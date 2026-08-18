@@ -398,12 +398,15 @@ impl RunIntake {
         Ok(outcome)
     }
 
-    /// Accept a fresh retry for the latest failed user turn without duplicating it.
-    pub(crate) fn retry_with_sink(
+    /// Accept a retry and report whether this call created the Run.
+    ///
+    /// Only `is_new=true` may start an executor; idempotent replays return the
+    /// original identity and do not emit a second accepted notification.
+    pub(crate) fn retry_with_sink_outcome(
         db: &Database,
         request: AssistantRunRetryRequest,
         sink: &impl crate::ai_runtime::run_engine::RunEventSink,
-    ) -> AppResult<AssistantRunAccepted> {
+    ) -> AppResult<AcceptRunOutcome> {
         if request.session.domain != SecurityDomain::Normal
             || request.source_run_id.trim().is_empty()
             || request.client_request_id.trim().is_empty()
@@ -411,7 +414,7 @@ impl RunIntake {
         {
             return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
-        let accepted = AgentRunRepository::accept_retry(
+        let outcome = AgentRunRepository::accept_retry_outcome(
             db,
             RetryRunInput {
                 session_key: request.session.session_key,
@@ -420,15 +423,20 @@ impl RunIntake {
                 run_id: uuid::Uuid::new_v4().to_string(),
             },
         )?;
+        if !outcome.is_new {
+            return Ok(outcome);
+        }
         let event = AgentRunRepository::get_for_session(
             db,
-            &accepted.session.session_key,
-            &accepted.run_id,
+            &outcome.accepted.session.session_key,
+            &outcome.accepted.run_id,
         )?
         .and_then(|response| response.events.into_iter().next())
         .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
-        sink.emit(&event)?;
-        Ok(accepted)
+        // The durable event is authoritative. A transient IPC notification
+        // failure must not strand a newly accepted retry before execution.
+        let _ = sink.emit(&event);
+        Ok(outcome)
     }
 
     /// Read only through the owning normal-domain session reference.

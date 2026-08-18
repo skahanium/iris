@@ -443,14 +443,30 @@ impl AgentRunRepository {
     /// This deliberately does not insert a second `session_messages` record.
     /// A newer visible message makes the historical failure ineligible, so a
     /// late provider response can never be inserted into a newer conversation.
+    #[cfg(test)]
     pub(crate) fn accept_retry(
         db: &Database,
         input: RetryRunInput,
     ) -> AppResult<AssistantRunAccepted> {
+        Self::accept_retry_outcome(db, input).map(|outcome| outcome.accepted)
+    }
+
+    /// Accept a retry and report whether this call created the Run.
+    ///
+    /// Repeated retries with the same `client_request_id` return the original
+    /// identity with `is_new=false`; only the first caller may start an
+    /// executor or emit a second accepted notification.
+    pub(crate) fn accept_retry_outcome(
+        db: &Database,
+        input: RetryRunInput,
+    ) -> AppResult<AcceptRunOutcome> {
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
                 if let Some((existing, _)) = accepted_for_client_request(conn, &input.client_request_id)? {
-                    return Ok(existing);
+                    return Ok(AcceptRunOutcome {
+                        accepted: existing,
+                        is_new: false,
+                    });
                 }
                 let source = conn
                     .query_row(
@@ -531,13 +547,16 @@ impl AgentRunRepository {
                 ).map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
                 conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;
-                Ok(AssistantRunAccepted {
-                    client_request_id: input.client_request_id,
-                    run_id: input.run_id,
-                    turn_id,
-                    session: AssistantSessionRef { domain: SecurityDomain::Normal, session_key: input.session_key },
-                    state: RunState::Accepted,
-                    state_version: 0,
+                Ok(AcceptRunOutcome {
+                    accepted: AssistantRunAccepted {
+                        client_request_id: input.client_request_id,
+                        run_id: input.run_id,
+                        turn_id,
+                        session: AssistantSessionRef { domain: SecurityDomain::Normal, session_key: input.session_key },
+                        state: RunState::Accepted,
+                        state_version: 0,
+                    },
+                    is_new: true,
                 })
             })
         })

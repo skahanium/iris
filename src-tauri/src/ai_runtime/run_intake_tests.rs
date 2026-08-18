@@ -11,6 +11,8 @@ use super::{
     agent_run_repository::{AgentRunRepository, AppendRunEventInput, DurableApplyCheckpointStage},
     frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput},
 };
+use std::sync::Arc;
+
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
@@ -496,14 +498,71 @@ fn retry_replay_emits_accepted_event_only_once() {
         client_request_id: "retry-replay-once".into(),
     };
 
-    let first = RunIntake::retry_with_sink(&db, retry.clone(), &sink).expect("first retry");
-    let second = RunIntake::retry_with_sink(&db, retry, &sink).expect("idempotent retry replay");
+    let first = RunIntake::retry_with_sink_outcome(&db, retry.clone(), &sink).expect("first retry");
+    let second =
+        RunIntake::retry_with_sink_outcome(&db, retry, &sink).expect("idempotent retry replay");
 
-    assert_eq!(first.run_id, second.run_id);
+    assert!(first.is_new, "the first retry must win execution");
+    assert!(
+        !second.is_new,
+        "an idempotent retry replay must not win execution again"
+    );
+    assert_eq!(first.accepted.run_id, second.accepted.run_id);
     assert_eq!(
         sink.0.lock().expect("sink lock").len(),
         1,
         "an idempotent retry replay must not emit a duplicate accepted event"
+    );
+}
+
+#[test]
+fn concurrent_retry_starts_executor_once() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let db =
+        Arc::new(Database::open(&directory.path().join("concurrent-retry.db")).expect("database"));
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("make source run retryable");
+    let sink = Arc::new(RecordingSink::default());
+    let retry = AssistantRunRetryRequest {
+        session: accepted.session.clone(),
+        source_run_id: accepted.run_id.clone(),
+        client_request_id: "concurrent-retry-once".into(),
+    };
+
+    let mut new_count = 0;
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let db = Arc::clone(&db);
+            let sink = Arc::clone(&sink);
+            let retry = retry.clone();
+            handles.push(scope.spawn(move || {
+                RunIntake::retry_with_sink_outcome(&db, retry, &*sink)
+                    .expect("concurrent retry accepted")
+            }));
+        }
+        for handle in handles {
+            if handle.join().expect("retry thread").is_new {
+                new_count += 1;
+            }
+        }
+    });
+
+    assert_eq!(
+        new_count, 1,
+        "two concurrent retries must produce exactly one execution owner"
+    );
+    assert_eq!(
+        sink.0.lock().expect("sink lock").len(),
+        1,
+        "concurrent retries must emit only one accepted notification"
     );
 }
 

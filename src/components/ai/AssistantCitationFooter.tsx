@@ -32,7 +32,11 @@ export const AssistantCitationFooter = memo(function AssistantCitationFooter({
 }: AssistantCitationFooterProps) {
   const [open, setOpen] = useState(false);
   const detailsId = useId();
-  const sourceGroup = binding?.mode === "source_group_fallback";
+  // Fail safe: missing or unknown binding with actual source entries must be
+  // presented as "this run's retrieval sources", never as precise citations.
+  const sourceGroup =
+    entries.length > 0 &&
+    (!binding || (binding.mode !== "exact" && binding.mode !== "normalized"));
   const visible = useMemo(
     () =>
       filterReferencedWebCitations(

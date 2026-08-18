@@ -426,14 +426,16 @@ pub async fn assistant_run_retry(
     request: AssistantRunRetryRequest,
 ) -> AppResult<AssistantRunAccepted> {
     let sink = TauriRunEventSink::new(&app_handle);
-    let accepted = RunIntake::retry_with_sink(&state.db, request, &sink)?;
-    spawn_normal_direct_run(
-        Arc::clone(&state),
-        app_handle,
-        accepted.clone(),
-        state.vault_path().ok(),
-    );
-    Ok(accepted)
+    let outcome = RunIntake::retry_with_sink_outcome(&state.db, request, &sink)?;
+    if outcome.is_new {
+        spawn_normal_direct_run(
+            Arc::clone(&state),
+            app_handle,
+            outcome.accepted.clone(),
+            state.vault_path().ok(),
+        );
+    }
+    Ok(outcome.accepted)
 }
 
 /// Apply one explicit control action to an isolated Agent Run.

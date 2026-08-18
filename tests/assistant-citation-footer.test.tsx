@@ -47,10 +47,11 @@ describe("AssistantCitationFooter", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开来源" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源" }));
+    expect(screen.getByText("本次检索来源")).toBeInTheDocument();
     expect(screen.getByText("Match report")).toBeInTheDocument();
     expect(screen.getByText("Coach news")).toBeInTheDocument();
-    expect(screen.queryByText("Unused")).not.toBeInTheDocument();
+    expect(screen.getByText("Unused")).toBeInTheDocument();
   });
 
   it("labels an uncalibrated source group as this-run retrieval sources", () => {
