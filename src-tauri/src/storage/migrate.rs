@@ -184,6 +184,9 @@ const MIGRATION_069_UP: &str = include_str!("../../migrations/069_cache_governan
 const MIGRATION_069_DOWN: &str = include_str!("../../migrations/069_cache_governance.down.sql");
 const MIGRATION_070_UP: &str = include_str!("../../migrations/070_cache_governance_v2.sql");
 const MIGRATION_070_DOWN: &str = include_str!("../../migrations/070_cache_governance_v2.down.sql");
+const MIGRATION_071_UP: &str = include_str!("../../migrations/071_ai_memories_scope_key.sql");
+const MIGRATION_071_DOWN: &str =
+    include_str!("../../migrations/071_ai_memories_scope_key.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -700,6 +703,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     )?;
     apply_migration(conn, "069_cache_governance", MIGRATION_069_UP, false)?;
     apply_migration(conn, "070_cache_governance_v2", MIGRATION_070_UP, false)?;
+    apply_migration(conn, "071_ai_memories_scope_key", MIGRATION_071_UP, false)?;
 
     Ok(())
 }
@@ -711,6 +715,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "071_ai_memories_scope_key", MIGRATION_071_DOWN);
     rollback_migration(conn, "070_cache_governance_v2", MIGRATION_070_DOWN);
     rollback_migration(conn, "069_cache_governance", MIGRATION_069_DOWN);
     rollback_migration(conn, "068_feed_image_authorization", MIGRATION_068_DOWN);
@@ -3072,6 +3077,56 @@ mod tests {
             )
             .unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn ai_memories_scope_key_migration_allows_same_key_in_different_scopes_and_rolls_back() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO ai_memories (key, content, scope) VALUES ('shared-key', 'global', 'global')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ai_memories (key, content, scope) VALUES ('shared-key', 'vault', 'run:note')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            count, 2,
+            "(scope, key) must allow the same key in different scopes"
+        );
+
+        assert!(
+            conn.execute(
+                "INSERT INTO ai_memories (key, content, scope) VALUES ('shared-key', 'duplicate', 'global')",
+                [],
+            )
+            .is_err(),
+            "same (scope, key) must remain unique"
+        );
+
+        rollback_migration(&conn, "071_ai_memories_scope_key", MIGRATION_071_DOWN);
+        let after_down: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            after_down, 1,
+            "down migration restores UNIQUE(key) and deduplicates"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO ai_memories (key, content, scope) VALUES ('shared-key', 'other-scope', 'run:other')",
+                [],
+            )
+            .is_err(),
+            "pre-071 schema must reject the same key across scopes"
         );
     }
 }

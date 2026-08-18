@@ -379,21 +379,14 @@ fn contains_any_hint(content: &str, hints: &[&str]) -> bool {
 }
 
 fn fallback_goal_summary(messages: &[MemoryMessage], fallback_label: &str) -> String {
-    let mut user_messages = messages
-        .iter()
-        .filter(|msg| msg.role == "user" && !msg.content.trim().is_empty());
-    let first = user_messages.next().map(|msg| msg.content.trim());
     let last = messages
         .iter()
         .rev()
         .find(|msg| msg.role == "user" && !msg.content.trim().is_empty())
         .map(|msg| msg.content.trim());
-    match (first, last) {
-        (Some(first), Some(last)) if first != last => {
-            bounded_summary(&format!("{fallback_label}: {first} / latest: {last}"))
-        }
-        (Some(first), _) => bounded_summary(&format!("{fallback_label}: {first}")),
-        _ => not_recorded(),
+    match last {
+        Some(last) => bounded_summary(&format!("{fallback_label}: {last}")),
+        None => not_recorded(),
     }
 }
 
@@ -442,7 +435,10 @@ fn redact_sensitive(text: &str) -> String {
 
 #[cfg(test)]
 mod memory_extraction_tests {
-    use super::{extract_summary, ConversationMemory, MemoryMessage, SummaryFallback};
+    use super::{
+        extract_summary, ConversationMemory, ConversationMemoryPolicy, MemoryMessage,
+        SummaryFallback,
+    };
     use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
     use crate::storage::db::Database;
 
@@ -563,5 +559,54 @@ mod memory_extraction_tests {
         assert_eq!((memory.seq_start, memory.seq_end), (1, 1));
         assert_eq!(recent.first().expect("recent").seq, 2);
         assert!(memory.seq_end < recent.first().expect("recent").seq);
+    }
+
+    #[test]
+    fn summary_invalidates_when_covered_messages_change() {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        db.with_conn(|conn| {
+            for seq in 1..=5_i64 {
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("covered-message-{seq}"),
+                        format!("2026-07-27T00:00:0{seq}Z"),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed conversation");
+
+        let policy = ConversationMemoryPolicy {
+            minimum_messages: 3,
+            recent_message_limit: 1,
+        };
+        let before = ConversationMemory::refresh_for_session(&db, session.session_id, policy)
+            .expect("refresh before")
+            .expect("memory exists");
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE session_messages SET content = ?1
+                 WHERE session_id = ?2 AND seq = ?3",
+                rusqlite::params!["covered-message-changed", session.session_id, 2],
+            )?;
+            Ok(())
+        })
+        .expect("change a covered message");
+
+        let after = ConversationMemory::refresh_for_session(&db, session.session_id, policy)
+            .expect("refresh after")
+            .expect("memory still exists");
+        assert_ne!(
+            before.content_hash, after.content_hash,
+            "a changed covered message must invalidate the old summary hash"
+        );
     }
 }

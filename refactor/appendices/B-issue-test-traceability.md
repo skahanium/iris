@@ -30,13 +30,13 @@
 | TOOL-002  | `harness_tools_do_not_inherit_vault_search_permission`                           | 权限单元       | harness 工具不再返回 `VaultSearch`（GREEN）                                                                             |
 | SEC-002   | `local_retrieval_content_never_enters_web_query`                                 | 隐私集成       | 捕获的 URL/query 不含夹具中的敏感标记（`tainted_web_query_*` 等 GREEN）                                                 |
 | SEC-002   | `untrusted_web_text_cannot_expand_permissions`                                   | 安全集成       | 注入文本无法启用工具或跳过确认（既有策略/安全负例 GREEN）                                                               |
-| CTX-001   | `run_situation_uses_committed_projection`                                        | 上下文单元     | 草稿、旧临时结果和旧权限不进入投影                                                                                      |
-| CTX-002   | `first_user_message_is_not_permanent_goal`                                       | 回归单元       | 后续无关请求不继承首条消息为目标（已新增，当前 RED）                                                                    |
-| CTX-003   | `summary_invalidates_when_covered_messages_change`                               | 摘要集成       | 删除/修改范围内消息后旧摘要不再使用                                                                                     |
-| CTX-003   | `short_conversation_does_not_require_summary`                                    | 上下文单元     | 预算内直接使用原消息                                                                                                    |
-| MEM-001   | `same_memory_key_can_exist_in_different_scopes`                                  | migration/仓储 | 两个 scope 的同 key 互不覆盖                                                                                            |
-| MEM-001   | `clear_scope_preserves_other_scopes`                                             | 仓储单元       | 清理精确且可重复                                                                                                        |
-| MEM-002   | `unconfirmed_inference_is_not_persisted`                                         | 记忆服务       | 模型猜测和 Web 内容不会写入                                                                                             |
+| CTX-001   | `run_situation_uses_committed_projection`                                        | 上下文单元     | 草稿、旧临时结果和旧权限不进入投影（`RunSituation = RunContext`，GREEN）                                                |
+| CTX-002   | `first_user_message_is_not_permanent_goal`                                       | 回归单元       | 后续无关请求不继承首条消息为目标（已新增，GREEN）                                                                       |
+| CTX-003   | `summary_invalidates_when_covered_messages_change`                               | 摘要集成       | 删除/修改范围内消息后旧摘要不再使用（已新增，GREEN）                                                                    |
+| CTX-003   | `short_conversation_does_not_require_summary`                                    | 上下文单元     | 预算内直接使用原消息（既有测试 GREEN）                                                                                  |
+| MEM-001   | `same_memory_key_can_exist_in_different_scopes`                                  | migration/仓储 | 两个 scope 的同 key 互不覆盖（`071_ai_memories_scope_key` + 测试 GREEN）                                                |
+| MEM-001   | `clear_scope_preserves_other_scopes`                                             | 仓储单元       | 清理精确且可重复（`same_key_can_exist_in_different_scopes_and_clear_preserves_other_scope` GREEN）                      |
+| MEM-002   | `unconfirmed_inference_is_not_persisted`                                         | 记忆服务       | 模型猜测和 Web 内容不会写入（写入需确认且带预算约束，GREEN）                                                            |
 | UI-001    | `capability_degraded_event_is_visible_and_recoverable`                           | 前后端契约     | 实时与刷新后的展示一致（已新增生产面板 contract，GREEN）                                                                |
 | UI-002    | `tool_diagnostics_are_redacted`                                                  | 前端/事件单元  | 不出现密钥、正文或原始参数                                                                                              |
 

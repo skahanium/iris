@@ -38,6 +38,12 @@ const RECENT_CONVERSATION_CANDIDATE_LIMIT: u32 = 24;
 const MAX_RECENT_CONVERSATION_PAIRS: usize = 12;
 const MAX_RECENT_CONVERSATION_TOKENS: u32 = 8_000;
 
+/// Read-only RunSituation projection consumed by the production executor.
+///
+/// This is intentionally the same value as [`RunContext`]: no second context
+/// table or parallel state machine is introduced.
+pub(crate) type RunSituation = RunContext;
+
 /// One authorized local source body held only while building a Provider request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunContextMaterial {
@@ -533,7 +539,7 @@ impl RunContextAssembler {
         vault: Option<&Path>,
         session_key: &str,
         run_id: &str,
-    ) -> AppResult<RunContext> {
+    ) -> AppResult<RunSituation> {
         let input = AgentRunRepository::prompt_input_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if input.explicit_references.len() > MAX_EXPLICIT_MATERIALS {

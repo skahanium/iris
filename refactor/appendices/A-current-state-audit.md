@@ -25,11 +25,11 @@
 | EVID-004  | P2     | Resolved   | `list_current_run_web_citation_links` 只返回当前 Run、未 retired、HTTPS 可定位证据；foreign/retired 均被排除                  | 保留 foreign/retired 负例测试                          |
 | SEC-001   | P0     | Resolved   | harness 工具已使用独立 `harness.*` 权限原子，不再继承 `vault.search`                                                          | 保留权限映射拒绝型测试                                 |
 | SEC-002   | P0     | Resolved   | 本地检索内容通过 `record_web_query_taint_witness` 与 Web 查询门禁阻止进入查询/URL/日志；已有端到端隐私负例                    | 保留 taint/隐私负例回归测试                            |
-| CTX-001   | P1     | Partial    | 运行时上下文构造逻辑存在，但生产调用链接入不足                                                                                | 接成只读 `RunSituation`，不新增状态表                  |
-| CTX-002   | P1     | Confirmed  | 会话记忆兜底可能把第一条用户消息长期提升为目标                                                                                | 移除兜底，目标只来自当前请求/明确任务                  |
-| CTX-003   | P1     | Partial    | `conversation_summaries` 已存在，可支持压缩，但需补覆盖范围和失效语义                                                         | 复用现表并增加失效/重建测试                            |
-| MEM-001   | P2     | Partial    | `ai_memories` 已存在，但 key 冲突可能跨 scope 覆盖                                                                            | 调整为 `(scope, key)` 并提供 scope 清理                |
-| MEM-002   | P2     | Confirmed  | 缺少“仅用户确认偏好可长期写入”的主干约束                                                                                      | 限制写入入口、来源和预算                               |
+| CTX-001   | P1     | Resolved   | `RunSituation = RunContext` 只读投影已在生产调用链使用，不新增第二状态表                                                      | 保留 committed projection 测试                         |
+| CTX-002   | P1     | Resolved   | 会话记忆兜底不再把第一条用户消息写入长期目标；仅使用最近用户消息或明确标记                                                    | `first_user_message_is_not_permanent_goal` 已 GREEN    |
+| CTX-003   | P1     | Resolved   | `conversation_summaries` 已有 seq 范围/内容哈希；新增覆盖消息变更后的失效重建测试                                             | 保留 summary invalidation 测试                         |
+| MEM-001   | P2     | Resolved   | `ai_memories` 迁移为 `UNIQUE(scope, key)`，提供 scope 清理且不影响其他 scope                                                  | 保留 migration up/down 与 clear-scope 测试             |
+| MEM-002   | P2     | Resolved   | 写入入口仍为 `user_confirmed` 且需确认；新增 key/content 长度预算与读取条数上限                                               | 保留预算与确认约束测试                                 |
 | UI-001    | P1     | Resolved   | `capability_degraded` 已接入 `UnifiedAssistantPanel` 生产事件投影，组件复用且不新增第二套体系                                 | 保留事件 reducer 与生产面板 contract 测试              |
 | UI-002    | P2     | Confirmed  | 原始/无用工具参数会增加噪音与隐私风险                                                                                         | 仅显示脱敏摘要和稳定错误码                             |
 | EVAL-001  | P1     | Stale      | “只有 24 个评测场景”的旧基线已过期；当前代码已有 48-case 契约                                                                 | 复用现有套件并维护稳定场景 ID                          |
@@ -102,3 +102,11 @@
 - SEC-001 / SEC-002：权限映射与本地检索→Web 查询隐私门禁保持既有负例 GREEN。
 - EVID-001/EVID-002：Direct/ToolLoop 的 `SourceGroupFallback` 与 UI fail-safe 继续 GREEN。
 - EVID-003：当前没有已支持的结构化 VERIFIED 工具，`VERIFIED` 注册表保持为空；`structured_verifier_requires_registered_rule` 保证无规则不能晋升。
+
+## 阶段 4 结果（branch-v1.3.0）
+
+- CTX-001：`RunSituation = RunContext` 作为只读投影接入生产调用链，不新增第二状态表。
+- CTX-002：`first_user_message_is_not_permanent_goal` 已 GREEN；会话记忆兜底只使用最近用户消息。
+- CTX-003：`summary_invalidates_when_covered_messages_change` 已 GREEN；摘要内容哈希随覆盖消息变化而失效重建。
+- MEM-001：`071_ai_memories_scope_key` migration up/down 已实现，`same_key_can_exist_in_different_scopes_and_clear_preserves_other_scope` 已 GREEN。
+- MEM-002：`memory_write` 仍要求确认，新增 key/content 长度预算与读取条数上限。
