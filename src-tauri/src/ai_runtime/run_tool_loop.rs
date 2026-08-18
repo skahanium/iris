@@ -3309,7 +3309,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn external_read_tool_crosses_transport_and_persists_only_bounded_safe_artifacts() {
+    async fn tool_diagnostics_never_expose_raw_arguments() {
         let directory = tempfile::tempdir().expect("temporary app directory");
         let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
@@ -3455,7 +3455,7 @@ mod tests {
             Vec::new(),
         )
         .with_allowed_tool_names(std::slice::from_ref(&snapshot.exposed_name));
-        let private_query = "external-query-body-must-not-persist";
+        let private_query = "note-body-must-not-persist api_key=sentinel-secret";
         let provider_output = "fact-web-1=value-1";
         let private_call_id = "provider-call-id-must-not-persist";
         let result = executor

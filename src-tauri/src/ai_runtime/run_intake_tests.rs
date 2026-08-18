@@ -480,7 +480,7 @@ impl RunEventSink for RecordingSink {
 }
 
 #[test]
-fn retry_replay_emits_accepted_event_only_once() {
+fn accepted_retry_does_not_spawn_again() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted run");
     db.with_conn(|conn| {

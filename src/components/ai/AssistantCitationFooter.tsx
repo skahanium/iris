@@ -51,7 +51,7 @@ export const AssistantCitationFooter = memo(function AssistantCitationFooter({
     return null;
   }
 
-  const title = sourceGroup ? "本次检索来源" : "来源";
+  const title = sourceGroup ? "本次检索来源组" : "来源";
   const summary = `${visible.length} 个来源`;
   const categorySummary = sourceSummary
     .map((entry) => `${sourceCategoryLabel(entry.category)} ${entry.count}`)
@@ -88,7 +88,7 @@ export const AssistantCitationFooter = memo(function AssistantCitationFooter({
         <div id={detailsId} className="mt-2">
           {sourceGroup ? (
             <p className="mb-1.5 text-caption text-muted-foreground">
-              本回答未提供可精确绑定的行内引用；以下仅为本次检索来源，不表示已逐段核验。
+              本回答未提供可精确绑定的行内引用；以下仅为本次检索来源组，不表示已逐段核验。
             </p>
           ) : null}
           {categorySummary ? (

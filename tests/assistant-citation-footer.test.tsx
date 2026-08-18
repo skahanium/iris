@@ -47,8 +47,8 @@ describe("AssistantCitationFooter", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源" }));
-    expect(screen.getByText("本次检索来源")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源组" }));
+    expect(screen.getByText("本次检索来源组")).toBeInTheDocument();
     expect(screen.getByText("Match report")).toBeInTheDocument();
     expect(screen.getByText("Coach news")).toBeInTheDocument();
     expect(screen.getByText("Unused")).toBeInTheDocument();
@@ -71,19 +71,19 @@ describe("AssistantCitationFooter", () => {
     );
 
     const toggle = screen.getByRole("button", {
-      name: "展开本次检索来源",
+      name: "展开本次检索来源组",
     });
     expect(screen.getByText("2 个来源")).toBeInTheDocument();
     expect(screen.queryByText("Verified one")).not.toBeInTheDocument();
 
     fireEvent.click(toggle);
 
-    expect(screen.getByText("本次检索来源")).toBeInTheDocument();
+    expect(screen.getByText("本次检索来源组")).toBeInTheDocument();
     expect(screen.getByText("Verified one")).toBeInTheDocument();
     expect(screen.getByText("Verified two")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源，不表示已逐段核验。",
+        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源组，不表示已逐段核验。",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("本轮已核验证据")).not.toBeInTheDocument();
@@ -108,7 +108,7 @@ describe("AssistantCitationFooter", () => {
     );
 
     expect(screen.getByText("12 个来源")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源组" }));
     expect(screen.getByText("Source 1")).toBeInTheDocument();
     expect(screen.getByText("Source 12")).toBeInTheDocument();
   });
@@ -125,14 +125,14 @@ describe("AssistantCitationFooter", () => {
     );
 
     const toggle = screen.getByRole("button", {
-      name: "展开本次检索来源",
+      name: "展开本次检索来源组",
     });
     fireEvent.click(toggle);
 
-    expect(screen.getByText("本次检索来源")).toBeInTheDocument();
+    expect(screen.getByText("本次检索来源组")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源，不表示已逐段核验。",
+        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源组，不表示已逐段核验。",
       ),
     ).toBeInTheDocument();
   });
@@ -155,14 +155,14 @@ describe("AssistantCitationFooter", () => {
     );
 
     const toggle = screen.getByRole("button", {
-      name: "展开本次检索来源",
+      name: "展开本次检索来源组",
     });
     fireEvent.click(toggle);
 
-    expect(screen.getByText("本次检索来源")).toBeInTheDocument();
+    expect(screen.getByText("本次检索来源组")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源，不表示已逐段核验。",
+        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源组，不表示已逐段核验。",
       ),
     ).toBeInTheDocument();
   });
@@ -208,7 +208,7 @@ describe("AssistantCitationFooter", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源组" }));
 
     expect(screen.getByText("First")).toBeInTheDocument();
     expect(screen.getByText("Second")).toBeInTheDocument();
