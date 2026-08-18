@@ -106,7 +106,11 @@ export function useAssistantRun() {
 
   const currentRun = useMemo<ActiveAssistantRun | null>(() => {
     if (!runIdentity) return null;
-    if (!eventState || eventState.runId !== runIdentity.runId)
+    if (
+      !eventState ||
+      eventState.runId !== runIdentity.runId ||
+      eventState.stateVersion <= runIdentity.stateVersion
+    )
       return runIdentity;
     return {
       ...runIdentity,
@@ -149,6 +153,15 @@ export function useAssistantRun() {
         runId: run.runId,
       });
       if (!persisted || activeRunIdRef.current !== run.runId) return;
+      const refreshed: ActiveAssistantRun = {
+        runId: persisted.run.runId,
+        turnId: persisted.run.turnId,
+        session: persisted.run.session,
+        state: persisted.run.state,
+        stateVersion: persisted.run.stateVersion,
+      };
+      setRunIdentity(refreshed);
+      currentRunRef.current = refreshed;
       setEventState(replayAssistantRunEvents(run.runId, persisted.events));
       setLatestEvent(persisted.events.at(-1) ?? null);
     } finally {
@@ -191,6 +204,23 @@ export function useAssistantRun() {
       unlisten?.();
     };
   }, [reduceLiveEvent]);
+
+  useEffect(() => {
+    const replayVisibleRun = () => {
+      const run = currentRunRef.current;
+      if (!run || isTerminalRunState(run.state)) return;
+      void replay(run);
+    };
+    const replayWhenVisible = () => {
+      if (document.visibilityState === "visible") replayVisibleRun();
+    };
+    window.addEventListener("focus", replayVisibleRun);
+    document.addEventListener("visibilitychange", replayWhenVisible);
+    return () => {
+      window.removeEventListener("focus", replayVisibleRun);
+      document.removeEventListener("visibilitychange", replayWhenVisible);
+    };
+  }, [replay]);
 
   const flushPresentationEvents = useCallback(() => {
     presentationFrameRef.current = null;

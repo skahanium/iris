@@ -107,6 +107,7 @@ impl ClassifiedEphemeralStore {
     }
 
     /// Admit a single explicit classified-document analysis without persistence.
+    #[cfg(test)]
     pub(crate) fn accept(
         &mut self,
         vault: &Path,

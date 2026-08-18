@@ -592,6 +592,69 @@ describe("useAssistantRun", () => {
     );
   });
 
+  it("窗口重新获得焦点时重放仍显示为非终态的 Run", async () => {
+    mockAssistantRunStart.mockResolvedValue({
+      runId: "run-focus-replay",
+      turnId: "turn-focus-replay",
+      session: { domain: "normal", sessionKey: "session-focus-replay" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    mockAssistantRunGet.mockResolvedValueOnce(null);
+    mockListenAssistantRunEvent.mockResolvedValue(() => undefined);
+    mockListenAssistantRunPresentation.mockResolvedValue(() => undefined);
+    mountProbe();
+
+    await act(async () => {
+      await runApi?.start({
+        ...request(),
+        clientRequestId: "client-run-focus-replay",
+      });
+    });
+    mockAssistantRunGet.mockClear();
+    mockAssistantRunGet.mockResolvedValue({
+      run: {
+        runId: "run-focus-replay",
+        turnId: "turn-focus-replay",
+        session: { domain: "normal", sessionKey: "session-focus-replay" },
+        state: "completed",
+        stateVersion: 2,
+        finalMessageId: 7,
+      },
+      events: [
+        {
+          runId: "run-focus-replay",
+          seq: 1,
+          stateVersion: 1,
+          timestamp: "2026-08-18T08:00:00.000Z",
+          type: "accepted",
+          payload: {
+            kind: "accepted",
+            turnId: "turn-focus-replay",
+            sessionKey: "session-focus-replay",
+          },
+        },
+        {
+          runId: "run-focus-replay",
+          seq: 2,
+          stateVersion: 2,
+          timestamp: "2026-08-18T08:00:01.000Z",
+          type: "completed",
+          payload: { kind: "completed", finalMessageId: 7 },
+        },
+      ],
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await vi.waitFor(() => {
+        expect(mockAssistantRunGet).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    expect(runApi?.runState).toBe("completed");
+  });
+
   it("batches streaming deltas into one animation-frame render and flushes completion immediately", async () => {
     let emitPresentation:
       | ((

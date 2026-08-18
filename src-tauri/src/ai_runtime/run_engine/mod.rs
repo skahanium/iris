@@ -133,7 +133,8 @@ impl RunEngine {
                 },
             },
         )?;
-        sink.emit(&failed)
+        emit_durable_event_best_effort(sink, &failed);
+        Ok(())
     }
 
     /// Persist the structured strict-Web failure before terminalizing the Run.
@@ -182,7 +183,8 @@ impl RunEngine {
                 },
             },
         )?;
-        sink.emit(&failed)
+        emit_durable_event_best_effort(sink, &failed);
+        Ok(())
     }
 
     /// Move an accepted Run into the visible Preparing stage before heavy context work.
@@ -261,7 +263,7 @@ impl RunEngine {
                 },
             },
         )?;
-        sink.emit(&failed)?;
+        emit_durable_event_best_effort(sink, &failed);
         Ok(true)
     }
 
@@ -310,7 +312,9 @@ impl RunEngine {
         let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .and_then(|response| response.events.last().cloned())
             .ok_or_else(|| AppError::msg("agent_run_completed_event_missing"))?;
-        sink.emit(&completed)
+        emit_durable_event_best_effort(sink, &completed);
+        crate::ai_runtime::model_gateway::clear_abort(run_id);
+        Ok(())
     }
 
     /// Drive accepted → preparing → running → completed for one direct answer.
@@ -388,7 +392,7 @@ impl RunEngine {
                         },
                     },
                 )?;
-                sink.emit(&failed)?;
+                emit_durable_event_best_effort(sink, &failed);
                 return Err(AppError::run(SafeRunErrorCode::ProviderUnavailable));
             }
         };
@@ -779,7 +783,7 @@ impl RunEngine {
                         },
                     },
                 )?;
-                sink.emit(&failed)?;
+                emit_durable_event_best_effort(sink, &failed);
                 return Err(AppError::run(code));
             }
         };
@@ -1171,7 +1175,7 @@ impl RunEngine {
                         },
                     },
                 )?;
-                sink.emit(&failed)?;
+                emit_durable_event_best_effort(sink, &failed);
                 return Err(AppError::run(code));
             }
         };
@@ -1253,7 +1257,7 @@ impl RunEngine {
                     },
                 },
             )?;
-            sink.emit(&failed)?;
+            emit_durable_event_best_effort(sink, &failed);
             return Err(AppError::msg("agent_run_direct_response_invalid"));
         }
         let mut content = match validated_final_model_answer_with_telemetry(

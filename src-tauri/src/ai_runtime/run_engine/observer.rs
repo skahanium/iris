@@ -26,6 +26,21 @@ pub(crate) trait RunEventSink: Send + Sync {
     }
 }
 
+/// Project an already committed Run event without letting transient UI delivery
+/// rewrite or interrupt the durable lifecycle fact.
+pub(crate) fn emit_durable_event_best_effort(
+    sink: &(impl RunEventSink + ?Sized),
+    event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+) {
+    if sink.emit(event).is_err() {
+        tracing::warn!(
+            run_id = %event.run_id(),
+            reason = "durable_event_delivery_failed",
+            "durable Agent Run event will be recovered from SQLite"
+        );
+    }
+}
+
 #[cfg(test)]
 pub(super) struct NoopRunEventSink;
 
@@ -98,9 +113,14 @@ impl<'a, R: Runtime> TauriRunEventSink<'a, R> {
 
 impl<R: Runtime> RunEventSink for TauriRunEventSink<'_, R> {
     fn emit(&self, event: &crate::ai_runtime::run_contract::AssistantRunEvent) -> AppResult<()> {
-        self.app_handle
-            .emit("assistant:run_event", event)
-            .map_err(|_| AppError::msg("agent_run_event_emit_failed"))?;
+        if self.app_handle.emit("assistant:run_event", event).is_err() {
+            tracing::warn!(
+                run_id = %event.run_id(),
+                reason = "durable_event_delivery_failed",
+                "durable Agent Run event will be recovered from SQLite"
+            );
+            return Ok(());
+        }
         if let Some(payload) = presentation_payload_for_durable_event(event) {
             let _ = self.emit_presentation(event.run_id(), payload);
         }

@@ -12,6 +12,7 @@ use crate::ai_runtime::run_contract::{
     Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType, SafeRunErrorCode,
     SecurityDomain, VerificationRequirement, WebDecisionReason,
 };
+use crate::ai_runtime::run_engine::emit_durable_event_best_effort;
 use crate::ai_runtime::tool_surface::{classify_time_sensitivity, TimeSensitivity};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -394,7 +395,7 @@ impl RunIntake {
         .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
         // The durable event is authoritative. A transient IPC notification
         // failure must not strand a newly accepted Run before execution.
-        let _ = sink.emit(&event);
+        emit_durable_event_best_effort(sink, &event);
         Ok(outcome)
     }
 
@@ -435,7 +436,7 @@ impl RunIntake {
         .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
         // The durable event is authoritative. A transient IPC notification
         // failure must not strand a newly accepted retry before execution.
-        let _ = sink.emit(&event);
+        emit_durable_event_best_effort(sink, &event);
         Ok(outcome)
     }
 
@@ -481,7 +482,7 @@ impl RunIntake {
     ) -> AppResult<NormalRunControlOutcome> {
         let (outcome, event) = Self::control_event(db, request)?;
         if let Some(event) = event {
-            sink.emit(&event)?;
+            emit_durable_event_best_effort(sink, &event);
         }
         Ok(outcome)
     }

@@ -995,6 +995,31 @@ fn intake_event_delivery_failure_does_not_strand_or_duplicate_the_run() {
 }
 
 #[test]
+fn control_event_delivery_failure_keeps_the_committed_terminal_state() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+
+    let outcome = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: accepted.session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: accepted.state_version,
+            action: RunControlAction::Cancel,
+        },
+        &RejectingSink,
+    )
+    .expect("durable control survives notification loss");
+
+    assert_eq!(outcome, super::run_intake::NormalRunControlOutcome::Applied);
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Cancelled);
+    crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
+}
+
+#[test]
 fn concurrent_intake_replays_converge_on_one_run() {
     let directory = tempfile::tempdir().expect("temporary database directory");
     let db = Database::open(&directory.path().join("concurrent.sqlite3")).expect("database");

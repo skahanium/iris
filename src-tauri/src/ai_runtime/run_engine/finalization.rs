@@ -209,14 +209,7 @@ pub(super) fn fail_finalization_with_sink(
     );
     match append {
         Ok(failed) => {
-            if sink.emit(&failed).is_err() {
-                log_finalization_failure(
-                    run_id,
-                    RunFinalizationStage::EventDelivery,
-                    SafeRunErrorCode::EventDeliveryFailed,
-                );
-                return Err(AppError::run(SafeRunErrorCode::EventDeliveryFailed));
-            }
+            emit_durable_event_best_effort(sink, &failed);
             Err(AppError::run(failure.code))
         }
         Err(_) => {
@@ -451,16 +444,7 @@ pub(super) fn emit_run_terminal(
         .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
         .and_then(|response| response.events.last().cloned())
         .ok_or_else(|| AppError::run(SafeRunErrorCode::PersistenceFailed))?;
-    if sink.emit(&completed).is_err() {
-        log_finalization_failure(
-            run_id,
-            RunFinalizationStage::EventDelivery,
-            SafeRunErrorCode::EventDeliveryFailed,
-        );
-        return Err(AppError::msg(
-            SafeRunErrorCode::EventDeliveryFailed.as_str(),
-        ));
-    }
+    emit_durable_event_best_effort(sink, &completed);
     // Terminal presentation delivery is best-effort: it is a live UI
     // projection of an already-durable Completed fact, so a failed emit must
     // never turn a successfully persisted Run into an error.

@@ -3240,7 +3240,7 @@ async fn presentation_delivery_failure_never_invalidates_the_durable_answer() {
 }
 
 #[tokio::test]
-async fn completed_emit_failure_never_appends_a_second_terminal_event() {
+async fn terminal_sink_failure_recovers_without_reexecution() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let provider = MockStreamingProvider {
@@ -3252,7 +3252,7 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
         events: std::sync::Mutex::new(Vec::new()),
     };
 
-    let error = RunEngine::execute_direct_streaming_with_sink(
+    RunEngine::execute_direct_streaming_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -3260,14 +3260,11 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
         &sink,
     )
     .await
-    .expect_err("completed emit failure is surfaced safely");
-    assert_eq!(
-        error.to_string(),
-        SafeRunErrorCode::EventDeliveryFailed.as_str()
-    );
+    .expect("a delivery failure cannot overwrite a durable completed result");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
-        .expect("replay")
+        .expect("first replay")
         .expect("run");
     assert_eq!(replay.run.state, RunState::Completed);
     assert_eq!(
@@ -3283,6 +3280,11 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
             .count(),
         1
     );
+    let replay_again = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("second replay")
+        .expect("run");
+    assert_eq!(replay_again.run.state, RunState::Completed);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
