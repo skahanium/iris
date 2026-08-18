@@ -16,7 +16,7 @@
 ### 阶段 0 兼容边界
 
 - **公共 IPC**：本阶段只允许新增内部 `pub(crate)` 契约（如 `AcceptRunOutcome.is_new`、sink 的 terminal presentation 钩子），不改变既有 Tauri command 的参数名、类型或返回值；若后续必须改动 `assistant_run_*`，必须同步 `src/types/ipc.ts`、`src/lib/ipc.ts`、`src/types/ai.ts` 和 `docs/ipc-api-reference.md`。
-- **数据库 migration**：本阶段不引入 schema 变更；若阶段 4 的 `(scope, key)` 唯一性或阶段 2/3 需要新列，必须走 `src-tauri/migrations/` 增量 up/down，禁止直接改表。
+- **数据库 migration**：本次不引入 schema 变更；记忆继续使用既有 071 的 `(scope, key)` 唯一约束，禁止为本次收口新增平行表。
 - **UI 兼容**：本阶段只增加 fail-safe 投影测试与现有组件的行为约束；不新增第二套来源/状态组件。`SourceGroupFallback` 文案必须与现有 `AssistantCitationFooter` 一致，未知事件类型继续安全忽略。
 - **评测兼容**：继续使用 `docs/eval/agent-answer-capacity.md` 定义的 48-case 与 24-case smoke 场景 ID；不另建评测框架，不把 live pilot 未执行声明为已通过。
 
@@ -68,7 +68,7 @@
 - 短会话直接使用已提交消息，超预算后才使用 `conversation_summaries`。
 - 为摘要增加覆盖范围、失效和重建测试。
 - 移除“首条用户消息永久作为目标”的兜底。
-- 将 `ai_memories` 唯一性调整为 `(scope, key)`，补 migration、回滚和 scope 清理。
+- 沿用 071 的 `(scope, key)` 唯一性，补齐 global/vault 作用域、优先级和经确认的 scope 清理，不新增 migration。
 - 仅通过显式确认写入少量偏好，并限制注入数量和长度。
 
 退出条件：摘要失效后不会污染新请求；原始消息始终可恢复；相同 key 可在不同 scope 共存；Web/模型推断不会自动成为长期记忆。

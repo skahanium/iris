@@ -20,29 +20,29 @@ Executor 只消费这份冻结输入；UI 只消费已持久化状态和可重�
 
 ## 2. Run 生命周期
 
-### 当前差距
+### 基线差距
 
 - retry 仓储层可以判断请求是否已被接受，但上层丢失 `is_new` 信息，仍可能再次启动执行器。
 - `AnswerComplete` 可能在最终助手消息持久化之前发出，持久化失败时 UI 已看到成功。
 - 用户拒绝确认、事件下发失败和恢复后的终态投影缺少统一说明。
 
-### 目标调整
+### 已交付调整
 
-- 内部 accept/retry 返回 `{ accepted, is_new }`；公共 IPC 若无兼容性需要则不改签名。
-- 仅 `is_new=true` 时启动执行器，并为普通会话增加单航班约束。
+- 内部 accept/retry 返回 `{ accepted, is_new }`，公共 IPC 签名保持不变。
+- 仅 `is_new=true` 时启动执行器；普通会话首次启动和 retry 共用同一事务内的单航班约束。
 - 最终化顺序固定为：校验证据 → 持久化助手消息与绑定 → 持久化 Run 终态 → 发出 `AnswerComplete`。
-- 事件 sink 失败只影响实时展示，恢复时从持久化快照/事件补齐。
-- 用户拒绝统一映射为现有 `Cancelled`，避免扩张状态枚举。
+- 事件 sink 失败只影响实时展示，窗口重新获得焦点或页面重新可见时从持久化快照/事件补齐。
+- 用户拒绝统一映射为现有 `Cancelled(reason=user_rejected_change)`，拒绝后不执行变更、不生成最终消息。
 
 ## 3. Intake、路由与工具表面
 
-### 当前差距
+### 基线差距
 
 - intake、能力分类、模型可见工具和实际执行之间仍存在重复判断。
 - `capabilities_read` 读取完整目录，而不是当前 Run 真正可用的工具表面。
 - 过早引入额外 LLM Router 会增加延迟、成本和新的不一致点。
 
-### 目标调整
+### 已交付调整
 
 - intake 只做确定性分类、权限快照和输入规范化，结果随 Run 冻结。
 - 首阶段不新增 LLM Router；只在确定性规则无法覆盖且有评测证据时再考虑。
@@ -51,29 +51,29 @@ Executor 只消费这份冻结输入；UI 只消费已持久化状态和可重�
 
 ## 4. 工具目录与执行
 
-### 当前差距
+### 基线差距
 
 - `ToolImplementationStatus` 已能区分 `Dispatchable`、`HarnessOnly`、`Planned`，但权限、能力读取和执行映射仍有旁路或错误映射。
 - `spawn_subagent`、`conclude_reasoning` 等遗留入口与当前个人笔记产品的真实用途不匹配，部分参数没有生产消费方。
 
-### 目标调整
+### 已交付调整
 
 - 保留现有 `ToolCatalogEntry` 和 `ToolImplementationStatus`，不新增第二套成熟度枚举。
-- 仅在现有目录上补充确有执行用途的 `cost_class`、`output_policy`、`evidence_policy` 等静态元数据。
+- `cost_class`、`output_policy`、`evidence_policy` 已作为 `ToolCatalogEntry` 的可选执行元数据；不再维护按工具名匹配的并行表。
 - 工具展示、参数校验、权限校验和 dispatch 共享目录事实；执行前仍由单一门禁最终裁决。
 - 修正错误的权限映射；无真实调用链的 reasoning/subagent 工具直接删除或保持不暴露，不为其预建平台能力。
 - 删除未被消费的工具参数，避免“模型以为有作用、运行时实际忽略”。
 
 ## 5. Web 证据与来源展示
 
-### 当前差距
+### 基线差距
 
 - ToolLoop 的未校准路径已经能生成 `SourceGroupFallback`。
 - Direct 严格 Web 路径在最终化时没有生成 citation binding，因而绕过该 fallback。
-- UI 只有在显式收到 fallback 时才显示“本次检索来源/未逐段核验”；绑定缺失时仍可能以普通“来源”呈现。
+- UI 只有在显式收到 fallback 时才显示来源组语义；绑定缺失时仍可能以普通“来源”呈现。
 - 严格结构化 VERIFIED 规则尚未形成有效覆盖。
 
-### 目标调整
+### 已交付调整
 
 - 所有 Web 最终化路径显式生成 `Exact`、`Normalized` 或 `SourceGroupFallback` 之一。
 - Direct 路径在无法生成精确绑定时必须生成 fallback，不能传空值。
@@ -83,18 +83,18 @@ Executor 只消费这份冻结输入；UI 只消费已持久化状态和可重�
 
 ## 6. 上下文压缩与最小记忆
 
-### 当前差距
+### 基线差距
 
 - `conversation_summaries` 已存在，但运行时上下文投影的生产接入不完整。
 - 兜底逻辑可能把第一条用户消息直接提升为目标，造成陈旧目标持续影响后续 Run。
-- `ai_memories` 已存在，但键唯一性和作用域语义不足以支撑安全的少量偏好记忆。
+- `ai_memories` 与 071 的 `(scope, key)` 唯一约束已存在，但运行时作用域、优先级和删除语义尚未闭环。
 
-### 目标调整
+### 已交付调整
 
 - 先接通 `RunSituation`：短会话直接使用已提交消息，超过预算才加载或生成摘要。
-- 摘要记录覆盖范围和生成依据；新消息、删除消息或模型切换需要触发失效检查。
+- 摘要读取前按覆盖范围内消息的顺序、内容哈希和数量校验；范围内修改、撤回或缺失会失效，范围后的新消息保留在近期窗口且不使旧摘要失效。
 - 删除“第一条用户消息永远是当前目标”的兜底，当前目标只能来自本次请求或明确的活跃任务状态。
-- `ai_memories` 使用 `(scope, key)` 唯一性，提供按 scope 清理；仅写入用户确认的偏好。
+- `ai_memories` 沿用 071 的 `(scope, key)` 唯一性；只使用 global 与当前 vault 两级作用域，读取时 vault 优先于 global，并提供经确认的精确 scope 删除/清理。
 - Web 结果、模型猜测和本地检索片段一律不能自动写入长期记忆。
 
 ## 7. 前端投影
