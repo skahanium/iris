@@ -2121,10 +2121,21 @@ fn frozen_relative_paths(
     }
     if paths.is_empty() {
         let target = match tool_name {
-            "memory_write" => args
-                .get("key")
-                .and_then(serde_json::Value::as_str)
-                .map(|key| format!("application://memory/{key}")),
+            "memory_write" => {
+                if args.get("operation").and_then(serde_json::Value::as_str) == Some("clear_scope")
+                {
+                    Some(format!(
+                        "application://memory-scope/{}",
+                        args.get("scope")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("global")
+                    ))
+                } else {
+                    args.get("key")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|key| format!("application://memory/{key}"))
+                }
+            }
             "scheduled_task_create" => Some("application://scheduled-tasks/new".to_string()),
             "scheduled_task_delete" => args
                 .get("id")
@@ -2923,6 +2934,7 @@ mod tests {
         corroborated_source_threshold_met, emit_deferred_web_degradation,
         expected_post_content_hashes, mcp_failover_events, web_search_result_limit,
         DeferredWebDegradationInput, McpFailoverEvent, NormalRunToolExecutor, RunWebBudget,
+        CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -4791,6 +4803,78 @@ mod tests {
             .await
             .expect("surface rejection is a normal tool result");
         assert_eq!(forged.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_memory_mutation_is_not_persisted() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试记忆确认门".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running");
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+
+        let error = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "memory-clear-request",
+                    "memory_write",
+                    r#"{"operation":"clear_scope","scope":"global"}"#,
+                ),
+                1,
+            )
+            .await
+            .expect_err("memory mutation must pause for confirmation");
+        assert_eq!(error.to_string(), CONFIRMATION_PENDING_ERROR);
+        let memory_count: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))?)
+            })
+            .expect("memory count");
+        assert_eq!(memory_count, 0);
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::AwaitingConfirmation);
     }
 
     #[tokio::test]

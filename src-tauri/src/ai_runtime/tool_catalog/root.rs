@@ -78,15 +78,19 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "memory_write",
-            description: "写入或更新用户确认的长期 AI 经验/记忆条目",
+            description: "写入、删除或清空用户确认的长期 AI 经验/记忆条目",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["upsert", "delete_key", "clear_scope"],
+                        "default": "upsert"
+                    },
                     "key": {"type": "string"},
                     "content": {"type": "string"},
                     "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"}
-                },
-                "required": ["key", "content"]
+                }
             }),
             access_level: ToolAccessLevel::WriteSettings,
             requires_confirmation: true,

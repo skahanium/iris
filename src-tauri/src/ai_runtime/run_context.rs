@@ -564,7 +564,7 @@ impl RunContextAssembler {
                 RECENT_CONVERSATION_CANDIDATE_LIMIT,
             )?;
         let recent_messages = select_bounded_recent_history(recent_message_candidates);
-        let conversation_memory = ConversationMemory::latest_for_session(db, input.session_id)?;
+        let conversation_memory = ConversationMemory::validated_for_session(db, input.session_id)?;
         // v2 Runs must retain the identity configuration accepted with their
         // user turn. Legacy rows have no snapshot and remain read-compatible.
         let prompt_profile = input
