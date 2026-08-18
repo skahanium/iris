@@ -588,6 +588,24 @@ describe("useUnifiedAssistantSend", () => {
     );
   });
 
+  it("explains that an existing active Run must finish before another starts", async () => {
+    const setError = vi.fn();
+    start.mockRejectedValue(new Error("agent_run_active_run_exists"));
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        setError,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(setError).toHaveBeenLastCalledWith(
+      "当前会话已有任务运行，请等待、取消或完成后重试。",
+    );
+  });
+
   it("replays an uncertain acceptance once with the original client request id", async () => {
     const commitAcceptedTurn = vi.fn();
     start

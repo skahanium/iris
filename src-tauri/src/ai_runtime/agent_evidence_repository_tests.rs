@@ -2,11 +2,11 @@ use super::agent_evidence_repository::{
     AgentEvidenceRepository, ExternalToolEvidenceInput, LocalEvidenceInput, MaterialRole,
     WebEvidenceInput,
 };
-use super::agent_run_repository::{AcceptRunInput, AgentRunRepository};
+use super::agent_run_repository::{AcceptRunInput, AgentRunRepository, AppendRunEventInput};
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_contract::{
     ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed,
-    Modality, RiskClass, SecurityDomain, WebDecisionReason,
+    Modality, RiskClass, RunEventPayload, RunEventType, SecurityDomain, WebDecisionReason,
 };
 use crate::storage::db::Database;
 
@@ -71,6 +71,21 @@ fn setup_run() -> (Database, i64, String) {
         "为证据账本建立可追溯运行",
     );
     (db, session_id, session_key)
+}
+
+fn cancel_test_run(db: &Database, run_id: &str) {
+    AgentRunRepository::append_event(
+        db,
+        AppendRunEventInput {
+            run_id: run_id.to_string(),
+            state_version: 0,
+            event_type: RunEventType::Cancelled,
+            payload: RunEventPayload::Cancelled {
+                reason: "test_fixture_finished".to_string(),
+            },
+        },
+    )
+    .expect("cancel the first run before accepting the next turn");
 }
 
 fn register_web_evidence(
@@ -236,6 +251,14 @@ fn web_evidence_persists_only_a_bounded_excerpt_and_returns_a_safe_reference() {
 #[test]
 fn current_run_citation_links_exclude_foreign_and_retired_evidence() {
     let (db, session_id, session_key) = setup_run();
+    let owned = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "Owned source",
+        "https://example.test/owned",
+    );
+    cancel_test_run(&db, "evidence-run");
     accept_test_run(
         &db,
         session_id,
@@ -244,13 +267,6 @@ fn current_run_citation_links_exclude_foreign_and_retired_evidence() {
         "evidence-second-run",
         "evidence-second-turn",
         "第二个运行",
-    );
-    let owned = register_web_evidence(
-        &db,
-        session_id,
-        "evidence-run",
-        "Owned source",
-        "https://example.test/owned",
     );
     let _foreign = register_web_evidence(
         &db,
@@ -342,6 +358,7 @@ fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
     })
     .expect("external evidence metadata");
 
+    cancel_test_run(&db, "evidence-run");
     accept_test_run(
         &db,
         session_id,

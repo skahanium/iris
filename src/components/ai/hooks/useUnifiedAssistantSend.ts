@@ -148,6 +148,9 @@ function classifiedSubmissionError(reason: unknown): string {
 
 function normalSubmissionError(reason: unknown): string {
   const message = invokeErrorMessage(reason);
+  if (message.includes("agent_run_active_run_exists")) {
+    return "当前会话已有任务运行，请等待、取消或完成后重试。";
+  }
   if (
     message.includes("agent_run_explicit_reference_changed") ||
     message.includes("agent_run_invalid_explicit_reference")

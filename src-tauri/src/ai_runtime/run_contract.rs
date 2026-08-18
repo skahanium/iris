@@ -1405,6 +1405,9 @@ pub enum SafeRunErrorCode {
     /// The same client request id was replayed with a different payload.
     #[serde(rename = "agent_run_idempotency_conflict")]
     IdempotencyConflict,
+    /// The normal session already owns another non-terminal top-level Run.
+    #[serde(rename = "agent_run_active_run_exists")]
+    ActiveRunExists,
     /// The model referenced a tool call id that this Run never issued.
     #[serde(rename = "agent_run_unknown_tool_call_id")]
     UnknownToolCallId,
@@ -1497,6 +1500,7 @@ impl SafeRunErrorCode {
             Self::InvalidSubagentBatchReport => "agent_run_invalid_subagent_batch_report",
             Self::RetryNotAvailable => "agent_run_retry_not_available",
             Self::IdempotencyConflict => "agent_run_idempotency_conflict",
+            Self::ActiveRunExists => "agent_run_active_run_exists",
             Self::UnknownToolCallId => "agent_run_unknown_tool_call_id",
             Self::UnverifiedWebCitation => "agent_run_unverified_web_citation",
             Self::WebEvidenceRequired => "agent_run_web_evidence_required",

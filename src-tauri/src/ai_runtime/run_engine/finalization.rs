@@ -566,6 +566,7 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::InvalidSubagentBatchReport
         | SafeRunErrorCode::RetryNotAvailable
         | SafeRunErrorCode::IdempotencyConflict
+        | SafeRunErrorCode::ActiveRunExists
         | SafeRunErrorCode::UnknownToolCallId
         | SafeRunErrorCode::UnverifiedWebCitation
         | SafeRunErrorCode::WebEvidenceRequired => "运行暂时无法完成，请稍后重试",

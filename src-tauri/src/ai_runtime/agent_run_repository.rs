@@ -312,6 +312,7 @@ impl AgentRunRepository {
                     (conn.last_insert_rowid(), session_key)
                 } else {
                     ensure_normal_session(conn, input.session_id, &input.session_key)?;
+                    ensure_no_active_top_level_run(conn, input.session_id)?;
                     (input.session_id, input.session_key.clone())
                 };
                 let (prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash) =
@@ -460,14 +461,33 @@ impl AgentRunRepository {
         db: &Database,
         input: RetryRunInput,
     ) -> AppResult<AcceptRunOutcome> {
+        let intake_fingerprint = retry_intake_fingerprint(&input)?;
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
-                if let Some((existing, _)) = accepted_for_client_request(conn, &input.client_request_id)? {
+                if let Some((existing, stored_fingerprint)) =
+                    accepted_for_client_request(conn, &input.client_request_id)?
+                {
+                    if stored_fingerprint.as_deref() != Some(intake_fingerprint.as_str()) {
+                        return Err(AppError::run(SafeRunErrorCode::IdempotencyConflict));
+                    }
                     return Ok(AcceptRunOutcome {
                         accepted: existing,
                         is_new: false,
                     });
                 }
+                let session_id = conn
+                    .query_row(
+                        "SELECT id FROM sessions WHERE session_key = ?1",
+                        [&input.session_key],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(|error| match error {
+                        rusqlite::Error::QueryReturnedNoRows => {
+                            AppError::run(SafeRunErrorCode::SessionNotFound)
+                        }
+                        other => other.into(),
+                    })?;
+                ensure_no_active_top_level_run(conn, session_id)?;
                 let source = conn
                     .query_row(
                         "SELECT r.session_id, r.turn_id, r.effect, r.effort, r.security_domain, r.risk,
@@ -526,12 +546,14 @@ impl AgentRunRepository {
                     "INSERT INTO agent_runs
                      (run_id, client_request_id, session_id, turn_id, status, state_version,
                       effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                      goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version,
+                      goal_summary, budget_policy_json, intake_fingerprint,
+                      prompt_profile_snapshot_json, prompt_contract_version,
                       prompt_contract_hash, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)",
                     rusqlite::params![input.run_id, input.client_request_id, session_id, turn_id,
                         effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                        goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version,
+                        goal_summary, budget_policy_json, intake_fingerprint,
+                        prompt_profile_snapshot_json, prompt_contract_version,
                         prompt_contract_hash, now],
                 )?;
                 let envelope: crate::ai_runtime::run_contract::ExecutionEnvelope =
@@ -2115,6 +2137,21 @@ fn ensure_normal_session(conn: &Connection, session_id: i64, session_key: &str) 
     }
 }
 
+fn ensure_no_active_top_level_run(conn: &Connection, session_id: i64) -> AppResult<()> {
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM agent_runs
+         WHERE session_id = ?1
+           AND status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'paused', 'verifying')",
+        [session_id],
+        |row| row.get(0),
+    )?;
+    if active_count == 0 {
+        Ok(())
+    } else {
+        Err(AppError::run(SafeRunErrorCode::ActiveRunExists))
+    }
+}
+
 /// Build the immutable, non-secret prompt-profile metadata in the same intake
 /// transaction that writes the user message and Run ledger row.
 fn load_prompt_contract_snapshot(conn: &Connection) -> AppResult<(String, i64, String)> {
@@ -2294,6 +2331,21 @@ fn intake_fingerprint(
         explicit_action: &input.explicit_action,
         envelope: &input.envelope,
         external_tool_grants,
+    })?;
+    Ok(hex::encode(Sha256::digest(canonical)))
+}
+
+fn retry_intake_fingerprint(input: &RetryRunInput) -> AppResult<String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RetryFingerprint<'a> {
+        session_key: &'a str,
+        source_run_id: &'a str,
+    }
+
+    let canonical = serde_json::to_vec(&RetryFingerprint {
+        session_key: &input.session_key,
+        source_run_id: &input.source_run_id,
     })?;
     Ok(hex::encode(Sha256::digest(canonical)))
 }

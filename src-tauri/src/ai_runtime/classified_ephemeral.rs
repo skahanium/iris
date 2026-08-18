@@ -41,6 +41,8 @@ struct ContextEntry {
 }
 
 struct RunEntry {
+    client_request_id: String,
+    request_fingerprint: String,
     turn_id: String,
     session: AssistantSessionRef,
     context_ref: String,
@@ -51,6 +53,12 @@ struct RunEntry {
     events: Vec<AssistantRunEvent>,
     output: Option<Zeroizing<String>>,
     created_at: Instant,
+}
+
+/// In-memory acceptance result used to prevent a replay from starting another executor.
+pub(crate) struct ClassifiedAcceptOutcome {
+    pub(crate) accepted: AssistantRunAccepted,
+    pub(crate) is_new: bool,
 }
 
 /// Process-local storage for classified execution. Dropping or clearing this
@@ -106,6 +114,19 @@ impl ClassifiedEphemeralStore {
         message: String,
         context_ref: &str,
     ) -> AppResult<AssistantRunAccepted> {
+        self.accept_outcome(vault, client_request_id, message, context_ref, None)
+            .map(|outcome| outcome.accepted)
+    }
+
+    /// Admit or replay one classified request without persisting classified state.
+    pub(crate) fn accept_outcome(
+        &mut self,
+        vault: &Path,
+        client_request_id: &str,
+        message: String,
+        context_ref: &str,
+        model_override: Option<&crate::ai_runtime::run_contract::ModelOverride>,
+    ) -> AppResult<ClassifiedAcceptOutcome> {
         self.prune();
         require_unlocked()?;
         if client_request_id.trim().is_empty()
@@ -119,6 +140,28 @@ impl ClassifiedEphemeralStore {
             .contexts
             .get(context_ref)
             .ok_or_else(|| AppError::run(SafeRunErrorCode::ClassifiedContextExpired))?;
+        let request_fingerprint =
+            classified_request_fingerprint(&message, context_ref, model_override)?;
+        if let Some((run_id, run)) = self
+            .runs
+            .iter()
+            .find(|(_, run)| run.client_request_id == client_request_id)
+        {
+            if run.request_fingerprint != request_fingerprint {
+                return Err(AppError::run(SafeRunErrorCode::IdempotencyConflict));
+            }
+            return Ok(ClassifiedAcceptOutcome {
+                accepted: AssistantRunAccepted {
+                    client_request_id: client_request_id.to_string(),
+                    run_id: run_id.clone(),
+                    turn_id: run.turn_id.clone(),
+                    session: run.session.clone(),
+                    state: run.state,
+                    state_version: run.state_version,
+                },
+                is_new: false,
+            });
+        }
         let policy = load_classified_policy_decision_engine(vault)?;
         let scope = policy.effective_document_scope(&context.path);
         if scope.decision_for(DocumentCapability::Read) == CapabilityDecision::Deny
@@ -152,6 +195,8 @@ impl ClassifiedEphemeralStore {
         self.runs.insert(
             run_id.clone(),
             RunEntry {
+                client_request_id: client_request_id.to_string(),
+                request_fingerprint,
                 turn_id: turn_id.clone(),
                 session: session.clone(),
                 context_ref: context_ref.to_string(),
@@ -164,13 +209,16 @@ impl ClassifiedEphemeralStore {
                 created_at: Instant::now(),
             },
         );
-        Ok(AssistantRunAccepted {
-            client_request_id: client_request_id.to_string(),
-            run_id,
-            turn_id,
-            session,
-            state: RunState::Accepted,
-            state_version: 0,
+        Ok(ClassifiedAcceptOutcome {
+            accepted: AssistantRunAccepted {
+                client_request_id: client_request_id.to_string(),
+                run_id,
+                turn_id,
+                session,
+                state: RunState::Accepted,
+                state_version: 0,
+            },
+            is_new: true,
         })
     }
 
@@ -354,6 +402,15 @@ impl ClassifiedEphemeralStore {
     }
 }
 
+fn classified_request_fingerprint(
+    message: &str,
+    context_ref: &str,
+    model_override: Option<&crate::ai_runtime::run_contract::ModelOverride>,
+) -> AppResult<String> {
+    let canonical = serde_json::to_vec(&(message, context_ref, model_override))?;
+    Ok(crate::cas::hash::content_hash(&canonical))
+}
+
 fn require_unlocked() -> AppResult<()> {
     let key = VAULT_KEY
         .get()
@@ -490,5 +547,39 @@ mod tests {
             .accept(temp.path(), "request", "   ".into(), &context.context_ref)
             .expect_err("empty input must be rejected");
         assert_eq!(error.to_string(), "agent_run_invalid_request");
+    }
+
+    #[test]
+    fn classified_request_replay_does_not_spawn_again() {
+        let _key_guard = with_unlocked_key();
+        let temp = tempfile::tempdir().expect("temp vault");
+        let document = temp.path().join(".classified").join("current.md");
+        std::fs::create_dir_all(document.parent().expect("parent")).expect("classified dir");
+        std::fs::write(&document, "classified body").expect("fixture document");
+        let mut store = ClassifiedEphemeralStore::default();
+        let context = store
+            .open_context(temp.path(), ".classified/current.md")
+            .expect("context");
+
+        let first = store
+            .accept(
+                temp.path(),
+                "classified-replay",
+                "question".into(),
+                &context.context_ref,
+            )
+            .expect("first acceptance");
+        let replay = store
+            .accept(
+                temp.path(),
+                "classified-replay",
+                "question".into(),
+                &context.context_ref,
+            )
+            .expect("idempotent replay");
+
+        assert_eq!(replay.run_id, first.run_id);
+        assert_eq!(replay.turn_id, first.turn_id);
+        assert_eq!(store.runs.len(), 1);
     }
 }

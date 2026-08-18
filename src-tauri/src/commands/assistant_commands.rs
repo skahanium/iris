@@ -386,34 +386,37 @@ pub async fn assistant_run_start<R: AssistantRunRuntime>(
                 return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
             }
             let model_override = request.model_override.clone();
-            let accepted = state
+            let outcome = state
                 .ai
                 .classified_ephemeral
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
-                .accept(
+                .accept_outcome(
                     &vault,
                     &request.client_request_id,
                     request.turn.message,
                     context_ref,
+                    model_override.as_ref(),
                 )?;
-            let event = state
-                .ai
-                .classified_ephemeral
-                .lock()
-                .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
-                .get(&accepted.run_id)?
-                .and_then(|response| response.events.into_iter().next())
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
-            sink.emit(&event)?;
-            spawn_classified_direct_run(
-                Arc::clone(&state),
-                vault,
-                app_handle,
-                accepted.clone(),
-                model_override,
-            );
-            Ok(accepted)
+            if outcome.is_new {
+                let event = state
+                    .ai
+                    .classified_ephemeral
+                    .lock()
+                    .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
+                    .get(&outcome.accepted.run_id)?
+                    .and_then(|response| response.events.into_iter().next())
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
+                let _ = sink.emit(&event);
+                spawn_classified_direct_run(
+                    Arc::clone(&state),
+                    vault,
+                    app_handle,
+                    outcome.accepted.clone(),
+                    model_override,
+                );
+            }
+            Ok(outcome.accepted)
         }
     }
 }

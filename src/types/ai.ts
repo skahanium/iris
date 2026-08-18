@@ -464,6 +464,7 @@ export type AssistantRunErrorCode =
   | "agent_run_invalid_subagent_batch_report"
   | "agent_run_retry_not_available"
   | "agent_run_idempotency_conflict"
+  | "agent_run_active_run_exists"
   | "agent_run_unknown_tool_call_id"
   | "agent_run_unverified_web_citation";
 

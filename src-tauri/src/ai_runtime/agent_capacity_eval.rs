@@ -7480,8 +7480,18 @@ fn probe_history_level(level: u32) -> Result<bool, EvalContractError> {
             false,
         );
         request.session = Some(session_ref.clone());
-        crate::ai_runtime::run_intake::RunIntake::start(&state.db, request)
+        let accepted = crate::ai_runtime::run_intake::RunIntake::start(&state.db, request)
             .map_err(|_| EvalContractError::new("boundary_history_failed"))?;
+        crate::ai_runtime::run_intake::RunIntake::control(
+            &state.db,
+            crate::ai_runtime::run_contract::AssistantRunControlRequest {
+                session: accepted.session,
+                run_id: accepted.run_id,
+                expected_state_version: accepted.state_version,
+                action: crate::ai_runtime::run_contract::RunControlAction::Cancel,
+            },
+        )
+        .map_err(|_| EvalContractError::new("boundary_history_failed"))?;
     }
     let mut current = boundary_request(
         format!("boundary-history-current-{level}"),
@@ -7499,9 +7509,9 @@ fn probe_history_level(level: u32) -> Result<bool, EvalContractError> {
         &accepted.run_id,
     )
     .map_err(|_| EvalContractError::new("boundary_context_failed"))?;
-    // Intake-only turns are deliberately absent from the committed history
-    // projection. The schedule still verifies the documented six-turn intake
-    // bound; its next level must be rejected as a capacity boundary.
+    // Cancelled intake-only turns are deliberately absent from the committed
+    // history projection. The schedule still verifies the documented
+    // six-turn intake bound; its next level is a failed capacity observation.
     Ok(context.recent_messages.is_empty() && level <= 6)
 }
 
@@ -9281,8 +9291,18 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
             false,
         );
         history.session = Some(session_ref.clone());
-        crate::ai_runtime::run_intake::RunIntake::start(&state.db, history)
+        let accepted = crate::ai_runtime::run_intake::RunIntake::start(&state.db, history)
             .map_err(|_| EvalContractError::new("combined_history_failed"))?;
+        crate::ai_runtime::run_intake::RunIntake::control(
+            &state.db,
+            crate::ai_runtime::run_contract::AssistantRunControlRequest {
+                session: accepted.session,
+                run_id: accepted.run_id,
+                expected_state_version: accepted.state_version,
+                action: crate::ai_runtime::run_contract::RunControlAction::Cancel,
+            },
+        )
+        .map_err(|_| EvalContractError::new("combined_history_failed"))?;
     }
     state
         .db
@@ -9372,8 +9392,8 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
         &accepted.run_id,
     )
     .map_err(|_| EvalContractError::new("combined_context_failed"))?;
-    // The eight setup Runs remain unfinished and must stay out of recent
-    // history. Thirteen completed pairs prove that the current context keeps
+    // The eight cancelled setup Runs must stay out of recent history.
+    // Thirteen completed pairs prove that the current context keeps
     // the 12 newest coherent user/assistant pairs under the 8k budget and
     // summarizes only the older complete pair.
     let history_tokens = context

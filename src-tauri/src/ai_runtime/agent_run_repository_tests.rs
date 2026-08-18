@@ -173,6 +173,14 @@ fn final_evidence_must_be_registered_by_the_exact_run_not_only_its_session() {
         },
     )
     .expect("first-run evidence");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE run_id = 'run-1'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("complete first run before accepting the next turn");
     let mut second = accept_input(session_id, session_key);
     second.client_request_id = "client-request-2".to_string();
     second.run_id = "run-2".to_string();
@@ -599,6 +607,114 @@ fn accept_rejects_reused_client_request_id_when_request_fingerprint_differs() {
 }
 
 #[test]
+fn same_session_concurrent_start_admits_only_one_active_run() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let db = std::sync::Arc::new(
+        Database::open(&directory.path().join("single-flight-start.db")).expect("database"),
+    );
+    let session = NormalSessionRepository::create(&db).expect("normal session");
+
+    let results = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for index in 0..2 {
+            let db = std::sync::Arc::clone(&db);
+            let mut input = accept_input(session.session_id, session.session_key.clone());
+            input.client_request_id = format!("concurrent-start-{index}");
+            input.run_id = format!("concurrent-run-{index}");
+            input.turn_id = format!("concurrent-turn-{index}");
+            input.message = format!("并发消息 {index}");
+            handles.push(scope.spawn(move || {
+                AgentRunRepository::accept_with_external_grants_outcome(&db, input, &[], false)
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("start thread"))
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec!["agent_run_active_run_exists"]
+    );
+    db.with_read_conn(|conn| {
+        let runs: i64 = conn.query_row("SELECT COUNT(*) FROM agent_runs", [], |row| row.get(0))?;
+        let messages: i64 = conn.query_row("SELECT COUNT(*) FROM session_messages", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!((runs, messages), (1, 1));
+        Ok(())
+    })
+    .expect("single-flight facts");
+}
+
+#[test]
+fn same_session_concurrent_retry_admits_only_one_active_run() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let db = std::sync::Arc::new(
+        Database::open(&directory.path().join("single-flight-retry.db")).expect("database"),
+    );
+    let session = NormalSessionRepository::create(&db).expect("normal session");
+    AgentRunRepository::accept(
+        &db,
+        accept_input(session.session_id, session.session_key.clone()),
+    )
+    .expect("source run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = 'run-1'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("make source retryable");
+
+    let results = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for index in 0..2 {
+            let db = std::sync::Arc::clone(&db);
+            let input = RetryRunInput {
+                session_key: session.session_key.clone(),
+                source_run_id: "run-1".into(),
+                client_request_id: format!("concurrent-retry-{index}"),
+                run_id: format!("retry-run-{index}"),
+            };
+            handles.push(scope.spawn(move || AgentRunRepository::accept_retry_outcome(&db, input)));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("retry thread"))
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec!["agent_run_active_run_exists"]
+    );
+    db.with_read_conn(|conn| {
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_runs
+             WHERE status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'paused', 'verifying')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(active, 1);
+        Ok(())
+    })
+    .expect("single-flight retry facts");
+}
+
+#[test]
 fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
     let (db, session_id, session_key) = setup();
     let mut input = accept_input(session_id, session_key.clone());
@@ -728,6 +844,10 @@ fn failed_run_retry_reuses_only_the_latest_failed_turn() {
     assert_eq!(retry.turn_id, "turn-1");
 
     db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = 'run-2'",
+            [],
+        )?;
         conn.execute(
             "INSERT INTO session_messages (session_id, seq, role, content, created_at)
              VALUES (?1, 2, 'user', 'newer turn makes the old failure ineligible', ?2)",
