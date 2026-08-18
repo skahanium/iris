@@ -13,6 +13,13 @@
 
 退出条件：每个进入施工的问题都有当前代码证据、稳定 ID 和至少一个目标测试。
 
+### 阶段 0 兼容边界
+
+- **公共 IPC**：本阶段只允许新增内部 `pub(crate)` 契约（如 `AcceptRunOutcome.is_new`、sink 的 terminal presentation 钩子），不改变既有 Tauri command 的参数名、类型或返回值；若后续必须改动 `assistant_run_*`，必须同步 `src/types/ipc.ts`、`src/lib/ipc.ts`、`src/types/ai.ts` 和 `docs/ipc-api-reference.md`。
+- **数据库 migration**：本阶段不引入 schema 变更；若阶段 4 的 `(scope, key)` 唯一性或阶段 2/3 需要新列，必须走 `src-tauri/migrations/` 增量 up/down，禁止直接改表。
+- **UI 兼容**：本阶段只增加 fail-safe 投影测试与现有组件的行为约束；不新增第二套来源/状态组件。`SourceGroupFallback` 文案必须与现有 `AssistantCitationFooter` 一致，未知事件类型继续安全忽略。
+- **评测兼容**：继续使用 `docs/eval/agent-answer-capacity.md` 定义的 48-case 与 24-case smoke 场景 ID；不另建评测框架，不把 live pilot 未执行声明为已通过。
+
 ## 阶段 1：Run 与来源展示止血
 
 目标：先消除重复执行、假完成和误导性来源展示。

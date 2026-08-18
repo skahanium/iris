@@ -11,6 +11,12 @@ pub(crate) trait RunEventSink: Send + Sync {
         Ok(())
     }
 
+    /// Emit the terminal presentation only after the durable Completed event.
+    /// Tauri derives this projection from that durable event itself.
+    fn emit_terminal_presentation(&self, run_id: &str) -> AppResult<()> {
+        self.emit_presentation(run_id, RunPresentationPayload::AnswerComplete)
+    }
+
     /// Emit a safe terminal event when SQLite itself cannot record that event.
     fn emit_ephemeral_failure(
         &self,
@@ -124,6 +130,12 @@ impl<R: Runtime> RunEventSink for TauriRunEventSink<'_, R> {
             }
         }
         result
+    }
+
+    fn emit_terminal_presentation(&self, _run_id: &str) -> AppResult<()> {
+        // `emit` projects the persisted Completed event to AnswerComplete.
+        // Do not send a second terminal presentation here.
+        Ok(())
     }
 }
 
@@ -409,9 +421,20 @@ impl AgentRunStreamObserver<'_> {
     /// web-grounded answer previously failed flush as `agent_run_persistence_failed`
     /// after evidence had already registered.
     ///
-    /// Even when `pending_delta` is empty (already streamed or a retry after a partial
-    /// flush), AnswerComplete must still be delivered so the UI can leave streaming.
+    /// `flush` retains the historical direct observer contract for tests and
+    /// callers that do not have a durable terminal step. Production finalization
+    /// uses `flush_without_terminal`, then emits AnswerComplete after Completed.
+    #[cfg(test)]
     pub(crate) fn flush(&mut self) -> AppResult<()> {
+        self.flush_internal(true)
+    }
+
+    /// Persist and emit answer deltas without claiming that the Run is complete.
+    pub(crate) fn flush_without_terminal(&mut self) -> AppResult<()> {
+        self.flush_internal(false)
+    }
+
+    fn flush_internal(&mut self, emit_terminal: bool) -> AppResult<()> {
         if !self.pending_delta.is_empty() {
             let final_content = mem::take(&mut self.pending_delta);
             let presentation_delta =
@@ -460,9 +483,11 @@ impl AgentRunStreamObserver<'_> {
                 self.presentation_content.push_str(&chunk);
             }
         }
-        let _ = self
-            .sink
-            .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete);
+        if emit_terminal {
+            let _ = self
+                .sink
+                .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete);
+        }
         Ok(())
     }
 

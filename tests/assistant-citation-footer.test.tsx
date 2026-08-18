@@ -112,6 +112,60 @@ describe("AssistantCitationFooter", () => {
     expect(screen.getByText("Source 12")).toBeInTheDocument();
   });
 
+  it("treats a missing binding as this-run retrieval sources instead of precise citations", () => {
+    render(
+      <AssistantCitationFooter
+        content="模型回答没有行内引用格式。"
+        entries={[
+          { index: 1, title: "Verified one", url: "https://example.com/one" },
+          { index: 2, title: "Verified two", url: "https://example.com/two" },
+        ]}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", {
+      name: "展开本次检索来源",
+    });
+    fireEvent.click(toggle);
+
+    expect(screen.getByText("本次检索来源")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源，不表示已逐段核验。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("fails safe for an unknown binding version", () => {
+    const binding = {
+      mode: "future_unknown_version",
+      referencedIndices: [],
+    } as unknown as import("@/types/ai").CitationBinding;
+
+    render(
+      <AssistantCitationFooter
+        content="模型回答没有行内引用格式。"
+        binding={binding}
+        entries={[
+          { index: 1, title: "Verified one", url: "https://example.com/one" },
+          { index: 2, title: "Verified two", url: "https://example.com/two" },
+        ]}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", {
+      name: "展开本次检索来源",
+    });
+    fireEvent.click(toggle);
+
+    expect(screen.getByText("本次检索来源")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源，不表示已逐段核验。",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows only category counts until the source disclosure is expanded", () => {
     render(
       <AssistantCitationFooter

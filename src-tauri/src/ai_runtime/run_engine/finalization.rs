@@ -301,7 +301,7 @@ pub(super) fn flush_validated_stream_or_fail(
     observer: &mut AgentRunStreamObserver<'_>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
-    observer.flush().map_err(|error| {
+    observer.flush_without_terminal().map_err(|error| {
         let code = if error.to_string().contains("delivery") || error.to_string().contains("emit") {
             SafeRunErrorCode::EventDeliveryFailed
         } else {
@@ -319,7 +319,7 @@ pub(super) fn flush_validated_stream_or_fail(
 }
 
 /// Shared Direct/ToolLoop terminal contract:
-/// AnswerComplete (via flush) → durable `completed` emit → clear abort handle.
+/// validated deltas → durable message/`completed` → AnswerComplete → clear abort handle.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_run_terminal(
     db: &Database,
@@ -461,6 +461,10 @@ pub(super) fn emit_run_terminal(
             SafeRunErrorCode::EventDeliveryFailed.as_str(),
         ));
     }
+    // Terminal presentation delivery is best-effort: it is a live UI
+    // projection of an already-durable Completed fact, so a failed emit must
+    // never turn a successfully persisted Run into an error.
+    let _ = sink.emit_terminal_presentation(run_id);
     crate::ai_runtime::model_gateway::clear_abort(run_id);
     Ok(())
 }

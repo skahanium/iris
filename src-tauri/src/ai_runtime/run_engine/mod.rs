@@ -1325,7 +1325,20 @@ impl RunEngine {
                     );
                 }
             };
-        content = linkify_final_web_citations(db, evidence_ids, content);
+        let citation_binding =
+            match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
+                Ok(cites) if !cites.is_empty() => {
+                    let outcome = crate::ai_runtime::citation_linkify::bind_current_run_citations(
+                        &content, &cites,
+                    );
+                    content = outcome.content;
+                    Some(outcome.binding)
+                }
+                _ => {
+                    content = linkify_final_web_citations(db, evidence_ids, content);
+                    None
+                }
+            };
         if settle_cancelled_run_with_partial(
             db,
             session,
@@ -1345,7 +1358,7 @@ impl RunEngine {
             running_state_version,
             content,
             evidence_ids.to_vec(),
-            None,
+            citation_binding,
             None,
             None,
             sink,

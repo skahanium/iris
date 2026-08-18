@@ -16,8 +16,9 @@ use super::normal_run_service::{
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
-    AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, ContextMode,
-    RunEventPayload, RunEventType, RunState, SecurityDomain,
+    AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef, AssistantTurnDraft,
+    CapabilityId, ContextMode, Effort, RunEventPayload, RunEventType, RunPresentationPayload,
+    RunState, SecurityDomain,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
@@ -28,6 +29,7 @@ use crate::ai_types::{EndpointFamily, ProviderConfig};
 use crate::app::AppState;
 use crate::error::AppResult;
 use crate::llm::config::{LlmRoutingConfig, ModelReference, ProviderOverride};
+use crate::storage::db::Database;
 
 #[derive(Default)]
 struct RecordingSink {
@@ -40,6 +42,33 @@ impl RunEventSink for RecordingSink {
             .lock()
             .expect("recording sink lock")
             .push(serde_json::to_value(event)?);
+        Ok(())
+    }
+}
+
+struct AnswerCompleteDurabilityProbe<'a> {
+    db: &'a Database,
+    session: AssistantSessionRef,
+    run_id: String,
+    observed_durable_state: Mutex<Option<bool>>,
+}
+
+impl RunEventSink for AnswerCompleteDurabilityProbe<'_> {
+    fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
+        Ok(())
+    }
+
+    fn emit_presentation(&self, run_id: &str, payload: RunPresentationPayload) -> AppResult<()> {
+        if matches!(payload, RunPresentationPayload::AnswerComplete) {
+            assert_eq!(run_id, self.run_id);
+            let durable = RunIntake::get(self.db, &self.session, &self.run_id)
+                .expect("probe Run snapshot")
+                .is_some_and(|response| {
+                    response.run.state == RunState::Completed
+                        && response.run.final_message_id.is_some()
+                });
+            *self.observed_durable_state.lock().expect("probe lock") = Some(durable);
+        }
         Ok(())
     }
 }
@@ -68,6 +97,14 @@ fn web_tool_loop_request() -> AssistantRunStartRequest {
     let mut request = direct_request();
     request.client_request_id = "headless-normal-web-tool-loop".into();
     request.turn.message = "请联网核实 synthetic 的最新状态".into();
+    request.web_enabled = true;
+    request
+}
+
+fn direct_required_web_request() -> AssistantRunStartRequest {
+    let mut request = direct_request();
+    request.client_request_id = "headless-normal-web-direct-required".into();
+    request.turn.message = "When was the first iPhone announced?".into();
     request.web_enabled = true;
     request
 }
@@ -238,6 +275,53 @@ async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, "user");
     assert_eq!(messages[0].content, "请概述当前信息");
+}
+
+#[tokio::test]
+async fn direct_streaming_does_not_emit_answer_complete_before_durable_finalization() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"普通直答\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["headless-direct-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "headless-direct-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+
+    let mut request = direct_request();
+    request.turn.message = "hello".into();
+    let accepted = RunIntake::start(&state.db, request).expect("accepted run");
+    let probe = AnswerCompleteDurabilityProbe {
+        db: &state.db,
+        session: accepted.session.clone(),
+        run_id: accepted.run_id.clone(),
+        observed_durable_state: Mutex::new(None),
+    };
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &probe).await;
+
+    assert_eq!(
+        *probe
+            .observed_durable_state
+            .lock()
+            .expect("probe lock"),
+        Some(true),
+        "AnswerComplete must be emitted only after the assistant message and Completed state are durable"
+    );
 }
 
 #[tokio::test]
@@ -750,6 +834,91 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
         .events
         .iter()
         .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+
+    let citation_map: String = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT citation_map_json FROM session_messages
+                 WHERE session_id = ?1 AND role = 'assistant'",
+                [1_i64],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("strict Web assistant citation map");
+    assert!(
+        citation_map.contains("\"mode\":\"source_group_fallback\""),
+        "ToolLoop strict Web finalization must bind an uncalibrated answer to its source group"
+    );
+}
+
+#[tokio::test]
+async fn direct_required_web_run_persists_source_group_binding_when_markers_are_missing() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"第一代 iPhone 于 2007 年发布。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["headless-contract-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "headless-contract-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+
+    let sink = RecordingSink::default();
+    let request = direct_required_web_request();
+    assert_eq!(
+        RunIntake::resolve_envelope(&request)
+            .expect("direct strict Web envelope")
+            .effort,
+        Effort::Direct
+    );
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted direct required Web run");
+    assert_eq!(
+        accepted.state,
+        RunState::Accepted,
+        "the direct strict Web fixture must start from an accepted Run"
+    );
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(response.run.state, RunState::Completed);
+    let _ = llm.finish().await.expect("LLM double completion");
+    let citation_map: String = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT citation_map_json FROM session_messages
+                 WHERE session_id = ?1 AND role = 'assistant'",
+                [1_i64],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("direct strict Web assistant citation map");
+    assert!(
+        citation_map.contains("\"mode\":\"source_group_fallback\""),
+        "Direct strict Web finalization must bind an uncalibrated answer to its source group"
+    );
 }
 
 #[tokio::test]

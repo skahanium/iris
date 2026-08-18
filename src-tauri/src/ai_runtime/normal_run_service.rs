@@ -1186,3 +1186,56 @@ fn dispatch_failure_code(error: &AppError) -> SafeRunErrorCode {
         SafeRunErrorCode::ProviderUnavailable
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::calibrated_structured_finalization_enabled;
+    use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
+    use crate::ai_runtime::provider_router::{ProviderRequirements, SecurityDomain};
+    use crate::ai_types::{EndpointFamily, ResolvedReasoningRequest};
+    use crate::llm::config::{ResolvedLlmConfig, ResolvedModelPool};
+
+    fn resolved(provider_id: &str, model: &str) -> ResolvedLlmConfig {
+        ResolvedLlmConfig {
+            provider_id: provider_id.into(),
+            model: model.into(),
+            base_url: "https://example.invalid/v1".into(),
+            thinking: false,
+            reasoning: ResolvedReasoningRequest::disabled(),
+            input_budget: 128_000,
+            output_budget: 8_192,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: true,
+            supports_reasoning: false,
+        }
+    }
+
+    fn requirements() -> ProviderRequirements {
+        ProviderRequirements {
+            endpoint_family: None,
+            streaming: true,
+            tools: true,
+            vision: false,
+            reasoning: false,
+            min_input_budget_tokens: 1,
+            min_output_budget_tokens: 1,
+            security_domain: SecurityDomain::External,
+        }
+    }
+
+    #[test]
+    fn structured_verifier_requires_registered_rule() {
+        let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+            resolved: resolved("any-provider", "any-model"),
+            failover_candidates: Vec::new(),
+        })
+        .expect("pool route");
+
+        assert!(
+            !calibrated_structured_finalization_enabled(&route, &requirements()),
+            "no provider/model pair may be promoted to structured VERIFIED before a registered rule exists"
+        );
+    }
+}

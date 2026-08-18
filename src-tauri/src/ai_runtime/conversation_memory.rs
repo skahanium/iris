@@ -515,6 +515,22 @@ mod memory_extraction_tests {
     }
 
     #[test]
+    fn first_user_message_is_not_permanent_goal() {
+        let messages = vec![
+            msg(1, "user", "What is the weather in Paris?"),
+            msg(2, "assistant", "I don't know yet."),
+            msg(3, "user", "请总结这份资料"),
+        ];
+
+        let goal = extract_summary(&messages, &[], &[], "goal", SummaryFallback::Goal);
+
+        assert!(
+            !goal.contains("What is the weather in Paris?"),
+            "the first user message must not become the permanent goal of later unrelated requests"
+        );
+    }
+
+    #[test]
     fn refresh_keeps_summary_and_recent_window_disjoint_at_twenty_five_messages() {
         let db = Database::open_in_memory().expect("database");
         let session = NormalSessionRepository::create(&db).expect("session");

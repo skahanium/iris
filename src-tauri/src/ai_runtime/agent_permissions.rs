@@ -35,6 +35,10 @@ pub enum AgentPermissionAtom {
     VaultVersioning,
     #[serde(rename = "runtime.context.read")]
     RuntimeContextRead,
+    #[serde(rename = "harness.child_run")]
+    HarnessChildRun,
+    #[serde(rename = "harness.conclude")]
+    HarnessConclude,
     #[serde(rename = "fs.pick_file")]
     FsPickFile,
     #[serde(rename = "fs.pick_folder")]
@@ -131,6 +135,8 @@ impl AgentPermissionAtom {
             Self::VaultAssetsWrite => "vault.assets.write",
             Self::VaultVersioning => "vault.versioning",
             Self::RuntimeContextRead => "runtime.context.read",
+            Self::HarnessChildRun => "harness.child_run",
+            Self::HarnessConclude => "harness.conclude",
             Self::FsPickFile => "fs.pick_file",
             Self::FsPickFolder => "fs.pick_folder",
             Self::FsImportToVault => "fs.import_to_vault",
@@ -318,8 +324,11 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
     use PermissionRiskLevel as Risk;
 
     let profile = match tool_name {
-        "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault" | "get_backlinks"
-        | "conclude_reasoning" | "spawn_subagent" => (vec![Atom::VaultSearch], Risk::Low, true),
+        "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault" | "get_backlinks" => {
+            (vec![Atom::VaultSearch], Risk::Low, true)
+        }
+        "spawn_subagent" => (vec![Atom::HarnessChildRun], Risk::Low, true),
+        "conclude_reasoning" => (vec![Atom::HarnessConclude], Risk::Low, true),
         "read_note" | "get_outline" | "get_regulation" | "get_context_packets" => {
             (vec![Atom::VaultRead], Risk::Low, true)
         }
@@ -787,6 +796,18 @@ mod tests {
             "mcp_runtime_profile_delete",
         ] {
             assert!(permission_profile_for_tool(name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn harness_tools_do_not_inherit_vault_search_permission() {
+        for name in ["spawn_subagent", "conclude_reasoning"] {
+            let profile = permission_profile_for_tool(name).expect("harness profile");
+            assert_ne!(
+                profile.atoms,
+                vec![AgentPermissionAtom::VaultSearch],
+                "{name} must not be authorized as vault.search"
+            );
         }
     }
 

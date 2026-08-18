@@ -119,4 +119,42 @@ mod tests {
             .iter()
             .any(|tool| tool["name"] == "system_time_now"));
     }
+
+    #[tokio::test]
+    async fn capabilities_read_reports_current_surface_only() {
+        let (state, _dir) = test_state();
+        let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+        let ctx = ToolDispatchContext {
+            note_path: None,
+            file_id: None,
+            run_id: None,
+            write_target_path: None,
+            document_policy: None,
+            web_search_enabled: false,
+            max_web_fetches: 0,
+            cold_start_packets: &[],
+            retrieval_scope: &retrieval_scope,
+            runtime_documents: &[],
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+        };
+
+        let capabilities =
+            dispatch_tool(&state, &ctx, "capabilities_read", &serde_json::json!({})).await;
+        assert!(capabilities.success, "{:?}", capabilities.error);
+        assert_eq!(capabilities.output["web_search_enabled"], false);
+
+        let tools = capabilities.output["tools"]
+            .as_array()
+            .expect("capabilities_read tools array");
+        assert!(
+            !tools.iter().any(|tool| tool["name"] == "web_search"),
+            "capabilities_read must not advertise web_search when web is disabled"
+        );
+        assert!(
+            !tools.iter().any(|tool| tool["name"] == "search_hybrid"),
+            "capabilities_read must not advertise vault search without a current Run surface"
+        );
+    }
 }

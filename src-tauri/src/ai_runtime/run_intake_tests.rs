@@ -1,9 +1,9 @@
 use super::run_contract::{
-    AssistantRunControlRequest, AssistantRunStartRequest, AssistantTurnDraft, ContextMode,
-    DisplayMention, DisplayMentionKind, DisplayMentionRange, Effect, Effort, ExplicitAction,
-    ExplicitTarget, Freshness, RiskClass, RunControlAction, RunEventPayload, RunEventType,
-    RunRecoveryKind, RunState, SecurityDomain, SelectionSnapshot, VerificationRequirement,
-    WebDecisionReason,
+    AssistantRunControlRequest, AssistantRunRetryRequest, AssistantRunStartRequest,
+    AssistantTurnDraft, ContextMode, DisplayMention, DisplayMentionKind, DisplayMentionRange,
+    Effect, Effort, ExplicitAction, ExplicitTarget, Freshness, RiskClass, RunControlAction,
+    RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain, SelectionSnapshot,
+    VerificationRequirement, WebDecisionReason,
 };
 use super::run_engine::RunEventSink;
 use super::run_intake::RunIntake;
@@ -475,6 +475,36 @@ impl RunEventSink for RecordingSink {
             .push(serde_json::to_value(event)?);
         Ok(())
     }
+}
+
+#[test]
+fn retry_replay_emits_accepted_event_only_once() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("make source run retryable");
+    let sink = RecordingSink::default();
+    let retry = AssistantRunRetryRequest {
+        session: accepted.session.clone(),
+        source_run_id: accepted.run_id.clone(),
+        client_request_id: "retry-replay-once".into(),
+    };
+
+    let first = RunIntake::retry_with_sink(&db, retry.clone(), &sink).expect("first retry");
+    let second = RunIntake::retry_with_sink(&db, retry, &sink).expect("idempotent retry replay");
+
+    assert_eq!(first.run_id, second.run_id);
+    assert_eq!(
+        sink.0.lock().expect("sink lock").len(),
+        1,
+        "an idempotent retry replay must not emit a duplicate accepted event"
+    );
 }
 
 struct RejectingSink;
