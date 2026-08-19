@@ -1,6 +1,6 @@
 # Iris 路线图
 
-Iris 采用里程碑式版本规划。当前开发基线为 **v1.2.22**；本文件是版本排期的唯一来源。`ARCHITECTURE.md` 只描述已存在的结构，`CHANGELOG.md` 只记录已交付的变化。
+Iris 采用里程碑式版本规划。当前开发基线为 **v1.3.0**；本文件是版本排期的唯一来源。`ARCHITECTURE.md` 只描述已存在的结构，`CHANGELOG.md` 只记录已交付的变化。
 
 ## 产品边界
 
@@ -47,7 +47,7 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 - 本里程碑不新增 Tauri IPC、数据库 migration、运行时依赖或专有文件格式；Markdown 文件仍为权威来源，删除仍进入可恢复回收站。
 - 发布门禁包括：`1024 / 1366 / 1440 / 1920px` 布局矩阵、亮/暗主题、键盘与读屏、Tab 溢出、禅模式、`prefers-reduced-motion`、长 Agent 回答、流式 Run、涉密会话隔离，以及 dirty 文档的重命名/移动/删除屏障。
 
-## v1.2.22 — Agent 可靠性与对话一致性（进行中）
+## v1.3.0 — Agent 可靠性与对话一致性（进行中）
 
 - 用户主动选区与 `@` 文档是独立的 `UserAuthorizedMaterial` 通道：通过安全校验后必须进入最终 Prompt，不按文件路径或 corpus 归类，也不受自动检索的 authority/exemplar/reference/lookup 筛选影响；这些角色只适用于系统自动召回材料。来源摘要显示“授权材料”，当前 user message 保持纯文本，选区正文不新增持久化。
 
