@@ -1350,7 +1350,9 @@ pub(crate) fn freeze_domain_run_grants(
             })
             .collect::<Vec<_>>();
         let healthy_count = healthy.len();
-        let chosen = if healthy_count == 1 {
+        let chosen = if healthy_count == 0 {
+            Vec::new()
+        } else if healthy_count == 1 {
             vec![healthy[0].clone()]
         } else if let Some(selected) = selected_web_provider_id {
             let mut ordered = healthy;

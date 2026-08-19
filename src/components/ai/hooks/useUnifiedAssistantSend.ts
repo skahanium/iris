@@ -151,6 +151,9 @@ function normalSubmissionError(reason: unknown): string {
   if (message.includes("agent_run_active_run_exists")) {
     return "当前会话已有任务运行，请等待、取消或完成后重试。";
   }
+  if (message.includes("agent_run_structured_provider_ambiguous")) {
+    return "当前事实工具存在多个可用服务，无法确定使用哪一个。请在管理中心调整联网服务优先级或结构化工具绑定。";
+  }
   if (
     message.includes("agent_run_explicit_reference_changed") ||
     message.includes("agent_run_invalid_explicit_reference")

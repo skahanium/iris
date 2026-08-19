@@ -1910,6 +1910,66 @@ fn web_enabled_time_sensitive_movie_question_enters_tool_loop() {
 }
 
 #[test]
+fn completed_conversation_accepts_a_third_current_movie_turn() {
+    use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
+
+    let db = Database::open_in_memory().expect("database");
+    upsert_web_evidence_provider(
+        &db,
+        &WebEvidenceProviderInput {
+            id: "generic-search".into(),
+            name: "Generic Search".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
+            transport_config_json: r#"{"command":"/bin/true"}"#.into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(r#"{"tool":"web_search"}"#.into()),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .expect("generic Web provider");
+    let mut first = request();
+    first.client_request_id = "three-turn-first".into();
+    first.turn.message = "你好？".into();
+    let first = RunIntake::start(&db, first).expect("first turn accepted");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE run_id = ?1",
+            [&first.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("complete first turn");
+
+    let mut second = request();
+    second.client_request_id = "three-turn-second".into();
+    second.session = Some(first.session.clone());
+    second.turn.message = "今天是几月几日？".into();
+    let second = RunIntake::start(&db, second).expect("second turn accepted");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE run_id = ?1",
+            [&second.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("complete second turn");
+
+    let mut third = request();
+    third.client_request_id = "three-turn-third".into();
+    third.session = Some(first.session);
+    third.web_enabled = true;
+    third.turn.message = "最近有什么好看的电影上映吗？".into();
+
+    let accepted = RunIntake::start(&db, third).expect("third turn accepted");
+    let persisted = AgentRunRepository::get(&db, &accepted.run_id)
+        .expect("load third Run")
+        .expect("third Run persisted");
+    assert_eq!(persisted.run.state, RunState::Accepted);
+}
+
+#[test]
 fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
     let mut request = request();
     request.web_enabled = false;

@@ -606,6 +606,27 @@ describe("useUnifiedAssistantSend", () => {
     );
   });
 
+  it("explains how to resolve an ambiguous structured provider route", async () => {
+    const setError = vi.fn();
+    start.mockRejectedValue({
+      code: "message",
+      message: "agent_run_structured_provider_ambiguous",
+    });
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        setError,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(setError).toHaveBeenLastCalledWith(
+      "当前事实工具存在多个可用服务，无法确定使用哪一个。请在管理中心调整联网服务优先级或结构化工具绑定。",
+    );
+  });
+
   it("replays an uncertain acceptance once with the original client request id", async () => {
     const commitAcceptedTurn = vi.fn();
     start
