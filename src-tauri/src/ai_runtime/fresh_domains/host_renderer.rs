@@ -113,4 +113,64 @@ mod tests {
         assert!(!rendered.contains("provider"));
         assert!(!rendered.contains("source_url"));
     }
+
+    #[test]
+    fn host_renderer_never_leaks_provider_metadata_across_all_domain_records() {
+        use crate::ai_runtime::fresh_domains::contracts::{
+            FinanceRecord, NewsRecord, SportsRecord, WeatherRecord,
+        };
+
+        let origin = EvidenceOrigin {
+            evidence_id: 1,
+            provider_id: "secret-provider".into(),
+            source_url: "https://example.invalid/source".into(),
+            source_title: "secret-title".into(),
+            observed_at: "2026-08-19T00:00:00Z".into(),
+        };
+        let records = vec![
+            FreshDomainRecord::Weather(WeatherRecord {
+                location: "北京".into(),
+                condition: "晴".into(),
+                temperature: "31".into(),
+                units: "C".into(),
+                observation_time: Some("2026-08-19T00:00:00Z".into()),
+                issue_time: None,
+                origin: origin.clone(),
+            }),
+            FreshDomainRecord::News(NewsRecord {
+                title: "示例新闻".into(),
+                publisher: "示例媒体".into(),
+                published_at: "2026-08-19T00:00:00Z".into(),
+                topic: Some("科技".into()),
+                location: None,
+                origin: origin.clone(),
+            }),
+            FreshDomainRecord::Finance(FinanceRecord {
+                instrument: "AAPL".into(),
+                asset_kind: "equity".into(),
+                currency: "USD".into(),
+                as_of: "2026-08-19T00:00:00Z".into(),
+                delay: "15 minutes".into(),
+                value: "234.56".into(),
+                origin: origin.clone(),
+            }),
+            FreshDomainRecord::Sports(SportsRecord {
+                competition: "NBA".into(),
+                participants: vec!["Team A".into(), "Team B".into()],
+                start_time: "2026-08-19T12:00:00Z".into(),
+                status: "live".into(),
+                score: Some("1-0".into()),
+                checked_at: "2026-08-19T00:00:00Z".into(),
+                origin,
+            }),
+        ];
+
+        for record in records {
+            let rendered = render_record(&record);
+            assert!(!rendered.contains("secret-provider"));
+            assert!(!rendered.contains("secret-title"));
+            assert!(!rendered.contains("source_url"));
+            assert!(!rendered.contains("example.invalid"));
+        }
+    }
 }
