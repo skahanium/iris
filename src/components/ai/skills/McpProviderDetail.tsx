@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { McpProfileCard, type McpCredentialSave } from "./McpProfileCard";
 import type {
   WebEvidenceProviderDiagnostics,
@@ -13,6 +15,7 @@ interface McpProviderDetailProps {
   credentialConfiguredByService?: Record<string, boolean>;
   saving?: boolean;
   persisted?: boolean;
+  children?: ReactNode;
   onSave: (
     input: WebEvidenceProviderInput,
     credentialSaves: McpCredentialSave[],
@@ -24,6 +27,14 @@ interface McpProviderDetailProps {
   onConfigurationChanged: () => void;
 }
 
-export function McpProviderDetail(props: McpProviderDetailProps) {
-  return <McpProfileCard {...props} surface="detail" />;
+export function McpProviderDetail({
+  children,
+  ...props
+}: McpProviderDetailProps) {
+  return (
+    <>
+      <McpProfileCard {...props} surface="detail" />
+      {children}
+    </>
+  );
 }

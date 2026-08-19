@@ -43,6 +43,7 @@ export type {
   AssistantSessionRetractRequest,
   AssistantSessionSummary,
 } from "@/types/ai";
+export type { DomainOperation, DomainOutputMapping } from "@/types/ipc";
 import type {
   AppUpdateInfo,
   AppUpdatePreflightResult,
