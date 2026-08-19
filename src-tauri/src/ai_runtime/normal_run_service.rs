@@ -13,10 +13,11 @@ use tauri::AppHandle;
 
 use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
+use crate::ai_runtime::fresh_research_plan::build_fresh_research_plan;
 use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, CapabilityId, Effort, Freshness, Modality, RunBudgetPolicy,
-    SafeRunErrorCode, VerificationRequirement, WebEvidenceFailureReason,
+    AssistantRunAccepted, CapabilityId, Effort, FreshFactDomain, Freshness, Modality,
+    RunBudgetPolicy, SafeRunErrorCode, VerificationRequirement, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingProvider, RunEngine, RunEventSink, WebVerificationFailure,
@@ -639,7 +640,7 @@ async fn dispatch_required_web_verified_run(
     )
     .with_allowed_tool_names(&["web_search".to_string()])
     .with_skill_activation_plan(skill_plan);
-    let query = required_web_query(context);
+    let query = required_web_query(context)?;
     let first_prefetch = crate::ai_runtime::agent_tool_loop::ToolLoopExecutor::execute(
         &executor,
         &accepted.run_id,
@@ -935,7 +936,24 @@ pub(crate) fn strict_follow_up_capabilities(
         .collect()
 }
 
-fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> String {
+fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> AppResult<String> {
+    if matches!(
+        context.envelope.fresh_fact.domain,
+        FreshFactDomain::Weather
+            | FreshFactDomain::News
+            | FreshFactDomain::Finance
+            | FreshFactDomain::Entertainment
+            | FreshFactDomain::Sports
+            | FreshFactDomain::GenericWeb
+    ) {
+        let plan = build_fresh_research_plan(
+            &context.user_message,
+            &context.envelope.fresh_fact,
+            "zh-CN",
+            None,
+        )?;
+        return Ok(plan.initial_query);
+    }
     let prior_users_newest_first = context
         .recent_messages
         .iter()
@@ -960,12 +978,12 @@ fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> S
             crate::ai_runtime::domain_executor::DomainMaterialOrigin::LocalRetrieval { .. }
         )
     });
-    required_web_query_from_context_sources(
+    Ok(required_web_query_from_context_sources(
         &context.user_message,
         &prior_users_newest_first,
         authorized_materials,
         has_automatic_local_material,
-    )
+    ))
 }
 
 /// Use only material the user explicitly authorized for this Run to make a

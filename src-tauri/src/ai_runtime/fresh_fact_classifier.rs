@@ -119,6 +119,14 @@ fn classify_domain(message: &str) -> FreshFactDomain {
     if contains_any(
         message,
         &[
+            "最新",
+            "当前",
+            "现在",
+            "实时",
+            "today",
+            "current",
+            "latest",
+            "now",
             "最新情况",
             "当前动态",
             "实时动态",

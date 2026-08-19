@@ -80,7 +80,7 @@ impl RunIntake {
             ],
         );
         let accepted_at = chrono::Utc::now();
-        let fresh_fact = classify_fresh_fact(&request.turn.message, accepted_at);
+        let fresh_fact = classify_fresh_fact(&directive_text, accepted_at);
         let web_decision = ExclusionClassifier::resolve(
             request,
             &message,
