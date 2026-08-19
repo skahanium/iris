@@ -6,21 +6,23 @@ import {
 } from "./helpers/tiptap-serialize-harness";
 
 describe("EmptyHeadingImeGuardExtension", () => {
-  it("adds a zero-width space before IME composition and removes it after", () => {
+  it("keeps a zero-width placeholder in empty headings after a transaction", () => {
     const editor = createProductionEditorFromHtml("<h1></h1>");
     try {
-      editor.commands.setTextSelection(1);
+      editor.view.dispatch(editor.state.tr);
+      expect(editor.state.doc.child(0).textContent).toBe("\u200b");
+    } finally {
+      editor.destroy();
+    }
+  });
 
-      editor.view.dom.dispatchEvent(
-        new CompositionEvent("compositionstart", { bubbles: true }),
-      );
+  it("removes the zero-width placeholder once real heading text is inserted", () => {
+    const editor = createProductionEditorFromHtml("<h1></h1>");
+    try {
+      editor.view.dispatch(editor.state.tr);
       expect(editor.state.doc.child(0).textContent).toBe("\u200b");
 
       editor.commands.insertContent("中文");
-
-      editor.view.dom.dispatchEvent(
-        new CompositionEvent("compositionend", { bubbles: true }),
-      );
       expect(editor.state.doc.child(0).type.name).toBe("heading");
       expect(editor.state.doc.child(0).textContent).toBe("中文");
     } finally {

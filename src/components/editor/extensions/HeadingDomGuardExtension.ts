@@ -1,6 +1,12 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 
+const ZWSP = "\u200b";
+
+function headingLooksEmpty(node: { textContent: string }): boolean {
+  return node.textContent.replaceAll(ZWSP, "").trim().length === 0;
+}
+
 /**
  * Protects heading nodes from WebKit contenteditable block-wrapping.
  *
@@ -29,7 +35,7 @@ export const HeadingDomGuardExtension = Extension.create({
 
           newState.doc.forEach((node, pos) => {
             if (changed) return;
-            if (node.type.name !== "heading" || node.content.size !== 0) {
+            if (node.type.name !== "heading" || !headingLooksEmpty(node)) {
               return;
             }
 
@@ -46,13 +52,26 @@ export const HeadingDomGuardExtension = Extension.create({
             // Only merge when the paragraph did not exist before this
             // transaction. A pre-existing empty heading + paragraph is a
             // legitimate document and must not be rewritten.
-            const oldAfter = oldState.doc.nodeAt(paragraphStart);
+            // Use the old-state heading node size because the IME placeholder
+            // can change the new-state heading size and shift positions.
+            const oldHeading = oldState.doc.nodeAt(pos);
+            const oldParagraphStart = oldHeading
+              ? pos + oldHeading.nodeSize
+              : -1;
+            const oldAfter =
+              oldParagraphStart >= 0
+                ? oldState.doc.nodeAt(oldParagraphStart)
+                : null;
             if (oldAfter && oldAfter.type.name === "paragraph") {
               return;
             }
 
             const text = after.textContent;
             tr.delete(paragraphStart, paragraphStart + after.nodeSize);
+            // Remove the IME placeholder before inserting the real text.
+            if (node.textContent.startsWith(ZWSP)) {
+              tr.delete(pos + 1, pos + 2);
+            }
             tr.insertText(text, pos + 1);
             changed = true;
           });

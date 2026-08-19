@@ -6,13 +6,14 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
  *
  * WebKit can lose an empty `<h1>/<h2>/<h3>` during Chinese/Japanese IME
  * composition: the composed text ends up in a paragraph and the heading node
- * disappears. A common workaround is to place an invisible zero-width space
- * (U+200B) inside the heading before composition starts, then remove it after
- * composition ends.
+ * disappears. A common workaround is to keep an invisible zero-width space
+ * (U+200B) inside empty headings so the browser always has a text node to
+ * attach composition to.
  *
- * This extension only touches headings during composition, so normal empty
- * heading semantics and the `HeadingDomGuardExtension` merge path are not
- * affected.
+ * This extension maintains that placeholder **outside** of composition
+ * transactions: it never dispatches while IME is active, so it cannot disrupt
+ * the composition session. Once real text is present, the placeholder is
+ * removed.
  */
 export const emptyHeadingImeGuardPluginKey = new PluginKey(
   "emptyHeadingImeGuard",
@@ -20,46 +21,47 @@ export const emptyHeadingImeGuardPluginKey = new PluginKey(
 
 const ZWSP = "\u200b";
 
+function headingHasRealContent(node: { textContent: string }): boolean {
+  return node.textContent.replaceAll(ZWSP, "").trim().length > 0;
+}
+
 export const EmptyHeadingImeGuardExtension = Extension.create({
   name: "emptyHeadingImeGuard",
 
   addProseMirrorPlugins() {
-    let compositionHeadingPos: number | null = null;
-
     return [
       new Plugin({
         key: emptyHeadingImeGuardPluginKey,
-        props: {
-          handleDOMEvents: {
-            compositionstart(view) {
-              const { $from } = view.state.selection;
-              const parent = $from.parent;
-              if (parent.type.name !== "heading" || parent.content.size !== 0) {
-                return false;
+        appendTransaction(_transactions, _oldState, newState) {
+          const tr = newState.tr;
+          let changed = false;
+
+          newState.doc.descendants((node, pos) => {
+            if (changed) return;
+            if (node.type.name !== "heading") return;
+
+            const text = node.textContent;
+            if (!headingHasRealContent(node)) {
+              // Keep the placeholder in empty/whitespace-only headings.
+              if (text !== ZWSP) {
+                // Remove any existing content first, then insert a single ZWSP.
+                if (node.content.size > 0) {
+                  tr.delete(pos + 1, pos + 1 + node.content.size);
+                }
+                tr.insertText(ZWSP, pos + 1);
+                changed = true;
               }
-              const insertPos = $from.pos;
-              view.dispatch(view.state.tr.insertText(ZWSP, insertPos));
-              compositionHeadingPos = insertPos;
-              return false;
-            },
-            compositionend(view) {
-              if (compositionHeadingPos == null) return false;
-              const pos = compositionHeadingPos;
-              compositionHeadingPos = null;
-              const $pos = view.state.doc.resolve(pos);
-              const parent = $pos.parent;
-              if (
-                parent.type.name !== "heading" ||
-                !parent.textContent.startsWith(ZWSP)
-              ) {
-                return false;
-              }
-              view.dispatch(
-                view.state.tr.delete($pos.start(), $pos.start() + 1),
-              );
-              return false;
-            },
-          },
+              return;
+            }
+
+            // Real text exists: drop a leading placeholder if one remains.
+            if (text.startsWith(ZWSP)) {
+              tr.delete(pos + 1, pos + 2);
+              changed = true;
+            }
+          });
+
+          return changed ? tr : null;
         },
       }),
     ];

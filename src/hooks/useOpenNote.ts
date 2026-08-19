@@ -8,11 +8,12 @@ import {
   type RefObject,
 } from "react";
 
+import { isClassifiedVaultPath } from "@/lib/classified-path";
 import type { DocumentPersistenceMoveResult } from "@/lib/document-persistence-coordinator";
 import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
 import { resetEditorContentBaseline } from "@/lib/editor-baseline";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
-import { documentRenameByTitle } from "@/lib/ipc";
+import { classifiedRename, documentRenameByTitle } from "@/lib/ipc";
 import { extractFrontmatterYaml, parseNoteForEditor } from "@/lib/markdown";
 import { pathStem } from "@/lib/note-display";
 import {
@@ -179,7 +180,16 @@ export function useOpenNote({
 
         const markdownSnapshot = getLiveMarkdown();
         let renamedPath = oldPath;
+        const classified = isClassifiedVaultPath(oldPath);
         const move = async (): Promise<DocumentPersistenceMoveResult> => {
+          if (classified) {
+            const parent = oldPath.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+            const extension = oldPath.endsWith(".md") ? ".md" : "";
+            const newPath = `${parent}/${title}${extension}`;
+            await classifiedRename(oldPath, newPath);
+            renamedPath = newPath;
+            return { path: newPath, indexDegraded: false };
+          }
           const receipt = await documentRenameByTitle(oldPath, title);
           renamedPath = receipt.entry.path;
           return {
