@@ -4,6 +4,7 @@
 //! dispatch providers, emit IPC events, or provide a compatibility path for
 //! the legacy Harness. Stage 4 owns those responsibilities.
 
+use crate::ai_runtime::fresh_research_plan::FreshResearchResumeState;
 use crate::ai_runtime::prompt_contract::PROMPT_CONTRACT_VERSION;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::run_contract::{
@@ -770,6 +771,70 @@ impl AgentRunRepository {
                 }
                 Ok(())
             })
+        })
+    }
+
+    /// Persist the latest body-free current-fact research continuation state.
+    pub(crate) fn persist_fresh_research_state(
+        db: &Database,
+        run_id: &str,
+        state: &FreshResearchResumeState,
+    ) -> AppResult<()> {
+        state.validate()?;
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let status: String = conn
+                    .query_row(
+                        "SELECT status FROM agent_runs WHERE run_id = ?1",
+                        [run_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(not_found_or_db)?;
+                let run_state = parse_wire::<RunState>(&status)?;
+                if run_state.is_terminal() {
+                    return Err(AppError::run(SafeRunErrorCode::TerminalState));
+                }
+                let step_seq: i64 = conn.query_row(
+                    "SELECT COALESCE(MAX(step_seq), 0) + 1 FROM agent_run_steps WHERE run_id = ?1",
+                    [run_id],
+                    |row| row.get(0),
+                )?;
+                let now = chrono::Utc::now().to_rfc3339();
+                conn.execute(
+                    "INSERT INTO agent_run_steps
+                     (run_id, step_seq, kind, status, input_summary, output_summary,
+                      resume_state_json, evidence_refs_json, created_at, updated_at)
+                     VALUES (?1, ?2, 'fresh_research', 'active', '', '', ?3, '[]', ?4, ?4)",
+                    rusqlite::params![run_id, step_seq, serde_json::to_string(state)?, now],
+                )?;
+                Ok(())
+            })
+        })
+    }
+
+    /// Read the latest body-free current-fact research continuation state.
+    pub(crate) fn latest_fresh_research_state(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Option<FreshResearchResumeState>> {
+        db.with_conn(|conn| {
+            let stored = conn
+                .query_row(
+                    "SELECT resume_state_json FROM agent_run_steps
+                     WHERE run_id = ?1 AND kind = 'fresh_research'
+                     ORDER BY step_seq DESC LIMIT 1",
+                    [run_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            stored
+                .map(|json| {
+                    let state: FreshResearchResumeState = serde_json::from_str(&json)
+                        .map_err(|_| AppError::msg("fresh_research_resume_state_invalid"))?;
+                    state.validate()?;
+                    Ok(state)
+                })
+                .transpose()
         })
     }
 

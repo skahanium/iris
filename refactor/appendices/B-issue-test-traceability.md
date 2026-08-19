@@ -36,7 +36,7 @@
 
 | ROUTE-003 | Partial  | `today_date_question_uses_trusted_runtime_without_web`           | 单测证明 runtime 规则；生产 intake/domain 路由仍待补充 |
 | ROUTE-003 | Partial  | `recent_movie_question_freezes_date_and_location`                | 计划 04 需证明地点真实传入生产研究计划 |
-| WEB-001   | Partial  | `insufficient_first_search_triggers_bounded_refinement`          | 已证明内存 gap 预算；未证明预搜索计数和恢复后预算 |
+| WEB-001   | Partial  | `insufficient_first_search_triggers_bounded_refinement`          | 已证明预搜索计数、gap 预算和 resume state 恢复；未证明 Provider attempt/winner 生产夹具 |
 | WEB-001   | Partial  | `sufficient_first_search_stops_without_extra_tool_turn`          | 已证明单测提前停止；未证明 provider failover 不扩大轮次 |
 | EVID-005  | Partial  | `strict_current_fact_rejects_unsupported_free_text`              | validator 单测通过；生产终局接线待完成 |
 | EVID-005  | Partial  | `source_group_fallback_cannot_complete_strict_current_fact`      | 来源组不能替代当前事实支持 |
@@ -52,7 +52,7 @@
 | CAP-001   | Resolved | `domain_tool_diagnostics_never_expose_raw_output`                | provider 原始 JSON 哨兵不进入 Run event、tool audit、UI error、eval report |
 
 | INPUT-001 | Partial | `input_submission_resumes_the_same_run_and_replay_is_noop` | 控制层证明同一 Run 恢复与重复提交幂等；生产执行路径待补 |
-| WEB-002 | Partial | `supplement_without_gap_is_rejected_after_initial_prefetch`; `duplicate_normalized_query_is_rejected_even_when_gap_changes` | 已证明补搜缺 gap 和规范化重复查询拒绝；预算持久化/真实 Provider 尝试待补 |
+| WEB-002 | Partial | `supplement_without_gap_is_rejected_after_initial_prefetch`; `duplicate_normalized_query_is_rejected_even_when_gap_changes`; `fresh_research_resume_state_restores_budget_and_query_deduplication` | 已证明补搜缺 gap、规范化重复查询拒绝及 resume state 恢复；真实 Provider 尝试待补 |
 | CAP-002 | Partial | `structured_weather_without_provider_fails_closed_instead_of_using_web_fallback` | 证明天气无结构化 Provider 不伪装通用 Web；11 operation 与 Host 渲染待补 |
 | EVID-006 | Partial | `current_fact_finalization` production gate; `domain_tool_output_requires_source_and_observed_time` | 终局 gate 与 DTO 规则存在；Provider evidence 身份哨兵和完整登记夹具待补 |
 

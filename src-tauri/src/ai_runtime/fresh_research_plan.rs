@@ -7,6 +7,7 @@
 
 use crate::ai_runtime::run_contract::{FreshFactDomain, FreshFactPolicy, LocationRequirement};
 use crate::error::{AppError, AppResult};
+use serde::{Deserialize, Serialize};
 
 /// A location the user explicitly confirmed for this Run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,11 +89,41 @@ pub(crate) fn explicit_city_from_message(message: &str) -> Option<String> {
         .map(|city| (*city).to_string())
 }
 
-/// Track already submitted normalized query/gap pairs so the ToolLoop cannot
-/// repeat the same research step without consuming a fresh budget slot.
+/// Durable, body-free state for resuming a bounded research plan.
+///
+/// Query text is intentionally represented only by a hash. The state is a
+/// continuation guard, not an evidence or prompt cache.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FreshResearchResumeState {
+    pub(crate) schema_version: u8,
+    pub(crate) max_searches: u8,
+    pub(crate) search_count: u8,
+    pub(crate) seen_query_hashes: Vec<String>,
+    pub(crate) winner_provider_id: Option<String>,
+}
+
+impl FreshResearchResumeState {
+    pub(crate) fn validate(&self) -> AppResult<()> {
+        if self.schema_version != 1
+            || self.search_count > self.max_searches
+            || self.seen_query_hashes.len() > usize::from(self.max_searches)
+            || self
+                .seen_query_hashes
+                .iter()
+                .any(|hash| hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(AppError::msg("fresh_research_resume_state_invalid"));
+        }
+        Ok(())
+    }
+}
+
+/// Track already submitted normalized queries so the ToolLoop cannot repeat
+/// the same research step without consuming a fresh budget slot.
 #[derive(Debug, Default)]
 pub(crate) struct ResearchQueryLedger {
-    seen: Vec<(String, EvidenceGap)>,
+    seen: Vec<String>,
 }
 
 impl ResearchQueryLedger {
@@ -102,15 +133,31 @@ impl ResearchQueryLedger {
 
     pub(crate) fn register(&mut self, query: &str, gap: EvidenceGap) -> AppResult<()> {
         let normalized = normalize_query(query);
-        if self
-            .seen
-            .iter()
-            .any(|(seen_query, _seen_gap)| seen_query == &normalized)
-        {
+        let query_hash = crate::cas::hash::content_hash_str(&normalized);
+        if self.seen.iter().any(|seen_hash| seen_hash == &query_hash) {
             return Err(AppError::msg("fresh_research_duplicate_query"));
         }
-        self.seen.push((normalized, gap));
+        let _ = gap;
+        self.seen.push(query_hash);
         Ok(())
+    }
+
+    pub(crate) fn from_hashes(hashes: Vec<String>) -> AppResult<Self> {
+        let mut ledger = Self { seen: hashes };
+        if ledger
+            .seen
+            .iter()
+            .any(|hash| hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(AppError::msg("fresh_research_resume_state_invalid"));
+        }
+        ledger.seen.sort();
+        ledger.seen.dedup();
+        Ok(ledger)
+    }
+
+    pub(crate) fn query_hashes(&self) -> Vec<String> {
+        self.seen.clone()
     }
 }
 

@@ -17,7 +17,7 @@
 | ROUTE-001 | P1     | Resolved   | `ToolSurfacePlan.tool_names` 已由生产编排器填充，`NormalRunToolExecutor` 只消费该冻结列表，`capabilities_read` 同步报告该列表                  | 保留 current-surface-only 与 executor surface 测试      |
 | ROUTE-002 | P2     | Unverified | 没有证据表明新增 LLM Router 能改善当前可靠性                                                                                                   | 不进入首阶段；仅保留评测后立项可能                      |
 | ROUTE-003 | P0     | Partial    | 分类器和 runtime 日期基础已存在，但生产领域路由仍可能未生成 `CurrentRunDomain`，且部分入口丢失确认地点                  | 计划 04 增加 production intake、地点传递和 provider 缺失负例 |
-| WEB-001   | P0     | Partial    | 已有内存预算和 gap ledger；首次预搜索未统一计入，Provider failover/重试与业务轮次尚未统一持久化                            | 计划 04 增加持久化预算、补搜和 failover 契约               |
+| WEB-001   | P0     | Partial    | 首次搜索计入预算，查询哈希、业务轮次和 winner 已持久化并可恢复；Provider failover/重试仍缺真实端到端计量夹具                            | 计划 04 增加 Provider attempt/winner 生产回归               |
 | TOOL-001  | P1     | Resolved   | `capabilities_read` 现通过 `ToolDispatchContext.available_tool_names` 只报告当前 Run 已冻结 surface                                            | 保留 current-surface-only 测试                          |
 | TOOL-002  | P0     | Resolved   | 两个 harness 工具曾错误映射到 `vault.search`；现已使用独立 `harness.*` 权限原子                                                                | 保留权限映射回归测试                                    |
 | TOOL-003  | P1     | Resolved   | 模型工具调用同时受 `AgentToolLoop.allowed_tools` 与 `NormalRunToolExecutor.allowed_tool_names` 表面门禁约束                                    | 保留 unexposed tool 负例与 executor surface 负例        |
@@ -41,7 +41,7 @@
 | EVAL-001  | P1     | Stale      | “只有 24 个评测场景”的旧基线已过期；当前代码已有 48-case 契约                                                                                  | 复用现有套件并维护稳定场景 ID                           |
 | EVAL-002  | P1     | Partial    | 已有固定场景夹具，但当前结果仍可能走旧链路；必须由正式 intake 和结构化/Web 终局共同证明                                            | 计划 04 重新接线并以生产路径结果更新 |
 | INPUT-001 | P1     | Partial   | 已有 `AwaitingInput`、Input 事件、同一 Run 恢复和面板输入；仍需生产路径回归与断线恢复证据                                                   | 补齐 production Run、恢复和 UI contract 测试 |
-| WEB-002   | P0     | Partial   | 首次搜索计入预算、补搜必须携带 gap、重复查询拒绝；预算持久化和真实 Provider 尝试计量仍未闭环                                               | 补齐 resume state、provider attempt 与 winner 测试 |
+| WEB-002   | P0     | Partial   | 首次搜索计入预算、补搜必须携带 gap、重复查询拒绝；resume state 已持久化，真实 Provider 尝试计量仍未闭环                                               | 补齐 provider attempt 与 winner 测试 |
 | CAP-002   | P0     | Partial   | 结构化 Provider 已 fail-closed、冻结备用路由并登记真实 evidence ID；Host 固定模板终局仍未替代模型 Markdown                                      | 增加 11 operation 生产夹具与 Host 渲染门禁 |
 | EVID-006  | P0     | Partial   | Provider 映射结果不再作为 Iris evidence ID，成功结果会登记 ledger；仍需验证 Provider 伪造字段和终局绑定                                      | 增加证据身份哨兵与终局回归 |
 | MEM-003   | —      | Stale      | “完全没有记忆基础设施”不准确：会话摘要和 `ai_memories` 均已存在                                                                                | 只补最小安全语义，不重建记忆中心                        |

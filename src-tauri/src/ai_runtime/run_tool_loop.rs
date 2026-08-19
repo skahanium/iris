@@ -24,7 +24,9 @@ use crate::ai_runtime::agent_run_repository::{
 use crate::ai_runtime::agent_tool_loop::{
     AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
 };
-use crate::ai_runtime::fresh_research_plan::{EvidenceGap, ResearchBudget, ResearchQueryLedger};
+use crate::ai_runtime::fresh_research_plan::{
+    EvidenceGap, FreshResearchResumeState, ResearchBudget, ResearchQueryLedger,
+};
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
@@ -289,6 +291,7 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     fresh_research_budget: Option<ResearchBudget>,
     fresh_search_count: Mutex<u8>,
     fresh_research_ledger: Mutex<ResearchQueryLedger>,
+    fresh_research_restore_error: Mutex<Option<String>>,
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
     /// The ChildRun retains the parent Run identity and persistence boundary.
     child_run_provider: Option<&'a dyn ToolLoopProvider>,
@@ -349,6 +352,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             fresh_research_budget: None,
             fresh_search_count: Mutex::new(0),
             fresh_research_ledger: Mutex::new(ResearchQueryLedger::new()),
+            fresh_research_restore_error: Mutex::new(None),
             child_run_provider: None,
             budget_policy,
             child_runs_started: Mutex::new(0),
@@ -393,7 +397,68 @@ impl<'a> NormalRunToolExecutor<'a> {
     /// normalized query/gap pairs are rejected.
     pub(crate) fn with_fresh_research_budget(mut self, budget: ResearchBudget) -> Self {
         self.fresh_research_budget = Some(budget);
+        match AgentRunRepository::latest_fresh_research_state(&self.state.db, &self.accepted.run_id)
+        {
+            Ok(Some(state)) if state.max_searches == budget.max_searches => {
+                if let Ok(mut count) = self.fresh_search_count.lock() {
+                    *count = state.search_count;
+                }
+                if let Ok(ledger) = ResearchQueryLedger::from_hashes(state.seen_query_hashes) {
+                    if let Ok(mut stored) = self.fresh_research_ledger.lock() {
+                        *stored = ledger;
+                    }
+                } else if let Ok(mut error) = self.fresh_research_restore_error.lock() {
+                    *error = Some("fresh_research_resume_state_invalid".to_string());
+                }
+                if let Ok(mut winner) = self.web_preferred_provider_id.lock() {
+                    *winner = state.winner_provider_id;
+                }
+            }
+            Ok(Some(_)) => {
+                if let Ok(mut error) = self.fresh_research_restore_error.lock() {
+                    *error = Some("fresh_research_resume_budget_mismatch".to_string());
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                if let Ok(mut stored) = self.fresh_research_restore_error.lock() {
+                    *stored = Some(error.to_string());
+                }
+            }
+        }
         self
+    }
+
+    fn persist_fresh_research_state(&self) -> AppResult<()> {
+        let budget = self
+            .fresh_research_budget
+            .ok_or_else(|| AppError::msg("fresh_research_budget_missing"))?;
+        let search_count = *self
+            .fresh_search_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        let seen_query_hashes = self
+            .fresh_research_ledger
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?
+            .query_hashes();
+        let winner_provider_id = self
+            .web_preferred_provider_id
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))?
+            .clone();
+        let state = FreshResearchResumeState {
+            schema_version: 1,
+            max_searches: budget.max_searches,
+            search_count,
+            seen_query_hashes,
+            winner_provider_id,
+        };
+        AgentRunRepository::persist_fresh_research_state(
+            &self.state.db,
+            &self.accepted.run_id,
+            &state,
+        )
     }
 
     fn try_reserve_fresh_research_slot(
@@ -404,6 +469,14 @@ impl<'a> NormalRunToolExecutor<'a> {
         let Some(budget) = self.fresh_research_budget else {
             return Ok(true);
         };
+        if let Some(error) = self
+            .fresh_research_restore_error
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?
+            .clone()
+        {
+            return Err(AppError::msg(error));
+        }
         let mut search_count = self
             .fresh_search_count
             .lock()
@@ -425,6 +498,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             ledger.register(query, gap)?;
         }
         *search_count += 1;
+        drop(search_count);
+        self.persist_fresh_research_state()?;
         Ok(true)
     }
 
@@ -2035,7 +2110,7 @@ impl NormalRunToolExecutor<'_> {
             .web_preferred_provider_id
             .lock()
             .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))? = Some(winner);
-        Ok(())
+        self.persist_fresh_research_state()
     }
 
     fn emit_mcp_failover_events(
@@ -5067,6 +5142,74 @@ mod tests {
         assert!(!executor
             .try_reserve_fresh_research_slot("补充查询", None)
             .expect("gap is mandatory"));
+    }
+
+    #[test]
+    fn fresh_research_resume_state_restores_budget_and_query_deduplication() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let budget = ResearchBudget {
+            max_searches: 2,
+            max_fetches: 3,
+            max_repairs: 1,
+        };
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_fresh_research_budget(budget);
+        assert!(executor
+            .try_reserve_fresh_research_slot("上海 今日天气", Some(EvidenceGap::MissingTimestamp))
+            .expect("first search"));
+
+        let resumed = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_fresh_research_budget(budget);
+        let duplicate = resumed
+            .try_reserve_fresh_research_slot("上海 今日天气", Some(EvidenceGap::MissingTimestamp));
+        assert_eq!(
+            duplicate
+                .expect_err("duplicate query must be rejected")
+                .to_string(),
+            "fresh_research_duplicate_query"
+        );
+        assert!(
+            resumed
+                .try_reserve_fresh_research_slot(
+                    "上海 今日天气 预警",
+                    Some(EvidenceGap::MissingEntity),
+                )
+                .expect("one remaining search is available")
+        );
+        assert!(!resumed
+            .try_reserve_fresh_research_slot("第三次查询", Some(EvidenceGap::MissingEntity))
+            .expect("budget is restored"));
     }
 
     #[tokio::test]

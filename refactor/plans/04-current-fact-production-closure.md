@@ -44,7 +44,7 @@
 - 首次预搜索计入业务搜索预算；简单事实最多首次加一次补充，推荐/比较/新闻汇总最多首次加两次补充。
 - 补充搜索必须携带 `EvidenceGap`；相同规范化查询/gap 不得重复；证据充分立即停止。
 - 同 MCP 技术重试和冻结备用 MCP 切换不消耗业务轮次；删除 ToolLoop 外层重复 Broker retry。
-- 查询哈希、gap、轮次和 winner 的 resume state 持久化仍是未完成项；当前只完成进程内预算、去重和冻结候选切换。
+- 查询哈希、gap 约束、业务轮次和 winner 已写入 `agent_run_steps.resume_state_json`，并在同一 Run 重建执行器时恢复；当前仍缺少真实 Provider 级 attempt/winner 端到端夹具，不能把“Provider 重试次数”与“业务搜索轮次”混为一谈。
 
 ### 5. UI、评测与文档收口（部分完成）
 
