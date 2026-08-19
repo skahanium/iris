@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const markdownProse = readFileSync("src/styles/markdown-prose.css", "utf8");
 const globalsCss = readFileSync("src/styles/globals.css", "utf8");
+const mainTsx = readFileSync("src/main.tsx", "utf8");
 const indexHtml = readFileSync("index.html", "utf8");
 
 describe("prose polish v2 tokens", () => {
@@ -13,13 +14,13 @@ describe("prose polish v2 tokens", () => {
     expect(indexHtml).toContain("/src/assets/fonts/");
   });
 
-  it("keeps components layer above tailwind base for editor heading sizes", () => {
-    const layerOrder = markdownProse.indexOf(
-      "@layer base, components, utilities;",
-    );
-    const componentsStart = markdownProse.indexOf("@layer components");
-    expect(layerOrder).toBeGreaterThanOrEqual(0);
-    expect(componentsStart).toBeGreaterThan(layerOrder);
+  it("loads markdown prose after tailwind globals so editor heading rules win", () => {
+    const globalsImport = mainTsx.indexOf("styles/globals.css");
+    const proseImport = mainTsx.indexOf("styles/markdown-prose.css");
+    expect(globalsImport).toBeGreaterThanOrEqual(0);
+    expect(proseImport).toBeGreaterThan(globalsImport);
+    expect(globalsCss).not.toContain('@import "./markdown-prose.css"');
+    expect(markdownProse).not.toContain("@layer components");
   });
 
   it("defines editor and conversation prose surfaces", () => {

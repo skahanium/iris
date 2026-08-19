@@ -6,6 +6,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/ui/toast";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import "./styles/globals.css";
+import "./styles/markdown-prose.css";
 
 function bootstrapStoredTheme() {
   try {
