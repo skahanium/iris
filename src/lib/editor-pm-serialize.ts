@@ -27,6 +27,29 @@ import {
 
 import { renderCalloutBlockquote } from "@/lib/callout-pm-serialize";
 
+const ZWSP = "\u200b";
+
+function stripZeroWidthSpacesFromHeading(
+  node: ProseMirrorNode,
+): ProseMirrorNode {
+  if (!node.textContent.includes(ZWSP)) return node;
+  const children: ProseMirrorNode[] = [];
+  node.forEach((child) => {
+    if (child.isText) {
+      const text = (child.text ?? "").replaceAll(ZWSP, "");
+      if (text) {
+        children.push(node.type.schema.text(text, child.marks));
+      }
+    } else {
+      children.push(child);
+    }
+  });
+  return node.type.create(
+    node.attrs,
+    children.length > 0 ? Fragment.fromArray(children) : undefined,
+  );
+}
+
 function escapeTableCellText(text: string): string {
   return text.replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
 }
@@ -235,7 +258,12 @@ const irisMarkdownSerializer = new MarkdownSerializer(
       if (renderIrisIndentedHtmlBlock(state, node, `h${level}`)) {
         return;
       }
-      baseHeadingSerialize(state, node, parent, index);
+      baseHeadingSerialize(
+        state,
+        stripZeroWidthSpacesFromHeading(node),
+        parent,
+        index,
+      );
     },
     image(state, node, parent, index) {
       baseImageSerialize(state, node, parent, index);

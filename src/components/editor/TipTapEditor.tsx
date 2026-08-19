@@ -74,6 +74,7 @@ import {
 
 import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
 import { HeadingDomGuardExtension } from "./extensions/HeadingDomGuardExtension";
+import { EmptyHeadingImeGuardExtension } from "./extensions/EmptyHeadingImeGuardExtension";
 import { HeadingFoldOverlay } from "./HeadingFoldOverlay";
 
 import { EditorImageDropExtension } from "./extensions/EditorImageDropExtension";
@@ -427,6 +428,8 @@ function TipTapEditorInner({
       ImeCompositionGuardExtension,
 
       HeadingDomGuardExtension,
+
+      EmptyHeadingImeGuardExtension,
 
       IrisParagraphExtension,
 
