@@ -667,3 +667,23 @@ export interface FeedChangedEvent {
   newItems: number;
   errorCode: string | null;
 }
+
+/** 已审核领域稳定操作。 */
+export type DomainOperation =
+  | "weather.current"
+  | "weather.forecast"
+  | "news.search"
+  | "finance.quote"
+  | "finance.metrics"
+  | "finance.news"
+  | "entertainment.now_playing"
+  | "entertainment.upcoming"
+  | "entertainment.streaming"
+  | "sports.schedule"
+  | "sports.score";
+
+/** 领域 provider 输出白名单映射。 */
+export interface DomainOutputMapping {
+  recordsPath: string;
+  fields: Record<string, string>;
+}

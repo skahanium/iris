@@ -1181,6 +1181,8 @@ mod normal_run_desktop_adapter_tests {
             read_only: true,
             user_trusted: true,
             attested_binding_config_hash: String::new(),
+            domain_operation: None,
+            output_mapping: None,
         };
         let attestation = crate::ai_runtime::mcp_external_tools::attest_reviewed_tool(
             &state.db,

@@ -3415,6 +3415,8 @@ mod tests {
             read_only: true,
             user_trusted: true,
             attested_binding_config_hash: String::new(),
+            domain_operation: None,
+            output_mapping: None,
         };
         let discovery_options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
             request_timeout: Duration::from_secs(20),

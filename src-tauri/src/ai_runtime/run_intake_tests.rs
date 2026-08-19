@@ -171,6 +171,8 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
         read_only: true,
         user_trusted: true,
         attested_binding_config_hash: String::new(),
+        domain_operation: None,
+        output_mapping: None,
     };
     let reviewed = review_discovered_tool(
         &binding_input.mcp_tool_name,
@@ -366,6 +368,8 @@ fn provider_config_drift_rolls_back_run_acceptance() {
         read_only: true,
         user_trusted: true,
         attested_binding_config_hash: String::new(),
+        domain_operation: None,
+        output_mapping: None,
     };
     let reviewed = review_discovered_tool(
         &binding_input.mcp_tool_name,
