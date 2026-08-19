@@ -10,10 +10,12 @@ use crate::storage::db::Database;
 use super::agent_capacity_eval::{
     aggregate_capacity_scorecard, approve_live_profile, build_agent_capacity_report,
     calculate_stable_boundary, controlled_live_fact_source_support,
-    discover_live_profile_candidates_from_database, evaluate_case, execute_headless_core_case,
-    execute_pressure_staircases, filter_live_profile_candidates_by_model_allowlist,
-    generate_core_scenarios, generate_pressure_staircases, live_pilot_dynamic_request_shape,
-    live_pilot_evidence_oracle, live_pilot_prompt, live_pilot_result_status,
+    current_fact_answer_does_not_deny_web_after_search,
+    current_fact_movie_follow_up_answer_grounded, discover_live_profile_candidates_from_database,
+    evaluate_case, execute_headless_core_case, execute_pressure_staircases,
+    filter_live_profile_candidates_by_model_allowlist, generate_core_scenarios,
+    generate_pressure_staircases, live_pilot_dynamic_request_shape, live_pilot_evidence_oracle,
+    live_pilot_prompt, live_pilot_result_status,
     live_pilot_source_binding_satisfies_citation_requirement,
     live_pilot_visible_answer_violates_attribution_boundary, live_public_local_fact_source_support,
     live_public_web_fact_source_support, measure_case_quality, no_answer_external_terminal_failure,
@@ -39,7 +41,8 @@ use super::agent_capacity_eval::{
     McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
     ProtocolValidationLevel, RequiredFact, SafetyViolation, ScenarioLanguage, SourceKind,
     StableLevelObservation, TruncationOutcome, VerdictReason, WebAnswerContamination,
-    WebQueryBoundary, WebState,
+    WebQueryBoundary, WebState, CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
+    CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE, CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
 };
 
 #[test]
@@ -4724,4 +4727,41 @@ fn pairwise_live_capability_matrix_marks_missing_layers_not_tested() {
         .combinations()
         .iter()
         .any(|entry| entry.layer() == "mcp_stdio"));
+}
+
+#[test]
+fn current_fact_movie_follow_up_scenario() {
+    let answer = "截至2026-08-18，上海院线正在上映《上海往事》和《夏日回声》。";
+    assert!(current_fact_movie_follow_up_answer_grounded(
+        answer,
+        &CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
+        CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE,
+    ));
+    assert_eq!(CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE, "2026-08-18");
+
+    let decoy_cited = "《上海往事》正在上映，另外《老城旧梦》也可以在旧片场看到。";
+    assert!(
+        !current_fact_movie_follow_up_answer_grounded(
+            decoy_cited,
+            &CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
+            CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE,
+        ),
+        "the old no-date decoy must not be cited as a current Shanghai cinema movie"
+    );
+}
+
+#[test]
+fn agent_does_not_deny_web_after_current_run_search() {
+    let tool_calls = ["web_search"];
+    let grounded = "我刚刚检索了上海院线排片，2026-08-18 上海正在上映《上海往事》。";
+    assert!(
+        current_fact_answer_does_not_deny_web_after_search(grounded, &tool_calls),
+        "a model that used web_search must not claim it has no Web/fetch capability"
+    );
+
+    let denial = "我没有联网能力，也无法抓取最新排片。";
+    assert!(
+        !current_fact_answer_does_not_deny_web_after_search(denial, &tool_calls),
+        "denying Web capability after a current-run search is an eval failure"
+    );
 }

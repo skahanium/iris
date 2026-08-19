@@ -6909,6 +6909,66 @@ pub(crate) fn live_pilot_visible_answer_violates_attribution_boundary(
     exposes_protocol || attributes_web_to_user
 }
 
+/// Fixed current-fact movie follow-up scenario date. The scenario is frozen
+/// so the evaluator never depends on the host machine's real clock.
+#[cfg(test)]
+pub(crate) const CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE: &str = "2026-08-18";
+
+/// The only movie entities the fixed current-fact scenario permits.
+#[cfg(test)]
+pub(crate) const CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES: [&str; 2] =
+    ["《上海往事》", "《夏日回声》"];
+
+/// A dated decoy that must not be cited: an old movie without a Shanghai
+/// cinema/date binding.
+#[cfg(test)]
+pub(crate) const CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE: &str = "《老城旧梦》";
+
+/// Verify a current-fact movie answer only cites entities from the allowed
+/// evidence set and does not introduce the decoy old movie.
+#[cfg(test)]
+pub(crate) fn current_fact_movie_follow_up_answer_grounded(
+    answer: &str,
+    allowed_movies: &[&str],
+    decoy_movie: &str,
+) -> bool {
+    let normalized = answer.to_lowercase();
+    let mentions_any_allowed = allowed_movies
+        .iter()
+        .any(|movie| normalized.contains(&movie.to_lowercase()));
+    mentions_any_allowed && !normalized.contains(&decoy_movie.to_lowercase())
+}
+
+/// Verify an answer that follows real `web_search` tool use does not deny that
+/// the current Run has Web/fetch capability.
+#[cfg(test)]
+pub(crate) fn current_fact_answer_does_not_deny_web_after_search(
+    answer: &str,
+    tool_calls: &[&str],
+) -> bool {
+    let used_web_search = tool_calls
+        .iter()
+        .any(|tool| matches!(*tool, "web_search" | "web.search" | "web.fetch"));
+    if !used_web_search {
+        return true;
+    }
+    let normalized = answer.to_lowercase();
+    ![
+        "没有联网",
+        "不能联网",
+        "不具备联网",
+        "没有抓取能力",
+        "无法抓取",
+        "无法访问网络",
+        "no web access",
+        "cannot access the web",
+        "no internet",
+        "cannot browse",
+    ]
+    .iter()
+    .any(|denial| normalized.contains(denial))
+}
+
 #[cfg(test)]
 fn expected_fact_claim(scenario: &CoreScenario, fact_id: &str) -> String {
     format!("{fact_id}=value-{}", scenario.case_id())

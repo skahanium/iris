@@ -2143,6 +2143,29 @@ fn today_date_question_uses_trusted_runtime_without_web() {
 }
 
 #[test]
+fn recent_movie_question_freezes_date_and_location() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "最近有什么好看的电影".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Entertainment);
+    assert_eq!(
+        envelope.fresh_fact.location_requirement,
+        crate::ai_runtime::run_contract::LocationRequirement::City
+    );
+    assert!(
+        envelope.fresh_fact.window_start.is_some(),
+        "current movie research must freeze a start date"
+    );
+    assert!(
+        envelope.fresh_fact.window_end.is_some(),
+        "current movie research must freeze an end date"
+    );
+}
+
+#[test]
 fn web_disabled_current_fact_keeps_domain_without_web_capability_or_satisfied_verification() {
     for message in [
         "上海未来一周天气",

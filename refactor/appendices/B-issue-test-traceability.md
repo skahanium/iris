@@ -34,6 +34,16 @@
 | UI-003   | Resolved | `queued_previous_run_frame_cannot_patch_new_run`                                | 上一 Run 排队 frame/event 不能修改新 Run 行                                               |
 | UI-003   | Resolved | `terminal_recovery_uses_only_its_own_persisted_answer`                          | 终态恢复只使用同 Run 持久化正文                                                           |
 
+| ROUTE-003 | Resolved | `today_date_question_uses_trusted_runtime_without_web`           | “今天是几月几日”直接使用本机 runtime，不生成 Web evidence                  |
+| ROUTE-003 | Resolved | `recent_movie_question_freezes_date_and_location`                | 近期影视请求冻结绝对日期与地点要求                                        |
+| WEB-001   | Resolved | `insufficient_first_search_triggers_bounded_refinement`          | 首批证据不足时按缺口继续搜索且不超预算                                    |
+| WEB-001   | Resolved | `sufficient_first_search_stops_without_extra_tool_turn`          | 简单问题证据充分后立即停止                                                |
+| EVID-005  | Resolved | `strict_current_fact_rejects_unsupported_free_text`              | 当前事实不能用无结构绑定自由文本完成                                      |
+| EVID-005  | Resolved | `source_group_fallback_cannot_complete_strict_current_fact`      | 来源组不能替代当前事实支持                                                |
+| EVID-005  | Resolved | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 模型不支持终局协议时失败关闭                                              |
+| EVAL-002  | Resolved | `current_fact_movie_follow_up_scenario`                          | 日期→近期电影→质疑上映情况多轮场景首次即可靠                              |
+| EVAL-002  | Resolved | `agent_does_not_deny_web_after_current_run_search`               | 已使用 Web 后不声称没有联网/抓取能力                                      |
+
 ## 追踪规则
 
 - 测试改名或迁移文件时必须同步本表，并以 `rg` 和测试运行结果重新核实。
@@ -44,20 +54,6 @@
 ## 待施工目标追踪
 
 下表中的测试名是施工计划锁定的目标名称，当前不得视为仓库中已存在或已通过。实现时必须先确认测试在修复前失败；只有测试真实存在、运行通过并能证明所列边界后，才移入上方实证表并把状态改为 `Resolved`。
-
-### 核心缺陷目标测试
-
-| 问题 ID   | 当前状态  | 目标测试                                                         | 预期证明边界                                              |
-| --------- | --------- | ---------------------------------------------------------------- | --------------------------------------------------------- |
-| ROUTE-003 | Confirmed | `today_date_question_uses_trusted_runtime_without_web`           | “今天是几月几日”直接使用本机 runtime，不生成 Web evidence |
-| ROUTE-003 | Confirmed | `recent_movie_question_freezes_date_and_location`                | 近期影视请求冻结绝对日期与地点要求                        |
-| WEB-001   | Confirmed | `insufficient_first_search_triggers_bounded_refinement`          | 首批证据不足时按缺口继续搜索且不超预算                    |
-| WEB-001   | Confirmed | `sufficient_first_search_stops_without_extra_tool_turn`          | 简单问题证据充分后立即停止                                |
-| EVID-005  | Confirmed | `strict_current_fact_rejects_unsupported_free_text`              | 当前事实不能用无结构绑定自由文本完成                      |
-| EVID-005  | Confirmed | `source_group_fallback_cannot_complete_strict_current_fact`      | 来源组不能替代当前事实支持                                |
-| EVID-005  | Confirmed | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 模型不支持终局协议时失败关闭                              |
-| EVAL-002  | Confirmed | `current_fact_movie_follow_up_scenario`                          | 日期→近期电影→质疑上映情况多轮场景首次即可靠              |
-| EVAL-002  | Confirmed | `agent_does_not_deny_web_after_current_run_search`               | 已使用 Web 后不声称没有联网/抓取能力                      |
 
 ### 后续领域能力增强目标测试
 
