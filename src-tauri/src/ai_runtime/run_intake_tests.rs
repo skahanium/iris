@@ -1,9 +1,9 @@
 use super::run_contract::{
     AssistantRunControlRequest, AssistantRunRetryRequest, AssistantRunStartRequest,
     AssistantTurnDraft, ContextMode, DisplayMention, DisplayMentionKind, DisplayMentionRange,
-    Effect, Effort, ExplicitAction, ExplicitTarget, Freshness, RiskClass, RunControlAction,
-    RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain, SelectionSnapshot,
-    VerificationRequirement, WebDecisionReason,
+    Effect, Effort, ExplicitAction, ExplicitTarget, FreshFactDomain, Freshness, RiskClass,
+    RunControlAction, RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain,
+    SelectionSnapshot, VerificationRequirement, WebDecisionReason,
 };
 use super::run_engine::RunEventSink;
 use super::run_intake::RunIntake;
@@ -2120,6 +2120,59 @@ fn web_enabled_trusted_runtime_questions_remain_offline() {
         assert_eq!(
             envelope.web_reason,
             WebDecisionReason::TrustedRuntimeFact,
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn today_date_question_uses_trusted_runtime_without_web() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "你好，今天是几月几日？".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Runtime);
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.web_reason, WebDecisionReason::TrustedRuntimeFact);
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn web_disabled_current_fact_keeps_domain_without_web_capability_or_satisfied_verification() {
+    for message in [
+        "上海未来一周天气",
+        "今天有什么重要新闻",
+        "最近有什么好看的电影",
+        "苹果现在股价多少",
+        "今晚湖人比赛几点",
+    ] {
+        let mut request = request();
+        request.web_enabled = false;
+        request.turn.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_ne!(
+            envelope.fresh_fact.domain,
+            FreshFactDomain::None,
+            "{message}"
+        );
+        assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
+        assert!(
+            !envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message}"
+        );
+        assert_eq!(
+            envelope.verification_requirement,
+            VerificationRequirement::CurrentRunWeb,
             "{message}"
         );
     }

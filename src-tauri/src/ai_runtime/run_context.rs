@@ -204,7 +204,7 @@ impl RunContext {
 
     fn system_prompt(&self) -> String {
         let time = crate::ai_runtime::runtime_context::current_time_context();
-        let timeliness_instruction = if is_time_sensitive_request(&self.user_message) {
+        let timeliness_instruction = if is_time_sensitive_request(self.envelope.fresh_fact.domain) {
             "This request is time-sensitive. If web_search is present in the current tool surface, use it before answering; otherwise do not fabricate current facts."
         } else {
             ""
@@ -235,8 +235,8 @@ impl RunContext {
     }
 }
 
-fn is_time_sensitive_request(message: &str) -> bool {
-    crate::ai_runtime::tool_surface::classify_time_sensitivity(message)
+fn is_time_sensitive_request(domain: crate::ai_runtime::run_contract::FreshFactDomain) -> bool {
+    crate::ai_runtime::tool_surface::classify_time_sensitivity(domain)
         == crate::ai_runtime::tool_surface::TimeSensitivity::Current
 }
 
@@ -443,6 +443,7 @@ mod history_selection_tests {
                 material_needs: Vec::new(),
                 required_capabilities: Vec::new(),
                 explicit_constraints: Vec::new(),
+                fresh_fact: Default::default(),
             },
             write_target_path: None,
             document_policy: crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine::new(
@@ -1399,13 +1400,14 @@ mod fallback_version_tests {
 #[cfg(test)]
 mod timeliness_tests {
     use super::is_time_sensitive_request;
+    use crate::ai_runtime::run_contract::FreshFactDomain;
 
     #[test]
-    fn detects_chinese_and_english_time_sensitive_queries() {
-        assert!(is_time_sensitive_request("最近有什么好看的电影吗？"));
-        assert!(is_time_sensitive_request("今天天气怎么样？"));
-        assert!(is_time_sensitive_request("What is the latest news?"));
-        assert!(!is_time_sensitive_request("解释一下量子计算"));
-        assert!(!is_time_sensitive_request("如何写 Rust 测试"));
+    fn detects_current_fresh_fact_domains() {
+        assert!(is_time_sensitive_request(FreshFactDomain::Entertainment));
+        assert!(is_time_sensitive_request(FreshFactDomain::Weather));
+        assert!(is_time_sensitive_request(FreshFactDomain::News));
+        assert!(!is_time_sensitive_request(FreshFactDomain::None));
+        assert!(!is_time_sensitive_request(FreshFactDomain::Runtime));
     }
 }

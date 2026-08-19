@@ -42,7 +42,7 @@ fn plan_tool_surface(
         web_enabled: authorized_capabilities
             .iter()
             .any(|capability| capability.as_str() == "web.search"),
-        time_sensitive: classify_time_sensitivity(&context.user_message),
+        time_sensitive: classify_time_sensitivity(context.envelope.fresh_fact.domain),
         effort: context.envelope.effort,
         web_prefetched,
         authorized_capabilities: authorized_capabilities.to_vec(),

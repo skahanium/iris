@@ -21,6 +21,7 @@ fn envelope(context: ContextMode, material_needs: Vec<MaterialNeed>) -> Executio
         material_needs,
         required_capabilities: vec![CapabilityId::new("model.text")],
         explicit_constraints: vec![],
+        fresh_fact: Default::default(),
     }
 }
 

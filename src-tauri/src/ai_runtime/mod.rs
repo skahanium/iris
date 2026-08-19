@@ -41,6 +41,7 @@ pub(crate) mod domain_executor;
 mod domain_executor_tests;
 pub(crate) mod final_answer_integrity;
 pub(crate) mod final_answer_submission;
+pub(crate) mod fresh_fact_classifier;
 pub(crate) mod frozen_change_plan;
 #[cfg(test)]
 mod frozen_change_plan_tests;

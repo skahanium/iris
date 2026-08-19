@@ -2,9 +2,10 @@ use super::run_contract::{
     transition_if_version, transition_to, AssistantRunAccepted, AssistantRunControlRequest,
     AssistantRunEvent, AssistantRunGetRequest, AssistantRunStartRequest, AssistantSessionRef,
     CapabilityId, ContextMode, Effect, Effort, EvidenceRef, EvidenceSourceKind, ExecutionEnvelope,
-    Freshness, MaterialNeed, RiskClass, RunControlAction, RunEventPayload, RunEventType,
-    RunPresentationEvent, RunPresentationPayload, RunStageCode, RunState, RunStateTransitionError,
-    SafeRunErrorCode, SecurityDomain, WebDecisionReason,
+    FreshFactDomain, FreshFactPolicy, Freshness, LocationRequirement, MaterialNeed, RiskClass,
+    RunControlAction, RunEventPayload, RunEventType, RunPresentationEvent, RunPresentationPayload,
+    RunStageCode, RunState, RunStateTransitionError, SafeRunErrorCode, SecurityDomain,
+    WebDecisionReason,
 };
 
 fn direct_answer_envelope() -> ExecutionEnvelope {
@@ -21,6 +22,7 @@ fn direct_answer_envelope() -> ExecutionEnvelope {
         material_needs: Vec::new(),
         required_capabilities: vec![CapabilityId::new("model.respond")],
         explicit_constraints: Vec::new(),
+        fresh_fact: FreshFactPolicy::default(),
     }
 }
 
@@ -306,6 +308,13 @@ fn execution_envelope_uses_the_same_camel_case_wire_fields_as_typescript() {
             "materialNeeds": [],
             "requiredCapabilities": ["model.respond"],
             "explicitConstraints": [],
+            "freshFact": {
+                "schemaVersion": 1,
+                "domain": "none",
+                "windowStart": null,
+                "windowEnd": null,
+                "locationRequirement": "none"
+            },
         })
     );
 }
@@ -331,6 +340,32 @@ fn historical_envelope_without_web_reason_deserializes_safely() {
     assert_eq!(
         envelope.verification_requirement,
         super::run_contract::VerificationRequirement::None
+    );
+}
+
+#[test]
+fn old_execution_envelope_defaults_fresh_fact_policy() {
+    let envelope: ExecutionEnvelope = serde_json::from_value(serde_json::json!({
+        "effect": "answer",
+        "context": "conversation",
+        "freshness": "web_required",
+        "effort": "tool_loop",
+        "securityDomain": "normal",
+        "risk": "read_only",
+        "modalities": [],
+        "materialNeeds": ["web"],
+        "requiredCapabilities": ["web.search"],
+        "explicitConstraints": []
+    }))
+    .expect("legacy envelope without freshFact remains readable");
+
+    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::None);
+    assert_eq!(envelope.fresh_fact.schema_version, 1);
+    assert_eq!(envelope.fresh_fact.window_start, None);
+    assert_eq!(envelope.fresh_fact.window_end, None);
+    assert_eq!(
+        envelope.fresh_fact.location_requirement,
+        LocationRequirement::None
     );
 }
 

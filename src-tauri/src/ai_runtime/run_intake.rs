@@ -4,13 +4,14 @@ use crate::ai_runtime::agent_run_repository::{
     AcceptRunInput, AcceptRunOutcome, AgentRunRepository, FrozenConfirmationApproval,
     FrozenConfirmationRejection, RetryRunInput,
 };
+use crate::ai_runtime::fresh_fact_classifier::classify_fresh_fact;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetResponse,
     AssistantRunRetryRequest, AssistantRunStartRequest, AssistantSessionRef, CapabilityId,
-    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed,
-    Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType, SafeRunErrorCode,
-    SecurityDomain, VerificationRequirement, WebDecisionReason,
+    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, FreshFactDomain, Freshness,
+    MaterialNeed, Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType,
+    SafeRunErrorCode, SecurityDomain, VerificationRequirement, WebDecisionReason,
 };
 use crate::ai_runtime::run_engine::emit_durable_event_best_effort;
 use crate::ai_runtime::tool_surface::{classify_time_sensitivity, TimeSensitivity};
@@ -78,8 +79,15 @@ impl RunIntake {
                 "\u{4e0d}\u{4fee}\u{6539}",
             ],
         );
-        let web_decision =
-            ExclusionClassifier::resolve(request, &message, &directive_text, local_only);
+        let accepted_at = chrono::Utc::now();
+        let fresh_fact = classify_fresh_fact(&request.turn.message, accepted_at);
+        let web_decision = ExclusionClassifier::resolve(
+            request,
+            &message,
+            &directive_text,
+            local_only,
+            fresh_fact.domain,
+        );
         let effect = if do_not_modify {
             Effect::Answer
         } else {
@@ -115,7 +123,8 @@ impl RunIntake {
                 .iter()
                 .any(|part| matches!(part, crate::ai_types::ContentPart::ImageUrl { .. }))
         });
-        let time_sensitive = classify_time_sensitivity(&directive_text) == TimeSensitivity::Current;
+        let time_sensitive =
+            !local_only && classify_time_sensitivity(fresh_fact.domain) == TimeSensitivity::Current;
         let effort = match effect {
             Effect::Apply => Effort::Durable,
             _ if freshness == Freshness::WebPreferred
@@ -186,7 +195,11 @@ impl RunIntake {
         // The user-controlled Web toggle is the sole authority that can add
         // Web capability. Freshness only describes evidence obligation; it
         // must never be a second permission switch.
-        if request.web_enabled && request.security_domain == SecurityDomain::Normal && !local_only {
+        if request.web_enabled
+            && request.security_domain == SecurityDomain::Normal
+            && !local_only
+            && fresh_fact.domain != FreshFactDomain::Runtime
+        {
             required_capabilities.push(CapabilityId::new("web.search"));
         }
         if child_run_requested {
@@ -231,6 +244,7 @@ impl RunIntake {
             material_needs,
             required_capabilities,
             explicit_constraints,
+            fresh_fact,
         })
     }
 
@@ -839,6 +853,7 @@ impl ExclusionClassifier {
         message: &str,
         directive_text: &str,
         local_only: bool,
+        fresh_fact_domain: FreshFactDomain,
     ) -> WebIntentDecision {
         // Hard exclusions — never overridden by an explicit web instruction.
         if request.security_domain == SecurityDomain::Classified {
@@ -867,7 +882,7 @@ impl ExclusionClassifier {
             return offline(WebDecisionReason::ConversationMeta);
         }
         if !explicit_web {
-            if is_trusted_runtime_request(directive_text) {
+            if is_trusted_runtime_request(fresh_fact_domain) {
                 return offline(WebDecisionReason::TrustedRuntimeFact);
             }
             if is_local_transformation_request(directive_text)
@@ -1186,35 +1201,8 @@ fn has_explicit_web_instruction(message: &str) -> bool {
     )
 }
 
-fn is_trusted_runtime_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "今天星期几",
-            "今天几号",
-            "当前日期",
-            "本机日期",
-            "现在几点",
-            "当前时间",
-            "本机时间",
-            "应用版本",
-            "iris 版本",
-            "联网是否开启",
-            "what day of the week is it today",
-            "which day of the week is it today",
-            "what day is it",
-            "what day of week is it",
-            "what is today's weekday",
-            "what is today's date",
-            "current local time",
-            "what is the local time",
-            "what time is it locally",
-            "show local date",
-            "app version",
-            "application version",
-            "iris version",
-        ],
-    )
+fn is_trusted_runtime_request(domain: FreshFactDomain) -> bool {
+    domain == FreshFactDomain::Runtime
 }
 
 fn is_conversation_meta_request(message: &str) -> bool {

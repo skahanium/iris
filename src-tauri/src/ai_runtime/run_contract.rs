@@ -84,6 +84,54 @@ pub(crate) enum VerificationRequirement {
     CurrentRunExternal,
 }
 
+/// Deterministic current-fact domain frozen into an accepted Run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FreshFactDomain {
+    #[default]
+    None,
+    Runtime,
+    Weather,
+    News,
+    Finance,
+    Entertainment,
+    Sports,
+    GenericWeb,
+}
+
+/// Minimum location context a current-fact domain needs before Web research.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LocationRequirement {
+    #[default]
+    None,
+    Country,
+    City,
+}
+
+/// Frozen, backward-compatible current-fact policy attached to one accepted Run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FreshFactPolicy {
+    pub(crate) schema_version: u8,
+    pub(crate) domain: FreshFactDomain,
+    pub(crate) window_start: Option<String>,
+    pub(crate) window_end: Option<String>,
+    pub(crate) location_requirement: LocationRequirement,
+}
+
+impl Default for FreshFactPolicy {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            domain: FreshFactDomain::None,
+            window_start: None,
+            window_end: None,
+            location_requirement: LocationRequirement::None,
+        }
+    }
+}
+
 /// Stable explanation for the deterministic Web decision attached to a Run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -255,6 +303,9 @@ pub(crate) struct ExecutionEnvelope {
     pub(crate) required_capabilities: Vec<CapabilityId>,
     /// Explicit constraints that remain binding throughout the Run.
     pub(crate) explicit_constraints: Vec<ExplicitConstraint>,
+    /// Frozen current-fact policy; defaults to a no-op for historical envelopes.
+    #[serde(default)]
+    pub(crate) fresh_fact: FreshFactPolicy,
 }
 
 impl RunBudgetPolicy {

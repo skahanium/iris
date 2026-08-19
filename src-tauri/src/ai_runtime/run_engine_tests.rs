@@ -4252,6 +4252,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
             material_needs: Vec::new(),
             required_capabilities: vec![CapabilityId::new("model.vision")],
             explicit_constraints: Vec::new(),
+            fresh_fact: Default::default(),
         },
         "描述图片",
         &[],
@@ -4380,6 +4381,7 @@ async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final
             material_needs: vec![super::run_contract::MaterialNeed::Exemplar],
             required_capabilities: vec![CapabilityId::new("model.text")],
             explicit_constraints: vec![],
+            fresh_fact: Default::default(),
         },
         "起草一份检查通知",
         &[DomainMaterial {

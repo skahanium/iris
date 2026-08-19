@@ -50,6 +50,7 @@ fn accept_test_run(
                     kind: "no_implicit_context".to_string(),
                     value: None,
                 }],
+                fresh_fact: Default::default(),
             },
         },
     )

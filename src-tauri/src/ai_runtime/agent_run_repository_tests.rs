@@ -37,6 +37,7 @@ fn envelope() -> ExecutionEnvelope {
             kind: "local_only".to_string(),
             value: Some("enabled".to_string()),
         }],
+        fresh_fact: Default::default(),
     }
 }
 
