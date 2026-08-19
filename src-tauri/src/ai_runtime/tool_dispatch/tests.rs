@@ -80,6 +80,10 @@ fn dispatch_context_with_plan<'a>(
         crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
     ));
     ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: None,
@@ -102,6 +106,10 @@ fn dispatch_context_with_retrieval_scope<'a>(
     retrieval_scope: &'a crate::ai_runtime::retrieval_scope::RetrievalScope,
 ) -> ToolDispatchContext<'a> {
     ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: None,
@@ -212,6 +220,10 @@ async fn read_note_rejects_document_policy_before_opening_the_file() {
     );
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: Some("policy-read-run"),
@@ -447,6 +459,10 @@ fn write_tool_approval_applies_patch_with_cas() {
     let base_hash = crate::cas::hash::content_hash_str(base);
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: Some("notes/test.md"),
         file_id: None,
         run_id: None,
@@ -526,6 +542,10 @@ fn write_tool_rejects_a_target_other_than_the_explicit_run_target() {
     let base_hash = crate::cas::hash::content_hash_str(base);
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: Some("bound-target-run"),
@@ -572,6 +592,10 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
     let (state, _dir) = test_state();
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: Some("notes/test.md"),
         file_id: None,
         run_id: None,
@@ -620,6 +644,10 @@ async fn cancelled_run_never_commits_a_markdown_patch() {
     let base_hash = crate::cas::hash::content_hash_str(base);
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: Some("notes/test.md"),
         file_id: None,
         run_id: Some("cancelled-markdown-write"),

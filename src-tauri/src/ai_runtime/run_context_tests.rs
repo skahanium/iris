@@ -1498,6 +1498,10 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
     )
     .expect("tool started");
     let dispatch_context = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: None,

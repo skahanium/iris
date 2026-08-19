@@ -24,6 +24,8 @@ fn ctx_with_scope<'a>(
     retrieval_scope: &'a RetrievalScope,
 ) -> ToolDispatchContext<'a> {
     ToolDispatchContext {
+        db: None,
+        selected_web_provider_id: None,
         note_path,
         file_id: None,
         run_id: None,

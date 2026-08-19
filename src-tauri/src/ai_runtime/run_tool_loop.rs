@@ -869,6 +869,10 @@ impl<'a> NormalRunToolExecutor<'a> {
         args: &serde_json::Value,
     ) -> ToolCallResult {
         let dispatch_context = ToolDispatchContext {
+            db: Some(&self.state.db),
+
+            selected_web_provider_id: None,
+
             note_path: None,
             file_id: None,
             run_id: Some(&self.accepted.run_id),

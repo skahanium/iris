@@ -30,6 +30,10 @@ fn dispatchable(name: &str) -> bool {
 fn ctx() -> ToolDispatchContext<'static> {
     let retrieval_scope = Box::leak(Box::new(RetrievalScope::default()));
     ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: None,

@@ -82,6 +82,11 @@ pub(crate) enum VerificationRequirement {
     /// A successful explicitly granted `external.read` call in this exact Run
     /// must register usable evidence before a final answer is accepted.
     CurrentRunExternal,
+    /// A successful current-fact domain operation in this exact Run must
+    /// register validated Appendix-D evidence before a final answer is
+    /// accepted. The domain operation may be served by a frozen `web.domain.read`
+    /// MCP mapping or by the generic Web evidence fallback.
+    CurrentRunDomain,
 }
 
 /// Deterministic current-fact domain frozen into an accepted Run.

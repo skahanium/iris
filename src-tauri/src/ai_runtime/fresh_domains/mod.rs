@@ -6,6 +6,8 @@
 )]
 
 pub(crate) mod contracts;
+pub(crate) mod provider;
+pub(crate) mod service;
 #[cfg(test)]
 mod tests;
 pub(crate) mod validation;

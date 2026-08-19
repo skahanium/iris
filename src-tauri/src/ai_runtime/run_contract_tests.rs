@@ -320,6 +320,46 @@ fn execution_envelope_uses_the_same_camel_case_wire_fields_as_typescript() {
 }
 
 #[test]
+fn current_run_domain_verification_uses_stable_snake_case_wire_value() {
+    use super::run_contract::VerificationRequirement;
+
+    let value = serde_json::to_value(VerificationRequirement::CurrentRunDomain).unwrap();
+    assert_eq!(value, serde_json::json!("current_run_domain"));
+
+    let parsed: VerificationRequirement =
+        serde_json::from_value(serde_json::json!("current_run_domain")).unwrap();
+    assert_eq!(parsed, VerificationRequirement::CurrentRunDomain);
+
+    let envelope = serde_json::json!({
+        "effect": "answer",
+        "context": "conversation",
+        "freshness": "web_required",
+        "webReason": "volatile_external_fact",
+        "verificationRequirement": "current_run_domain",
+        "effort": "tool_loop",
+        "securityDomain": "normal",
+        "risk": "read_only",
+        "modalities": [],
+        "materialNeeds": ["web"],
+        "requiredCapabilities": ["web.domain.read", "web.search"],
+        "explicitConstraints": [],
+        "freshFact": {
+            "schemaVersion": 1,
+            "domain": "weather",
+            "windowStart": null,
+            "windowEnd": null,
+            "locationRequirement": "city"
+        }
+    });
+    let envelope: super::run_contract::ExecutionEnvelope =
+        serde_json::from_value(envelope).expect("current_run_domain envelope remains readable");
+    assert_eq!(
+        envelope.verification_requirement,
+        VerificationRequirement::CurrentRunDomain
+    );
+}
+
+#[test]
 fn historical_envelope_without_web_reason_deserializes_safely() {
     let envelope: ExecutionEnvelope = serde_json::from_value(serde_json::json!({
         "effect": "answer",

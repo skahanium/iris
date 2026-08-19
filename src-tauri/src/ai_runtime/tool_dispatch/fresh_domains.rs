@@ -7,6 +7,7 @@
 
 use chrono::{DateTime, NaiveDate, Utc};
 
+use crate::ai_runtime::fresh_domains::service::{FreshDomainRequest, FreshDomainService};
 use crate::ai_runtime::mcp_external_tools::DomainOperation;
 use crate::error::{AppError, AppResult};
 
@@ -15,7 +16,6 @@ use super::{FrozenDomainWindow, ToolDispatchContext};
 const MAX_WEATHER_DAYS: i64 = 7;
 const MAX_NEWS_LIMIT: i64 = 20;
 
-const ERROR_SERVICE_UNAVAILABLE: &str = "agent_run_fresh_domain_service_unavailable";
 const ERROR_UNKNOWN_OPERATION: &str = "agent_run_fresh_domain_unknown_operation";
 const ERROR_BUDGET_EXCEEDED: &str = "agent_run_fresh_domain_budget_exceeded";
 const ERROR_MISSING_INSTRUMENT: &str = "agent_run_fresh_domain_missing_instrument";
@@ -34,7 +34,19 @@ pub(super) async fn fresh_domain_tool(
         return Err(AppError::msg("web search not enabled for this request"));
     }
     validate_fresh_domain_request(tool_name, args, ctx.fresh_fact_policy.as_ref())?;
-    Err(AppError::msg(ERROR_SERVICE_UNAVAILABLE))
+    let operation = parse_operation_for_tool(tool_name, args)?;
+    let records = FreshDomainService
+        .execute(
+            FreshDomainRequest {
+                tool_name: tool_name.to_string(),
+                operation,
+                args: args.clone(),
+                requested_at: Utc::now(),
+            },
+            ctx,
+        )
+        .await?;
+    Ok(serde_json::to_value(records)?)
 }
 
 pub(super) fn validate_fresh_domain_request(
@@ -128,6 +140,46 @@ fn validate_sports(args: &serde_json::Value, policy: Option<&FrozenDomainWindow>
         validate_date_in_frozen_window(date, policy)?;
     }
     Ok(())
+}
+
+fn parse_operation_for_tool(
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> AppResult<DomainOperation> {
+    match tool_name {
+        "weather_lookup" => parse_operation_for(
+            args,
+            &[
+                DomainOperation::WeatherCurrent,
+                DomainOperation::WeatherForecast,
+            ],
+        ),
+        "news_lookup" => Ok(DomainOperation::NewsSearch),
+        "finance_lookup" => parse_operation_for(
+            args,
+            &[
+                DomainOperation::FinanceQuote,
+                DomainOperation::FinanceMetrics,
+                DomainOperation::FinanceNews,
+            ],
+        ),
+        "entertainment_lookup" => parse_operation_for(
+            args,
+            &[
+                DomainOperation::EntertainmentNowPlaying,
+                DomainOperation::EntertainmentUpcoming,
+                DomainOperation::EntertainmentStreaming,
+            ],
+        ),
+        "sports_lookup" => parse_operation_for(
+            args,
+            &[
+                DomainOperation::SportsSchedule,
+                DomainOperation::SportsScore,
+            ],
+        ),
+        _ => Err(AppError::msg(ERROR_UNKNOWN_OPERATION)),
+    }
 }
 
 fn parse_operation_for(
@@ -317,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_domain_tool_accepts_valid_request_then_returns_service_unavailable() {
+    fn fresh_domain_tool_accepts_valid_request_validation() {
         let p = policy(Some("2026-08-18T00:00:00Z"), Some("2026-08-25T00:00:00Z"));
         validate_fresh_domain_request(
             "sports_lookup",
@@ -325,5 +377,10 @@ mod tests {
             Some(&p),
         )
         .expect("valid request must pass validation");
+        parse_operation_for_tool(
+            "sports_lookup",
+            &serde_json::json!({ "operation": "sports.score" }),
+        )
+        .expect("operation parser returns the validated operation");
     }
 }

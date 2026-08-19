@@ -35,6 +35,13 @@ impl ToolRegistry {
         let snapshots = crate::ai_runtime::mcp_external_tools::load_run_snapshots(db, run_id)?;
         let mut registry = Self::new();
         for snapshot in snapshots {
+            // Domain snapshots are consumed by the internal FreshDomainService,
+            // never exposed as Composer-selectable generic external tools.
+            if snapshot.capability
+                == crate::ai_runtime::mcp_external_tools::WEB_DOMAIN_READ_CAPABILITY
+            {
+                continue;
+            }
             if !crate::ai_runtime::mcp_external_tools::snapshot_contract_is_valid(&snapshot) {
                 return Err(AppError::msg("external_tool_binding_config_changed"));
             }
@@ -274,6 +281,118 @@ mod tests {
         );
 
         assert!(constrained.iter().any(|tool| tool.name == "spawn_subagent"));
+    }
+
+    #[test]
+    fn domain_snapshots_are_not_exposed_as_composer_external_tools() {
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "weather-mcp".into(),
+                name: "Weather MCP".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: "{}".into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+        )
+        .unwrap();
+        let reviewed = crate::ai_runtime::mcp_external_tools::review_discovered_tool(
+            "weather",
+            &serde_json::json!({"type":"object"}),
+            Some(true),
+        )
+        .unwrap();
+        let provider_config_hash =
+            crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&db)
+                .unwrap()
+                .into_iter()
+                .find(|provider| provider.id == "weather-mcp")
+                .unwrap()
+                .provider_config_hash;
+        let provider_launch_hash = crate::ai_runtime::mcp_host_runtime::frozen_provider_launch_hash(
+            "weather-mcp",
+            "stdio",
+            "{}",
+            "{}",
+        );
+        let operation = crate::ai_runtime::mcp_external_tools::DomainOperation::WeatherCurrent;
+        let output_mapping = crate::ai_runtime::mcp_external_tools::DomainOutputMapping {
+            records_path: "$.records".into(),
+            fields: [("sourceUrl".to_string(), "$.url".to_string())].into(),
+        };
+        let binding_config_hash = crate::ai_runtime::mcp_external_tools::test_binding_hash(
+            "weather-mcp",
+            &provider_config_hash,
+            &provider_launch_hash,
+            "weather",
+            &reviewed.input_schema,
+            operation,
+            &output_mapping,
+        );
+        crate::ai_runtime::mcp_external_tools::upsert_binding(
+            &db,
+            &crate::ai_runtime::mcp_external_tools::McpCapabilityBindingInput {
+                id: None,
+                provider_id: "weather-mcp".into(),
+                mcp_tool_name: "weather".into(),
+                input_schema: reviewed.input_schema.clone(),
+                argument_mapping: serde_json::json!({}),
+                domain_operation: Some(operation),
+                output_mapping: Some(output_mapping),
+                risk_class: "read_only".into(),
+                read_only: true,
+                user_trusted: true,
+                attested_binding_config_hash: binding_config_hash,
+            },
+            &reviewed,
+            &provider_config_hash,
+        )
+        .unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sessions (session_key, created_at, updated_at)
+                 VALUES ('domain-surface-session', datetime('now'), datetime('now'))",
+                [],
+            )?;
+            let session_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO agent_runs
+                 (run_id, client_request_id, session_id, turn_id, status, state_version,
+                  effect, effort, security_domain, risk, envelope_json, goal_summary,
+                  created_at, updated_at)
+                 VALUES ('run-with-domain', 'domain-client', ?1, 'domain-turn', 'accepted', 0,
+                         'answer', 'direct', 'normal', 'read_only', '{}', '',
+                         datetime('now'), datetime('now'))",
+                [session_id],
+            )?;
+            crate::ai_runtime::mcp_external_tools::freeze_domain_run_grants(
+                conn,
+                "run-with-domain",
+                &[operation],
+                None,
+            )
+        })
+        .unwrap();
+
+        let registry = ToolRegistry::for_run(&db, "run-with-domain").unwrap();
+        let surface = registry
+            .tools_for_authorized_capabilities(&[CapabilityId::new("external.read")], false);
+
+        assert!(
+            surface
+                .iter()
+                .all(|tool| !tool.name.starts_with("external_")),
+            "web.domain.read snapshots must not become Composer external tools"
+        );
+        assert!(
+            !surface.iter().any(|tool| tool.name == "weather_lookup"),
+            "without web.domain.read capability the built-in domain tool must not surface"
+        );
     }
 
     #[test]

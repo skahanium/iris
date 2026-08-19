@@ -20,6 +20,12 @@ impl From<&crate::ai_runtime::run_contract::FreshFactPolicy> for FrozenDomainWin
 }
 
 pub struct ToolDispatchContext<'a> {
+    /// Database used by domain/evidence dispatch. `None` is reserved for
+    /// isolated unit tests that do not exercise provider execution.
+    pub db: Option<&'a Database>,
+    /// Currently selected Web provider, when known, used to break ties between
+    /// multiple healthy domain mappings.
+    pub selected_web_provider_id: Option<&'a str>,
     pub note_path: Option<&'a str>,
     pub file_id: Option<i64>,
     /// Owning Run. When present, every dispatch and irreversible commit must

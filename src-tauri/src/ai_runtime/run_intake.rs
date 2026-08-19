@@ -4,6 +4,7 @@ use crate::ai_runtime::agent_run_repository::{
     AcceptRunInput, AcceptRunOutcome, AgentRunRepository, FrozenConfirmationApproval,
     FrozenConfirmationRejection, RetryRunInput,
 };
+use crate::ai_runtime::fresh_domains::provider::default_operations_for_domain;
 use crate::ai_runtime::fresh_fact_classifier::classify_fresh_fact;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
@@ -81,6 +82,7 @@ impl RunIntake {
         );
         let accepted_at = chrono::Utc::now();
         let fresh_fact = classify_fresh_fact(&directive_text, accepted_at);
+        let domain_operations = default_operations_for_domain(fresh_fact.domain);
         let web_decision = ExclusionClassifier::resolve(
             request,
             &message,
@@ -202,6 +204,13 @@ impl RunIntake {
         {
             required_capabilities.push(CapabilityId::new("web.search"));
         }
+        if request.web_enabled
+            && request.security_domain == SecurityDomain::Normal
+            && !local_only
+            && !domain_operations.is_empty()
+        {
+            required_capabilities.push(CapabilityId::new("web.domain.read"));
+        }
         if child_run_requested {
             required_capabilities.push(CapabilityId::new("harness.child_run"));
         }
@@ -293,6 +302,14 @@ impl RunIntake {
             .as_ref()
             .map_or_else(String::new, |session| session.session_key.clone());
         let external_tool_grants = request.external_tool_grants.clone();
+        let domain_operations = default_operations_for_domain(envelope.fresh_fact.domain);
+        let selected_web_provider_id = if request.web_enabled {
+            crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)
+                .ok()
+                .map(|provider| provider.id)
+        } else {
+            None
+        };
         AgentRunRepository::accept_with_external_grants_outcome(
             db,
             AcceptRunInput {
@@ -310,6 +327,8 @@ impl RunIntake {
                 envelope,
             },
             &external_tool_grants,
+            &domain_operations,
+            selected_web_provider_id.as_deref(),
             create_session,
         )
     }

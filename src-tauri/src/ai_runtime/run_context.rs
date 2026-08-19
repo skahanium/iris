@@ -216,6 +216,9 @@ impl RunContext {
             crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunExternal => {
                 "External factual conclusions require eligible evidence from an explicitly granted read-only external tool for this answer. Do not use training knowledge, historical assistant messages, conversation summaries, or older citations as independent evidence. If eligible evidence is unavailable, do not guess."
             }
+            crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunDomain => {
+                "External factual conclusions require eligible current-fact domain evidence collected for this answer. Do not use training knowledge, historical assistant messages, conversation summaries, or older citations as independent evidence. If eligible evidence is unavailable, do not guess."
+            }
             crate::ai_runtime::run_contract::VerificationRequirement::None => {
                 "Historical assistant messages, conversation summaries, and older citations are continuity aids, not independent evidence."
             }

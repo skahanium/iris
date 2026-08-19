@@ -67,6 +67,10 @@ mod tests {
         crate::llm::config::save(&state.db, &routing).expect("save enabled model pool");
         let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
         let ctx = ToolDispatchContext {
+            db: None,
+
+            selected_web_provider_id: None,
+
             note_path: Some("notes/test.md"),
             file_id: Some(7),
             run_id: None,
@@ -131,6 +135,10 @@ mod tests {
         let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
         let available_tool_names = vec!["system_time_now".to_string()];
         let ctx = ToolDispatchContext {
+            db: None,
+
+            selected_web_provider_id: None,
+
             note_path: None,
             file_id: None,
             run_id: None,

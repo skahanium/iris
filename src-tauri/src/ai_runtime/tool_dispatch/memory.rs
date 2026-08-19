@@ -194,6 +194,10 @@ mod tests {
 
     fn context<'a>(retrieval_scope: &'a RetrievalScope) -> ToolDispatchContext<'a> {
         ToolDispatchContext {
+            db: None,
+
+            selected_web_provider_id: None,
+
             note_path: None,
             file_id: None,
             run_id: None,

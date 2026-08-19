@@ -1951,7 +1951,7 @@ fn is_https_url(url: &str) -> bool {
     url.trim().to_lowercase().starts_with("https://")
 }
 
-fn domain_from_url(url: &str) -> Option<String> {
+pub(crate) fn domain_from_url(url: &str) -> Option<String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;

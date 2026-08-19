@@ -1912,6 +1912,59 @@ fn web_enabled_external_question_persists_the_web_capability_contract() {
 }
 
 #[test]
+fn web_enabled_current_fact_adds_domain_capability_without_external_read() {
+    for message in [
+        "上海未来一周天气",
+        "今天有什么重要新闻",
+        "最近有什么好看的电影",
+        "苹果现在股价多少",
+        "今晚湖人比赛几点",
+    ] {
+        let mut request = request();
+        request.web_enabled = true;
+        request.turn.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.domain.read"),
+            "{message} must carry web.domain.read"
+        );
+        assert!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message} must carry web.search"
+        );
+        assert!(
+            !envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "external.read"),
+            "{message} must not grant external.read"
+        );
+    }
+}
+
+#[test]
+fn web_disabled_current_fact_does_not_add_domain_capability() {
+    let mut request = request();
+    request.web_enabled = false;
+    request.turn.message = "上海未来一周天气".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.domain.read"));
+}
+
+#[test]
 fn web_toggle_is_the_only_authority_that_grants_web_search() {
     let mut disabled = request();
     disabled.web_enabled = false;

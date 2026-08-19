@@ -625,7 +625,14 @@ fn same_session_concurrent_start_admits_only_one_active_run() {
             input.turn_id = format!("concurrent-turn-{index}");
             input.message = format!("并发消息 {index}");
             handles.push(scope.spawn(move || {
-                AgentRunRepository::accept_with_external_grants_outcome(&db, input, &[], false)
+                AgentRunRepository::accept_with_external_grants_outcome(
+                    &db,
+                    input,
+                    &[],
+                    &[],
+                    None,
+                    false,
+                )
             }));
         }
         handles

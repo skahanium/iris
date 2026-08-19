@@ -257,7 +257,7 @@ impl AgentRunRepository {
         reason = "test fixtures accept Runs without external grants"
     )]
     pub(crate) fn accept(db: &Database, input: AcceptRunInput) -> AppResult<AssistantRunAccepted> {
-        Self::accept_with_external_grants(db, input, &[])
+        Self::accept_with_external_grants(db, input, &[], &[], None)
     }
 
     /// Atomically persist the accepted Run and its explicit MCP snapshots.
@@ -265,9 +265,18 @@ impl AgentRunRepository {
         db: &Database,
         input: AcceptRunInput,
         external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
+        domain_operations: &[crate::ai_runtime::mcp_external_tools::DomainOperation],
+        selected_web_provider_id: Option<&str>,
     ) -> AppResult<AssistantRunAccepted> {
-        Self::accept_with_external_grants_outcome(db, input, external_tool_grants, false)
-            .map(|outcome| outcome.accepted)
+        Self::accept_with_external_grants_outcome(
+            db,
+            input,
+            external_tool_grants,
+            domain_operations,
+            selected_web_provider_id,
+            false,
+        )
+        .map(|outcome| outcome.accepted)
     }
 
     /// Atomically accept a Run and report whether this call created it.
@@ -279,6 +288,8 @@ impl AgentRunRepository {
         db: &Database,
         input: AcceptRunInput,
         external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
+        domain_operations: &[crate::ai_runtime::mcp_external_tools::DomainOperation],
+        selected_web_provider_id: Option<&str>,
         create_session: bool,
     ) -> AppResult<AcceptRunOutcome> {
         if input.envelope.security_domain != SecurityDomain::Normal {
@@ -400,6 +411,12 @@ impl AgentRunRepository {
                     conn,
                     &input.run_id,
                     external_tool_grants,
+                )?;
+                crate::ai_runtime::mcp_external_tools::freeze_domain_run_grants(
+                    conn,
+                    &input.run_id,
+                    domain_operations,
+                    selected_web_provider_id,
                 )?;
                 let event = AssistantRunEvent::new(
                     &input.run_id,
