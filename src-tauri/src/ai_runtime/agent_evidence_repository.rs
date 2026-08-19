@@ -623,7 +623,7 @@ impl AgentEvidenceRepository {
                      FROM agent_run_evidence run_evidence
                      JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
                      WHERE run_evidence.run_id = ?1
-                       AND run_evidence.registration_source = 'web_search'
+                       AND run_evidence.registration_source IN ('web_search', 'external_tool')
                        AND evidence.source_type = 'web'
                        AND evidence.retired_at IS NULL
                        AND evidence.url LIKE 'https://%'

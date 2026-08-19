@@ -209,6 +209,7 @@ fn install_headless_contract_mcp(state: &AppState) {
                 "-File".to_string(),
                 fixture,
                 "search-only".to_string(),
+                "2".to_string(),
             ],
         )
     } else {
@@ -216,7 +217,10 @@ fn install_headless_contract_mcp(state: &AppState) {
             "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
             env!("CARGO_MANIFEST_DIR")
         );
-        ("/bin/sh", vec![fixture, "search-only".to_string()])
+        (
+            "/bin/sh",
+            vec![fixture, "search-only".to_string(), "2".to_string()],
+        )
     };
     upsert_web_evidence_provider(
         &state.db,
@@ -865,6 +869,56 @@ async fn production_runtime_time_uses_frozen_surface_and_recovers() {
         })
         .expect("tool audit query");
     assert_eq!(runtime_tool_audit, 1, "system_time_now must be dispatched");
+}
+
+#[tokio::test]
+async fn news_web_fallback_produces_validated_record_from_headless_mcp() {
+    use crate::ai_runtime::fresh_domains::service::{FreshDomainRequest, FreshDomainService};
+    use crate::ai_runtime::mcp_external_tools::DomainOperation;
+    use crate::ai_runtime::retrieval_scope::RetrievalScope;
+    use crate::ai_runtime::tool_dispatch::ToolDispatchContext;
+
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let db = &state.db;
+    let retrieval_scope = RetrievalScope::default();
+    let available_tool_names: Vec<String> = vec!["news_lookup".into()];
+    let cold_start_packets: Vec<crate::ai_runtime::ContextPacket> = Vec::new();
+    let runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot> = Vec::new();
+    let ctx = ToolDispatchContext {
+        db: Some(db),
+        selected_web_provider_id: None,
+        note_path: None,
+        file_id: None,
+        run_id: None,
+        write_target_path: None,
+        document_policy: None,
+        web_search_enabled: true,
+        fresh_fact_policy: None,
+        available_tool_names: &available_tool_names,
+        max_web_fetches: 2,
+        cold_start_packets: &cold_start_packets,
+        retrieval_scope: &retrieval_scope,
+        runtime_documents: &runtime_documents,
+        app_handle: None,
+        attachment_count: 0,
+        skill_activation_plan: None,
+    };
+    let request = FreshDomainRequest {
+        tool_name: "news_lookup".into(),
+        operation: DomainOperation::NewsSearch,
+        args: serde_json::json!({ "operation": "news.search", "topic": "synthetic", "limit": 5 }),
+        requested_at: chrono::DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
+            .expect("fixed time")
+            .with_timezone(&chrono::Utc),
+        location_gap: None,
+    };
+    let records = FreshDomainService
+        .execute(request, &ctx)
+        .await
+        .expect("news web fallback must produce validated records from the headless MCP");
+    assert!(!records.is_empty(), "news fallback must not be empty");
 }
 
 #[tokio::test]

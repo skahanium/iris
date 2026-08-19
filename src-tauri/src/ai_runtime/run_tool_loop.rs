@@ -989,6 +989,8 @@ impl<'a> NormalRunToolExecutor<'a> {
         if !result.success {
             return Ok(());
         }
+        let mut domain_evidence_ids = Vec::new();
+        let mut domain_names = Vec::new();
         let evidence_inputs = match tool_name {
             "read_note" => vec![self.read_note_evidence_input(run_id, args, result)?],
             "search_hybrid" | "search_semantic" | "search_keyword" => result
@@ -1015,6 +1017,34 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .and_then(local_evidence_input_from_packet)
                 .map(|packet| vec![local_packet_evidence_input(run_id, self.context, packet)])
                 .unwrap_or_default(),
+            "weather_lookup"
+            | "news_lookup"
+            | "finance_lookup"
+            | "entertainment_lookup"
+            | "sports_lookup" => {
+                for record in result.output.as_array().into_iter().flatten() {
+                    if let Some(origin) = record.get("origin") {
+                        if let Some(evidence_id) = origin
+                            .get("evidence_id")
+                            .and_then(serde_json::Value::as_i64)
+                        {
+                            domain_evidence_ids.push(evidence_id);
+                        }
+                        if let Some(url) =
+                            origin.get("sourceUrl").and_then(serde_json::Value::as_str)
+                        {
+                            if let Some(domain) =
+                                crate::ai_runtime::web_evidence_broker::domain_from_url(url)
+                            {
+                                if !domain.trim().is_empty() {
+                                    domain_names.push(domain.to_ascii_lowercase());
+                                }
+                            }
+                        }
+                    }
+                }
+                Vec::new()
+            }
             _ => return Ok(()),
         };
         for input in evidence_inputs {
@@ -1023,6 +1053,20 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
                 .push(registered.evidence_id);
+        }
+        self.local_evidence_ids
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
+            .extend(domain_evidence_ids.iter().copied());
+        if !domain_evidence_ids.is_empty() {
+            let mut web_state = self
+                .run_web_evidence
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
+            web_state
+                .evidence_ids
+                .extend(domain_evidence_ids.iter().copied());
+            web_state.domains.extend(domain_names);
         }
         Ok(())
     }

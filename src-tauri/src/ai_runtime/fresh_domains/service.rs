@@ -263,17 +263,48 @@ impl FreshDomainService {
             },
         )
         .await?;
+        let evidence_owner = if let Some(run_id) = context.run_id {
+            let (session_id, message_seq_first) =
+                AgentRunRepository::evidence_owner_for_run(db, run_id)?
+                    .ok_or_else(|| AppError::msg("agent_run_evidence_owner_missing"))?;
+            Some((run_id.to_string(), session_id, message_seq_first))
+        } else {
+            None
+        };
         let mut records = Vec::new();
         for item in output
             .items
             .iter()
             .filter(|item| item.failure_reason.is_none())
         {
-            if let Some(record) =
+            if let Some(mut record) =
                 record_from_web_item(request.operation, item, request.requested_at)
             {
                 if validate_domain_record(request.operation, request.requested_at, &record).is_ok()
                 {
+                    if let Some((run_id, session_id, message_seq_first)) = evidence_owner.as_ref() {
+                        let bounded_excerpt = serde_json::to_string(&record)
+                            .map_err(AppError::from)?
+                            .chars()
+                            .take(2_000)
+                            .collect::<String>();
+                        let registered = AgentEvidenceRepository::register_external_tool(
+                            db,
+                            ExternalToolEvidenceInput {
+                                session_id: *session_id,
+                                run_id: run_id.clone(),
+                                message_seq_first: *message_seq_first,
+                                title: item.title.clone(),
+                                provider_id: item.provider_id.clone(),
+                                provider_config_hash: "web-fallback".to_string(),
+                                binding_id: "web-fallback".to_string(),
+                                raw_result_hash: item.raw_result_hash.clone(),
+                                retrieved_at: request.requested_at.to_rfc3339(),
+                                bounded_excerpt,
+                            },
+                        )?;
+                        set_record_evidence_id(&mut record, registered.evidence_id);
+                    }
                     records.push(record);
                 }
             }
