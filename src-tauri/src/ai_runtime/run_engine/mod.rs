@@ -957,7 +957,33 @@ impl RunEngine {
                         );
                     }
                 };
-            let outcome = if let Some(submission) = outcome.final_submission.as_ref() {
+            let host_submission = if outcome.final_submission.is_none() && finalization_required {
+                AgentRunRepository::fresh_fact_policy_for_run(db, run_id)?
+                    .filter(|policy| {
+                        matches!(
+                            policy.domain,
+                            crate::ai_runtime::run_contract::FreshFactDomain::Weather
+                                | crate::ai_runtime::run_contract::FreshFactDomain::News
+                                | crate::ai_runtime::run_contract::FreshFactDomain::Finance
+                                | crate::ai_runtime::run_contract::FreshFactDomain::Entertainment
+                                | crate::ai_runtime::run_contract::FreshFactDomain::Sports
+                        )
+                    })
+                    .map(|policy| {
+                        crate::ai_runtime::fresh_domains::host_renderer::render_current_run_submission(
+                            db, run_id, &policy,
+                        )
+                    })
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
+            let submission = outcome
+                .final_submission
+                .as_ref()
+                .or(host_submission.as_ref());
+            let outcome = if let Some(submission) = submission {
                 let provenance =
                     match validated_current_run_final_submission(db, run_id, submission, true) {
                         Ok(provenance) => provenance,

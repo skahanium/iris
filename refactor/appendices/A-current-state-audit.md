@@ -26,7 +26,7 @@
 | EVID-002  | P0     | Resolved   | UI 对 fallback 及缺失/未知 binding 明确显示“本次检索来源组/不表示已逐段核验”；精确 binding 仍走精确样式                                        | 保留来源组 fail-safe 测试                               |
 | EVID-003  | P1     | Deferred   | 当前没有已注册的结构化业务校验规则；无规则时 fail-closed，通用自由文本语义校验不进入本轮                                                       | 引入真实结构化工具时再注册字段/单位/来源/时效规则       |
 | EVID-004  | P2     | Resolved   | `list_current_run_web_citation_links` 只返回当前 Run、未 retired、HTTPS 可定位证据；foreign/retired 均被排除                                   | 保留 foreign/retired 负例测试                           |
-| EVID-005  | P0     | Partial    | 终局 validator 已存在，但尚未证明所有当前事实生产路径都进入结构化终局；来源组/自由文本门仍需接入真实 ToolLoop | 计划 04 接通 `submit_domain_answer` 和 production finalization |
+| EVID-005  | P0     | Partial    | 当前事实终局已接入真实 ToolLoop，并支持 Host 从 DTO 固定渲染；完整 operation 矩阵仍待扩展 | 计划 04 扩展 11-operation production matrix |
 | CAP-001   | P1     | Partial    | DTO、工具目录、mapping 和部分验证已落地；Provider 输出仍携带预分配 evidence ID，结构化服务尚可能回退 Web，生产证据登记未闭环 | 计划 04 分离证据身份、冻结候选、failover 并覆盖 11 个 operation |
 | SEC-001   | P0     | Resolved   | harness 工具已使用独立 `harness.*` 权限原子，不再继承 `vault.search`                                                                           | 保留权限映射拒绝型测试                                  |
 | SEC-002   | P0     | Resolved   | 本地检索内容通过 `record_web_query_taint_witness` 与 Web 查询门禁阻止进入查询/URL/日志；已有端到端隐私负例                                     | 保留 taint/隐私负例回归测试                             |
@@ -42,7 +42,7 @@
 | EVAL-002  | P1     | Partial    | 已有固定场景夹具，但当前结果仍可能走旧链路；必须由正式 intake 和结构化/Web 终局共同证明                                            | 计划 04 重新接线并以生产路径结果更新 |
 | INPUT-001 | P1     | Partial   | 已有 `AwaitingInput`、Input 事件、同一 Run 恢复和面板输入；仍需生产路径回归与断线恢复证据                                                   | 补齐 production Run、恢复和 UI contract 测试 |
 | WEB-002   | P0     | Partial   | 首次搜索计入预算、补搜必须携带 gap、重复查询拒绝；resume state 已持久化，真实 Provider 尝试计量仍未闭环                                               | 补齐 provider attempt 与 winner 测试 |
-| CAP-002   | P0     | Partial   | 结构化 Provider 已 fail-closed、冻结备用路由并登记真实 evidence ID；Host 固定模板终局仍未替代模型 Markdown                                      | 增加 11 operation 生产夹具与 Host 渲染门禁 |
+| CAP-002   | P0     | Partial   | 结构化 Provider 已 fail-closed、冻结备用路由、登记真实 evidence ID，并支持 Host 固定模板终局；11 operation 生产夹具仍待扩展                                      | 增加 11 operation 生产夹具 |
 | EVID-006  | P0     | Partial   | Provider 映射结果不再作为 Iris evidence ID，成功结果会登记 ledger；仍需验证 Provider 伪造字段和终局绑定                                      | 增加证据身份哨兵与终局回归 |
 | MEM-003   | —      | Stale      | “完全没有记忆基础设施”不准确：会话摘要和 `ai_memories` 均已存在                                                                                | 只补最小安全语义，不重建记忆中心                        |
 
@@ -81,5 +81,5 @@
 ## 当前核心缺陷待收口边界
 
 - `ROUTE-003`、`WEB-001`、`EVID-005`、`EVAL-002` 仍为 Partial：已有生产接线或定向门禁，但尚未完成端到端领域矩阵和恢复持久化证据。
-- `CAP-001`、`CAP-002`、`EVID-006` 仍为 Partial：结构化 Provider 已 fail-closed 并登记真实 evidence ID，但 Host 固定模板终局和全部 operation 生产夹具尚未完成。
+- `CAP-001`、`CAP-002`、`EVID-006` 仍为 Partial：核心结构化 Provider、真实 evidence ID 和 Host 固定模板已完成，全部 operation 生产夹具尚未完成。
 - 附录 D 和施工计划描述的是目标契约；`ARCHITECTURE.md` 已同步当前领域只读能力实现事实。

@@ -31,13 +31,13 @@
 - `ToolSurfacePlan` 只暴露当前 operation；Web 关闭时所有外部工具不可达。
 - 修复 `normal_run_service` 中构建研究计划时丢失确认地点的问题。
 
-### 3. 结构化记录、Provider 与证据（部分完成）
+### 3. 结构化记录、Provider 与证据（核心闭环完成）
 
 - 将 Provider 输出 DTO 与数据库 evidence ID 分离；验证成功后由现有 `session_evidence` 生成真实 ID。
 - 每个 operation 在 Run 接受时冻结最多三个有序健康 mapping；无序多 Provider fail-closed。
 - 每个业务调用最多三个 Provider 尝试：有备选时顺序切换；仅单 Provider 时瞬时故障允许一次同 Provider 重试。
 - 结构化 Provider 全部失败时不生成猜测；新闻才允许走 Web fallback，且不伪造 `NewsRecord`。
-- `submit_domain_answer` 及 Host 固定模板渲染仍是未完成项；当前仍使用已有 `submit_final_answer`，并由当前事实 validator 做 fail-closed 校验。
+- Provider DTO 已登记真实 evidence ID；模型未提交终局时，Host 可从已登记 DTO 生成固定模板答案，`submit_final_answer` 仍作为可解释模型终局协议。
 
 ### 4. 统一研究预算（部分完成）
 
@@ -46,7 +46,7 @@
 - 同 MCP 技术重试和冻结备用 MCP 切换不消耗业务轮次；删除 ToolLoop 外层重复 Broker retry。
 - 查询哈希、gap 约束、业务轮次和 winner 已写入 `agent_run_steps.resume_state_json`，并在同一 Run 重建执行器时恢复；当前仍缺少真实 Provider 级 attempt/winner 端到端夹具，不能把“Provider 重试次数”与“业务搜索轮次”混为一谈。
 
-### 5. UI、评测与文档收口（部分完成）
+### 5. UI、评测与文档收口（本轮门禁完成）
 
 - 前端支持当前 Run 的 pending input，隔离旧 Run 的回答和事件。
 - 为全部 11 个 `DomainOperation`、缺 Provider、陈旧数据、备用 Provider、补充搜索、恢复和诊断安全增加生产路径测试。

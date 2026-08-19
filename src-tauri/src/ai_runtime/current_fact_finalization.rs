@@ -58,11 +58,9 @@ pub(crate) fn validate_current_fact_submission(
         })
         .collect::<Vec<_>>();
 
-    let mut supported_entities = Vec::new();
     let mut has_fallback_only = true;
     for registered in evidence {
         let reference = &registered.reference;
-        supported_entities.push(reference.title.as_deref().unwrap_or("").to_string());
         if !is_source_group_fallback_evidence(reference) {
             has_fallback_only = false;
         }
@@ -72,8 +70,6 @@ pub(crate) fn validate_current_fact_submission(
         return Err(CurrentFactFinalizationError::UnsupportedClaim);
     }
 
-    let visible_content = submission.visible_content();
-    let supported_text = supported_entities.join("\n").to_lowercase();
     for block in &submission.blocks {
         for source in &block.sources {
             let resolved = evidence_by_reference
@@ -90,15 +86,6 @@ pub(crate) fn validate_current_fact_submission(
         {
             return Err(CurrentFactFinalizationError::UnsupportedClaim);
         }
-    }
-
-    if !supported_text.is_empty()
-        && !supported_entities.iter().any(|entity| {
-            let entity = entity.trim().to_lowercase();
-            !entity.is_empty() && visible_content.to_lowercase().contains(&entity)
-        })
-    {
-        return Err(CurrentFactFinalizationError::InsufficientEvidence);
     }
 
     Ok(())
