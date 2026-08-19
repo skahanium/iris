@@ -1,6 +1,6 @@
 # 时效分类、有界研究与证据化收口 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 让本机日期不误联网，让当前外部事实在首批证据不足时可以有界继续研究，并阻止来源组存在但事实无支持的自由文本完成。
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust、SQLite 现有 schema、Tauri 2、现有 LLM tool loop/WebEvidenceBroker、Vitest 仅用于用户可见错误投影。
 
-**Status:** Planned；对应 `ROUTE-003`、`WEB-001`、`EVID-005`、`EVAL-002`。测试通过并更新附录 A、B 前，不得写入 `ARCHITECTURE.md` 作为已实现事实。
+**Status:** Completed；对应 `ROUTE-003`、`WEB-001`、`EVID-005`、`EVAL-002`。测试已通过并更新附录 A、B；未写入 `ARCHITECTURE.md` 作为已实现事实。
 
 **Dependencies:** 后端实现不依赖计划 01 的代码，但 PR 顺序应先完成跨 Run 投影隔离，避免评测期间混淆回答内容所有权。
 
@@ -74,7 +74,7 @@ pub(crate) struct FreshFactPolicy {
 
 `ExecutionEnvelope` 增加 `#[serde(default)] pub(crate) fresh_fact: FreshFactPolicy`。`Default` 必须产生 `schema_version=1`、domain none、无窗口和无地点要求。
 
-- [ ] **Step 1: 写历史 JSON 兼容测试**
+- [x] **Step 1: 写历史 JSON 兼容测试**
 
 构造不含 `freshFact` 的旧 envelope JSON，反序列化后断言：
 
@@ -83,7 +83,7 @@ assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::None);
 assert_eq!(envelope.fresh_fact.schema_version, 1);
 ```
 
-- [ ] **Step 2: 写领域分类表驱动测试**
+- [x] **Step 2: 写领域分类表驱动测试**
 
 在新模块中先锁定接口：
 
@@ -108,7 +108,7 @@ pub(crate) fn classify_fresh_fact(
 
 并断言新闻默认 72 小时、影视为过去 30 天至未来 60 天、体育为当天至未来 7 天、天气为当天至未来 7 天。时间由测试固定为 `2026-08-18T08:00:00Z`，不得读取真实当前日期。
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml fresh_fact_classifier -- --nocapture
@@ -117,11 +117,11 @@ cargo test --manifest-path src-tauri/Cargo.toml old_execution_envelope_defaults_
 
 Expected: FAIL，因为类型和模块尚不存在。
 
-- [ ] **Step 4: 实现最小确定性分类器**
+- [x] **Step 4: 实现最小确定性分类器**
 
 实现对象词与时效词组合，不引入模型调用。runtime 必须覆盖中文“今天/现在/当前 + 几月几日/几号/星期/几点/日期/时间”和等价英文。只出现“电影”但明确询问历史影评时不进入 current entertainment；“近期/上映/院线/流媒体/现在能看”才进入当前影视。
 
-- [ ] **Step 5: 运行测试并提交契约**
+- [x] **Step 5: 运行测试并提交契约**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml fresh_fact_classifier -- --nocapture
@@ -145,7 +145,7 @@ Expected: tests PASS，commit 成功。
 - Consumes: Task 1 的 `classify_fresh_fact`。
 - Produces: 每个 accepted envelope 的 `fresh_fact`；runtime 请求得到 `WebDecisionReason::TrustedRuntimeFact`、`Freshness::Offline`。
 
-- [ ] **Step 1: 写截图问题失败测试**
+- [x] **Step 1: 写截图问题失败测试**
 
 新增：
 
@@ -160,11 +160,11 @@ async fn today_date_question_uses_trusted_runtime_without_web() {
 }
 ```
 
-- [ ] **Step 2: 写 Web 关闭负例**
+- [x] **Step 2: 写 Web 关闭负例**
 
 天气/新闻/影视/金融/体育在 Web 关闭时仍分类为对应 domain，但 envelope 不获得 Web capability，且 verification 不能被误标为已经满足。
 
-- [ ] **Step 3: 运行 intake 目标测试确认失败**
+- [x] **Step 3: 运行 intake 目标测试确认失败**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml today_date_question_uses_trusted_runtime_without_web -- --nocapture
@@ -172,11 +172,11 @@ cargo test --manifest-path src-tauri/Cargo.toml today_date_question_uses_trusted
 
 Expected: FAIL，当前会进入 WebRequired。
 
-- [ ] **Step 4: 在 ExclusionClassifier 前后接入同一分类结果**
+- [x] **Step 4: 在 ExclusionClassifier 前后接入同一分类结果**
 
 一次调用 `classify_fresh_fact`，把结果写入 envelope；`is_trusted_runtime_request` 改为消费 domain runtime，而不是维护第二套短语列表。`classify_time_sensitivity` 若保留，只从 fresh domain 投影 `Current/None`，不能继续独立扫描消息。
 
-- [ ] **Step 5: 运行 intake 与 surface 测试**
+- [x] **Step 5: 运行 intake 与 surface 测试**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml run_intake_tests -- --nocapture
@@ -232,29 +232,29 @@ pub(crate) fn build_fresh_research_plan(
 ) -> AppResult<FreshResearchPlan>;
 ```
 
-- [ ] **Step 1: 写绝对日期与地点测试**
+- [x] **Step 1: 写绝对日期与地点测试**
 
 对 2026-08-18、上海、近期电影断言 query 同时包含 `2026-08-18`、时间窗结束日期、上海和院线/流媒体语义；不得包含历史助手回答或自动本地材料。
 
-- [ ] **Step 2: 写预算与去重测试**
+- [x] **Step 2: 写预算与去重测试**
 
 单一事实断言 `2/3/1`，推荐断言 `3/5/1`。同一 normalized query + 同一 gap 第二次提交必须返回 `fresh_research_duplicate_query`。
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml fresh_research_plan -- --nocapture
 ```
 
-- [ ] **Step 4: 实现纯查询规划**
+- [x] **Step 4: 实现纯查询规划**
 
 查询构造只消费列出的显式输入。地点缺失且 `LocationRequirement::City` 时返回 `agent_run_location_required`；不访问 IP、Vault 或 provider 配置。
 
-- [ ] **Step 5: 用 planner 替换原始 `required_web_query` 的当前事实分支**
+- [x] **Step 5: 用 planner 替换原始 `required_web_query` 的当前事实分支**
 
 非当前事实继续使用既有安全 query 逻辑；current fact 使用 `FreshResearchPlan.initial_query`。保留显式授权材料的 taint/sanitization 门禁。
 
-- [ ] **Step 6: 运行相关测试并提交**
+- [x] **Step 6: 运行相关测试并提交**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml fresh_research_plan -- --nocapture
@@ -280,15 +280,15 @@ Expected: PASS。
 - Consumes: `FreshResearchPlan`、现有 `NormalRunToolExecutor`、WebEvidenceBroker。
 - Produces: current ToolLoop 不因一次预取自动隐藏 `web_search`；每次后续搜索携带一个未解决 `EvidenceGap` 并扣减 frozen budget。
 
-- [ ] **Step 1: 写首批不足后继续搜索测试**
+- [x] **Step 1: 写首批不足后继续搜索测试**
 
 模型夹具顺序：第一次 `web_search` 返回缺地域/日期的影视结果；模型随后以 `MissingLocation` 发出第二次查询；第二次返回完整证据；第三次搜索必须被预算/完成状态阻止。
 
-- [ ] **Step 2: 写首批充分即停止测试**
+- [x] **Step 2: 写首批充分即停止测试**
 
 第一次返回包含实体、地域、渠道、日期和来源的夹具，断言只调用一次 Web，随后直接进入终局提交。
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml insufficient_first_search_triggers_bounded_refinement -- --nocapture
@@ -297,7 +297,7 @@ cargo test --manifest-path src-tauri/Cargo.toml sufficient_first_search_stops_wi
 
 Expected: 第一项 FAIL，当前只检索一次并隐藏工具。
 
-- [ ] **Step 4: 分离 Direct 充分路径与 ToolLoop 研究路径**
+- [x] **Step 4: 分离 Direct 充分路径与 ToolLoop 研究路径**
 
 - runtime 直接使用可信能力；
 - current Direct 只有在 deterministic sufficiency 已满足时无工具最终化；
@@ -305,7 +305,7 @@ Expected: 第一项 FAIL，当前只检索一次并隐藏工具。
 - planner 只把 `web_search` 放入授权 surface，不绕过 `NormalRunToolExecutor`；
 - 工具循环消费 `ResearchBudget`，达到上限返回稳定不足结果。
 
-- [ ] **Step 5: 运行 Web/surface/loop 测试并提交**
+- [x] **Step 5: 运行 Web/surface/loop 测试并提交**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml insufficient_first_search_triggers_bounded_refinement -- --nocapture
@@ -354,19 +354,19 @@ pub(crate) fn validate_current_fact_submission(
 - `agent_run_fresh_evidence_insufficient`
 - `agent_run_location_required`
 
-- [ ] **Step 1: 写来源组不能完成严格事实测试**
+- [x] **Step 1: 写来源组不能完成严格事实测试**
 
 提交包含电影名和上映日期、但 citation binding 只有 `SourceGroupFallback`，断言 `UnsupportedClaim`。
 
-- [ ] **Step 2: 写不支持工具协议的模型路由测试**
+- [x] **Step 2: 写不支持工具协议的模型路由测试**
 
 current fact + route 无 tools/continuation 能力时，断言返回 `agent_run_grounded_finalization_unavailable`，没有最终 assistant 消息和 Completed。
 
-- [ ] **Step 3: 写证据外实体测试**
+- [x] **Step 3: 写证据外实体测试**
 
 夹具证据只包含电影 A，submission 引入电影 B，断言拒绝；结构化修复一次仍包含 B 后返回 `agent_run_fresh_evidence_insufficient`。
 
-- [ ] **Step 4: 运行测试确认失败**
+- [x] **Step 4: 运行测试确认失败**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml strict_current_fact_rejects_unsupported_free_text -- --nocapture
@@ -374,15 +374,15 @@ cargo test --manifest-path src-tauri/Cargo.toml source_group_fallback_cannot_com
 cargo test --manifest-path src-tauri/Cargo.toml unsupported_finalization_protocol_never_falls_back_to_guessing -- --nocapture
 ```
 
-- [ ] **Step 5: 实现当前事实终局门**
+- [x] **Step 5: 实现当前事实终局门**
 
 移除 current fact 对空 `calibrated_structured_finalization_enabled` 白名单的依赖。current fact 必须暴露内部 `submit_final_answer`；验证实体、数字和日期可在所引用 evidence 中精确或规范化定位。普通非 current free text 继续现有 uncalibrated 路径。
 
-- [ ] **Step 6: 同步前端错误联合类型和文案**
+- [x] **Step 6: 同步前端错误联合类型和文案**
 
 在 `AssistantRunErrorCode` 增加三个稳定码；UI 映射：需要地点直接询问、证据不足明确不猜测、协议不可用建议更换支持 Agent 工具的模型。
 
-- [ ] **Step 7: 运行测试并提交**
+- [x] **Step 7: 运行测试并提交**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml current_fact -- --nocapture
@@ -408,11 +408,11 @@ Expected: PASS。
 - Consumes: Tasks 1–5。
 - Produces: 固定日期/近期电影/追问复现场景；ROUTE-003、WEB-001、EVID-005、EVAL-002 的真实证据。
 
-- [ ] **Step 1: 增加固定多轮 eval**
+- [x] **Step 1: 增加固定多轮 eval**
 
 夹具时间固定 2026-08-18，证据只允许两部带上海院线/日期的电影，并额外放入一个无日期旧电影诱饵。断言回答只引用允许实体，且工具使用后不包含“没有联网/抓取能力”。
 
-- [ ] **Step 2: 运行新增场景**
+- [x] **Step 2: 运行新增场景**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml current_fact_movie_follow_up_scenario -- --nocapture
@@ -421,7 +421,7 @@ cargo test --manifest-path src-tauri/Cargo.toml agent_does_not_deny_web_after_cu
 
 Expected: PASS。
 
-- [ ] **Step 3: 运行阶段质量门**
+- [x] **Step 3: 运行阶段质量门**
 
 ```bash
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
@@ -435,7 +435,7 @@ npm run typecheck
 
 Expected: 全部 exit 0。
 
-- [ ] **Step 4: 更新追踪表并提交**
+- [x] **Step 4: 更新追踪表并提交**
 
 只有对应测试真实存在且通过后，才把问题从待施工表移到实证表。
 

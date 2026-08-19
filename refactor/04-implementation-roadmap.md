@@ -6,7 +6,7 @@
 | ---- | ------------------- | --------------------------------------------------- |
 | 0–4  | Baseline / Resolved | 附录 A 的 Resolved 事实与附录 B 的既有实证测试      |
 | 5    | Resolved            | `UI-003` 目标测试已移入附录 B 实证表                |
-| 6    | Planned             | `ROUTE-003`、`WEB-001`、`EVID-005` 尚未 Resolved    |
+| 6    | Resolved            | `ROUTE-003`、`WEB-001`、`EVID-005` 已移入附录 B 实证表 |
 | 7    | Planned             | 只在阶段 5–6 有真实证据后收口 `EVAL-002` 与事实文档 |
 | 8    | Planned             | 核心缺陷收口后再施工 `CAP-001`，独立验收领域增强    |
 
@@ -60,7 +60,7 @@
 
 施工计划：[`plans/01-turn-projection-isolation.md`](plans/01-turn-projection-isolation.md)。
 
-## 阶段 6：时效分类与有界联网研究
+## 阶段 6：时效分类与有界联网研究（已交付）
 
 目标：先纠正通用路径，使没有专用领域服务商时也不会因为单次搜索和自由文本生成而猜测。
 
