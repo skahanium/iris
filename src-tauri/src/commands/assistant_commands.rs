@@ -443,7 +443,7 @@ pub async fn assistant_run_retry(
 
 /// Apply one explicit control action to an isolated Agent Run.
 #[tauri::command]
-pub async fn assistant_run_control<R: tauri::Runtime>(
+pub async fn assistant_run_control<R: AssistantRunRuntime>(
     state: State<'_, Arc<AppState>>,
     app_handle: AppHandle<R>,
     request: AssistantRunControlRequest,
@@ -451,7 +451,7 @@ pub async fn assistant_run_control<R: tauri::Runtime>(
     assistant_run_control_inner(Arc::clone(&state), app_handle, request).await
 }
 
-async fn assistant_run_control_inner<R: tauri::Runtime>(
+async fn assistant_run_control_inner<R: AssistantRunRuntime>(
     state: Arc<AppState>,
     app_handle: AppHandle<R>,
     request: AssistantRunControlRequest,
@@ -487,6 +487,29 @@ async fn assistant_run_control_inner<R: tauri::Runtime>(
                     session,
                     run_id,
                     confirmation_id,
+                    state.vault_path().ok(),
+                ),
+                (
+                    NormalRunControlOutcome::InputProvided,
+                    crate::ai_runtime::run_contract::RunControlAction::SubmitInput { .. },
+                ) => spawn_normal_direct_run(
+                    Arc::clone(&state),
+                    app_handle,
+                    crate::ai_runtime::run_contract::AssistantRunAccepted {
+                        client_request_id: String::new(),
+                        run_id: run_id.clone(),
+                        turn_id: crate::ai_runtime::run_intake::RunIntake::get(
+                            &state.db,
+                            &session,
+                            &run_id,
+                        )?
+                        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
+                        .run
+                        .turn_id,
+                        session: session.clone(),
+                        state: crate::ai_runtime::run_contract::RunState::AwaitingInput,
+                        state_version: 0,
+                    },
                     state.vault_path().ok(),
                 ),
                 _ => {}

@@ -361,15 +361,16 @@ impl ClassifiedEphemeralStore {
             return Ok(None);
         };
         Ok(Some(AssistantRunGetResponse {
-            run: AssistantRunSnapshot {
+                run: AssistantRunSnapshot {
                 run_id: run_id.to_string(),
                 turn_id: run.turn_id.clone(),
                 session: run.session.clone(),
                 state: run.state,
                 state_version: run.state_version,
                 final_message_id: None,
-                pending_confirmation: None,
-                recovery: None,
+                    pending_confirmation: None,
+                    pending_input: None,
+                    recovery: None,
             },
             events: run.events.clone(),
         }))

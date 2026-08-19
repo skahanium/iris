@@ -105,6 +105,18 @@ fn state_machine_allows_direct_completion_and_confirmation_resume() {
 }
 
 #[test]
+fn state_machine_allows_missing_input_pause_and_same_run_resume() {
+    assert_eq!(
+        transition_to(RunState::Running, RunState::AwaitingInput),
+        Ok(RunState::AwaitingInput)
+    );
+    assert_eq!(
+        transition_to(RunState::AwaitingInput, RunState::Running),
+        Ok(RunState::Running)
+    );
+}
+
+#[test]
 fn illegal_state_transitions_return_a_stable_error() {
     assert_eq!(
         transition_to(RunState::Accepted, RunState::Completed),

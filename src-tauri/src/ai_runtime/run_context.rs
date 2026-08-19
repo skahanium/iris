@@ -553,6 +553,12 @@ impl RunContextAssembler {
         let envelope = AgentRunRepository::policy_request_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
             .envelope;
+        let input_values = AgentRunRepository::latest_input_values(db, session_key, run_id)?;
+        let user_message = input_values
+            .get("city")
+            .filter(|city| !city.trim().is_empty())
+            .map(|city| format!("{}\n\n[本轮已确认查询城市：{}]", input.user_message, city))
+            .unwrap_or_else(|| input.user_message.clone());
         let write_target_path = explicit_apply_target_path(&input, &envelope)?;
         let document_policy =
             crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?;
@@ -743,7 +749,7 @@ impl RunContextAssembler {
         Ok(RunContext {
             session_id: input.session_id,
             message_seq_first: input.message_seq_first,
-            user_message: input.user_message,
+            user_message,
             content_parts: input.content_parts,
             envelope,
             write_target_path,

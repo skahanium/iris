@@ -679,6 +679,7 @@ pub(crate) fn classified_run_get(
                 .final_message_seq
                 .map(|seq| classified_final_message_id(&run.run_id, seq)),
             pending_confirmation: None,
+            pending_input: None,
             recovery: None,
         },
         events,

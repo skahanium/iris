@@ -1579,7 +1579,7 @@ impl AgentRunRepository {
                 "SELECT r.run_id FROM agent_runs r
                  JOIN sessions s ON s.id = r.session_id
                  WHERE s.session_key = ?1
-                   AND r.status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'paused', 'verifying')
+                   AND r.status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'awaiting_input', 'paused', 'verifying')
                  ORDER BY r.updated_at DESC, r.created_at DESC LIMIT 1",
                 [session_key],
                 |row| row.get::<_, String>(0),
@@ -1754,6 +1754,7 @@ impl AgentRunRepository {
                     state_version,
                     final_message_id: final_message_id.map(|id| id.to_string()),
                     pending_confirmation,
+                    pending_input: pending_input_summary(&events),
                     recovery,
                 },
                 events,
@@ -1943,6 +1944,37 @@ impl AgentRunRepository {
                     .transpose()
                     .map_err(|_| AppError::msg("agent_run_invalid_prompt_profile_snapshot"))?,
             }))
+        })
+    }
+
+    /// Return the latest validated user input supplied to one Run.
+    pub(crate) fn latest_input_values(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+    ) -> AppResult<std::collections::BTreeMap<String, String>> {
+        db.with_read_conn(|conn| {
+            let payload_json = conn
+                .query_row(
+                    "SELECT e.payload_json
+                     FROM agent_run_events e
+                     JOIN agent_runs r ON r.run_id = e.run_id
+                     JOIN sessions s ON s.id = r.session_id
+                     WHERE e.run_id = ?1 AND s.session_key = ?2
+                       AND e.event_type = 'input_provided'
+                     ORDER BY e.event_seq DESC LIMIT 1",
+                    rusqlite::params![run_id, session_key],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let Some(payload_json) = payload_json else {
+                return Ok(std::collections::BTreeMap::new());
+            };
+            let payload: RunEventPayload = serde_json::from_str(&payload_json)?;
+            match payload {
+                RunEventPayload::InputProvided { values, .. } => Ok(values),
+                _ => Ok(std::collections::BTreeMap::new()),
+            }
         })
     }
     /// Read the immutable execution budget only when the normal-domain session matches.
@@ -2158,7 +2190,7 @@ fn ensure_no_active_top_level_run(conn: &Connection, session_id: i64) -> AppResu
     let active_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM agent_runs
          WHERE session_id = ?1
-           AND status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'paused', 'verifying')",
+           AND status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'awaiting_input', 'paused', 'verifying')",
         [session_id],
         |row| row.get(0),
     )?;
@@ -2416,6 +2448,33 @@ fn safe_body_summary(body: &str) -> String {
 }
 
 fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
+    if let RunEventPayload::InputRequired {
+        input_id,
+        input_kind,
+        fields,
+        prompt,
+    } = payload
+    {
+        if input_id.trim().is_empty()
+            || input_id.chars().count() > 160
+            || input_kind != "location"
+            || fields != &["city".to_string()]
+            || prompt.trim().is_empty()
+            || prompt.chars().count() > 256
+        {
+            return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+        }
+    }
+    if let RunEventPayload::InputProvided { input_id, values } = payload {
+        if input_id.trim().is_empty()
+            || values.len() != 1
+            || values.get("city").is_none_or(|city| {
+                city.trim().is_empty() || city.chars().count() > 128 || city.chars().any(char::is_control)
+            })
+        {
+            return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+        }
+    }
     if let RunEventPayload::ReasoningSummary { summary_id, text } = payload {
         if summary_id.trim().is_empty()
             || summary_id.chars().count() > 160
@@ -2520,6 +2579,8 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
     match payload {
         RunEventPayload::StageChanged { state, .. } => Some(*state),
         RunEventPayload::ConfirmationRequired { .. } => Some(RunState::AwaitingConfirmation),
+        RunEventPayload::InputRequired { .. } => Some(RunState::AwaitingInput),
+        RunEventPayload::InputProvided { .. } => Some(RunState::Running),
         RunEventPayload::Paused { .. } => Some(RunState::Paused),
         RunEventPayload::Resumed { .. } => Some(RunState::Running),
         RunEventPayload::Completed { .. } => Some(RunState::Completed),
@@ -2536,6 +2597,36 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
         | RunEventPayload::ProviderSwitched { .. }
         | RunEventPayload::EvidenceRegistered { .. } => None,
     }
+}
+
+fn pending_input_summary(
+    events: &[crate::ai_runtime::run_contract::AssistantRunEvent],
+) -> Option<crate::ai_runtime::run_contract::PendingRunInput> {
+    let mut pending = None;
+    for event in events {
+        match event.payload() {
+            RunEventPayload::InputRequired {
+                input_id,
+                input_kind,
+                fields,
+                prompt,
+            } => {
+                pending = Some(crate::ai_runtime::run_contract::PendingRunInput {
+                    input_id: input_id.clone(),
+                    kind: input_kind.clone(),
+                    fields: fields.clone(),
+                    prompt: prompt.clone(),
+                });
+            }
+            RunEventPayload::InputProvided { input_id, .. }
+                if pending.as_ref().is_some_and(|value| value.input_id == *input_id) =>
+            {
+                pending = None;
+            }
+            _ => {}
+        }
+    }
+    pending
 }
 
 fn validate_tool_call_lifecycle(

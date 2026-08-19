@@ -369,6 +369,7 @@ export type RunState =
   | "preparing"
   | "running"
   | "awaiting_confirmation"
+  | "awaiting_input"
   | "paused"
   | "verifying"
   | "completed"
@@ -396,6 +397,8 @@ export type RunEventType =
   | "capability_degraded"
   | "web_verification_failed"
   | "confirmation_required"
+  | "input_required"
+  | "input_provided"
   | "permission_denied"
   | "provider_switched"
   | "evidence_registered"
@@ -465,6 +468,7 @@ export type AssistantRunErrorCode =
   | "agent_run_retry_not_available"
   | "agent_run_idempotency_conflict"
   | "agent_run_active_run_exists"
+  | "agent_run_input_invalid"
   | "agent_run_unknown_tool_call_id"
   | "agent_run_unverified_web_citation"
   | "agent_run_grounded_finalization_unavailable"
@@ -512,6 +516,13 @@ export interface PendingConfirmation {
   targets?: ConfirmationTargetSummary[];
   /** ISO 8601 timestamp, absent on events emitted by pre-maturity backends. */
   expiresAt?: string;
+}
+
+export interface PendingRunInput {
+  inputId: string;
+  kind: "location";
+  fields: Array<"city">;
+  prompt: string;
 }
 
 export interface SubagentBudgetUsage {
@@ -614,6 +625,18 @@ export type AssistantRunEventPayload =
       expiresAt?: PendingConfirmation["expiresAt"];
     }
   | {
+      kind: "input_required";
+      inputId: string;
+      inputKind: PendingRunInput["kind"];
+      fields: PendingRunInput["fields"];
+      prompt: string;
+    }
+  | {
+      kind: "input_provided";
+      inputId: string;
+      values: Record<string, string>;
+    }
+  | {
       kind: "permission_denied";
       code: AssistantRunErrorCode;
       message: string;
@@ -663,7 +686,8 @@ export type RunControlAction =
   | { type: "approve_change"; confirmationId: string; planHash: string }
   | { type: "reject_change"; confirmationId: string }
   | { type: "resume" }
-  | { type: "cancel" };
+  | { type: "cancel" }
+  | { type: "submit_input"; inputId: string; values: Record<string, string> };
 
 export interface AssistantRunControlRequest {
   session: AssistantSessionRef;
@@ -692,6 +716,7 @@ export interface AssistantRunSnapshot {
   stateVersion: number;
   finalMessageId?: string | null;
   pendingConfirmation?: PendingConfirmation | null;
+  pendingInput?: PendingRunInput | null;
   recovery?: RunRecoveryKind | null;
 }
 

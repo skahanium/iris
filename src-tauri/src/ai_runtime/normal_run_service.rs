@@ -14,10 +14,12 @@ use tauri::AppHandle;
 use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
 use crate::ai_runtime::fresh_research_plan::build_fresh_research_plan;
+use crate::ai_runtime::fresh_research_plan::explicit_city_from_message;
 use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, CapabilityId, Effort, FreshFactDomain, Freshness, Modality,
-    RunBudgetPolicy, SafeRunErrorCode, VerificationRequirement, WebEvidenceFailureReason,
+    RunBudgetPolicy, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
+    VerificationRequirement, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingProvider, RunEngine, RunEventSink, WebVerificationFailure,
@@ -103,7 +105,13 @@ async fn execute_normal_run_internal(
     telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
 ) {
     let db = Arc::clone(&state.db);
-    if RunEngine::mark_preparing_with_sink(&db, &accepted.session, &accepted.run_id, sink).is_err()
+    let current_state = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .ok()
+        .flatten()
+        .map(|response| response.run.state);
+    if !matches!(current_state, Some(RunState::Running))
+        && RunEngine::mark_preparing_with_sink(&db, &accepted.session, &accepted.run_id, sink)
+            .is_err()
     {
         return;
     }
@@ -183,6 +191,50 @@ async fn execute_normal_run_internal(
             return;
         }
     };
+    if requires_user_input(&context) {
+        let snapshot = match RunIntake::get(&db, &accepted.session, &accepted.run_id) {
+            Ok(Some(snapshot)) => snapshot,
+            _ => return,
+        };
+        if snapshot.run.state == RunState::Preparing {
+            let running = match AgentRunRepository::append_event(
+                &db,
+                crate::ai_runtime::agent_run_repository::AppendRunEventInput {
+                    run_id: accepted.run_id.clone(),
+                    state_version: snapshot.run.state_version,
+                    event_type: RunEventType::StageChanged,
+                    payload: RunEventPayload::StageChanged {
+                        state: RunState::Running,
+                        stage: "正在等待补充信息".into(),
+                        stage_code: Some(crate::ai_runtime::run_contract::RunStageCode::Preparing),
+                    },
+                },
+            ) {
+                Ok(event) => event,
+                Err(_) => return,
+            };
+            let input = match AgentRunRepository::append_event(
+                &db,
+                crate::ai_runtime::agent_run_repository::AppendRunEventInput {
+                    run_id: accepted.run_id.clone(),
+                    state_version: running.state_version(),
+                    event_type: RunEventType::InputRequired,
+                    payload: RunEventPayload::InputRequired {
+                        input_id: format!("location-{}", accepted.run_id),
+                        input_kind: "location".into(),
+                        fields: vec!["city".into()],
+                        prompt: "请告诉我需要查询的城市".into(),
+                    },
+                },
+            ) {
+                Ok(event) => event,
+                Err(_) => return,
+            };
+            let _ = sink.emit(&running);
+            let _ = sink.emit(&input);
+        }
+        return;
+    }
     let domain_plan = context.domain_plan();
     // Never route an external-fact Run to a direct model answer when Web is
     // unavailable. This is a safety denial, not a degraded offline answer.
@@ -267,6 +319,13 @@ async fn execute_normal_run_internal(
         // covers a provider implementation that exited during cancellation.
         crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
     }
+}
+
+fn requires_user_input(context: &crate::ai_runtime::run_context::RunContext) -> bool {
+    matches!(
+        context.envelope.fresh_fact.location_requirement,
+        crate::ai_runtime::run_contract::LocationRequirement::City
+    ) && explicit_city_from_message(&context.user_message).is_none()
 }
 
 /// Rebuild and evaluate the persisted normal Run policy before Provider routing.

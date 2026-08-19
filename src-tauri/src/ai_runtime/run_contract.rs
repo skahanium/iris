@@ -700,6 +700,9 @@ pub struct AssistantRunSnapshot {
     /// Current confirmation summary, if the Run is waiting for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pending_confirmation: Option<PendingConfirmationSummary>,
+    /// Current deterministic input request, if this Run is waiting for a user value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pending_input: Option<PendingRunInput>,
     /// Safe recovery information, if applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) recovery: Option<RunRecoveryKind>,
@@ -727,6 +730,8 @@ pub(crate) enum RunState {
     Running,
     /// The Run is waiting for a user confirmation.
     AwaitingConfirmation,
+    /// The Run is waiting for a bounded user-provided value before continuing.
+    AwaitingInput,
     /// The Run is durably paused and may later resume.
     Paused,
     /// The Run is validating an output before completion.
@@ -793,6 +798,10 @@ pub(crate) enum RunEventType {
     WebVerificationFailed,
     /// A frozen change plan needs user confirmation.
     ConfirmationRequired,
+    /// A bounded input is required to continue this Run.
+    InputRequired,
+    /// The required input was supplied and this Run may resume.
+    InputProvided,
     /// Policy denied an action.
     PermissionDenied,
     /// The Provider Router selected a permitted fallback candidate.
@@ -940,6 +949,24 @@ pub(crate) enum RunEventPayload {
         /// RFC 3339 expiry of the frozen approval window.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expires_at: Option<String>,
+    },
+    /// A bounded user input request with no raw provider data.
+    InputRequired {
+        /// Stable input request identity.
+        input_id: String,
+        /// Input category, such as `location`.
+        input_kind: String,
+        /// Required bounded field names.
+        fields: Vec<String>,
+        /// Safe prompt shown to the user.
+        prompt: String,
+    },
+    /// Sanitized values supplied for a previously requested input.
+    InputProvided {
+        /// Stable input request identity.
+        input_id: String,
+        /// Bounded, validated values keyed by field name.
+        values: std::collections::BTreeMap<String, String>,
     },
     /// A safe policy denial.
     PermissionDenied {
@@ -1261,10 +1288,31 @@ pub enum RunControlAction {
         /// Stable confirmation identifier.
         confirmation_id: String,
     },
+    /// Provide the bounded value requested by an `InputRequired` event.
+    SubmitInput {
+        /// Stable input request identity.
+        input_id: String,
+        /// Validated values for the requested fields.
+        values: std::collections::BTreeMap<String, String>,
+    },
     /// Resume a valid paused or confirmation-blocked Run.
     Resume,
     /// Cancel an active Run.
     Cancel,
+}
+
+/// A safe, replayable input request exposed while a Run is awaiting user data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingRunInput {
+    /// Stable input request identity.
+    pub(crate) input_id: String,
+    /// Input category.
+    pub(crate) kind: String,
+    /// Required bounded field names.
+    pub(crate) fields: Vec<String>,
+    /// User-facing prompt.
+    pub(crate) prompt: String,
 }
 
 /// Safe, bounded reason for a Web evidence failure. These values never contain provider output,
@@ -1482,6 +1530,9 @@ pub enum SafeRunErrorCode {
     /// A current-fact Run requires an explicit location that is not available.
     #[serde(rename = "agent_run_location_required")]
     LocationRequired,
+    /// A submitted Run input does not match the pending request.
+    #[serde(rename = "agent_run_input_invalid")]
+    InputInvalid,
 }
 
 impl std::fmt::Display for SafeRunErrorCode {
@@ -1572,6 +1623,7 @@ impl SafeRunErrorCode {
             Self::GroundedFinalizationUnavailable => "agent_run_grounded_finalization_unavailable",
             Self::FreshEvidenceInsufficient => "agent_run_fresh_evidence_insufficient",
             Self::LocationRequired => "agent_run_location_required",
+            Self::InputInvalid => "agent_run_input_invalid",
         }
     }
 }
@@ -1588,6 +1640,8 @@ impl RunEventPayload {
             Self::CapabilityDegraded { .. } => RunEventType::CapabilityDegraded,
             Self::WebVerificationFailed { .. } => RunEventType::WebVerificationFailed,
             Self::ConfirmationRequired { .. } => RunEventType::ConfirmationRequired,
+            Self::InputRequired { .. } => RunEventType::InputRequired,
+            Self::InputProvided { .. } => RunEventType::InputProvided,
             Self::PermissionDenied { .. } => RunEventType::PermissionDenied,
             Self::ProviderSwitched { .. } => RunEventType::ProviderSwitched,
             Self::EvidenceRegistered { .. } => RunEventType::EvidenceRegistered,
@@ -1625,8 +1679,9 @@ pub(crate) fn transition_to(
             RunState::Preparing,
             RunState::Running | RunState::Failed | RunState::Cancelled
         ) | (
-            RunState::Running,
+        RunState::Running,
             RunState::AwaitingConfirmation
+                | RunState::AwaitingInput
                 | RunState::Paused
                 | RunState::Verifying
                 | RunState::Completed
@@ -1636,6 +1691,7 @@ pub(crate) fn transition_to(
             RunState::AwaitingConfirmation,
             RunState::Running | RunState::Cancelled
         ) | (RunState::Paused, RunState::Running)
+        | (RunState::AwaitingInput, RunState::Running)
             | (
                 RunState::Verifying,
                 RunState::Paused | RunState::Completed | RunState::Failed | RunState::Cancelled

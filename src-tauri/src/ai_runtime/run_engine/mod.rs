@@ -236,7 +236,7 @@ impl RunEngine {
         if snapshot.run.state.is_terminal()
             || matches!(
                 snapshot.run.state,
-                RunState::AwaitingConfirmation | RunState::Paused
+                RunState::AwaitingConfirmation | RunState::AwaitingInput | RunState::Paused
             )
         {
             return Ok(false);

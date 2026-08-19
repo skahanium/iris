@@ -556,7 +556,8 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::WebEvidenceRequired
         | SafeRunErrorCode::GroundedFinalizationUnavailable
         | SafeRunErrorCode::FreshEvidenceInsufficient
-        | SafeRunErrorCode::LocationRequired => "运行暂时无法完成，请稍后重试",
+        | SafeRunErrorCode::LocationRequired
+        | SafeRunErrorCode::InputInvalid => "运行暂时无法完成，请稍后重试",
     }
 }
 

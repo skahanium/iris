@@ -14,7 +14,7 @@ impl RunEngine {
                  FROM agent_runs r
                  JOIN sessions s ON s.id = r.session_id
                  WHERE r.status IN
-                   ('accepted', 'preparing', 'running', 'verifying', 'awaiting_confirmation')",
+                   ('accepted', 'preparing', 'running', 'verifying', 'awaiting_confirmation', 'awaiting_input')",
             )?;
             let rows = statement
                 .query_map([], |row| {
@@ -37,6 +37,15 @@ impl RunEngine {
             let effort = serde_json::from_value::<Effort>(serde_json::Value::String(effort))?;
             let effect = serde_json::from_value::<Effect>(serde_json::Value::String(effect))?;
             let confirmation = latest_confirmation_for_recovery(db, &run_id)?;
+
+            if state == RunState::AwaitingInput
+                && AgentRunRepository::get_for_session(db, &session_key, &run_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|response| response.run.pending_input.is_some())
+            {
+                continue;
+            }
 
             if state == RunState::AwaitingConfirmation
                 && confirmation

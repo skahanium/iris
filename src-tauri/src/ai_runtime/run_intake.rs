@@ -30,6 +30,7 @@ pub(crate) enum NormalRunControlOutcome {
     ConfirmationApproved,
     ConfirmationRejected,
     RecoveryResumed { confirmation_id: String },
+    InputProvided,
     Noop,
 }
 
@@ -592,6 +593,30 @@ impl RunIntake {
                     }
                 }
             }
+            RunControlAction::SubmitInput { input_id, values } => {
+                if snapshot.run.state == crate::ai_runtime::run_contract::RunState::Running
+                    && snapshot.events.iter().any(|event| {
+                        matches!(
+                            event.payload(),
+                            RunEventPayload::InputProvided { input_id: provided, .. }
+                                if provided == &input_id
+                        )
+                    })
+                {
+                    return Ok((NormalRunControlOutcome::Noop, None));
+                }
+                validate_input_submission(&snapshot, &input_id, &values)?;
+                let event = AgentRunRepository::append_event(
+                    db,
+                    crate::ai_runtime::agent_run_repository::AppendRunEventInput {
+                        run_id: request.run_id.clone(),
+                        state_version: request.expected_state_version,
+                        event_type: RunEventType::InputProvided,
+                        payload: RunEventPayload::InputProvided { input_id, values },
+                    },
+                )?;
+                Ok((NormalRunControlOutcome::InputProvided, Some(event)))
+            }
             RunControlAction::Resume => {
                 let (event, confirmation_id) = AgentRunRepository::resume_durable_apply(
                     db,
@@ -606,6 +631,32 @@ impl RunIntake {
             }
         }
     }
+}
+
+fn validate_input_submission(
+    snapshot: &AssistantRunGetResponse,
+    input_id: &str,
+    values: &std::collections::BTreeMap<String, String>,
+) -> AppResult<()> {
+    if snapshot.run.state != crate::ai_runtime::run_contract::RunState::AwaitingInput
+        || input_id.trim().is_empty()
+        || values.len() != 1
+        || values
+            .get("city")
+            .is_none_or(|city| city.trim().is_empty() || city.chars().count() > 128)
+    {
+        return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+    }
+    let pending = snapshot
+        .run
+        .pending_input
+        .as_ref()
+        .filter(|pending| pending.input_id == input_id && pending.kind == "location")
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InputInvalid))?;
+    if pending.fields != ["city".to_string()] {
+        return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+    }
+    Ok(())
 }
 
 /// Keep ordinary externally verifiable facts on the strict one-search Direct

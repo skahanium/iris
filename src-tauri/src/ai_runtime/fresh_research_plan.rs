@@ -73,6 +73,21 @@ pub(crate) fn build_fresh_research_plan(
     })
 }
 
+/// Extract a conservative explicit city from the current user message.
+///
+/// This is only used to decide whether a Run must ask for missing location
+/// input. It is not a geocoder and never substitutes for user confirmation.
+pub(crate) fn explicit_city_from_message(message: &str) -> Option<String> {
+    const KNOWN_CITIES: &[&str] = &[
+        "北京", "上海", "广州", "深圳", "杭州", "成都", "重庆", "武汉", "西安", "南京",
+        "苏州", "天津", "青岛", "厦门", "香港", "澳门",
+    ];
+    KNOWN_CITIES
+        .iter()
+        .find(|city| message.contains(**city))
+        .map(|city| (*city).to_string())
+}
+
 /// Track already submitted normalized query/gap pairs so the ToolLoop cannot
 /// repeat the same research step without consuming a fresh budget slot.
 #[derive(Debug, Default)]
@@ -283,5 +298,12 @@ mod tests {
             .register("上海 电影 2026-08-18", EvidenceGap::MissingEntity)
             .expect_err("duplicate");
         assert_eq!(error.to_string(), "fresh_research_duplicate_query");
+    }
+
+    #[test]
+    fn explicit_city_is_detected_only_from_conservative_known_names() {
+        assert_eq!(explicit_city_from_message("上海未来一周天气"), Some("上海".into()));
+        assert_eq!(explicit_city_from_message("未来一周天气"), None);
+        assert_eq!(explicit_city_from_message("我的笔记里有上海"), Some("上海".into()));
     }
 }

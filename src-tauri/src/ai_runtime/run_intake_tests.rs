@@ -1394,6 +1394,93 @@ fn minimal_intake_resolves_a_direct_offline_answer_envelope() {
 }
 
 #[test]
+fn input_submission_resumes_the_same_run_and_replay_is_noop() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在查询".into(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("running");
+    let required = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: running.state_version(),
+            event_type: RunEventType::InputRequired,
+            payload: RunEventPayload::InputRequired {
+                input_id: "location-test".into(),
+                input_kind: "location".into(),
+                fields: vec!["city".into()],
+                prompt: "请告诉我城市".into(),
+            },
+        },
+    )
+    .expect("input request");
+    let session = accepted.session.clone();
+    let mut values = std::collections::BTreeMap::new();
+    values.insert("city".into(), "上海".into());
+    let outcome = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: required.state_version(),
+            action: RunControlAction::SubmitInput {
+                input_id: "location-test".into(),
+                values: values.clone(),
+            },
+        },
+        &RecordingSink::default(),
+    )
+    .expect("input submission");
+    assert_eq!(outcome, super::run_intake::NormalRunControlOutcome::InputProvided);
+    let replay = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: required.state_version(),
+            action: RunControlAction::SubmitInput {
+                input_id: "location-test".into(),
+                values,
+            },
+        },
+        &RecordingSink::default(),
+    )
+    .expect("replayed input");
+    assert_eq!(replay, super::run_intake::NormalRunControlOutcome::Noop);
+    let snapshot = RunIntake::get(&db, &session, &accepted.run_id)
+        .expect("snapshot")
+        .expect("run exists");
+    assert_eq!(snapshot.run.state, RunState::Running);
+    assert!(snapshot.run.pending_input.is_none());
+}
+
+#[test]
 fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted run");
