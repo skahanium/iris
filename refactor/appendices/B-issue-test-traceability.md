@@ -34,22 +34,30 @@
 | UI-003   | Resolved | `queued_previous_run_frame_cannot_patch_new_run`                                | 上一 Run 排队 frame/event 不能修改新 Run 行                                               |
 | UI-003   | Resolved | `terminal_recovery_uses_only_its_own_persisted_answer`                          | 终态恢复只使用同 Run 持久化正文                                                           |
 
-| ROUTE-003 | Resolved | `today_date_question_uses_trusted_runtime_without_web`           | “今天是几月几日”直接使用本机 runtime，不生成 Web evidence                  |
-| ROUTE-003 | Resolved | `recent_movie_question_freezes_date_and_location`                | 近期影视请求冻结绝对日期与地点要求                                        |
-| WEB-001   | Resolved | `insufficient_first_search_triggers_bounded_refinement`          | 首批证据不足时按缺口继续搜索且不超预算                                    |
-| WEB-001   | Resolved | `sufficient_first_search_stops_without_extra_tool_turn`          | 简单问题证据充分后立即停止                                                |
-| EVID-005  | Resolved | `strict_current_fact_rejects_unsupported_free_text`              | 当前事实不能用无结构绑定自由文本完成                                      |
-| EVID-005  | Resolved | `source_group_fallback_cannot_complete_strict_current_fact`      | 来源组不能替代当前事实支持                                                |
-| EVID-005  | Resolved | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 模型不支持终局协议时失败关闭                                              |
-| EVAL-002  | Resolved | `current_fact_movie_follow_up_scenario`                          | 日期→近期电影→质疑上映情况多轮场景首次即可靠                              |
-| EVAL-002  | Resolved | `agent_does_not_deny_web_after_current_run_search`               | 已使用 Web 后不声称没有联网/抓取能力                                      |
-| CAP-001   | Resolved | `domain_tool_output_requires_source_and_observed_time`           | 领域 DTO 缺来源或数据时点时拒绝，成功夹具保留 evidence ID/时点/来源        |
+| ROUTE-003 | Partial  | `today_date_question_uses_trusted_runtime_without_web`           | 单测证明 runtime 规则；生产 intake/domain 路由仍待补充 |
+| ROUTE-003 | Partial  | `recent_movie_question_freezes_date_and_location`                | 计划 04 需证明地点真实传入生产研究计划 |
+| WEB-001   | Partial  | `insufficient_first_search_triggers_bounded_refinement`          | 已证明内存 gap 预算；未证明预搜索计数和恢复后预算 |
+| WEB-001   | Partial  | `sufficient_first_search_stops_without_extra_tool_turn`          | 已证明单测提前停止；未证明 provider failover 不扩大轮次 |
+| EVID-005  | Partial  | `strict_current_fact_rejects_unsupported_free_text`              | validator 单测通过；生产终局接线待完成 |
+| EVID-005  | Partial  | `source_group_fallback_cannot_complete_strict_current_fact`      | 来源组不能替代当前事实支持 |
+| EVID-005  | Partial  | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 协议不支持时失败关闭 |
+| EVAL-002  | Partial  | `current_fact_movie_follow_up_scenario`                          | 固定场景存在；需重新接入生产结构化/Web 路径 |
+| EVAL-002  | Partial  | `agent_does_not_deny_web_after_current_run_search`               | 已搜索能力诚实性仍需生产路径复验 |
+| CAP-001   | Partial  | `domain_tool_output_requires_source_and_observed_time`            | DTO 单测保留；需改为真实 evidence ledger 证据 |
 | CAP-001   | Resolved | `weather_without_confirmed_city_requests_location`               | 天气缺城市时询问，不推断位置                                              |
 | CAP-001   | Resolved | `location_scope_widens_city_then_province_then_country`          | 允许放宽的领域遵守固定地域顺序                                            |
 | CAP-001   | Resolved | `stale_weather_and_market_data_fail_closed`                      | 陈旧天气/行情不产生当前结论                                              |
 | CAP-001   | Resolved | `movie_availability_requires_region_channel_and_date`            | 影视可用性必须包含地域、渠道和日期                                        |
 | CAP-001   | Resolved | `finance_analysis_cannot_introduce_unsupported_numbers`          | 描述性金融分析不引入证据外数值                                            |
 | CAP-001   | Resolved | `domain_tool_diagnostics_never_expose_raw_output`                | provider 原始 JSON 哨兵不进入 Run event、tool audit、UI error、eval report |
+
+| INPUT-001 | Planned | `missing_location_enters_awaiting_input_and_resumes_same_run` | 缺城市进入等待并由同一 Run 恢复 |
+| WEB-002 | Planned | `simple_fact_allows_initial_plus_one_supplement` | 简单事实最多首次加一次补充 |
+| WEB-002 | Planned | `recommendation_allows_initial_plus_two_supplements` | 推荐类最多首次加两次补充 |
+| WEB-002 | Planned | `provider_failover_does_not_consume_query_budget` | 备用 MCP 不占业务轮次 |
+| CAP-002 | Planned | `validated_domain_record_is_registered_before_tool_success` | 结构化记录登记成功后工具才成功 |
+| CAP-002 | Planned | `domain_answer_is_host_rendered_from_canonical_record` | 领域事实由 Host 根据登记记录渲染 |
+| EVID-006 | Planned | `provider_cannot_supply_evidence_id` | Provider 不得注入 Iris evidence ID |
 
 ## 追踪规则
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust、SQLite migration 072、Tauri IPC、React 19 管理中心、现有 MCP host/credential store/WebEvidenceBroker。
 
-**Status:** Completed；对应阶段 8 的 `CAP-001`。测试已通过并更新附录 A、B、`ARCHITECTURE.md` 和 IPC 事实文档。
+**Status:** Partial；DTO、目录和基础 Provider mapping 已落地，但生产 intake、结构化证据登记、领域终局渲染、缺参恢复和统一 Provider failover 尚未闭环。必须继续执行 [`plans/04-current-fact-production-closure.md`](04-current-fact-production-closure.md) 后才能标记 Completed。
 
 **Dependencies:** 依赖计划 02 的 `FreshFactPolicy`、`EvidenceGap`、研究预算和当前事实终局接口稳定；不得并行发明第二套分类或最终化协议。
 

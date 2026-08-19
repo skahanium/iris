@@ -16,8 +16,8 @@
 | RUN-003   | P1     | Resolved   | Run、消息和事件为唯一事实源；sink 失败不改写终态，前端在 focus/visible 时通过 `assistant_run_get` 恢复且不重执行                               | 保留终态 sink 故障与前端恢复测试                        |
 | ROUTE-001 | P1     | Resolved   | `ToolSurfacePlan.tool_names` 已由生产编排器填充，`NormalRunToolExecutor` 只消费该冻结列表，`capabilities_read` 同步报告该列表                  | 保留 current-surface-only 与 executor surface 测试      |
 | ROUTE-002 | P2     | Unverified | 没有证据表明新增 LLM Router 能改善当前可靠性                                                                                                   | 不进入首阶段；仅保留评测后立项可能                      |
-| ROUTE-003 | P0     | Resolved   | `classify_fresh_fact` 冻结 domain/时间窗/地点要求；runtime 请求保持 Offline 且不申请 web.search；近期影视冻结 City 与绝对日期窗口                  | 保留 runtime 与日期/地点冻结回归测试                    |
-| WEB-001   | P0     | Resolved   | `FreshResearchPlan` 提供冻结预算；ToolLoop 首批不足时按 `EvidenceGap` 允许有界后续搜索，充分后立即停止且不超预算                            | 保留 insufficient/sufficient 搜索回归测试               |
+| ROUTE-003 | P0     | Partial    | 分类器和 runtime 日期基础已存在，但生产领域路由仍可能未生成 `CurrentRunDomain`，且部分入口丢失确认地点                  | 计划 04 增加 production intake、地点传递和 provider 缺失负例 |
+| WEB-001   | P0     | Partial    | 已有内存预算和 gap ledger；首次预搜索未统一计入，Provider failover/重试与业务轮次尚未统一持久化                            | 计划 04 增加持久化预算、补搜和 failover 契约               |
 | TOOL-001  | P1     | Resolved   | `capabilities_read` 现通过 `ToolDispatchContext.available_tool_names` 只报告当前 Run 已冻结 surface                                            | 保留 current-surface-only 测试                          |
 | TOOL-002  | P0     | Resolved   | 两个 harness 工具曾错误映射到 `vault.search`；现已使用独立 `harness.*` 权限原子                                                                | 保留权限映射回归测试                                    |
 | TOOL-003  | P1     | Resolved   | 模型工具调用同时受 `AgentToolLoop.allowed_tools` 与 `NormalRunToolExecutor.allowed_tool_names` 表面门禁约束                                    | 保留 unexposed tool 负例与 executor surface 负例        |
@@ -26,8 +26,8 @@
 | EVID-002  | P0     | Resolved   | UI 对 fallback 及缺失/未知 binding 明确显示“本次检索来源组/不表示已逐段核验”；精确 binding 仍走精确样式                                        | 保留来源组 fail-safe 测试                               |
 | EVID-003  | P1     | Deferred   | 当前没有已注册的结构化业务校验规则；无规则时 fail-closed，通用自由文本语义校验不进入本轮                                                       | 引入真实结构化工具时再注册字段/单位/来源/时效规则       |
 | EVID-004  | P2     | Resolved   | `list_current_run_web_citation_links` 只返回当前 Run、未 retired、HTTPS 可定位证据；foreign/retired 均被排除                                   | 保留 foreign/retired 负例测试                           |
-| EVID-005  | P0     | Resolved   | 新增 `current_fact_finalization` 终局门：拒绝无结构自由文本、拒绝来源组完成严格当前事实、协议不支持时失败关闭；稳定错误码已加入 SafeRunErrorCode | 保留 strict/fallback/unsupported protocol 回归测试      |
-| CAP-001   | P1     | Resolved   | 已落地天气/新闻/金融/影视/体育五个稳定只读工具、`web.domain.read` capability、统一 DTO 验证、确认地点与白名单 output mapping；附录 B 六项领域矩阵与诊断哨兵测试通过                                        | 保留六领域成功/失败契约与 provider 原始 JSON 隔离回归测试 |
+| EVID-005  | P0     | Partial    | 终局 validator 已存在，但尚未证明所有当前事实生产路径都进入结构化终局；来源组/自由文本门仍需接入真实 ToolLoop | 计划 04 接通 `submit_domain_answer` 和 production finalization |
+| CAP-001   | P1     | Partial    | DTO、工具目录、mapping 和部分验证已落地；Provider 输出仍携带预分配 evidence ID，结构化服务尚可能回退 Web，生产证据登记未闭环 | 计划 04 分离证据身份、冻结候选、failover 并覆盖 11 个 operation |
 | SEC-001   | P0     | Resolved   | harness 工具已使用独立 `harness.*` 权限原子，不再继承 `vault.search`                                                                           | 保留权限映射拒绝型测试                                  |
 | SEC-002   | P0     | Resolved   | 本地检索内容通过 `record_web_query_taint_witness` 与 Web 查询门禁阻止进入查询/URL/日志；已有端到端隐私负例                                     | 保留 taint/隐私负例回归测试                             |
 | CTX-001   | P1     | Resolved   | `RunSituation = RunContext` 只读投影已在生产调用链使用，不新增第二状态表                                                                       | 保留 committed projection 测试                          |
@@ -39,7 +39,11 @@
 | UI-002    | P2     | Resolved   | 工具事件与审计只保存工具名、稳定码和受限摘要；哨兵测试证明原始参数、正文标记与凭证不进入事件诊断                                               | 保留原始参数哨兵负例                                    |
 | UI-003    | P0     | Resolved   | reveal 返回 `runId` 并按身份门在 render 阶段隐藏异 Run answer；投影层只消费同 Run reveal，移除活动空答案回退；`activateAccepted` 切换前清理旧 frame/待 flush 事件 | 保留跨 Run 组合回归、终态恢复负例与迟到 frame 回归测试 |
 | EVAL-001  | P1     | Stale      | “只有 24 个评测场景”的旧基线已过期；当前代码已有 48-case 契约                                                                                  | 复用现有套件并维护稳定场景 ID                           |
-| EVAL-002  | P1     | Resolved   | 新增固定 2026-08-18 电影追问场景与“已搜索后不否认联网”场景，断言只引用允许实体且不引入旧电影诱饵                                            | 保留两个固定 eval 场景                                   |
+| EVAL-002  | P1     | Partial    | 已有固定场景夹具，但当前结果仍可能走旧链路；必须由正式 intake 和结构化/Web 终局共同证明                                            | 计划 04 重新接线并以生产路径结果更新 |
+| INPUT-001 | P1     | Planned   | 缺城市等必要参数目前不能在同一 Run 中正式等待并恢复                                                                 | 增加 `AwaitingInput`、Input 事件和恢复测试 |
+| WEB-002   | P0     | Planned   | 补充搜索、同 Provider 重试、备用 MCP 切换目前未由一个持久化控制器统一计量                                                         | 增加预算、去重和 failover 测试 |
+| CAP-002   | P0     | Planned   | 结构化工具尚无完整的 production evidence/final-answer 闭环                                                                          | 11 个 operation 的端到端生产夹具 |
+| EVID-006  | P0     | Planned   | Provider 不能注入 Iris evidence ID，Host 必须基于登记记录渲染领域事实                                                                  | 增加证据身份和 Host 渲染门禁 |
 | MEM-003   | —      | Stale      | “完全没有记忆基础设施”不准确：会话摘要和 `ai_memories` 均已存在                                                                                | 只补最小安全语义，不重建记忆中心                        |
 
 ## 核对纪律

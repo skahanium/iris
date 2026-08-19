@@ -6,9 +6,9 @@
 | ---- | ------------------- | --------------------------------------------------- |
 | 0–4  | Baseline / Resolved | 附录 A 的 Resolved 事实与附录 B 的既有实证测试      |
 | 5    | Resolved            | `UI-003` 目标测试已移入附录 B 实证表                |
-| 6    | Resolved            | `ROUTE-003`、`WEB-001`、`EVID-005` 已移入附录 B 实证表 |
-| 7    | Planned             | 只在阶段 5–6 有真实证据后收口 `EVAL-002` 与事实文档 |
-| 8    | Resolved            | `CAP-001` 目标测试已移入附录 B 实证表              |
+| 6    | Partial             | 已有分类和预算骨架，但生产路由、地点传递和补充搜索持久化仍待收口 |
+| 7    | Partial             | UI 隔离已完成；当前事实生产闭环和真实评测仍待收口             |
+| 8    | Partial             | DTO/目录/mapping 已落地；结构化 Provider、证据和终局仍待收口   |
 
 ## 阶段 0–4：第一轮结构性收口（已交付回归基线）
 
@@ -90,7 +90,7 @@
 
 阶段 7 完成后可以宣称本次用户暴露的核心缺陷已经收口；不得同时宣称 `CAP-001` 或六类领域能力已经完成。
 
-## 阶段 8：六类稳定能力与低配置服务商（已交付）
+## 阶段 8：六类稳定能力与低配置服务商（Partial）
 
 目标：补齐常见当前事实能力，而不建设万能数据平台。
 
@@ -101,7 +101,7 @@
 - 复用确认式 memory 保存常用地点；缺城市时天气和附近影院必须询问。
 - 金融限定为事实、新闻、趋势和比较分析，不提供个性化买卖建议。
 
-退出条件：`CAP-001` 的六类成功/失败夹具、provider 选择、权限隔离和诊断哨兵全部通过；无 provider 时不会编造；多 provider 时按契约确定选择或只提示一次选择；Web 关闭后全部外部领域工具不可达。完成后单独更新 `ARCHITECTURE.md`、IPC 参考和领域工具文案。
+当前夹具证明了 DTO 和部分 fail-closed 规则，但不证明真实 intake → ToolLoop → Provider snapshot → evidence ledger → 最终消息闭环。完整退出条件见 [`plans/04-current-fact-production-closure.md`](plans/04-current-fact-production-closure.md)：11 个 operation 必须走生产路径，补充搜索和 Provider failover 必须统一计量，缺参必须可恢复，结构化事实必须由 Host 根据真实 evidence ID 渲染。
 
 施工计划：[`plans/03-common-domain-capabilities.md`](plans/03-common-domain-capabilities.md)。
 
