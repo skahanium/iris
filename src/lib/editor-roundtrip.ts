@@ -19,6 +19,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { CalloutBlockquoteExtension } from "@/components/editor/extensions/CalloutBlockquoteExtension";
 import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtension";
 import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFoldExtension";
+import { HeadingDomGuardExtension } from "@/components/editor/extensions/HeadingDomGuardExtension";
 import { ImageExtension } from "@/components/editor/extensions/ImageExtension";
 import { FindHighlightExtension } from "@/components/editor/extensions/FindHighlightExtension";
 import {
@@ -55,6 +56,7 @@ export function createProductionEditorExtensions(
       },
     }),
     ImeCompositionGuardExtension,
+    HeadingDomGuardExtension,
     IrisParagraphExtension,
     ListIndentKeymapExtension,
     FindHighlightExtension,
