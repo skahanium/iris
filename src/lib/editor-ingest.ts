@@ -14,7 +14,7 @@ import {
   classifyWorkspacePath,
   parseWikiMediaReference,
 } from "@/lib/media-reference";
-import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/contract";
+import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/classify";
 import type {
   MarkdownCapabilityWarning,
   MarkdownSyntaxFragment,
