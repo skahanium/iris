@@ -16,9 +16,9 @@ use super::normal_run_service::{
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
-    AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef, AssistantTurnDraft,
-    CapabilityId, ContextMode, Effort, RunEventPayload, RunEventType, RunPresentationPayload,
-    RunState, SecurityDomain,
+    AssistantRunAccepted, AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef,
+    AssistantTurnDraft, CapabilityId, ContextMode, Effort, RunEventPayload, RunEventType,
+    RunPresentationPayload, RunState, SecurityDomain,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
@@ -260,6 +260,34 @@ fn install_test_routing(state: &AppState, base_url: &str, model_name: &str) {
     });
     crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
     state.set_test_streaming_client(reqwest::Client::new());
+}
+
+#[allow(clippy::type_complexity)]
+fn start_headless_tool_loop(
+    state: &AppState,
+    request: AssistantRunStartRequest,
+) -> (
+    RecordingSink,
+    AssistantRunAccepted,
+    crate::ai_runtime::run_context::RunContext,
+    crate::ai_runtime::domain_executor::DomainExecutionPlan,
+    Vec<i64>,
+) {
+    let sink = RecordingSink::default();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted headless tool-loop run");
+    let context = RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("run context");
+    let domain_plan = context.domain_plan();
+    let initial_evidence =
+        RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
+            .expect("initial evidence registration");
+    (sink, accepted, context, domain_plan, initial_evidence)
 }
 
 #[tokio::test]
@@ -771,24 +799,12 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
 async fn production_runtime_time_uses_frozen_surface_and_recovers() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
-    let sink = RecordingSink::default();
     let mut request = direct_request();
     request.client_request_id = "production-runtime-time".into();
     request.turn.message = "请调研当前时间，并使用 system_time_now 工具确认后汇总。".into();
     request.web_enabled = false;
-    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
-        .expect("accepted runtime tool-loop run");
-    let context = RunContextAssembler::assemble(
-        &state.db,
-        None,
-        &accepted.session.session_key,
-        &accepted.run_id,
-    )
-    .expect("run context");
-    let domain_plan = context.domain_plan();
-    let initial_evidence =
-        RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
-            .expect("initial evidence registration");
+    let (sink, accepted, context, domain_plan, initial_evidence) =
+        start_headless_tool_loop(&state, request);
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"runtime-time-call\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n",
@@ -1036,23 +1052,11 @@ async fn production_news_search_web_fallback_passes_through_evidence_ledger() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
-    let sink = RecordingSink::default();
     let mut request = web_tool_loop_request();
     request.client_request_id = "production-news-web-fallback".into();
     request.turn.message = "请调研最新 synthetic 新闻。".into();
-    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
-        .expect("accepted news web-fallback run");
-    let context = RunContextAssembler::assemble(
-        &state.db,
-        None,
-        &accepted.session.session_key,
-        &accepted.run_id,
-    )
-    .expect("run context");
-    let domain_plan = context.domain_plan();
-    let initial_evidence =
-        RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
-            .expect("initial evidence registration");
+    let (sink, accepted, context, domain_plan, initial_evidence) =
+        start_headless_tool_loop(&state, request);
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"news-call\",\"type\":\"function\",\"function\":{\"name\":\"news_lookup\",\"arguments\":\"{\\\"operation\\\":\\\"news.search\\\",\\\"topic\\\":\\\"synthetic\\\",\\\"limit\\\":5}\"}}]}}]}\n\ndata: [DONE]\n\n",
