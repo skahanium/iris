@@ -1076,7 +1076,6 @@ fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> A
             | FreshFactDomain::Finance
             | FreshFactDomain::Entertainment
             | FreshFactDomain::Sports
-            | FreshFactDomain::GenericWeb
     ) {
         let plan = build_fresh_research_plan(
             &context.user_message,
@@ -1392,5 +1391,20 @@ mod tests {
             !calibrated_structured_finalization_enabled(&route, &requirements()),
             "no provider/model pair may be promoted to structured VERIFIED before a registered rule exists"
         );
+    }
+
+    #[test]
+    fn generic_web_prefetch_removes_automatic_local_clause_before_search() {
+        let query = super::required_web_query_from_context_sources(
+            "依据本地 design note 与最新 Web status 做 gap analysis，并清楚区分两类来源。",
+            &[],
+            Vec::<String>::new(),
+            true,
+        );
+        assert_eq!(
+            query,
+            "最新 Web status 做 gap analysis，并清楚区分两类来源。"
+        );
+        assert!(!query.contains("本地 design note"));
     }
 }

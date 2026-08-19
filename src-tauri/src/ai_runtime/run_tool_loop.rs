@@ -2110,7 +2110,10 @@ impl NormalRunToolExecutor<'_> {
             .web_preferred_provider_id
             .lock()
             .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))? = Some(winner);
-        self.persist_fresh_research_state()
+        if self.fresh_research_budget.is_some() {
+            self.persist_fresh_research_state()?
+        }
+        Ok(())
     }
 
     fn emit_mcp_failover_events(

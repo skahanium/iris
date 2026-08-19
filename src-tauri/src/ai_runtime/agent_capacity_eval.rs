@@ -3936,11 +3936,15 @@ async fn execute_live_pilot_case(
     // local search. Reproduce that production precondition in the isolated
     // headless pilot rather than teaching the evaluator to fabricate evidence
     // after a tool call.
-    if execution_scenario.implicit_vault() == ImplicitVaultExpectation::Allowed
-        && matches!(
-            execution_scenario.evidence_group(),
-            EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
-        )
+    if matches!(
+        execution_scenario.evidence_group(),
+        EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
+    ) && (execution_scenario.implicit_vault() == ImplicitVaultExpectation::Allowed
+        || !execution_scenario
+            .manifest
+            .local_authorization
+            .explicit_reference_ids
+            .is_empty())
     {
         prepared
             .state
@@ -5782,7 +5786,12 @@ async fn execute_headless_core_case_with_local_body(
             .required_sources
             .iter()
             .any(|source| source.kind == SourceKind::Local);
-    if needs_implicit_vault_prefetch {
+    let needs_explicit_vault_index = !scenario
+        .manifest
+        .local_authorization
+        .explicit_reference_ids
+        .is_empty();
+    if needs_implicit_vault_prefetch || needs_explicit_vault_index {
         state
             .db
             .with_conn(|connection| {
