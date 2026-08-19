@@ -43,6 +43,13 @@
 | EVID-005  | Resolved | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 模型不支持终局协议时失败关闭                                              |
 | EVAL-002  | Resolved | `current_fact_movie_follow_up_scenario`                          | 日期→近期电影→质疑上映情况多轮场景首次即可靠                              |
 | EVAL-002  | Resolved | `agent_does_not_deny_web_after_current_run_search`               | 已使用 Web 后不声称没有联网/抓取能力                                      |
+| CAP-001   | Resolved | `domain_tool_output_requires_source_and_observed_time`           | 领域 DTO 缺来源或数据时点时拒绝，成功夹具保留 evidence ID/时点/来源        |
+| CAP-001   | Resolved | `weather_without_confirmed_city_requests_location`               | 天气缺城市时询问，不推断位置                                              |
+| CAP-001   | Resolved | `location_scope_widens_city_then_province_then_country`          | 允许放宽的领域遵守固定地域顺序                                            |
+| CAP-001   | Resolved | `stale_weather_and_market_data_fail_closed`                      | 陈旧天气/行情不产生当前结论                                              |
+| CAP-001   | Resolved | `movie_availability_requires_region_channel_and_date`            | 影视可用性必须包含地域、渠道和日期                                        |
+| CAP-001   | Resolved | `finance_analysis_cannot_introduce_unsupported_numbers`          | 描述性金融分析不引入证据外数值                                            |
+| CAP-001   | Resolved | `domain_tool_diagnostics_never_expose_raw_output`                | provider 原始 JSON 哨兵不进入 Run event、tool audit、UI error、eval report |
 
 ## 追踪规则
 
@@ -50,20 +57,3 @@
 - 一个问题可以由多个层级测试覆盖，但不得把不存在的目标测试写成已通过。
 - 只有对应测试通过后，附录 A 才能把 RUN-003、MEM-001、UI-002 等状态标记为 Resolved。
 - EVID-003 保持 Deferred：本轮只验 fail-closed 门；未来结构化工具规则和自由文本实验见附录 C。
-
-## 待施工目标追踪
-
-下表中的测试名是施工计划锁定的目标名称，当前不得视为仓库中已存在或已通过。实现时必须先确认测试在修复前失败；只有测试真实存在、运行通过并能证明所列边界后，才移入上方实证表并把状态改为 `Resolved`。
-
-### 后续领域能力增强目标测试
-
-以下目标只用于阶段 8 的 `CAP-001`，不进入阶段 5–7 的核心缺陷完成条件。
-
-| 问题 ID | 当前状态  | 目标测试                                                | 预期证明边界                       |
-| ------- | --------- | ------------------------------------------------------- | ---------------------------------- |
-| CAP-001 | Confirmed | `domain_tool_output_requires_source_and_observed_time`  | 领域 DTO 缺来源或数据时点时拒绝    |
-| CAP-001 | Confirmed | `weather_without_confirmed_city_requests_location`      | 天气缺城市时询问，不推断位置       |
-| CAP-001 | Confirmed | `location_scope_widens_city_then_province_then_country` | 允许放宽的领域遵守固定地域顺序     |
-| CAP-001 | Confirmed | `stale_weather_and_market_data_fail_closed`             | 陈旧天气/行情不产生当前结论        |
-| CAP-001 | Confirmed | `movie_availability_requires_region_channel_and_date`   | 影视可用性必须包含地域、渠道和日期 |
-| CAP-001 | Confirmed | `finance_analysis_cannot_introduce_unsupported_numbers` | 描述性金融分析不引入证据外数值     |

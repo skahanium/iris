@@ -4765,3 +4765,467 @@ fn agent_does_not_deny_web_after_current_run_search() {
         "denying Web capability after a current-run search is an eval failure"
     );
 }
+
+// CAP-001: deterministic six-domain current-fact reliability contracts.
+
+use chrono::{DateTime, Utc};
+
+use crate::ai_runtime::fresh_domains::contracts::{
+    DomainOperation, EntertainmentRecord, EvidenceOrigin, FinanceRecord, FreshDomainRecord,
+    WeatherRecord,
+};
+use crate::ai_runtime::fresh_domains::location::{
+    first_location_scope, resolve_confirmed_location, AiMemory, ConfirmedLocation, LocationScope,
+};
+use crate::ai_runtime::fresh_domains::service::{
+    allows_location_widening, enforce_location_requirement, extract_mapped_records,
+    with_location_scope,
+};
+use crate::ai_runtime::fresh_domains::validation::{
+    validate_domain_record, validate_finance_analysis_numbers,
+};
+
+const CAP_REQUESTED_AT: &str = "2026-08-18T08:00:00Z";
+const CAP_ERROR_EVIDENCE_INSUFFICIENT: &str = "agent_run_fresh_evidence_insufficient";
+const CAP_ERROR_HTTPS_REQUIRED: &str = "agent_run_fresh_https_required";
+const CAP_ERROR_STALE: &str = "agent_run_fresh_evidence_stale";
+const CAP_ERROR_LOCATION_REQUIRED: &str = "agent_run_location_required";
+const CAP_ERROR_FINANCE_UNSUPPORTED_NUMBER: &str = "finance_analysis_unsupported_number";
+
+fn cap_requested_at() -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(CAP_REQUESTED_AT)
+        .expect("fixed requested_at fixture")
+        .with_timezone(&Utc)
+}
+
+fn cap_origin(evidence_id: i64) -> EvidenceOrigin {
+    EvidenceOrigin {
+        evidence_id,
+        provider_id: "fixture-provider".to_string(),
+        source_url: "https://example.com/source".to_string(),
+        source_title: "Fixture Source".to_string(),
+        observed_at: CAP_REQUESTED_AT.to_string(),
+    }
+}
+
+fn cap_weather_current() -> WeatherRecord {
+    WeatherRecord {
+        location: "北京".to_string(),
+        condition: "晴".to_string(),
+        temperature: "31".to_string(),
+        units: "C".to_string(),
+        observation_time: Some("2026-08-18T07:00:00Z".to_string()),
+        issue_time: None,
+        origin: cap_origin(1),
+    }
+}
+
+fn cap_finance() -> FinanceRecord {
+    FinanceRecord {
+        instrument: "AAPL".to_string(),
+        asset_kind: "equity".to_string(),
+        currency: "USD".to_string(),
+        as_of: "2026-08-17T20:00:00Z".to_string(),
+        delay: "15 minutes".to_string(),
+        value: "234.56".to_string(),
+        origin: cap_origin(4),
+    }
+}
+
+fn cap_entertainment() -> EntertainmentRecord {
+    EntertainmentRecord {
+        title: "电影A".to_string(),
+        region: "US".to_string(),
+        channel: "Streamer".to_string(),
+        date: "2026-08-20".to_string(),
+        checked_at: "2026-08-18T07:00:00Z".to_string(),
+        origin: cap_origin(5),
+    }
+}
+
+fn cap_origin_ref(record: &FreshDomainRecord) -> &EvidenceOrigin {
+    match record {
+        FreshDomainRecord::Weather(record) => &record.origin,
+        FreshDomainRecord::News(record) => &record.origin,
+        FreshDomainRecord::Finance(record) => &record.origin,
+        FreshDomainRecord::Entertainment(record) => &record.origin,
+        FreshDomainRecord::Sports(record) => &record.origin,
+    }
+}
+
+fn cap_assert_success(
+    operation: DomainOperation,
+    record: &FreshDomainRecord,
+    expected_evidence_id: i64,
+) {
+    validate_domain_record(operation, cap_requested_at(), record)
+        .expect("minimal fixture must pass deterministic validation");
+    let origin = cap_origin_ref(record);
+    assert_eq!(origin.evidence_id, expected_evidence_id);
+    assert_eq!(origin.observed_at, CAP_REQUESTED_AT);
+    assert_eq!(origin.source_url, "https://example.com/source");
+}
+
+fn cap_assert_error(operation: DomainOperation, record: &FreshDomainRecord, code: &str) {
+    let error = validate_domain_record(operation, cap_requested_at(), record)
+        .expect_err("fixture must be rejected");
+    assert_eq!(error.to_string(), code);
+    assert_ne!(
+        error.to_string(),
+        "",
+        "failed validation must not fabricate a final fact body"
+    );
+}
+
+#[test]
+fn domain_tool_output_requires_source_and_observed_time() {
+    let valid = FreshDomainRecord::Weather(cap_weather_current());
+    cap_assert_success(DomainOperation::WeatherCurrent, &valid, 1);
+
+    let mut missing_source = cap_weather_current();
+    missing_source.origin.source_url = "http://example.com/source".to_string();
+    cap_assert_error(
+        DomainOperation::WeatherCurrent,
+        &FreshDomainRecord::Weather(missing_source),
+        CAP_ERROR_HTTPS_REQUIRED,
+    );
+
+    let mut missing_observation = cap_weather_current();
+    missing_observation.observation_time = None;
+    cap_assert_error(
+        DomainOperation::WeatherCurrent,
+        &FreshDomainRecord::Weather(missing_observation),
+        CAP_ERROR_EVIDENCE_INSUFFICIENT,
+    );
+
+    let mut missing_market_as_of = cap_finance();
+    missing_market_as_of.as_of.clear();
+    cap_assert_error(
+        DomainOperation::FinanceQuote,
+        &FreshDomainRecord::Finance(missing_market_as_of),
+        CAP_ERROR_EVIDENCE_INSUFFICIENT,
+    );
+}
+
+#[test]
+fn weather_without_confirmed_city_requests_location() {
+    let valid = FreshDomainRecord::Weather(cap_weather_current());
+    cap_assert_success(DomainOperation::WeatherCurrent, &valid, 1);
+
+    let missing_city = enforce_location_requirement(
+        DomainOperation::WeatherCurrent,
+        &ConfirmedLocation::default(),
+    )
+    .expect_err("weather without city must ask for location");
+    assert_eq!(missing_city.to_string(), CAP_ERROR_LOCATION_REQUIRED);
+
+    let mut record = cap_weather_current();
+    record.location.clear();
+    cap_assert_error(
+        DomainOperation::WeatherCurrent,
+        &FreshDomainRecord::Weather(record),
+        CAP_ERROR_LOCATION_REQUIRED,
+    );
+
+    let memories = vec![AiMemory {
+        key: "location.city".to_string(),
+        content: "北京".to_string(),
+        scope: "global".to_string(),
+    }];
+    let resolved = resolve_confirmed_location(None, &memories);
+    assert_eq!(resolved.city.as_deref(), Some("北京"));
+    assert!(enforce_location_requirement(DomainOperation::WeatherCurrent, &resolved).is_ok());
+}
+
+#[test]
+fn location_scope_widens_city_then_province_then_country() {
+    let confirmed = ConfirmedLocation {
+        city: Some("上海".to_string()),
+        province: Some("江苏".to_string()),
+        country: Some("中国".to_string()),
+    };
+
+    assert_eq!(first_location_scope(&confirmed), Some(LocationScope::City));
+    assert_eq!(
+        LocationScope::City.next(&confirmed),
+        Some(LocationScope::Province)
+    );
+    assert_eq!(
+        LocationScope::Province.next(&confirmed),
+        Some(LocationScope::Country)
+    );
+    assert_eq!(LocationScope::Country.next(&confirmed), None);
+
+    let province_only = ConfirmedLocation {
+        city: None,
+        province: Some("广东".to_string()),
+        country: Some("中国".to_string()),
+    };
+    let args = with_location_scope(
+        DomainOperation::NewsSearch,
+        &serde_json::json!({ "topic": "科技" }),
+        LocationScope::Province,
+        &province_only,
+    );
+    assert_eq!(args["location"], "广东");
+
+    assert!(allows_location_widening(DomainOperation::NewsSearch));
+    assert!(allows_location_widening(
+        DomainOperation::EntertainmentUpcoming
+    ));
+    assert!(!allows_location_widening(DomainOperation::WeatherCurrent));
+}
+
+#[test]
+fn stale_weather_and_market_data_fail_closed() {
+    let valid_weather = FreshDomainRecord::Weather(cap_weather_current());
+    cap_assert_success(DomainOperation::WeatherCurrent, &valid_weather, 1);
+    let valid_market = FreshDomainRecord::Finance(cap_finance());
+    cap_assert_success(DomainOperation::FinanceQuote, &valid_market, 4);
+
+    let mut stale_weather = cap_weather_current();
+    stale_weather.observation_time = Some("2026-08-18T04:00:00Z".to_string());
+    cap_assert_error(
+        DomainOperation::WeatherCurrent,
+        &FreshDomainRecord::Weather(stale_weather),
+        CAP_ERROR_STALE,
+    );
+
+    let mut stale_market = cap_finance();
+    stale_market.delay = "30 minutes".to_string();
+    cap_assert_error(
+        DomainOperation::FinanceQuote,
+        &FreshDomainRecord::Finance(stale_market),
+        CAP_ERROR_STALE,
+    );
+}
+
+#[test]
+fn movie_availability_requires_region_channel_and_date() {
+    let valid = FreshDomainRecord::Entertainment(cap_entertainment());
+    cap_assert_success(DomainOperation::EntertainmentNowPlaying, &valid, 5);
+
+    let mut record = cap_entertainment();
+    record.region.clear();
+    record.channel.clear();
+    record.date.clear();
+    cap_assert_error(
+        DomainOperation::EntertainmentNowPlaying,
+        &FreshDomainRecord::Entertainment(record),
+        CAP_ERROR_EVIDENCE_INSUFFICIENT,
+    );
+}
+
+#[test]
+fn finance_analysis_cannot_introduce_unsupported_numbers() {
+    let first = cap_finance();
+    let mut second = cap_finance();
+    second.origin.evidence_id = 42;
+    second.value = "88.88".to_string();
+
+    let records = vec![first.clone(), second.clone()];
+    let allowed_ids = [4, 42];
+
+    validate_finance_analysis_numbers(&allowed_ids, &records, &["234.56", "88.88"])
+        .expect("input-record numbers are supported");
+
+    let error = validate_finance_analysis_numbers(&allowed_ids, &records, &["999.99"])
+        .expect_err("unseen number must be rejected");
+    assert_eq!(error.to_string(), CAP_ERROR_FINANCE_UNSUPPORTED_NUMBER);
+}
+
+#[test]
+fn domain_tool_diagnostics_never_expose_raw_output() {
+    use crate::ai_runtime::agent_run_repository::{
+        AcceptRunInput, AgentRunRepository, AppendRunEventInput,
+    };
+    use crate::ai_runtime::mcp_external_tools::DomainOutputMapping;
+    use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
+    use crate::ai_runtime::run_contract::{
+        ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed, Modality,
+        RiskClass, RunEventPayload, RunEventType, SafeRunErrorCode, SecurityDomain,
+        WebDecisionReason,
+    };
+    use crate::ai_runtime::tool_audit::{query_by_run, record_audit, ToolAuditInput};
+    use crate::error::AppError;
+
+    const SECRET_SENTINEL: &str = "SECRET_SENTINEL";
+    const NOTE_SENTINEL: &str = "NOTE_SENTINEL";
+    const ARGUMENT_SENTINEL: &str = "ARGUMENT_SENTINEL";
+
+    let provider_raw_json = serde_json::json!({
+        "records": [{
+            "location": "北京",
+            "condition": "晴",
+            "temperature": 31,
+            "units": "C",
+            "observationTime": "2026-08-18T07:00:00Z",
+            "sourceUrl": "https://example.com/weather",
+            "sourceTitle": "Example Weather",
+            "observedAt": "2026-08-18T07:00:00Z",
+            "secret": SECRET_SENTINEL,
+            "note": NOTE_SENTINEL,
+            "argument": ARGUMENT_SENTINEL
+        }]
+    });
+
+    let mapping = DomainOutputMapping {
+        records_path: "$.records".into(),
+        fields: [
+            ("location".to_string(), "$.location".to_string()),
+            ("condition".to_string(), "$.condition".to_string()),
+            ("temperature".to_string(), "$.temperature".to_string()),
+            ("units".to_string(), "$.units".to_string()),
+            (
+                "observationTime".to_string(),
+                "$.observationTime".to_string(),
+            ),
+            ("sourceUrl".to_string(), "$.sourceUrl".to_string()),
+            ("sourceTitle".to_string(), "$.sourceTitle".to_string()),
+            ("observedAt".to_string(), "$.observedAt".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+    };
+    let mapped = extract_mapped_records(&mapping, &provider_raw_json)
+        .expect("whitelist output mapping must reduce raw provider JSON");
+    let mapped_text = serde_json::to_string(&mapped).expect("mapped DTO JSON");
+    for sentinel in [SECRET_SENTINEL, NOTE_SENTINEL, ARGUMENT_SENTINEL] {
+        assert!(
+            !mapped_text.contains(sentinel),
+            "mapped DTO must not carry raw provider markers: {sentinel}"
+        );
+    }
+
+    let db = Database::open_in_memory().expect("diagnostic database");
+    let session = NormalSessionRepository::create(&db).expect("diagnostic session");
+    let accepted = AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key,
+            client_request_id: "diagnostic-client-request".to_string(),
+            run_id: "diagnostic-run".to_string(),
+            turn_id: "diagnostic-turn".to_string(),
+            message: "diagnostic domain run".to_string(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effect: Effect::Answer,
+                context: ContextMode::ExplicitReferences,
+                freshness: Freshness::WebPreferred,
+                web_reason: WebDecisionReason::LegacyUnknown,
+                verification_requirement:
+                    crate::ai_runtime::run_contract::VerificationRequirement::None,
+                effort: Effort::Direct,
+                security_domain: SecurityDomain::Normal,
+                risk: RiskClass::ReadOnly,
+                modalities: vec![Modality::Text],
+                material_needs: vec![MaterialNeed::Reference],
+                required_capabilities: vec![],
+                explicit_constraints: vec![],
+                fresh_fact: Default::default(),
+            },
+        },
+    )
+    .expect("accepted diagnostic run");
+    record_audit(
+        &db,
+        &ToolAuditInput {
+            run_id: &accepted.run_id,
+            run_step: 1,
+            tool_name: "weather_lookup",
+            arguments: &serde_json::json!({
+                "operation": "weather.current",
+                "location": ARGUMENT_SENTINEL,
+            }),
+            result: &provider_raw_json,
+            error: None,
+            success: true,
+            duration_ms: 1,
+            subagent_depth: 0,
+        },
+    )
+    .expect("record tool audit");
+    let audit_text =
+        serde_json::to_string(&query_by_run(&db, &accepted.run_id).expect("audit rows"))
+            .expect("tool audit JSON");
+    for sentinel in [SECRET_SENTINEL, NOTE_SENTINEL, ARGUMENT_SENTINEL] {
+        assert!(
+            !audit_text.contains(sentinel),
+            "tool audit must not carry raw provider markers: {sentinel}"
+        );
+    }
+
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: accepted.state_version,
+            event_type: RunEventType::ToolStarted,
+            payload: RunEventPayload::ToolStarted {
+                capability: "weather_lookup".to_string(),
+                tool_call_id: "domain-call-1".to_string(),
+            },
+        },
+    )
+    .expect("append tool started");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: accepted.state_version,
+            event_type: RunEventType::ToolCompleted,
+            payload: RunEventPayload::ToolCompleted {
+                capability: "weather_lookup".to_string(),
+                tool_call_id: "domain-call-1".to_string(),
+                summary: "外部只读工具调用完成".to_string(),
+                duration_ms: Some(1),
+                success: Some(true),
+                subagent_batch_report: None,
+            },
+        },
+    )
+    .expect("append tool completed");
+    let event_text = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COALESCE(group_concat(payload_json, '|'), '') FROM agent_run_events WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("run event payloads");
+    for sentinel in [SECRET_SENTINEL, NOTE_SENTINEL, ARGUMENT_SENTINEL] {
+        assert!(
+            !event_text.contains(sentinel),
+            "Run events must not carry raw provider markers: {sentinel}"
+        );
+    }
+
+    let ui_error = serde_json::to_string(&AppError::run(SafeRunErrorCode::WebProviderTimeout))
+        .expect("UI error JSON");
+    for sentinel in [SECRET_SENTINEL, NOTE_SENTINEL, ARGUMENT_SENTINEL] {
+        assert!(
+            !ui_error.contains(sentinel),
+            "UI error must not carry raw provider markers: {sentinel}"
+        );
+    }
+
+    let report_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("docs/eval/results/v1.2.15-agent-capacity.json");
+    let report_text =
+        std::fs::read_to_string(&report_path).expect("versioned agent capacity report");
+    for sentinel in [SECRET_SENTINEL, NOTE_SENTINEL, ARGUMENT_SENTINEL] {
+        assert!(
+            !report_text.contains(sentinel),
+            "eval report must not carry raw provider markers: {sentinel}"
+        );
+    }
+}

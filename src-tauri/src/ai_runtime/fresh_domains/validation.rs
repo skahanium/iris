@@ -208,7 +208,10 @@ fn validate_finance(record: &FinanceRecord) -> crate::error::AppResult<()> {
     validate_budget(&record.delay, MAX_DELAY_CHARS)?;
     validate_budget(&record.value, MAX_VALUE_CHARS)?;
     parse_rfc3339(&record.as_of)?;
-    parse_delay_minutes(&record.delay)?;
+    let delay_minutes = parse_delay_minutes(&record.delay)?;
+    if delay_minutes > 15 {
+        return Err(crate::error::AppError::msg(ERROR_STALE));
+    }
     Ok(())
 }
 

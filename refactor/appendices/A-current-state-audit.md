@@ -27,7 +27,7 @@
 | EVID-003  | P1     | Deferred   | 当前没有已注册的结构化业务校验规则；无规则时 fail-closed，通用自由文本语义校验不进入本轮                                                       | 引入真实结构化工具时再注册字段/单位/来源/时效规则       |
 | EVID-004  | P2     | Resolved   | `list_current_run_web_citation_links` 只返回当前 Run、未 retired、HTTPS 可定位证据；foreign/retired 均被排除                                   | 保留 foreign/retired 负例测试                           |
 | EVID-005  | P0     | Resolved   | 新增 `current_fact_finalization` 终局门：拒绝无结构自由文本、拒绝来源组完成严格当前事实、协议不支持时失败关闭；稳定错误码已加入 SafeRunErrorCode | 保留 strict/fallback/unsupported protocol 回归测试      |
-| CAP-001   | P1     | Confirmed  | 目录只有 `system_time_now` 与通用 `web_search`，尚无天气、新闻、金融、影视和体育稳定 operation                                                 | 核心缺陷收口后按附录 D 独立建设与验收                   |
+| CAP-001   | P1     | Resolved   | 已落地天气/新闻/金融/影视/体育五个稳定只读工具、`web.domain.read` capability、统一 DTO 验证、确认地点与白名单 output mapping；附录 B 六项领域矩阵与诊断哨兵测试通过                                        | 保留六领域成功/失败契约与 provider 原始 JSON 隔离回归测试 |
 | SEC-001   | P0     | Resolved   | harness 工具已使用独立 `harness.*` 权限原子，不再继承 `vault.search`                                                                           | 保留权限映射拒绝型测试                                  |
 | SEC-002   | P0     | Resolved   | 本地检索内容通过 `record_web_query_taint_witness` 与 Web 查询门禁阻止进入查询/URL/日志；已有端到端隐私负例                                     | 保留 taint/隐私负例回归测试                             |
 | CTX-001   | P1     | Resolved   | `RunSituation = RunContext` 只读投影已在生产调用链使用，不新增第二状态表                                                                       | 保留 committed projection 测试                          |
@@ -77,5 +77,5 @@
 ## 当前核心缺陷待收口边界
 
 - `ROUTE-003`、`WEB-001`、`EVID-005`、`EVAL-002` 已由附录 B 中的定向测试证明并标记为 Resolved。
-- `CAP-001` 是核心缺陷收口后的领域能力增强，不阻塞上述问题独立结案。
-- 附录 D 和施工计划描述的是目标契约，不是 `ARCHITECTURE.md` 已实现事实。
+- `CAP-001` 已由附录 B 中的六领域矩阵与诊断哨兵测试证明并标记为 Resolved。
+- 附录 D 和施工计划描述的是目标契约；`ARCHITECTURE.md` 已同步当前领域只读能力实现事实。
