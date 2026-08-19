@@ -869,6 +869,26 @@ async fn dispatch_required_web_verified_run(
                 PromptContractV3::web_evidence_data_prompt(&evidence_json, false).into();
         }
     }
+    // Current-fact research no longer depends on the empty calibrated
+    // whitelist: the Run must expose `submit_final_answer` and fail closed if
+    // the model route cannot support tool continuation.
+    if research_mode && !structured_finalization {
+        if !has_local_follow_up_tools {
+            let _ = RunEngine::fail_before_dispatch_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                SafeRunErrorCode::GroundedFinalizationUnavailable,
+                sink,
+            );
+            return Err(AppError::run(
+                SafeRunErrorCode::GroundedFinalizationUnavailable,
+            ));
+        }
+        structured_finalization = true;
+        messages[1].content =
+            PromptContractV3::web_evidence_data_prompt(&evidence_json, true).into();
+    }
     if structured_finalization {
         tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
     }

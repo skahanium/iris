@@ -1468,6 +1468,15 @@ pub enum SafeRunErrorCode {
     /// Web evidence is required but the Run has none registered.
     #[serde(rename = "agent_run_web_evidence_required")]
     WebEvidenceRequired,
+    /// The model route cannot expose the grounded finalization protocol required by a current-fact Run.
+    #[serde(rename = "agent_run_grounded_finalization_unavailable")]
+    GroundedFinalizationUnavailable,
+    /// A current-fact Run could not collect enough evidence to support its final answer.
+    #[serde(rename = "agent_run_fresh_evidence_insufficient")]
+    FreshEvidenceInsufficient,
+    /// A current-fact Run requires an explicit location that is not available.
+    #[serde(rename = "agent_run_location_required")]
+    LocationRequired,
 }
 
 impl std::fmt::Display for SafeRunErrorCode {
@@ -1555,6 +1564,9 @@ impl SafeRunErrorCode {
             Self::UnknownToolCallId => "agent_run_unknown_tool_call_id",
             Self::UnverifiedWebCitation => "agent_run_unverified_web_citation",
             Self::WebEvidenceRequired => "agent_run_web_evidence_required",
+            Self::GroundedFinalizationUnavailable => "agent_run_grounded_finalization_unavailable",
+            Self::FreshEvidenceInsufficient => "agent_run_fresh_evidence_insufficient",
+            Self::LocationRequired => "agent_run_location_required",
         }
     }
 }

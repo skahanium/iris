@@ -466,7 +466,10 @@ export type AssistantRunErrorCode =
   | "agent_run_idempotency_conflict"
   | "agent_run_active_run_exists"
   | "agent_run_unknown_tool_call_id"
-  | "agent_run_unverified_web_citation";
+  | "agent_run_unverified_web_citation"
+  | "agent_run_grounded_finalization_unavailable"
+  | "agent_run_fresh_evidence_insufficient"
+  | "agent_run_location_required";
 
 export interface ClassifiedDocumentContext {
   contextRef: string;

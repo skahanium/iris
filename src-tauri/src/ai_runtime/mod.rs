@@ -34,6 +34,11 @@ pub mod classified_retrieval;
 // remain untouched. New classified Runs use `classified_ephemeral` exclusively.
 pub mod classified_session;
 pub mod conversation_memory;
+#[allow(
+    dead_code,
+    reason = "Task 5 finalization gate is exercised by tests; production wiring lands with the calibrated route"
+)]
+pub(crate) mod current_fact_finalization;
 pub(crate) mod direct_provider_route;
 pub(crate) mod document_policy_repository;
 pub(crate) mod domain_executor;

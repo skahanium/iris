@@ -734,6 +734,9 @@ impl RunEngine {
         {
             observer.enable_source_group_citation_filter();
         }
+        let finalization_required = tools.iter().any(|tool| {
+            tool.name == crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME
+        });
         let outcome = if let Some(telemetry) = telemetry {
             AgentToolLoop::from_policy(&budget_policy)
                 .execute_with_eval_telemetry(
@@ -987,6 +990,18 @@ impl RunEngine {
                         );
                     }
                 }
+            } else if finalization_required {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::GroundedFinalizationUnavailable,
+                        "current-fact run required a grounded final submission",
+                    ),
+                );
             } else {
                 // No production route is admitted to strict structured-final
                 // mode until it passes the live-model calibration gate. A
