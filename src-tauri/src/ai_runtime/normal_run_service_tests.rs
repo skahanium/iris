@@ -239,6 +239,25 @@ fn install_headless_contract_mcp(state: &AppState) {
     .expect("headless MCP registry setup");
 }
 
+fn install_test_routing(state: &AppState, base_url: &str, model_name: &str) {
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(base_url.to_string()),
+            enabled_models: Some(vec![model_name.to_string()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: model_name.to_string(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+}
+
 #[tokio::test]
 async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
     let directory = tempfile::tempdir().expect("temporary app directory");
@@ -742,6 +761,220 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         .events
         .iter()
         .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+}
+
+#[tokio::test]
+async fn production_runtime_time_uses_frozen_surface_and_recovers() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-runtime-time".into();
+    request.turn.message = "请调研当前时间，并使用 system_time_now 工具确认后汇总。".into();
+    request.web_enabled = false;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted runtime tool-loop run");
+    let context = RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("run context");
+    let domain_plan = context.domain_plan();
+    let initial_evidence =
+        RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
+            .expect("initial evidence registration");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"runtime-time-call\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"当前时间是 2026-08-18 08:00:00。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        &gateway,
+        ProviderConfig {
+            name: "headless-runtime-model".into(),
+            base_url: llm.base_url.clone(),
+            api_key: None,
+            model: "runtime-model".into(),
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        256,
+    )
+    .expect("model gateway provider");
+    let capabilities = vec![CapabilityId::new("runtime.read")];
+    let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
+    assert!(tools.iter().any(|tool| tool.name == "system_time_now"));
+    let executor = NormalRunToolExecutor::new(
+        &state,
+        None,
+        &accepted,
+        &context,
+        capabilities,
+        super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
+        &sink,
+        Vec::new(),
+    )
+    .with_allowed_tool_names(
+        &tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    RunEngine::execute_tool_loop_with_sink(
+        &state.db,
+        &accepted.session,
+        &accepted.run_id,
+        context.messages_with_domain_plan(&domain_plan),
+        tools,
+        &initial_evidence,
+        Some(&domain_plan),
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect("production runtime tool-loop chain");
+
+    let calls = llm.finish().await.expect("LLM double completion");
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(
+        calls.len(),
+        2,
+        "runtime tool call must complete a real continuation"
+    );
+    assert_eq!(response.run.state, RunState::Completed);
+    let runtime_tool_audit = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM tool_audit WHERE run_id = ?1 AND tool_name = 'system_time_now'",
+                [&accepted.run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("tool audit query");
+    assert_eq!(runtime_tool_audit, 1, "system_time_now must be dispatched");
+}
+
+#[tokio::test]
+async fn production_missing_city_waits_for_input_and_resumes_the_same_run() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"无法获取天气。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "headless-contract-model");
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-missing-city-input".into();
+    request.turn.message = "今天天气怎么样？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted weather run without city");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let waiting = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("waiting run");
+    assert_eq!(waiting.run.state, RunState::AwaitingInput);
+    assert!(waiting.run.pending_input.is_some(), "must request city");
+
+    let mut values = std::collections::BTreeMap::new();
+    values.insert("city".into(), "上海".into());
+    let outcome = RunIntake::control_with_sink(
+        &state.db,
+        super::run_contract::AssistantRunControlRequest {
+            session: accepted.session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: waiting.run.state_version,
+            action: super::run_contract::RunControlAction::SubmitInput {
+                input_id: format!("location-{}", accepted.run_id),
+                values,
+            },
+        },
+        &RecordingSink::default(),
+    )
+    .expect("input submission");
+    assert_eq!(
+        outcome,
+        super::run_intake::NormalRunControlOutcome::InputProvided
+    );
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let resumed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("resumed run");
+    assert_ne!(
+        resumed.run.state,
+        RunState::AwaitingInput,
+        "resumed run must leave the input wait state"
+    );
+    assert!(resumed.run.pending_input.is_none());
+}
+
+#[tokio::test]
+async fn production_weather_without_provider_fails_closed_instead_of_fabricating() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"weather-call\",\"type\":\"function\",\"function\":{\"name\":\"weather_lookup\",\"arguments\":\"{\\\"operation\\\":\\\"weather.current\\\",\\\"location\\\":\\\"上海\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"上海今天天气晴朗。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "headless-contract-model");
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-weather-no-provider".into();
+    request.turn.message = "上海今天天气怎么样？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted weather run without provider");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("weather run");
+    assert_ne!(
+        response.run.state,
+        RunState::Completed,
+        "weather without a structured provider must not complete with a fabricated answer"
+    );
+    let assistant_message_count: i64 = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1 AND role = 'assistant'",
+                [1_i64],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("assistant message query");
+    assert_eq!(
+        assistant_message_count, 0,
+        "no fabricated assistant weather answer may be persisted"
+    );
 }
 
 #[tokio::test]

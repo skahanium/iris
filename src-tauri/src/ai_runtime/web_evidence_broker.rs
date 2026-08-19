@@ -1312,6 +1312,15 @@ snippet: {}
     (!body.trim().is_empty()).then_some(body)
 }
 
+fn parse_freshness_label(text: &str) -> Option<String> {
+    static FRESHNESS_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = FRESHNESS_RE.get_or_init(|| {
+        regex::Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})")
+            .expect("freshness regex must compile")
+    });
+    re.find(text).map(|matched| matched.as_str().to_string())
+}
+
 fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebEvidenceItem> {
     let search_backend = fetch.search_backend;
     if let Some(failure_reason) = fetch.failure_reason.as_ref() {
@@ -1355,6 +1364,8 @@ fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebE
                 );
             }
             let canonical_url = canonicalize_url(&row.url);
+            let freshness_label =
+                parse_freshness_label(&row.snippet).or_else(|| parse_freshness_label(&row.title));
             WebEvidenceItem {
                 domain: domain_from_url(&row.url).unwrap_or_default(),
                 raw_result_hash: result_hash(&[&row.url, &row.title, &row.snippet]),
@@ -1371,7 +1382,7 @@ fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebE
                 retrieval_reason: "web.search".into(),
                 search_backend,
                 source_rank: WebSourceRank::Unknown,
-                freshness_label: None,
+                freshness_label,
                 failure_reason: None,
                 conflict_group: None,
                 conflict_note: None,
@@ -1988,6 +1999,39 @@ mod tests {
         assert_eq!(
             initial_run_search_queries("最近世界杯战况如何？"),
             vec!["最近世界杯战况如何？".to_string()]
+        );
+    }
+
+    #[test]
+    fn freshness_label_is_extracted_from_search_snippet() {
+        assert_eq!(
+            parse_freshness_label("snippet deterministic date: 2026-08-18T07:00:00Z value"),
+            Some("2026-08-18T07:00:00Z".to_string())
+        );
+        assert_eq!(
+            parse_freshness_label("no date here"),
+            None,
+            "missing date must remain None so news validation fails closed"
+        );
+    }
+
+    #[test]
+    fn search_fetch_with_dated_snippet_produces_news_usable_freshness() {
+        let fetch = SearchProviderFetch {
+            body: "[1] title: Contract\nurl: https://source.invalid/contract\nsnippet: deterministic date: 2026-08-18T07:00:00Z"
+                .to_string(),
+            search_backend: WebSearchBackend::Provider,
+            provider_id: "mcp.test".into(),
+            provider_kind: "mcp".into(),
+            failure_reason: None,
+            diagnostic_summary: None,
+        };
+        let items = web_evidence_items_from_search_fetch(&fetch);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].failure_reason, None);
+        assert_eq!(
+            items[0].freshness_label.as_deref(),
+            Some("2026-08-18T07:00:00Z")
         );
     }
 

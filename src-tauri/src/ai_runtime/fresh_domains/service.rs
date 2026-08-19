@@ -713,6 +713,34 @@ mod tests {
         }
     }
 
+    fn weather_snapshot(output_mapping: DomainOutputMapping) -> FrozenMcpToolSnapshot {
+        FrozenMcpToolSnapshot {
+            run_id: String::new(),
+            binding_id: "binding".into(),
+            provider_id: "provider".into(),
+            exposed_name: "weather".into(),
+            mcp_tool_name: "weather".into(),
+            input_schema: serde_json::json!({}),
+            argument_mapping: serde_json::json!({}),
+            output_policy: serde_json::json!({}),
+            domain_operation: Some(DomainOperation::WeatherCurrent),
+            output_mapping: Some(output_mapping),
+            provider_config_hash: "hash".into(),
+            provider_launch_hash: String::new(),
+            transport_kind: "stdio".into(),
+            transport_config_json: "{}".into(),
+            credential_refs_json: "{}".into(),
+            binding_config_hash: "hash".into(),
+            capability: crate::ai_runtime::mcp_external_tools::WEB_DOMAIN_READ_CAPABILITY
+                .to_string(),
+            risk_class: "read_only".into(),
+            read_only: true,
+            user_trusted: true,
+            frozen_at: String::new(),
+            snapshot_integrity_hash: String::new(),
+        }
+    }
+
     #[test]
     fn output_mapping_extracts_scalars_from_whitelisted_paths() {
         let mapping = mapping(
@@ -739,6 +767,51 @@ mod tests {
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0]["temperature"], "31");
+    }
+
+    #[test]
+    fn provider_supplied_evidence_id_is_never_used_as_iris_evidence_id() {
+        let mapping = mapping(
+            "$.records",
+            &[
+                ("location", "$.city"),
+                ("condition", "$.condition"),
+                ("temperature", "$.temp"),
+                ("units", "$.unit"),
+                ("sourceUrl", "$.url"),
+                ("observedAt", "$.time"),
+                ("evidenceId", "$.evidenceId"),
+            ],
+        );
+        let output = serde_json::json!({
+            "records": [{
+                "city": "北京",
+                "condition": "晴",
+                "temp": 31,
+                "unit": "C",
+                "url": "https://example.com/weather",
+                "time": "2026-08-18T07:00:00Z",
+                "evidenceId": "provider-999"
+            }]
+        });
+        let records = extract_mapped_records(&mapping, &output).unwrap();
+        let snapshot = weather_snapshot(mapping);
+        let record = build_record(
+            DomainOperation::WeatherCurrent,
+            &snapshot,
+            records[0].clone(),
+        )
+        .expect("mapped record builds");
+
+        match record {
+            FreshDomainRecord::Weather(weather) => {
+                assert_eq!(
+                    weather.origin.evidence_id, 0,
+                    "provider-supplied evidenceId must never become Iris evidence identity"
+                );
+            }
+            _ => panic!("expected weather record"),
+        }
     }
 
     #[test]
@@ -860,6 +933,112 @@ mod tests {
         let error = FreshDomainService.execute(request, &ctx).await.unwrap_err();
 
         assert_eq!(error.to_string(), ERROR_STRUCTURED_PROVIDER_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn every_non_news_domain_operation_fails_closed_without_a_structured_provider() {
+        use crate::ai_runtime::retrieval_scope::RetrievalScope;
+        use crate::ai_runtime::tool_dispatch::ToolDispatchContext;
+
+        let cases: Vec<(DomainOperation, &str, serde_json::Value)> = vec![
+            (
+                DomainOperation::WeatherCurrent,
+                "weather_lookup",
+                serde_json::json!({ "operation": "weather.current", "location": "北京" }),
+            ),
+            (
+                DomainOperation::WeatherForecast,
+                "weather_lookup",
+                serde_json::json!({ "operation": "weather.forecast", "location": "北京", "days": 3 }),
+            ),
+            (
+                DomainOperation::FinanceQuote,
+                "finance_lookup",
+                serde_json::json!({ "operation": "finance.quote", "instrument": "AAPL" }),
+            ),
+            (
+                DomainOperation::FinanceMetrics,
+                "finance_lookup",
+                serde_json::json!({ "operation": "finance.metrics", "instrument": "AAPL" }),
+            ),
+            (
+                DomainOperation::FinanceNews,
+                "finance_lookup",
+                serde_json::json!({ "operation": "finance.news", "instrument": "AAPL" }),
+            ),
+            (
+                DomainOperation::EntertainmentNowPlaying,
+                "entertainment_lookup",
+                serde_json::json!({ "operation": "entertainment.now_playing", "location": "上海" }),
+            ),
+            (
+                DomainOperation::EntertainmentUpcoming,
+                "entertainment_lookup",
+                serde_json::json!({ "operation": "entertainment.upcoming" }),
+            ),
+            (
+                DomainOperation::EntertainmentStreaming,
+                "entertainment_lookup",
+                serde_json::json!({ "operation": "entertainment.streaming" }),
+            ),
+            (
+                DomainOperation::SportsSchedule,
+                "sports_lookup",
+                serde_json::json!({ "operation": "sports.schedule", "competition": "NBA" }),
+            ),
+            (
+                DomainOperation::SportsScore,
+                "sports_lookup",
+                serde_json::json!({ "operation": "sports.score", "competition": "NBA" }),
+            ),
+        ];
+
+        let db = Database::open_in_memory().unwrap();
+        let retrieval_scope = RetrievalScope::default();
+        let available_tool_names: Vec<String> = Vec::new();
+        let cold_start_packets: Vec<crate::ai_runtime::ContextPacket> = Vec::new();
+        let runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot> = Vec::new();
+        let ctx = ToolDispatchContext {
+            db: Some(&db),
+            selected_web_provider_id: None,
+            note_path: None,
+            file_id: None,
+            run_id: None,
+            write_target_path: None,
+            document_policy: None,
+            web_search_enabled: true,
+            fresh_fact_policy: None,
+            available_tool_names: &available_tool_names,
+            max_web_fetches: 2,
+            cold_start_packets: &cold_start_packets,
+            retrieval_scope: &retrieval_scope,
+            runtime_documents: &runtime_documents,
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+        };
+
+        for (operation, tool_name, args) in cases {
+            let request = FreshDomainRequest {
+                tool_name: tool_name.to_string(),
+                operation,
+                args,
+                requested_at: DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+                location_gap: None,
+            };
+            let error = FreshDomainService
+                .execute(request, &ctx)
+                .await
+                .expect_err(&format!("{tool_name} must fail closed without a provider"));
+            assert_eq!(
+                error.to_string(),
+                ERROR_STRUCTURED_PROVIDER_UNAVAILABLE,
+                "operation {} must not fall back to generic web success",
+                operation.as_str(),
+            );
+        }
     }
 
     #[test]

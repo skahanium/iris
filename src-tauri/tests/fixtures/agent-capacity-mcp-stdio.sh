@@ -52,6 +52,7 @@ while IFS= read -r line; do
               claims="$claims fact-web-$ordinal=value-$ordinal"
               ordinal=$((ordinal + 1))
             done
+            claims="$claims date: 2026-08-18T07:00:00Z"
             if [ "$result_count" -gt 1 ]; then
               results="[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\\n"
               index=2
