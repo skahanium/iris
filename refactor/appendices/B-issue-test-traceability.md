@@ -40,7 +40,9 @@
 | WEB-001 | Partial | `insufficient_first_search_triggers_bounded_refinement` | 已证明预搜索计数、gap 预算和 resume state 恢复；未证明 Provider attempt/winner 生产夹具 |
 | WEB-001 | Partial | `sufficient_first_search_stops_without_extra_tool_turn` | 已证明单测提前停止；未证明 provider failover 不扩大轮次 |
 | WEB-001 | Partial | `search_fetch_with_dated_snippet_produces_news_usable_freshness` | 搜索片段可解析时效标签，News WebFallback 可进入 DTO 校验 |
+| WEB-001 | Partial | `news_web_fallback_produces_validated_record_from_headless_mcp` | News WebFallback 服务层已能由 headless MCP 产出验证记录 |
 | EVID-005 | Partial | `strict_current_fact_rejects_unsupported_free_text`; Host renderer test | 生产终局与 DTO 固定渲染已接线；完整领域矩阵待补 |
+| EVID-005 | Partial | `host_renderer_never_leaks_provider_metadata_across_all_domain_records` | Host 固定模板终局覆盖全部领域 DTO，且不泄漏 Provider 元数据 |
 | EVID-005 | Partial | `source_group_fallback_cannot_complete_strict_current_fact` | 来源组不能替代当前事实支持 |
 | EVID-005 | Partial | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 协议不支持时失败关闭 |
 | EVAL-002 | Partial | `current_fact_movie_follow_up_scenario` | 固定场景存在；需重新接入生产结构化/Web 路径 |
