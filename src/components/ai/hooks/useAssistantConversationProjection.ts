@@ -95,7 +95,15 @@ export function useAssistantConversationProjection({
 
   useEffect(() => {
     if (!run) return;
-    const outputting = deriveRunOutputting(run, presentation);
+    // The Run acceptance event can arrive before the conversation projection
+    // has appended its user/assistant placeholder. Do not mark the whole
+    // transcript streaming in that gap: the list would otherwise treat the
+    // previous assistant answer as the current streaming bubble.
+    const hasRunMessage = messages.some(
+      (message) => message.runId === run.runId,
+    );
+    const outputting =
+      hasRunMessage && deriveRunOutputting(run, presentation);
     setStreaming(outputting);
     if (outputting) {
       setActivityHint(run.stage);
@@ -109,7 +117,7 @@ export function useAssistantConversationProjection({
         setActivityHint(null);
       }
     }
-  }, [presentation, run, setActivityHint, setStreaming]);
+  }, [messages, presentation, run, setActivityHint, setStreaming]);
 
   useEffect(() => {
     if (!run) return;

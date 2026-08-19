@@ -499,9 +499,7 @@ async fn assistant_run_control_inner<R: AssistantRunRuntime>(
                         client_request_id: String::new(),
                         run_id: run_id.clone(),
                         turn_id: crate::ai_runtime::run_intake::RunIntake::get(
-                            &state.db,
-                            &session,
-                            &run_id,
+                            &state.db, &session, &run_id,
                         )?
                         .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
                         .run

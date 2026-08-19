@@ -17,6 +17,10 @@ use super::location::{
 };
 use super::provider::{resolve_domain_provider, DomainProviderRoute};
 use super::validation::validate_domain_record;
+use crate::ai_runtime::agent_evidence_repository::{
+    AgentEvidenceRepository, ExternalToolEvidenceInput,
+};
+use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::fresh_research_plan::EvidenceGap;
 use crate::ai_runtime::mcp_external_tools::{
     load_run_snapshots, provider_is_current, snapshot_contract_is_valid,
@@ -36,6 +40,7 @@ const ERROR_MAPPING_TOO_LARGE: &str = "external_tool_mapping_output_too_large";
 const ERROR_SNAPSHOT_INVALID: &str = "external_tool_binding_config_changed";
 const ERROR_PROVIDER_CHANGED: &str = "external_tool_provider_config_changed";
 const ERROR_EVIDENCE_INSUFFICIENT: &str = "agent_run_fresh_evidence_insufficient";
+const ERROR_STRUCTURED_PROVIDER_UNAVAILABLE: &str = "agent_run_structured_provider_unavailable";
 const ERROR_LOCATION_REQUIRED: &str = "agent_run_location_required";
 const MAX_MAPPED_FIELD_CHARS: usize = 4_096;
 const MAX_MAPPED_ARRAY_CHARS: usize = 8_192;
@@ -110,7 +115,10 @@ impl FreshDomainService {
             return self.execute_frozen(db, request, context, route).await;
         }
 
-        self.execute_web_fallback(db, request, context).await
+        if request.operation == DomainOperation::NewsSearch {
+            return self.execute_web_fallback(db, request, context).await;
+        }
+        Err(AppError::msg(ERROR_STRUCTURED_PROVIDER_UNAVAILABLE))
     }
 
     fn frozen_route(
@@ -151,7 +159,7 @@ impl FreshDomainService {
         &self,
         db: &Database,
         request: &FreshDomainRequest,
-        _context: &ToolDispatchContext<'_>,
+        context: &ToolDispatchContext<'_>,
         snapshot: FrozenMcpToolSnapshot,
     ) -> AppResult<Vec<FreshDomainRecord>> {
         let mapped_arguments = validate_and_map_arguments(&snapshot, &request.args)?;
@@ -188,8 +196,37 @@ impl FreshDomainService {
         let mapped_records = extract_mapped_records(mapping, &call.result)?;
         let mut records = Vec::new();
         for mapped in mapped_records {
-            let record = build_record(request.operation, &snapshot, mapped)?;
+            let mut record = build_record(request.operation, &snapshot, mapped)?;
             validate_domain_record(request.operation, request.requested_at, &record)?;
+            if let Some(run_id) = context.run_id {
+                let (session_id, message_seq_first) =
+                    AgentRunRepository::evidence_owner_for_run(db, run_id)?
+                        .ok_or_else(|| AppError::msg("agent_run_evidence_owner_missing"))?;
+                let origin = record_origin(&record);
+                let bounded_excerpt = serde_json::to_string(&record)
+                    .map_err(AppError::from)?
+                    .chars()
+                    .take(12_000)
+                    .collect::<String>();
+                let registered = AgentEvidenceRepository::register_external_tool(
+                    db,
+                    ExternalToolEvidenceInput {
+                        session_id,
+                        run_id: run_id.to_string(),
+                        message_seq_first,
+                        title: origin.source_title.clone(),
+                        provider_id: snapshot.provider_id.clone(),
+                        provider_config_hash: snapshot.provider_config_hash.clone(),
+                        binding_id: snapshot.binding_id.clone(),
+                        raw_result_hash: crate::cas::hash::content_hash_str(
+                            &call.result.to_string(),
+                        ),
+                        retrieved_at: request.requested_at.to_rfc3339(),
+                        bounded_excerpt,
+                    },
+                )?;
+                set_record_evidence_id(&mut record, registered.evidence_id);
+            }
             records.push(record);
         }
         if records.is_empty() {
@@ -536,6 +573,26 @@ fn required_string(mapped: &Map<String, Value>, key: &str) -> AppResult<String> 
         .ok_or_else(|| AppError::msg(ERROR_MAPPING_INVALID))
 }
 
+fn record_origin(record: &FreshDomainRecord) -> &EvidenceOrigin {
+    match record {
+        FreshDomainRecord::Weather(record) => &record.origin,
+        FreshDomainRecord::News(record) => &record.origin,
+        FreshDomainRecord::Finance(record) => &record.origin,
+        FreshDomainRecord::Entertainment(record) => &record.origin,
+        FreshDomainRecord::Sports(record) => &record.origin,
+    }
+}
+
+fn set_record_evidence_id(record: &mut FreshDomainRecord, evidence_id: i64) {
+    match record {
+        FreshDomainRecord::Weather(record) => record.origin.evidence_id = evidence_id,
+        FreshDomainRecord::News(record) => record.origin.evidence_id = evidence_id,
+        FreshDomainRecord::Finance(record) => record.origin.evidence_id = evidence_id,
+        FreshDomainRecord::Entertainment(record) => record.origin.evidence_id = evidence_id,
+        FreshDomainRecord::Sports(record) => record.origin.evidence_id = evidence_id,
+    }
+}
+
 fn optional_string(mapped: &Map<String, Value>, key: &str) -> Option<String> {
     mapped
         .get(key)
@@ -750,6 +807,50 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.to_string(), ERROR_EVIDENCE_INSUFFICIENT);
+    }
+
+    #[tokio::test]
+    async fn structured_weather_without_provider_fails_closed_instead_of_using_web_fallback() {
+        use crate::ai_runtime::retrieval_scope::RetrievalScope;
+        use crate::ai_runtime::tool_dispatch::ToolDispatchContext;
+
+        let db = Database::open_in_memory().unwrap();
+        let retrieval_scope = RetrievalScope::default();
+        let available_tool_names: Vec<String> = vec!["weather_lookup".into()];
+        let cold_start_packets: Vec<crate::ai_runtime::ContextPacket> = Vec::new();
+        let runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot> = Vec::new();
+        let ctx = ToolDispatchContext {
+            db: Some(&db),
+            selected_web_provider_id: None,
+            note_path: None,
+            file_id: None,
+            run_id: None,
+            write_target_path: None,
+            document_policy: None,
+            web_search_enabled: true,
+            fresh_fact_policy: None,
+            available_tool_names: &available_tool_names,
+            max_web_fetches: 2,
+            cold_start_packets: &cold_start_packets,
+            retrieval_scope: &retrieval_scope,
+            runtime_documents: &runtime_documents,
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+        };
+        let request = FreshDomainRequest {
+            tool_name: "weather_lookup".into(),
+            operation: DomainOperation::WeatherCurrent,
+            args: serde_json::json!({ "location": "北京" }),
+            requested_at: DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            location_gap: None,
+        };
+
+        let error = FreshDomainService.execute(request, &ctx).await.unwrap_err();
+
+        assert_eq!(error.to_string(), ERROR_STRUCTURED_PROVIDER_UNAVAILABLE);
     }
 
     #[test]

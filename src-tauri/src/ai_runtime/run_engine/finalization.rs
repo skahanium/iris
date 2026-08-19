@@ -268,6 +268,50 @@ pub(super) fn validated_current_run_final_submission(
     submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
     strict_web: bool,
 ) -> Result<crate::ai_runtime::provenance::ValidatedFinalAnswerSubmission, RunFinalizationFailure> {
+    let frozen_fresh_fact =
+        AgentRunRepository::fresh_fact_policy_for_run(db, run_id).map_err(|error| {
+            RunFinalizationFailure::new(
+                RunFinalizationStage::EvidenceValidation,
+                SafeRunErrorCode::EvidenceInvalid,
+                error.to_string(),
+            )
+        })?;
+    if let Some(policy) = frozen_fresh_fact {
+        if matches!(
+            policy.domain,
+            crate::ai_runtime::run_contract::FreshFactDomain::Weather
+                | crate::ai_runtime::run_contract::FreshFactDomain::News
+                | crate::ai_runtime::run_contract::FreshFactDomain::Finance
+                | crate::ai_runtime::run_contract::FreshFactDomain::Entertainment
+                | crate::ai_runtime::run_contract::FreshFactDomain::Sports
+        ) {
+            let evidence = AgentEvidenceRepository::list_current_run_registered(db, run_id)
+                .map_err(|error| {
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::EvidenceInvalid,
+                        error.to_string(),
+                    )
+                })?;
+            crate::ai_runtime::current_fact_finalization::validate_current_fact_submission(
+                &policy,
+                submission,
+                &evidence,
+            )
+            .map_err(|error| {
+                let code = match error {
+                    crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::UnsupportedProtocol => SafeRunErrorCode::FinalizationProtocolInvalid,
+                    crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::InsufficientEvidence
+                    | crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::UnsupportedClaim => SafeRunErrorCode::EvidenceInvalid,
+                };
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::EvidenceValidation,
+                    code,
+                    "current_fact_submission_rejected",
+                )
+            })?;
+        }
+    }
     let policy =
         AgentEvidenceRepository::provenance_policy(db, run_id, strict_web).map_err(|error| {
             RunFinalizationFailure::new(

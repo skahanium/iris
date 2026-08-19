@@ -79,8 +79,8 @@ pub(crate) fn build_fresh_research_plan(
 /// input. It is not a geocoder and never substitutes for user confirmation.
 pub(crate) fn explicit_city_from_message(message: &str) -> Option<String> {
     const KNOWN_CITIES: &[&str] = &[
-        "北京", "上海", "广州", "深圳", "杭州", "成都", "重庆", "武汉", "西安", "南京",
-        "苏州", "天津", "青岛", "厦门", "香港", "澳门",
+        "北京", "上海", "广州", "深圳", "杭州", "成都", "重庆", "武汉", "西安", "南京", "苏州",
+        "天津", "青岛", "厦门", "香港", "澳门",
     ];
     KNOWN_CITIES
         .iter()
@@ -105,7 +105,7 @@ impl ResearchQueryLedger {
         if self
             .seen
             .iter()
-            .any(|(seen_query, seen_gap)| seen_query == &normalized && *seen_gap == gap)
+            .any(|(seen_query, _seen_gap)| seen_query == &normalized)
         {
             return Err(AppError::msg("fresh_research_duplicate_query"));
         }
@@ -301,9 +301,27 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_normalized_query_is_rejected_even_when_gap_changes() {
+        let mut ledger = ResearchQueryLedger::new();
+        ledger
+            .register("上海 电影", EvidenceGap::MissingEntity)
+            .expect("first register");
+        let error = ledger
+            .register(" 上海   电影 ", EvidenceGap::MissingTimestamp)
+            .expect_err("same query cannot be retried under another gap");
+        assert_eq!(error.to_string(), "fresh_research_duplicate_query");
+    }
+
+    #[test]
     fn explicit_city_is_detected_only_from_conservative_known_names() {
-        assert_eq!(explicit_city_from_message("上海未来一周天气"), Some("上海".into()));
+        assert_eq!(
+            explicit_city_from_message("上海未来一周天气"),
+            Some("上海".into())
+        );
         assert_eq!(explicit_city_from_message("未来一周天气"), None);
-        assert_eq!(explicit_city_from_message("我的笔记里有上海"), Some("上海".into()));
+        assert_eq!(
+            explicit_city_from_message("我的笔记里有上海"),
+            Some("上海".into())
+        );
     }
 }

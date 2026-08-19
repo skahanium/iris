@@ -1457,7 +1457,10 @@ fn input_submission_resumes_the_same_run_and_replay_is_noop() {
         &RecordingSink::default(),
     )
     .expect("input submission");
-    assert_eq!(outcome, super::run_intake::NormalRunControlOutcome::InputProvided);
+    assert_eq!(
+        outcome,
+        super::run_intake::NormalRunControlOutcome::InputProvided
+    );
     let replay = RunIntake::control_with_sink(
         &db,
         AssistantRunControlRequest {

@@ -1569,6 +1569,29 @@ impl AgentRunRepository {
         Self::get_scoped(db, run_id, None)
     }
 
+    /// Read the immutable current-fact policy frozen in a Run's envelope.
+    pub(crate) fn fresh_fact_policy_for_run(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Option<crate::ai_runtime::run_contract::FreshFactPolicy>> {
+        db.with_read_conn(|conn| {
+            let envelope_json = conn
+                .query_row(
+                    "SELECT envelope_json FROM agent_runs WHERE run_id = ?1",
+                    [run_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            envelope_json
+                .map(|json| {
+                    let envelope: ExecutionEnvelope = serde_json::from_str(&json)
+                        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+                    Ok(envelope.fresh_fact)
+                })
+                .transpose()
+        })
+    }
+
     /// Return the latest recoverable Run for one normal-domain session.
     pub(crate) fn latest_active_for_session(
         db: &Database,
@@ -1975,6 +1998,28 @@ impl AgentRunRepository {
                 RunEventPayload::InputProvided { values, .. } => Ok(values),
                 _ => Ok(std::collections::BTreeMap::new()),
             }
+        })
+    }
+
+    /// Return the owning session and user-message sequence for one Run. This
+    /// is the only storage lookup domain tools need when registering a bounded
+    /// provider result as evidence.
+    pub(crate) fn evidence_owner_for_run(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Option<(i64, i64)>> {
+        db.with_read_conn(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT r.session_id, m.seq
+                 FROM agent_runs r
+                 JOIN session_messages m
+                   ON m.session_id = r.session_id AND m.turn_id = r.turn_id
+                 WHERE r.run_id = ?1 AND m.role = 'user'",
+                    [run_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?)
         })
     }
     /// Read the immutable execution budget only when the normal-domain session matches.
@@ -2469,7 +2514,9 @@ fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
         if input_id.trim().is_empty()
             || values.len() != 1
             || values.get("city").is_none_or(|city| {
-                city.trim().is_empty() || city.chars().count() > 128 || city.chars().any(char::is_control)
+                city.trim().is_empty()
+                    || city.chars().count() > 128
+                    || city.chars().any(char::is_control)
             })
         {
             return Err(AppError::run(SafeRunErrorCode::InputInvalid));
@@ -2619,7 +2666,9 @@ fn pending_input_summary(
                 });
             }
             RunEventPayload::InputProvided { input_id, .. }
-                if pending.as_ref().is_some_and(|value| value.input_id == *input_id) =>
+                if pending
+                    .as_ref()
+                    .is_some_and(|value| value.input_id == *input_id) =>
             {
                 pending = None;
             }

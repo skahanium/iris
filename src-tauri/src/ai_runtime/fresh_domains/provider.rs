@@ -51,8 +51,8 @@ pub(crate) fn default_operations_for_domain(domain: FreshFactDomain) -> Vec<Doma
 /// 2. If multiple healthy mappings remain and one belongs to the currently
 ///    selected Web provider, that provider wins.
 /// 3. A single healthy mapping is selected automatically.
-/// 4. Multiple healthy mappings without a current Web provider fall back to
-///    generic Web evidence.
+/// 4. Multiple healthy mappings without a current Web provider fail closed for
+///    structured operations; News may still use generic Web evidence.
 ///
 /// Disabled providers or providers whose config hash drifted are rejected when
 /// they were the only configured mapping for the operation.
@@ -112,7 +112,11 @@ pub(crate) fn resolve_domain_provider(
         }
     }
 
-    Ok(DomainProviderRoute::WebEvidence)
+    if operation == DomainOperation::NewsSearch {
+        Ok(DomainProviderRoute::WebEvidence)
+    } else {
+        Err(AppError::msg("agent_run_structured_provider_ambiguous"))
+    }
 }
 
 /// Build a route snapshot from live binding metadata.
@@ -295,7 +299,7 @@ mod domain_provider_tests {
     }
 
     #[test]
-    fn multiple_unselected_healthy_mappings_fall_back_to_web() {
+    fn multiple_unselected_healthy_mappings_fail_closed_for_structured_operation() {
         let db = Database::open_in_memory().unwrap();
         provider(&db, "weather-a", "Weather A", true);
         provider(&db, "weather-b", "Weather B", true);
@@ -312,9 +316,10 @@ mod domain_provider_tests {
             DomainOperation::WeatherCurrent,
         );
 
-        let route = resolve_domain_provider(&db, DomainOperation::WeatherCurrent, None).unwrap();
+        let error =
+            resolve_domain_provider(&db, DomainOperation::WeatherCurrent, None).unwrap_err();
 
-        assert!(matches!(route, DomainProviderRoute::WebEvidence));
+        assert_eq!(error.to_string(), "agent_run_structured_provider_ambiguous");
     }
 
     #[test]

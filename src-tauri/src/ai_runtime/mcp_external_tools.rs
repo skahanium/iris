@@ -1349,15 +1349,25 @@ pub(crate) fn freeze_domain_run_grants(
                     && candidate.12 == 1
             })
             .collect::<Vec<_>>();
-        let chosen = if healthy.len() == 1 {
+        let healthy_count = healthy.len();
+        let chosen = if healthy_count == 1 {
             Some(healthy[0].clone())
         } else if let Some(selected) = selected_web_provider_id {
             healthy
                 .into_iter()
                 .find(|candidate| candidate.1 == selected)
+        } else if !healthy.is_empty() && *operation != DomainOperation::NewsSearch {
+            return Err(safe_error("agent_run_structured_provider_ambiguous"));
         } else {
             None
         };
+        if healthy_count > 1
+            && selected_web_provider_id.is_some()
+            && chosen.is_none()
+            && *operation != DomainOperation::NewsSearch
+        {
+            return Err(safe_error("agent_run_structured_provider_ambiguous"));
+        }
         if let Some(candidate) = chosen {
             let (
                 binding_id,

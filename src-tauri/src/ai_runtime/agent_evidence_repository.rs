@@ -294,6 +294,30 @@ impl AgentEvidenceRepository {
         })
     }
 
+    /// Load every non-retired evidence registration owned by one Run. The
+    /// returned references are Run-local and safe for deterministic final
+    /// protocol validation; no excerpt or raw provider payload is exposed.
+    pub(crate) fn list_current_run_registered(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Vec<RegisteredEvidence>> {
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1 AND evidence.retired_at IS NULL
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let ids = statement
+                .query_map([run_id], |row| row.get::<_, i64>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            ids.into_iter()
+                .map(|id| registered_by_id(conn, id))
+                .collect()
+        })
+    }
+
     /// Register local source metadata without accepting or persisting note text.
     pub(crate) fn register_local(
         db: &Database,

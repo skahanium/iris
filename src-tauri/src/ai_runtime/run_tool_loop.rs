@@ -411,6 +411,12 @@ impl<'a> NormalRunToolExecutor<'a> {
         if *search_count >= budget.max_searches {
             return Ok(false);
         }
+        // The first deterministic prefetch is the only search allowed to omit
+        // an evidence gap. Every later search must explain what is still
+        // missing; this prevents the model from spinning generic queries.
+        if *search_count > 0 && gap.is_none() {
+            return Ok(false);
+        }
         if let Some(gap) = gap {
             let mut ledger = self
                 .fresh_research_ledger
@@ -5020,6 +5026,47 @@ mod tests {
         assert!(!executor
             .try_reserve_fresh_research_slot("额外搜索", Some(EvidenceGap::MissingTimestamp),)
             .expect("budget check"));
+    }
+
+    #[test]
+    fn supplement_without_gap_is_rejected_after_initial_prefetch() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string()])
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 2,
+            max_fetches: 2,
+            max_repairs: 0,
+        });
+
+        assert!(executor
+            .try_reserve_fresh_research_slot("初始查询", None)
+            .expect("initial search"));
+        assert!(!executor
+            .try_reserve_fresh_research_slot("补充查询", None)
+            .expect("gap is mandatory"));
     }
 
     #[tokio::test]
