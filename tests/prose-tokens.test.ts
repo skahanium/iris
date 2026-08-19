@@ -23,6 +23,19 @@ describe("prose polish v2 tokens", () => {
     expect(markdownProse).not.toContain("@layer components");
   });
 
+  it("keeps editor h1-h3 font-size rules outside Tailwind component layers", () => {
+    expect(markdownProse).toContain(
+      "font-size: calc(var(--prose-h1) * var(--editor-zoom))",
+    );
+    expect(markdownProse).toContain(
+      "font-size: calc(var(--prose-h2) * var(--editor-zoom))",
+    );
+    expect(markdownProse).toContain(
+      "font-size: calc(var(--prose-h3) * var(--editor-zoom))",
+    );
+    expect(markdownProse).not.toContain("@layer components");
+  });
+
   it("defines editor and conversation prose surfaces", () => {
     expect(markdownProse).toContain('data-prose-surface="editor"');
     expect(markdownProse).toContain('data-prose-surface="conversation"');
