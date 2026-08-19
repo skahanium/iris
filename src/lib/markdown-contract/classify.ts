@@ -240,15 +240,10 @@ function walkTokens(tokens: Token[], acc: FragmentAccumulator): void {
     if (type === "list") {
       const listToken = token as Tokens.List;
       if (listToken.items) {
-        for (const item of listToken.items) {
-          if (item.task) {
-            // Task list: emit the item's raw (includes checkbox)
-            pushFragment(acc, item.raw ?? "", "task_list");
-          } else {
-            // Regular list: emit the item
-            pushFragment(acc, item.raw ?? "", "list");
-          }
-        }
+        // Emit the whole list as one fragment so mixed normal/task items stay
+        // in the same list instead of being split into separate lists.
+        const allTasks = listToken.items.every((item) => item.task);
+        pushFragment(acc, raw, allTasks ? "task_list" : "list");
       } else {
         pushFragment(acc, raw, "list");
       }

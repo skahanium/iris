@@ -659,4 +659,32 @@ describe("serializeOpenNote integration (PM + ingest)", () => {
     expect(first).not.toContain("npm install -g @mimo-ai/cli\n\n```");
     expect(second).not.toContain("npm install -g @mimo-ai/cli\n\n```");
   });
+
+  it("round-trips table cell links and escaped pipes", () => {
+    const md =
+      "| A | B |\n| --- | --- |\n| [文档](https://example.com) | a\\|b |";
+    const out = normalizeMd(
+      pmSerializeBody(createProductionEditorFromIngestedBody(md)),
+    );
+    expect(out).toContain("[文档](https://example.com)");
+    expect(out).toContain("a\\|b");
+  });
+
+  it("round-trips task item nested list content", () => {
+    const md = "- [ ] parent\n  - child";
+    const out = normalizeMd(
+      pmSerializeBody(createProductionEditorFromIngestedBody(md)),
+    );
+    expect(out).toContain("- [ ] parent");
+    expect(out).toContain("child");
+  });
+
+  it("keeps mixed normal and task list items in one list", () => {
+    const md = "- normal\n- [x] done";
+    const out = normalizeMd(
+      pmSerializeBody(createProductionEditorFromIngestedBody(md)),
+    );
+    expect(out).toContain("- normal");
+    expect(out).toContain("- [x] done");
+  });
 });

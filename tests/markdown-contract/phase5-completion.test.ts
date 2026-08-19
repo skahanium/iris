@@ -270,6 +270,8 @@ describe("CRITERION 5: capability classification is stable", () => {
       "",
       "- list",
       "",
+      "Paragraph between lists.",
+      "",
       "- [x] task",
       "",
       "> blockquote",
