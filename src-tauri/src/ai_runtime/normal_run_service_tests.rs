@@ -1032,6 +1032,119 @@ async fn production_weather_without_provider_fails_closed_instead_of_fabricating
 }
 
 #[tokio::test]
+async fn production_news_search_web_fallback_passes_through_evidence_ledger() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let sink = RecordingSink::default();
+    let mut request = web_tool_loop_request();
+    request.client_request_id = "production-news-web-fallback".into();
+    request.turn.message = "请调研最新 synthetic 新闻。".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted news web-fallback run");
+    let context = RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("run context");
+    let domain_plan = context.domain_plan();
+    let initial_evidence =
+        RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
+            .expect("initial evidence registration");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"news-call\",\"type\":\"function\",\"function\":{\"name\":\"news_lookup\",\"arguments\":\"{\\\"operation\\\":\\\"news.search\\\",\\\"topic\\\":\\\"synthetic\\\",\\\"limit\\\":5}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        &gateway,
+        ProviderConfig {
+            name: "headless-news-model".into(),
+            base_url: llm.base_url.clone(),
+            api_key: None,
+            model: "news-model".into(),
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        256,
+    )
+    .expect("model gateway provider");
+    let capabilities = vec![
+        CapabilityId::new("web.search"),
+        CapabilityId::new("web.domain.read"),
+    ];
+    let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
+    assert!(tools.iter().any(|tool| tool.name == "news_lookup"));
+    let provider_snapshot =
+        super::mcp_runtime_registry::resolve_selected_web_search_provider(&state.db)
+            .expect("freeze selected MCP provider before the model tool loop");
+    let executor = NormalRunToolExecutor::new(
+        &state,
+        None,
+        &accepted,
+        &context,
+        capabilities,
+        super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
+        &sink,
+        vec![provider_snapshot],
+    )
+    .with_allowed_tool_names(
+        &tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    RunEngine::execute_tool_loop_with_sink(
+        &state.db,
+        &accepted.session,
+        &accepted.run_id,
+        context.messages_with_domain_plan(&domain_plan),
+        tools,
+        &initial_evidence,
+        Some(&domain_plan),
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect("production news web-fallback chain");
+
+    let calls = llm.finish().await.expect("LLM double completion");
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(
+        calls.len(),
+        2,
+        "news lookup must complete a real continuation"
+    );
+    assert_eq!(response.run.state, RunState::Completed);
+    let news_evidence_count = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM session_evidence WHERE origin_run_id = ?1 AND source_type = 'web'",
+                [&accepted.run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("evidence ledger query");
+    assert!(
+        news_evidence_count >= 1,
+        "news web-fallback must enter the evidence ledger"
+    );
+}
+
+#[tokio::test]
 async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");

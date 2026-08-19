@@ -232,6 +232,9 @@ impl FreshDomainService {
                         ),
                         retrieved_at: request.requested_at.to_rfc3339(),
                         bounded_excerpt,
+                        url: Some(origin.source_url.clone()),
+                        normalized_url: Some(origin.source_url.clone()),
+                        domain: Some(domain_from_url(&origin.source_url).unwrap_or_default()),
                     },
                 )?;
                 set_record_evidence_id(&mut record, registered.evidence_id);
@@ -301,6 +304,9 @@ impl FreshDomainService {
                                 raw_result_hash: item.raw_result_hash.clone(),
                                 retrieved_at: request.requested_at.to_rfc3339(),
                                 bounded_excerpt,
+                                url: Some(item.url.clone()),
+                                normalized_url: Some(item.canonical_url.clone()),
+                                domain: Some(item.domain.clone()),
                             },
                         )?;
                         set_record_evidence_id(&mut record, registered.evidence_id);

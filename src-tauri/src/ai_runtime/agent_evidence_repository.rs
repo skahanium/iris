@@ -119,6 +119,9 @@ pub(crate) struct ExternalToolEvidenceInput {
     pub(crate) raw_result_hash: String,
     pub(crate) retrieved_at: String,
     pub(crate) bounded_excerpt: String,
+    pub(crate) url: Option<String>,
+    pub(crate) normalized_url: Option<String>,
+    pub(crate) domain: Option<String>,
 }
 
 /// Lossless ledger identifier plus the UI-safe reference shape.
@@ -490,10 +493,12 @@ impl AgentEvidenceRepository {
                               message_seq_first, source_type, title, content_hash,
                               retrieval_reason, retrieved_at, provider_id, provider_kind,
                               raw_result_hash, extraction_method, origin_run_id,
-                              material_role, stale, bounded_excerpt, created_at)
+                              material_role, stale, bounded_excerpt, created_at,
+                              url, normalized_url, domain)
                              VALUES (?1, ?2, ?3, ?4, ?5, 'web', ?6, ?7,
                                      'external.read', ?8, ?9, 'mcp', ?10,
-                                     'mcp_tool_output_v1', ?11, 'lookup', 0, ?12, ?13)",
+                                     'mcp_tool_output_v1', ?11, 'lookup', 0, ?12, ?13,
+                                     ?14, ?15, ?16)",
                     params![
                         input.session_id,
                         citation.index,
@@ -508,6 +513,9 @@ impl AgentEvidenceRepository {
                         input.run_id,
                         input.bounded_excerpt,
                         now,
+                        input.url.clone(),
+                        input.normalized_url.clone(),
+                        input.domain.clone(),
                     ],
                 )?;
                 let registered = registered_by_id(conn, conn.last_insert_rowid())?;
@@ -623,10 +631,13 @@ impl AgentEvidenceRepository {
                      FROM agent_run_evidence run_evidence
                      JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
                      WHERE run_evidence.run_id = ?1
-                       AND run_evidence.registration_source IN ('web_search', 'external_tool')
                        AND evidence.source_type = 'web'
                        AND evidence.retired_at IS NULL
-                       AND evidence.url LIKE 'https://%'
+                       AND (
+                         (run_evidence.registration_source = 'web_search'
+                          AND evidence.url LIKE 'https://%')
+                         OR run_evidence.registration_source = 'external_tool'
+                       )
                  )",
             )?;
             statement

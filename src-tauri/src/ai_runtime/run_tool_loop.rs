@@ -1023,21 +1023,23 @@ impl<'a> NormalRunToolExecutor<'a> {
             | "entertainment_lookup"
             | "sports_lookup" => {
                 for record in result.output.as_array().into_iter().flatten() {
-                    if let Some(origin) = record.get("origin") {
-                        if let Some(evidence_id) = origin
-                            .get("evidence_id")
-                            .and_then(serde_json::Value::as_i64)
-                        {
-                            domain_evidence_ids.push(evidence_id);
-                        }
-                        if let Some(url) =
-                            origin.get("sourceUrl").and_then(serde_json::Value::as_str)
-                        {
-                            if let Some(domain) =
-                                crate::ai_runtime::web_evidence_broker::domain_from_url(url)
+                    let inner = record.as_object().and_then(|object| object.values().next());
+                    if let Some(inner) = inner {
+                        if let Some(origin) = inner.get("origin") {
+                            if let Some(evidence_id) =
+                                origin.get("evidenceId").and_then(serde_json::Value::as_i64)
                             {
-                                if !domain.trim().is_empty() {
-                                    domain_names.push(domain.to_ascii_lowercase());
+                                domain_evidence_ids.push(evidence_id);
+                            }
+                            if let Some(url) =
+                                origin.get("sourceUrl").and_then(serde_json::Value::as_str)
+                            {
+                                if let Some(domain) =
+                                    crate::ai_runtime::web_evidence_broker::domain_from_url(url)
+                                {
+                                    if !domain.trim().is_empty() {
+                                        domain_names.push(domain.to_ascii_lowercase());
+                                    }
                                 }
                             }
                         }
@@ -1370,6 +1372,9 @@ impl NormalRunToolExecutor<'_> {
                                             raw_result_hash,
                                             retrieved_at: chrono::Utc::now().to_rfc3339(),
                                             bounded_excerpt: excerpt,
+                                            url: None,
+                                            normalized_url: None,
+                                            domain: None,
                                         },
                                     ) {
                                         Err(_) => failed_tool_call_with_duration(

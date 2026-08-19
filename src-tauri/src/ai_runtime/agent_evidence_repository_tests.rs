@@ -316,6 +316,9 @@ fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
             raw_result_hash: "result-hash".into(),
             retrieved_at: "2026-07-30T00:00:00Z".into(),
             bounded_excerpt: "bounded external result".into(),
+            url: None,
+            normalized_url: None,
+            domain: None,
         },
     )
     .expect("external evidence");
@@ -382,6 +385,9 @@ fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
             raw_result_hash: "result-hash".into(),
             retrieved_at: "2026-07-30T00:01:00Z".into(),
             bounded_excerpt: "bounded external result".into(),
+            url: None,
+            normalized_url: None,
+            domain: None,
         },
     )
     .expect("second Run gets its own acquisition");
@@ -414,6 +420,9 @@ fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
             raw_result_hash: "result-hash-2".into(),
             retrieved_at: "2026-07-30T00:00:00Z".into(),
             bounded_excerpt: "must not persist".into(),
+            url: None,
+            normalized_url: None,
+            domain: None,
         },
     )
     .expect_err("different Run");
