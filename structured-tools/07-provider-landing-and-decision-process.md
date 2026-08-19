@@ -47,7 +47,8 @@
 出现以下任一情况，施工 AI **必须停止并询问设计者**，不得继续：
 
 1. 候选 Provider 不是 MCP，而是 REST 或其他协议；
-   - 当前架构没有通用 REST adapter，是否新增 adapter 属于架构决策。
+   - 当前架构没有通用 REST adapter，是否新增 adapter 属于架构决策；
+   - 若允许 REST adapter，软件门禁必须包含对应 transport 的 contract fixture，不能只测 MCP。
 2. 同一 operation 需要多个 Provider 才能覆盖目标范围；
    - 必须确认覆盖矩阵、路由规则和 readiness 展示方式。
 3. 某个 Provider 只能覆盖 operation 的一部分；
@@ -73,13 +74,14 @@
 
 ## 6. Open Decisions（当前未决事项）
 
-| ID     | 决策点                                                          | 候选选项                                                            | 推荐                 | 状态 |
-| ------ | --------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------- | ---- |
-| OD-001 | operation 级 readiness/preview 如何持久化                       | A. 现有 binding 加列；B. 新表；C. 不新增 schema 但需解释 Ready 来源 | A                    | Open |
-| OD-002 | 是否允许新增 REST adapter                                       | A. 允许；B. 只支持 MCP；C. 暂缓                                     | 视 Provider 调研结果 | Open |
-| OD-003 | operation coverage 如何表示                                     | A. mapping JSON 增加 coverage 元数据；B. 新表/列；C. 文档人工维护   | A（若足够）          | Open |
-| OD-004 | 多 Provider 子集覆盖时是否引入 `PartialReady`/`CoverageLimited` | A. 引入；B. 不引入，按子集声明支持                                  | 视产品需要           | Open |
-| OD-005 | 无合规 Provider 的 operation 是否从支持矩阵移除                 | A. 移除并缩减文档；B. 保持 Unconfigured 并隐藏                      | A                    | Open |
+| ID     | 决策点                                                          | 候选选项                                                                                                  | 推荐                 | 状态 |
+| ------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------- | ---- |
+| OD-001 | operation 级 readiness/preview 如何持久化                       | A. 现有 binding 加列；B. 新表；C. 不新增 schema 但需解释 Ready 来源                                       | A                    | Open |
+| OD-002 | 是否允许新增 REST adapter                                       | A. 允许；B. 只支持 MCP；C. 暂缓                                                                           | 视 Provider 调研结果 | Open |
+| OD-003 | operation coverage 如何表示                                     | A. mapping JSON 增加 coverage 元数据；B. 新表/列；C. 文档人工维护（仅人工声明，不能支撑程序化 readiness） | A（若足够）          | Open |
+| OD-004 | 多 Provider 子集覆盖时是否引入 `PartialReady`/`CoverageLimited` | A. 引入；B. 不引入，按子集声明支持                                                                        | 视产品需要           | Open |
+| OD-005 | 无合规 Provider 的 operation 是否从支持矩阵移除                 | A. 移除并缩减文档；B. 保持 Unconfigured 并隐藏                                                            | A                    | Open |
+| OD-006 | `news.search` 最终形态是结构化 Provider 还是仅 WebFallback      | A. 保留 WebFallback；B. 必须接入结构化 Provider 后才算完成                                                | A                    | Open |
 
 > 任何 AI 施工者在开始阶段 5 的某个 operation 前，必须确认对应 OD 已关闭或该 operation 不依赖该 OD。
 

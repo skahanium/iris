@@ -4,7 +4,7 @@
 
 **Goal:** 让五个外部领域工具的 11 个 operation 具备 operation-specific readiness、真实 Provider 配置、健康路由和双重验收。
 
-**Architecture:** 复用现有 MCP provider registry、capability binding、Run snapshot、WebEvidenceBroker 和 evidence ledger。readiness 由现有数据库事实派生；Run 只暴露并冻结本轮可执行 operation；Provider 输出经白名单 mapping 和 DTO validator 后登记现有 evidence，再由 Host/结构化协议最终化。
+**Architecture:** 复用现有 MCP provider registry、capability binding、Run snapshot、WebEvidenceBroker 和 evidence ledger。readiness 由现有数据库事实派生；Run 只暴露并冻结本轮可执行 operation；Provider 输出经白名单 mapping 和 DTO validator 后登记现有 evidence，再由 Host/结构化协议最终化。若 07 OD-002 允许 REST adapter，则新增 adapter 但仍复用现有 registry、snapshot、evidence 和 dispatch 边界。
 
 **Tech Stack:** Rust、SQLite migration 072、Tauri 2、React 19、现有 MCP host、Vitest、Rust tests；不新增第三方依赖。
 
@@ -35,6 +35,7 @@
 - Modify: `src/types/ipc.ts`
 - Modify: `src/lib/ipc.ts`
 - Modify: `docs/ipc-api-reference.md`
+- If 决策门 1 选择 A/B：Create `src-tauri/migrations/073_agent_domain_operation_readiness.sql` + `.down.sql`，并 Modify `src-tauri/src/storage/migrate.rs`
 
 **Interfaces:**
 
@@ -87,7 +88,7 @@ Expected: FAIL，readiness 接口不存在。
 
 - [ ] **Step 2：实现派生和只读 IPC**
 
-从现有 Provider、binding、health 派生状态。新增 `domain_operation_readiness_list` command，只返回 operation、状态、安全 reason code 和稳定 Provider ID，不返回 transport 或 credential refs。同步 IPC 类型与参考文档。
+从现有 Provider、binding、health 派生状态。若决策门 1 选择 A/B，先落地 migration 和 `migrate.rs` 再实现 IPC。新增 `domain_operation_readiness_list` command，只返回 operation、状态、安全 reason code 和稳定 Provider ID，不返回 transport 或 credential refs。同步 IPC 类型与参考文档。
 
 - [ ] **Step 3：验证并提交**
 
@@ -167,6 +168,7 @@ git commit -m "fix(ai): 按领域操作冻结真实工具表面"
 - Modify: `src/types/ipc.ts`
 - Modify: `src/lib/ipc.ts`
 - Modify: `docs/ipc-api-reference.md`
+- If 决策门 3 允许 coverage 元数据或 schema 变更：Create 对应 migration + `.down.sql`，并 Modify `src-tauri/src/storage/migrate.rs`
 - Modify: `tests/mcp-domain-capability-mapping.test.tsx`
 - Modify: `tests/mcp-profiles-diagnostics.test.tsx`
 
@@ -199,7 +201,7 @@ Expected: FAIL，当前保存流程没有真实记录预览门。
 
 - [ ] **Step 2：实现受限预览和矩阵**
 
-由用户显式触发只读 Provider 调用；Host 使用现有超时和预算，在内存完成 mapping/validation，只返回计数、时间和安全码。UI 展示 11-operation 未配置/待验证/可用/降级/不健康状态。
+由用户显式触发只读 Provider 调用；Host 使用现有超时和预算，在内存完成 mapping/validation，只返回计数、时间和安全码。UI 展示当前支持矩阵内 operation 的未配置/待验证/可用/降级/不健康/WebFallback（仅 News）状态。
 
 - [ ] **Step 3：验证并提交**
 
@@ -282,6 +284,7 @@ PDR 必须回答：
 - 是否需要多个 Provider 覆盖同一 operation？覆盖矩阵是什么？
 - mapping 是否能完整映射到 DTO？是否需要 schema/coverage 扩展？
 - 真实预览用什么安全公开参数？预期返回什么？
+- `news.search` 是否接受 WebFallback 作为完成形态，还是必须接入结构化 Provider？（见 07 OD-006）
 - 如果没有合规 Provider，该 operation 是否从支持矩阵移除？
 
 - [ ] **Step 1：Provider 调研与 PDR 起草（不写业务代码）**
@@ -330,7 +333,7 @@ Expected: 保存后状态只能是 NeedsReview，不能直接是 Ready。
 
 - [ ] **Step 5：执行真实 Production Run**
 
-分别执行天气、新闻、金融、娱乐和体育场景，并验证最终消息来源、时间、地域及恢复。一个领域有多个 operation 时逐项执行，不能以领域中的一次成功代替其他 operation。
+分别执行当前支持矩阵内领域（天气、新闻、金融、娱乐、体育中的受支持项）的真实场景，并验证最终消息来源、时间、地域及恢复。一个领域有多个 operation 时逐项执行，不能以领域中的一次成功代替其他 operation。
 
 - [ ] **Step 6：更新实例记录与 Decision Log**
 
@@ -341,7 +344,7 @@ git add structured-tools/06-instance-readiness-record.md structured-tools/07-pro
 git commit -m "docs(ai): 记录结构化服务实例验收"
 ```
 
-### Task 6：完成 11-operation 软件生产门禁
+### Task 6：完成受支持 operation 软件生产门禁（目标 11 个）
 
 **Files:**
 
@@ -352,11 +355,11 @@ git commit -m "docs(ai): 记录结构化服务实例验收"
 - Modify: `docs/eval/agent-answer-capacity.md`
 - Create: `docs/testing/structured-domain-provider-readiness.md`
 
-- [ ] **前置条件**：只有已确认 PDR 的 operation 才能计入 11-operation production 测试；没有 PDR 的 operation 必须先从 Task 5 补齐。
+- [ ] **前置条件**：只有已确认 PDR 且属于当前支持矩阵的 operation 才能计入 production 测试；没有 PDR 或已从支持矩阵移除的 operation 必须先从 Task 5 补齐或明确排除。
 
-- [ ] **Step 1：增加 11 个 production 测试**
+- [ ] **Step 1：增加受支持 operation 的 production 测试（目标 11 个）**
 
-使用 `05-evaluation-and-acceptance.md` 中的固定测试名。每个测试都从 intake 走到 snapshot、fixture MCP、DTO validation、evidence、最终消息和恢复。
+使用 `05-evaluation-and-acceptance.md` 中的固定测试名；若决策门 6 缩减支持矩阵，则只保留支持矩阵内 operation 对应的测试。每个测试都从 intake 走到 fixture（结构化为 MCP/REST snapshot，News WebFallback 为 WebEvidenceBroker fixture）、DTO validation、evidence、最终消息和恢复。
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml production_ -- --nocapture
@@ -423,15 +426,15 @@ npm run agent:eval
 
 - [ ] **Step 3：执行实例门禁并更新状态**
 
-只有软件门禁和当前实例门禁都通过，才能把 DOM-AVAIL、DOM-HEALTH、DOM-SURFACE、DOM-ROUTE、DOM-LIVE 和 DOM-UPGRADE 标记 Resolved。
+只有软件门禁和当前实例门禁都通过，才能把 DOM-AVAIL、DOM-HEALTH、DOM-SURFACE、DOM-ROUTE、DOM-LIVE、DOM-UPGRADE、DOM-DECISION、DOM-PROVIDER 和 DOM-COVERAGE 标记 Resolved。
 
 ```bash
 git add src-tauri/src/storage/migrate.rs src/components/ai/hooks/useUnifiedAssistantSend.ts tests/use-unified-assistant-send.test.tsx ARCHITECTURE.md structured-tools
-git commit -m "docs(ai): 对齐结构化工具生产事实"
+git commit -m "fix(ai): 对齐结构化工具生产事实与升级错误语义"
 ```
 
 ## 完成定义
 
-- 软件门禁：11-operation production matrix 和完整质量检查全部通过。
+- 软件门禁：受支持 operation 的 production matrix（目标 11 个）和完整质量检查全部通过。
 - 实例门禁：当前实例受支持 operation 都是 Operational，五领域真实场景完成。
 - 未找到合规 Provider 的 operation 必须保持 Unconfigured 并从支持声明中移除，不能通过放宽 validator 获得完成状态。

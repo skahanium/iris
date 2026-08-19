@@ -52,6 +52,7 @@ Unconfigured
   -> Operational      正式 Run 与恢复通过
   -> Degraded         主路由失败但存在安全 fallback/冻结备用
   -> Unhealthy        持续失败或熔断
+  -> WebFallback      仅 News：无结构化 binding 但普通 Web 可用
 ```
 
 禁止：

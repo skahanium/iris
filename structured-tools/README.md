@@ -44,6 +44,7 @@
 | Healthy         | Configured 且真实探测成功，未处于持续失败或熔断状态                |
 | Operational     | Healthy 且正式 Run 的 snapshot、evidence、finalization、恢复均通过 |
 | Degraded        | 有安全 fallback 或冻结备用 Provider，且 UI 明确说明降级            |
+| WebFallback     | 仅 News：无结构化 binding，但普通 Web 可用且通过确定性校验         |
 | Unavailable     | 没有合规路由；必须失败关闭，不能从模型记忆猜测                     |
 
 ## 使用方式

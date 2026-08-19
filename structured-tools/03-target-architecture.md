@@ -52,6 +52,8 @@ struct DomainOperationReadiness {
 
 `news.search` 没有结构化 binding、但 Web 已授权和可用时，可以是 `WebFallback`。其他领域无 binding 时为 `Unconfigured`。
 
+> 状态集合可能根据决策门 3 扩展（例如 `PartialReady`/`CoverageLimited`），扩展前必须由设计者确认。
+
 ### 2.1 Readiness 持久化：施工前必须定案的决策
 
 当前代码只有 provider 级健康表（`web_evidence_provider_health`）和 binding 元数据，**没有 operation 级 preview/readiness 的持久化字段**。而 `Ready` 又要求“最近真实预览或调用成功”，这会形成矛盾：
@@ -92,7 +94,7 @@ struct DomainToolGrant {
 5. timeout、rate limit、schema drift 和空数据返回稳定安全码。
 6. 原始参数、输出、transport 和凭证不进入诊断。
 
-AnySearch/Tavily 只有在 MCP discovery 实际暴露独立领域工具并逐 operation 通过准入时，才能建立领域 binding。普通 `web_search/web_fetch` 映射不能直接升级。
+AnySearch/Tavily 只有在实际暴露独立领域工具并通过对应 transport 的准入（MCP discovery，或经 07 OD-002 确认的 REST adapter）并逐 operation 通过验收时，才能建立领域 binding。普通 `web_search/web_fetch` 映射不能直接升级。
 
 ## 5. 健康和候选冻结
 
@@ -130,8 +132,10 @@ Run 接受后：
 1. 若一个 Provider 覆盖该 operation 的全部目标范围，按单 Provider 处理。
 2. 若需要多个 Provider 才能覆盖目标范围，必须设计“按请求参数路由到覆盖该范围的 Provider”。
 3. 若当前 schema/mapping 无法表达覆盖范围，**这是 DECISION REQUIRED**：选择在 mapping JSON 中增加 `coverage` 元数据，或允许一次最小 migration 增加覆盖字段；AI 不得自行决定。
-4. 未被任何 Provider 覆盖的子范围，状态只能是 `Unconfigured`/`Unavailable`，不得由模型补写，也不得用普通 Web 冒充。
+4. 未被任何 Provider 覆盖的子范围，不得宣称可用；具体状态为 `Unavailable`，或经决策门 3 确认后使用 `CoverageLimited`/`PartialReady`，不得由模型补写，也不得用普通 Web 冒充。
 5. 若覆盖模型过于复杂，允许把该 operation 的支持范围收缩到单一 Provider 能覆盖的子集，并在产品支持矩阵中明确声明。
+
+## 6. 输出和证据
 
 Provider 不能提供 Iris evidence ID。执行顺序固定为：
 
@@ -159,9 +163,9 @@ Provider 不能提供 Iris evidence ID。执行顺序固定为：
 
 ## 8. 管理中心
 
-管理中心按 11 个 operation 展示：
+管理中心按当前支持矩阵内全部 operation 展示（目标 11 个）：
 
-- 状态：未配置、待验证、可用、降级、不健康；
+- 状态：未配置、待验证、可用、降级、不健康、WebFallback（仅 News）；
 - 主 Provider 和备用数量；
 - 最近安全探测时间；
 - 安全 reason code 和修复入口；
@@ -173,10 +177,10 @@ Provider 不能提供 Iris evidence ID。执行顺序固定为：
 
 ### 软件门禁
 
-使用本地、确定性的 MCP contract fixture 覆盖 11 个 operation 的正式生产链。它证明 Iris 代码可以正确接入合规 Provider。
+使用本地、确定性的 contract fixture（MCP；若 07 OD-002 允许 REST adapter，则包含对应 transport fixture）覆盖当前支持矩阵内的全部 operation 的正式生产链（目标为 11 个；若决策门 6 选择缩减，则以支持矩阵为准）。它证明 Iris 代码可以正确接入合规 Provider。
 
 ### 实例门禁
 
-当前实例显示受支持 operation 均为 Ready/Operational，并用真实 Provider 完成天气、新闻、金融、娱乐和体育场景。它证明用户当前安装配置真的可用。
+当前实例显示受支持 operation 均为 Ready/Operational，并用真实 Provider 完成当前支持矩阵内的天气、新闻、金融、娱乐和体育场景。它证明用户当前安装配置真的可用。
 
 两者缺一时不得宣称完成。

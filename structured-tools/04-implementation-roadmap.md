@@ -31,7 +31,7 @@
 
 ## 阶段 1：Readiness 真相
 
-- 从现有 Provider、binding 和 health 派生 11-operation 状态。
+- 从现有 Provider、binding 和 health 派生当前支持矩阵内 operation 状态（目标 11 个）。
 - 将“未配置”和“Provider 不健康”区分开。
 - 让 resolver 实际消费健康事实，删除名为 healthy、实则只检查配置的并行判断。
 - 暴露只读、安全的 readiness IPC。
@@ -62,7 +62,7 @@
 - 保存 mapping 后，由用户显式触发一次受限真实调用。
 - 原始输出只在内存中完成 mapping/validation。
 - 预览成功才允许状态进入 Ready。
-- 管理中心展示完整 11-operation readiness 矩阵和操作建议。
+- 管理中心展示当前支持矩阵内全部 operation 的 readiness 矩阵和操作建议（目标 11 个）。
 
 **决策门 3（DECISION REQUIRED）**：
 
@@ -108,6 +108,7 @@ PDR 至少回答：
 - 是否存在多个 Provider 覆盖同一 operation？覆盖矩阵是什么？
 - 字段 mapping 是否能完整映射到 DTO？不能时是否允许 schema/mapping 扩展？
 - 真实预览用什么安全公开参数？预期返回什么字段？
+- `news.search` 是否接受 WebFallback 作为完成形态，还是必须接入结构化 Provider？（见 07 OD-006）
 - 没有合规 Provider 时，该 operation 是否从支持矩阵移除？
 
 每个 operation 必须单独完成 discovery、只读审核、字段 mapping、真实预览、健康探测和 production Run 验收。同一 Provider 覆盖多个 operation 也不能合并验收。
@@ -122,8 +123,8 @@ PDR 至少回答：
 
 ## 阶段 6：验收与收口
 
-- 使用本地 MCP contract fixture 运行 11-operation production matrix。
-- 在当前实例执行五领域真实场景清单。
+- 使用本地 contract fixture（MCP 或已确认的 REST adapter）运行当前支持矩阵内全部 operation 的 production matrix（目标 11 个）。
+- 在当前实例执行当前支持矩阵内领域的真实场景清单。
 - 验证安装版 059→072 升级和新装路径。
 - 运行 Rust/前端质量门和 Agent eval。
 - 按真实证据更新本文档状态。
