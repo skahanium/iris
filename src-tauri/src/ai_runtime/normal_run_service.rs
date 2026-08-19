@@ -582,7 +582,7 @@ async fn dispatch_normal_run_after_context(
                 &context.user_message,
                 &context.envelope.fresh_fact,
                 "zh-CN",
-                confirmed_location_for_context(&context).as_ref(),
+                confirmed_location_for_context(context).as_ref(),
             )?;
             executor = executor.with_fresh_research_budget(plan.budget);
         }

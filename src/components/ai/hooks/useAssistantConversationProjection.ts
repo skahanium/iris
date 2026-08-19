@@ -102,8 +102,7 @@ export function useAssistantConversationProjection({
     const hasRunMessage = messages.some(
       (message) => message.runId === run.runId,
     );
-    const outputting =
-      hasRunMessage && deriveRunOutputting(run, presentation);
+    const outputting = hasRunMessage && deriveRunOutputting(run, presentation);
     setStreaming(outputting);
     if (outputting) {
       setActivityHint(run.stage);

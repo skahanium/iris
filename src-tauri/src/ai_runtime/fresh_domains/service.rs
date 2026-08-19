@@ -154,10 +154,10 @@ impl FreshDomainService {
             .cloned()
             .collect::<Vec<_>>();
         for snapshot in &snapshots {
-            if !snapshot_contract_is_valid(&snapshot) {
+            if !snapshot_contract_is_valid(snapshot) {
                 return Err(AppError::msg(ERROR_SNAPSHOT_INVALID));
             }
-            if !provider_is_current(db, &snapshot)? {
+            if !provider_is_current(db, snapshot)? {
                 return Err(AppError::msg(ERROR_PROVIDER_CHANGED));
             }
         }

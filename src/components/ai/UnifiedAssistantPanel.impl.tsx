@@ -509,7 +509,9 @@ export function UnifiedAssistantPanel({
           data-testid="assistant-run-input-required"
           aria-live="polite"
         >
-          <p className="text-xs font-medium">{assistantRun.pendingInput.prompt}</p>
+          <p className="text-xs font-medium">
+            {assistantRun.pendingInput.prompt}
+          </p>
           <div className="mt-2 flex gap-2">
             <Input
               value={pendingCity}
