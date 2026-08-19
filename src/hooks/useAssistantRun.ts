@@ -32,6 +32,7 @@ import type {
   AssistantRunStartRequest,
   AssistantSessionRef,
   PendingConfirmation,
+  PendingRunInput,
   RunRecoveryKind,
   RunState,
 } from "@/types/ai";
@@ -143,6 +144,10 @@ export function useAssistantRun() {
       stateVersion: currentRun.stateVersion,
     };
   }, [currentRun, eventState?.pendingConfirmation, runState]);
+  const pendingInput = useMemo<PendingRunInput | null>(() => {
+    if (!currentRun || runState !== "awaiting_input") return null;
+    return eventState?.pendingInput ?? null;
+  }, [currentRun, eventState?.pendingInput, runState]);
 
   const replay = useCallback(async (run: ActiveAssistantRun) => {
     if (resyncingRef.current.has(run.runId)) return;
@@ -440,6 +445,25 @@ export function useAssistantRun() {
     });
   }, [currentRun, pendingConfirmation]);
 
+  const submitInput = useCallback(
+    async (values: Record<string, string>) => {
+      const run = currentRunRef.current;
+      const input = pendingInput;
+      if (!run || !input) return;
+      await assistantRunControl({
+        session: run.session,
+        runId: run.runId,
+        expectedStateVersion: run.stateVersion,
+        action: {
+          type: "submit_input",
+          inputId: input.inputId,
+          values,
+        },
+      });
+    },
+    [pendingInput],
+  );
+
   const resume = useCallback(async () => {
     const run = currentRun;
     if (!run || run.state !== "paused" || recovery !== "resume_available")
@@ -499,6 +523,8 @@ export function useAssistantRun() {
     eventState,
     presentationState,
     pendingConfirmation,
+    pendingInput,
+    submitInput,
     recovery,
     start,
     retryWebVerification,

@@ -51,13 +51,10 @@
 | CAP-001   | Resolved | `finance_analysis_cannot_introduce_unsupported_numbers`          | 描述性金融分析不引入证据外数值                                            |
 | CAP-001   | Resolved | `domain_tool_diagnostics_never_expose_raw_output`                | provider 原始 JSON 哨兵不进入 Run event、tool audit、UI error、eval report |
 
-| INPUT-001 | Planned | `missing_location_enters_awaiting_input_and_resumes_same_run` | 缺城市进入等待并由同一 Run 恢复 |
-| WEB-002 | Planned | `simple_fact_allows_initial_plus_one_supplement` | 简单事实最多首次加一次补充 |
-| WEB-002 | Planned | `recommendation_allows_initial_plus_two_supplements` | 推荐类最多首次加两次补充 |
-| WEB-002 | Planned | `provider_failover_does_not_consume_query_budget` | 备用 MCP 不占业务轮次 |
-| CAP-002 | Planned | `validated_domain_record_is_registered_before_tool_success` | 结构化记录登记成功后工具才成功 |
-| CAP-002 | Planned | `domain_answer_is_host_rendered_from_canonical_record` | 领域事实由 Host 根据登记记录渲染 |
-| EVID-006 | Planned | `provider_cannot_supply_evidence_id` | Provider 不得注入 Iris evidence ID |
+| INPUT-001 | Partial | `input_submission_resumes_the_same_run_and_replay_is_noop` | 控制层证明同一 Run 恢复与重复提交幂等；生产执行路径待补 |
+| WEB-002 | Partial | `supplement_without_gap_is_rejected_after_initial_prefetch`; `duplicate_normalized_query_is_rejected_even_when_gap_changes` | 已证明补搜缺 gap 和规范化重复查询拒绝；预算持久化/真实 Provider 尝试待补 |
+| CAP-002 | Partial | `structured_weather_without_provider_fails_closed_instead_of_using_web_fallback` | 证明天气无结构化 Provider 不伪装通用 Web；11 operation 与 Host 渲染待补 |
+| EVID-006 | Partial | `current_fact_finalization` production gate; `domain_tool_output_requires_source_and_observed_time` | 终局 gate 与 DTO 规则存在；Provider evidence 身份哨兵和完整登记夹具待补 |
 
 ## 追踪规则
 

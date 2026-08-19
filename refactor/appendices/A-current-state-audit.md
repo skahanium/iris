@@ -40,10 +40,10 @@
 | UI-003    | P0     | Resolved   | reveal 返回 `runId` 并按身份门在 render 阶段隐藏异 Run answer；投影层只消费同 Run reveal，移除活动空答案回退；`activateAccepted` 切换前清理旧 frame/待 flush 事件 | 保留跨 Run 组合回归、终态恢复负例与迟到 frame 回归测试 |
 | EVAL-001  | P1     | Stale      | “只有 24 个评测场景”的旧基线已过期；当前代码已有 48-case 契约                                                                                  | 复用现有套件并维护稳定场景 ID                           |
 | EVAL-002  | P1     | Partial    | 已有固定场景夹具，但当前结果仍可能走旧链路；必须由正式 intake 和结构化/Web 终局共同证明                                            | 计划 04 重新接线并以生产路径结果更新 |
-| INPUT-001 | P1     | Planned   | 缺城市等必要参数目前不能在同一 Run 中正式等待并恢复                                                                 | 增加 `AwaitingInput`、Input 事件和恢复测试 |
-| WEB-002   | P0     | Planned   | 补充搜索、同 Provider 重试、备用 MCP 切换目前未由一个持久化控制器统一计量                                                         | 增加预算、去重和 failover 测试 |
-| CAP-002   | P0     | Planned   | 结构化工具尚无完整的 production evidence/final-answer 闭环                                                                          | 11 个 operation 的端到端生产夹具 |
-| EVID-006  | P0     | Planned   | Provider 不能注入 Iris evidence ID，Host 必须基于登记记录渲染领域事实                                                                  | 增加证据身份和 Host 渲染门禁 |
+| INPUT-001 | P1     | Partial   | 已有 `AwaitingInput`、Input 事件、同一 Run 恢复和面板输入；仍需生产路径回归与断线恢复证据                                                   | 补齐 production Run、恢复和 UI contract 测试 |
+| WEB-002   | P0     | Partial   | 首次搜索计入预算、补搜必须携带 gap、重复查询拒绝；预算持久化和真实 Provider 尝试计量仍未闭环                                               | 补齐 resume state、provider attempt 与 winner 测试 |
+| CAP-002   | P0     | Partial   | 结构化 Provider 已 fail-closed、冻结备用路由并登记真实 evidence ID；Host 固定模板终局仍未替代模型 Markdown                                      | 增加 11 operation 生产夹具与 Host 渲染门禁 |
+| EVID-006  | P0     | Partial   | Provider 映射结果不再作为 Iris evidence ID，成功结果会登记 ledger；仍需验证 Provider 伪造字段和终局绑定                                      | 增加证据身份哨兵与终局回归 |
 | MEM-003   | —      | Stale      | “完全没有记忆基础设施”不准确：会话摘要和 `ai_memories` 均已存在                                                                                | 只补最小安全语义，不重建记忆中心                        |
 
 ## 核对纪律
@@ -80,6 +80,6 @@
 
 ## 当前核心缺陷待收口边界
 
-- `ROUTE-003`、`WEB-001`、`EVID-005`、`EVAL-002` 已由附录 B 中的定向测试证明并标记为 Resolved。
-- `CAP-001` 已由附录 B 中的六领域矩阵与诊断哨兵测试证明并标记为 Resolved。
+- `ROUTE-003`、`WEB-001`、`EVID-005`、`EVAL-002` 仍为 Partial：已有生产接线或定向门禁，但尚未完成端到端领域矩阵和恢复持久化证据。
+- `CAP-001`、`CAP-002`、`EVID-006` 仍为 Partial：结构化 Provider 已 fail-closed 并登记真实 evidence ID，但 Host 固定模板终局和全部 operation 生产夹具尚未完成。
 - 附录 D 和施工计划描述的是目标契约；`ARCHITECTURE.md` 已同步当前领域只读能力实现事实。

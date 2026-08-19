@@ -19,34 +19,34 @@
 
 ## 施工阶段
 
-### 1. 文档基线与缺参协议
+### 1. 文档基线与缺参协议（已施工，待生产回归）
 
 - 将阶段 8、CAP-001 等过早 Resolved 状态改为 Partial/Planned，并登记 `INPUT-001`、`ROUTE-004`、`WEB-002`、`CAP-002`、`EVID-006`、`EVAL-003`。
 - 扩展 Run 状态为 `awaiting_input`，增加 `InputRequired/InputProvided` 事件、`SubmitInput` 控制动作和 `pendingInput` 投影。
 - 缺城市时等待并恢复同一 Run、同一 envelope、同一 Provider snapshot 和预算；重复提交幂等。
 
-### 2. 当前事实生产路由
+### 2. 当前事实生产路由（部分完成）
 
 - 真实接通 `CurrentRunDomain`；时间使用 Host runtime；无结构化天气/金融/影视/体育 Provider 时返回稳定缺失错误。
 - `ToolSurfacePlan` 只暴露当前 operation；Web 关闭时所有外部工具不可达。
 - 修复 `normal_run_service` 中构建研究计划时丢失确认地点的问题。
 
-### 3. 结构化记录、Provider 与证据
+### 3. 结构化记录、Provider 与证据（部分完成）
 
 - 将 Provider 输出 DTO 与数据库 evidence ID 分离；验证成功后由现有 `session_evidence` 生成真实 ID。
 - 每个 operation 在 Run 接受时冻结最多三个有序健康 mapping；无序多 Provider fail-closed。
 - 每个业务调用最多三个 Provider 尝试：有备选时顺序切换；仅单 Provider 时瞬时故障允许一次同 Provider 重试。
 - 结构化 Provider 全部失败时不生成猜测；新闻才允许走 Web fallback，且不伪造 `NewsRecord`。
-- 新增 `submit_domain_answer`，模型只提交当前 Run 的 evidence ID，事实文本由 Host 固定模板渲染。
+- `submit_domain_answer` 及 Host 固定模板渲染仍是未完成项；当前仍使用已有 `submit_final_answer`，并由当前事实 validator 做 fail-closed 校验。
 
-### 4. 统一研究预算
+### 4. 统一研究预算（部分完成）
 
 - 首次预搜索计入业务搜索预算；简单事实最多首次加一次补充，推荐/比较/新闻汇总最多首次加两次补充。
 - 补充搜索必须携带 `EvidenceGap`；相同规范化查询/gap 不得重复；证据充分立即停止。
 - 同 MCP 技术重试和冻结备用 MCP 切换不消耗业务轮次；删除 ToolLoop 外层重复 Broker retry。
-- 将查询哈希、gap、轮次、Provider 尝试和 winner 写入现有 Run resume state，恢复后不得重置预算；不保存原始查询。
+- 查询哈希、gap、轮次和 winner 的 resume state 持久化仍是未完成项；当前只完成进程内预算、去重和冻结候选切换。
 
-### 5. UI、评测与文档收口
+### 5. UI、评测与文档收口（部分完成）
 
 - 前端支持当前 Run 的 pending input，隔离旧 Run 的回答和事件。
 - 为全部 11 个 `DomainOperation`、缺 Provider、陈旧数据、备用 Provider、补充搜索、恢复和诊断安全增加生产路径测试。

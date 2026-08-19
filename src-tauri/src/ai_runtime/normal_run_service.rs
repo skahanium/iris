@@ -15,6 +15,7 @@ use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
 use crate::ai_runtime::fresh_research_plan::build_fresh_research_plan;
 use crate::ai_runtime::fresh_research_plan::explicit_city_from_message;
+use crate::ai_runtime::fresh_research_plan::ConfirmedLocation;
 use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, CapabilityId, Effort, FreshFactDomain, Freshness, Modality,
@@ -328,6 +329,16 @@ fn requires_user_input(context: &crate::ai_runtime::run_context::RunContext) -> 
     ) && explicit_city_from_message(&context.user_message).is_none()
 }
 
+fn confirmed_location_for_context(
+    context: &crate::ai_runtime::run_context::RunContext,
+) -> Option<ConfirmedLocation> {
+    explicit_city_from_message(&context.user_message).map(|city| ConfirmedLocation {
+        city: Some(city),
+        province: None,
+        country: None,
+    })
+}
+
 /// Rebuild and evaluate the persisted normal Run policy before Provider routing.
 fn evaluate_normal_run_policy(
     db: &Database,
@@ -571,7 +582,7 @@ async fn dispatch_normal_run_after_context(
                 &context.user_message,
                 &context.envelope.fresh_fact,
                 "zh-CN",
-                None,
+                confirmed_location_for_context(&context).as_ref(),
             )?;
             executor = executor.with_fresh_research_budget(plan.budget);
         }
@@ -958,7 +969,7 @@ async fn dispatch_required_web_verified_run(
             &context.user_message,
             &context.envelope.fresh_fact,
             "zh-CN",
-            None,
+            confirmed_location_for_context(context).as_ref(),
         )?;
         executor = executor.with_fresh_research_budget(plan.budget);
     }
@@ -1071,7 +1082,7 @@ fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> A
             &context.user_message,
             &context.envelope.fresh_fact,
             "zh-CN",
-            None,
+            confirmed_location_for_context(context).as_ref(),
         )?;
         return Ok(plan.initial_query);
     }
