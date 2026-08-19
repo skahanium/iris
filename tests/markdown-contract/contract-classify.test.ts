@@ -1,4 +1,4 @@
-﻿/**
+/**
  * contract-classify.test.ts — TDD 红灯测试
  *
  * 直接测试 classifyMarkdownCapabilities() 的行为规范。
@@ -429,5 +429,17 @@ describe("classify: idempotency and determinism", () => {
       expect(result1[i]!.syntaxKind).toBe(result2[i]!.syntaxKind);
       expect(result1[i]!.capability).toBe(result2[i]!.capability);
     }
+  });
+});
+
+describe("classify: escaped syntax is not misclassified", () => {
+  it("keeps escaped wiki link as plain text", () => {
+    const fragments = classifyMarkdownCapabilities("\\[\\[not a link]]");
+    expect(fragments.some((f) => f.syntaxKind === "wiki_link")).toBe(false);
+  });
+
+  it("keeps escaped footnote reference as plain text", () => {
+    const fragments = classifyMarkdownCapabilities("\\[^not a footnote]");
+    expect(fragments.some((f) => f.syntaxKind === "footnote_ref")).toBe(false);
   });
 });

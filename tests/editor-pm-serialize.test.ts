@@ -687,4 +687,20 @@ describe("serializeOpenNote integration (PM + ingest)", () => {
     expect(out).toContain("- normal");
     expect(out).toContain("- [x] done");
   });
+
+  it("preserves inline raw HTML byte-for-byte through production roundtrip", () => {
+    const md = '<span title="a ** b">x</span>';
+    const out = normalizeMd(
+      pmSerializeBody(createProductionEditorFromIngestedBody(md)),
+    );
+    expect(out).toBe(md);
+  });
+
+  it("preserves single-newline soft breaks through production roundtrip", () => {
+    const md = "第一行\n第二行";
+    const out = normalizeMd(
+      pmSerializeBody(createProductionEditorFromIngestedBody(md)),
+    );
+    expect(out).toBe(md);
+  });
 });

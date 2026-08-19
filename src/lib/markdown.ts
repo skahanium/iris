@@ -194,6 +194,7 @@ function repairStrongDelimitersInDocument(markdown: string): string {
   let inFence = false;
   let repaired = "";
   let inlineCodeFence = "";
+  let htmlComment = false;
   let strongOpen = false;
   let underscoreOpen = false;
 
@@ -221,6 +222,18 @@ function repairStrongDelimitersInDocument(markdown: string): string {
       continue;
     }
 
+    if (htmlComment) {
+      repaired += line;
+      if (line.includes("-->")) htmlComment = false;
+      continue;
+    }
+    if (/^\s*<!--/.test(line)) {
+      htmlComment = true;
+      repaired += line;
+      if (line.includes("-->")) htmlComment = false;
+      continue;
+    }
+
     for (let i = 0; i < line.length; ) {
       if (line[i] === "`") {
         const match = /^`+/.exec(line.slice(i));
@@ -233,6 +246,21 @@ function repairStrongDelimitersInDocument(markdown: string): string {
         repaired += ticks;
         i += ticks.length;
         continue;
+      }
+
+      // ── HTML tags / comments ────────────────────────────────
+      // Copy tag text verbatim so `**` inside attributes is never treated
+      // as a Markdown emphasis delimiter.
+      if (!inlineCodeFence && line[i] === "<") {
+        const rest = line.slice(i);
+        const tagMatch =
+          /^<\/?[a-zA-Z][^>]*>/.exec(rest) ?? /^<!--[\s\S]*?-->/.exec(rest);
+        if (tagMatch) {
+          const token = tagMatch[0];
+          repaired += token;
+          i += token.length;
+          continue;
+        }
       }
 
       // ── ** (asterisk bold) ──────────────────────────────────

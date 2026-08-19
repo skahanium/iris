@@ -260,6 +260,32 @@ describe("DocumentTitleField uncontrolled behavior", () => {
 
     expect(onChange).toHaveBeenCalledWith("你好");
   });
+
+  it("commits pasted Chinese title text", async () => {
+    const onChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(TitleHarness, {
+          value: "",
+          resetKey: "note-paste.md",
+          onChange,
+        }),
+      );
+    });
+
+    const field = textarea();
+    await act(async () => {
+      field.focus();
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: { getData: () => "中文标题" },
+      });
+      field.dispatchEvent(event);
+    });
+
+    expect(onChange).toHaveBeenCalledWith("中文标题");
+    expect(field.value).toBe("中文标题");
+  });
 });
 
 function HarnessWithState({
