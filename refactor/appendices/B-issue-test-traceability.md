@@ -30,31 +30,36 @@
 | MEM-001  | Resolved | `confirmed_memory_clear_is_scope_local`                                          | clear_scope 只清理明确指定作用域并返回 `affectedCount`                                    |
 | MEM-002  | Resolved | `unconfirmed_memory_mutation_is_not_persisted`                                   | 未确认的 upsert/delete/clear 均不会 dispatch 或落库                                       |
 | UI-002   | Resolved | `tool_diagnostics_never_expose_raw_arguments`                                    | 工具事件和审计不含原始参数、笔记正文哨兵或凭证哨兵                                        |
-| UI-003   | Resolved | `new_run_never_projects_previous_reveal_answer`                                 | 新 Run 首帧和处理期间不投影上一 Run reveal                                                |
-| UI-003   | Resolved | `queued_previous_run_frame_cannot_patch_new_run`                                | 上一 Run 排队 frame/event 不能修改新 Run 行                                               |
-| UI-003   | Resolved | `terminal_recovery_uses_only_its_own_persisted_answer`                          | 终态恢复只使用同 Run 持久化正文                                                           |
+| UI-003   | Resolved | `new_run_never_projects_previous_reveal_answer`                                  | 新 Run 首帧和处理期间不投影上一 Run reveal                                                |
+| UI-003   | Resolved | `queued_previous_run_frame_cannot_patch_new_run`                                 | 上一 Run 排队 frame/event 不能修改新 Run 行                                               |
+| UI-003   | Resolved | `terminal_recovery_uses_only_its_own_persisted_answer`                           | 终态恢复只使用同 Run 持久化正文                                                           |
 
-| ROUTE-003 | Partial  | `today_date_question_uses_trusted_runtime_without_web`           | 单测证明 runtime 规则；生产 intake/domain 路由仍待补充 |
-| ROUTE-003 | Partial  | `recent_movie_question_freezes_date_and_location`                | 计划 04 需证明地点真实传入生产研究计划 |
-| WEB-001   | Partial  | `insufficient_first_search_triggers_bounded_refinement`          | 已证明预搜索计数、gap 预算和 resume state 恢复；未证明 Provider attempt/winner 生产夹具 |
-| WEB-001   | Partial  | `sufficient_first_search_stops_without_extra_tool_turn`          | 已证明单测提前停止；未证明 provider failover 不扩大轮次 |
-| EVID-005  | Partial  | `strict_current_fact_rejects_unsupported_free_text`; Host renderer test | 生产终局与 DTO 固定渲染已接线；完整领域矩阵待补 |
-| EVID-005  | Partial  | `source_group_fallback_cannot_complete_strict_current_fact`      | 来源组不能替代当前事实支持 |
-| EVID-005  | Partial  | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 协议不支持时失败关闭 |
-| EVAL-002  | Partial  | `current_fact_movie_follow_up_scenario`                          | 固定场景存在；需重新接入生产结构化/Web 路径 |
-| EVAL-002  | Partial  | `agent_does_not_deny_web_after_current_run_search`               | 已搜索能力诚实性仍需生产路径复验 |
-| CAP-001   | Partial  | `domain_tool_output_requires_source_and_observed_time`            | DTO 单测保留；需改为真实 evidence ledger 证据 |
-| CAP-001   | Resolved | `weather_without_confirmed_city_requests_location`               | 天气缺城市时询问，不推断位置                                              |
-| CAP-001   | Resolved | `location_scope_widens_city_then_province_then_country`          | 允许放宽的领域遵守固定地域顺序                                            |
-| CAP-001   | Resolved | `stale_weather_and_market_data_fail_closed`                      | 陈旧天气/行情不产生当前结论                                              |
-| CAP-001   | Resolved | `movie_availability_requires_region_channel_and_date`            | 影视可用性必须包含地域、渠道和日期                                        |
-| CAP-001   | Resolved | `finance_analysis_cannot_introduce_unsupported_numbers`          | 描述性金融分析不引入证据外数值                                            |
-| CAP-001   | Resolved | `domain_tool_diagnostics_never_expose_raw_output`                | provider 原始 JSON 哨兵不进入 Run event、tool audit、UI error、eval report |
+| ROUTE-003 | Partial | `today_date_question_uses_trusted_runtime_without_web` | 单测证明 runtime 规则；生产 intake/domain 路由仍待补充 |
+| ROUTE-003 | Partial | `recent_movie_question_freezes_date_and_location` | 计划 04 需证明地点真实传入生产研究计划 |
+| ROUTE-003 | Partial | `production_runtime_time_uses_frozen_surface_and_recovers` | runtime 正式 ToolLoop 生产链已闭合；领域生产路由仍待真实 Provider |
+| WEB-001 | Partial | `insufficient_first_search_triggers_bounded_refinement` | 已证明预搜索计数、gap 预算和 resume state 恢复；未证明 Provider attempt/winner 生产夹具 |
+| WEB-001 | Partial | `sufficient_first_search_stops_without_extra_tool_turn` | 已证明单测提前停止；未证明 provider failover 不扩大轮次 |
+| WEB-001 | Partial | `search_fetch_with_dated_snippet_produces_news_usable_freshness` | 搜索片段可解析时效标签，News WebFallback 可进入 DTO 校验 |
+| EVID-005 | Partial | `strict_current_fact_rejects_unsupported_free_text`; Host renderer test | 生产终局与 DTO 固定渲染已接线；完整领域矩阵待补 |
+| EVID-005 | Partial | `source_group_fallback_cannot_complete_strict_current_fact` | 来源组不能替代当前事实支持 |
+| EVID-005 | Partial | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 协议不支持时失败关闭 |
+| EVAL-002 | Partial | `current_fact_movie_follow_up_scenario` | 固定场景存在；需重新接入生产结构化/Web 路径 |
+| EVAL-002 | Partial | `agent_does_not_deny_web_after_current_run_search` | 已搜索能力诚实性仍需生产路径复验 |
+| CAP-001 | Partial | `domain_tool_output_requires_source_and_observed_time` | DTO 单测保留；需改为真实 evidence ledger 证据 |
+| CAP-001 | Resolved | `weather_without_confirmed_city_requests_location` | 天气缺城市时询问，不推断位置 |
+| CAP-001 | Resolved | `location_scope_widens_city_then_province_then_country` | 允许放宽的领域遵守固定地域顺序 |
+| CAP-001 | Resolved | `stale_weather_and_market_data_fail_closed` | 陈旧天气/行情不产生当前结论 |
+| CAP-001 | Resolved | `movie_availability_requires_region_channel_and_date` | 影视可用性必须包含地域、渠道和日期 |
+| CAP-001 | Resolved | `finance_analysis_cannot_introduce_unsupported_numbers` | 描述性金融分析不引入证据外数值 |
+| CAP-001 | Resolved | `domain_tool_diagnostics_never_expose_raw_output` | provider 原始 JSON 哨兵不进入 Run event、tool audit、UI error、eval report |
 
 | INPUT-001 | Partial | `input_submission_resumes_the_same_run_and_replay_is_noop` | 控制层证明同一 Run 恢复与重复提交幂等；生产执行路径待补 |
+| INPUT-001 | Partial | `production_missing_city_waits_for_input_and_resumes_the_same_run` | 生产路径缺城市等待并同一 Run 恢复；断线恢复仍待补 |
 | WEB-002 | Partial | `supplement_without_gap_is_rejected_after_initial_prefetch`; `duplicate_normalized_query_is_rejected_even_when_gap_changes`; `fresh_research_resume_state_restores_budget_and_query_deduplication` | 已证明补搜缺 gap、规范化重复查询拒绝及 resume state 恢复；真实 Provider 尝试待补 |
 | CAP-002 | Partial | `structured_weather_without_provider_fails_closed_instead_of_using_web_fallback`; Host renderer test | 证明天气 fail-closed 与 Host DTO 渲染；11 operation 矩阵待补 |
+| CAP-002 | Partial | `production_weather_without_provider_fails_closed_instead_of_fabricating`; `every_non_news_domain_operation_fails_closed_without_a_structured_provider` | 生产/服务层均证明无 Provider fail-closed；真实 Provider 夹具仍待补 |
 | EVID-006 | Partial | `current_fact_finalization` production gate; `domain_tool_output_requires_source_and_observed_time` | 终局 gate 与 DTO 规则存在；Provider evidence 身份哨兵和完整登记夹具待补 |
+| EVID-006 | Partial | `provider_supplied_evidence_id_is_never_used_as_iris_evidence_id` | Provider 伪造 evidenceId 被忽略；终局绑定回归仍待补 |
 
 ## 追踪规则
 

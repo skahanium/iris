@@ -9,7 +9,7 @@
 | 项目                       | 当前值            |
 | -------------------------- | ----------------- |
 | 代码分支                   | `branch-v1.3.0`   |
-| 审计提交                   | `bb600a7e`        |
+| 审计提交                   | `6cdfb650`        |
 | 普通 Web Provider          | AnySearch、Tavily |
 | 普通 Web search/fetch      | 已配置            |
 | migration 072 领域字段     | 开发库存在        |
