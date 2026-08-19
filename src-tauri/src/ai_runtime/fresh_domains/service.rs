@@ -12,14 +12,18 @@ use super::contracts::{
     EntertainmentRecord, EvidenceOrigin, FinanceRecord, FreshDomainRecord, NewsRecord,
     SportsRecord, WeatherRecord,
 };
+use super::location::{
+    first_location_scope, resolve_confirmed_location, ConfirmedLocation, LocationScope,
+};
 use super::provider::{resolve_domain_provider, DomainProviderRoute};
 use super::validation::validate_domain_record;
+use crate::ai_runtime::fresh_research_plan::EvidenceGap;
 use crate::ai_runtime::mcp_external_tools::{
     load_run_snapshots, provider_is_current, snapshot_contract_is_valid,
     validate_and_map_arguments, DomainOperation, DomainOutputMapping, FrozenMcpToolSnapshot,
     WEB_DOMAIN_READ_CAPABILITY,
 };
-use crate::ai_runtime::tool_dispatch::ToolDispatchContext;
+use crate::ai_runtime::tool_dispatch::{read_global_memories, ToolDispatchContext};
 use crate::ai_runtime::web_evidence_broker::{
     collect_initial_run_web_evidence_with_usage, domain_from_url, WebEvidenceBrokerInput,
     WebEvidenceItem,
@@ -32,6 +36,7 @@ const ERROR_MAPPING_TOO_LARGE: &str = "external_tool_mapping_output_too_large";
 const ERROR_SNAPSHOT_INVALID: &str = "external_tool_binding_config_changed";
 const ERROR_PROVIDER_CHANGED: &str = "external_tool_provider_config_changed";
 const ERROR_EVIDENCE_INSUFFICIENT: &str = "agent_run_fresh_evidence_insufficient";
+const ERROR_LOCATION_REQUIRED: &str = "agent_run_location_required";
 const MAX_MAPPED_FIELD_CHARS: usize = 4_096;
 const MAX_MAPPED_ARRAY_CHARS: usize = 8_192;
 
@@ -42,6 +47,10 @@ pub(crate) struct FreshDomainRequest {
     pub(crate) operation: DomainOperation,
     pub(crate) args: Value,
     pub(crate) requested_at: DateTime<Utc>,
+    /// Evidence gap that motivated the current request. `LocationCoverage`
+    /// allows widening city → province → country when the narrower scope
+    /// returns no usable evidence.
+    pub(crate) location_gap: Option<EvidenceGap>,
 }
 
 /// Stateless current-fact domain executor.
@@ -53,18 +62,55 @@ impl FreshDomainService {
     /// generic Web fallback and return only validated Appendix-D records.
     pub(crate) async fn execute(
         &self,
-        request: FreshDomainRequest,
+        mut request: FreshDomainRequest,
+        context: &ToolDispatchContext<'_>,
+    ) -> AppResult<Vec<FreshDomainRecord>> {
+        let db = context
+            .db
+            .ok_or_else(|| AppError::msg("fresh_domain_context_missing_db"))?;
+        let memories = read_global_memories(db)?;
+        let explicit = explicit_location_from_args(&request.args);
+        let confirmed = resolve_confirmed_location(explicit.as_ref(), &memories);
+        enforce_location_requirement(request.operation, &confirmed)?;
+
+        let mut current_scope = first_location_scope(&confirmed);
+        loop {
+            if let Some(scope) = current_scope {
+                request.args =
+                    with_location_scope(request.operation, &request.args, scope, &confirmed);
+            }
+            match self.execute_once(&request, context).await {
+                Ok(records) => return Ok(records),
+                Err(error)
+                    if error.to_string() == ERROR_EVIDENCE_INSUFFICIENT
+                        && request.location_gap == Some(EvidenceGap::LocationCoverage)
+                        && allows_location_widening(request.operation) =>
+                {
+                    let Some(next_scope) = current_scope.and_then(|scope| scope.next(&confirmed))
+                    else {
+                        return Err(error);
+                    };
+                    current_scope = Some(next_scope);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    async fn execute_once(
+        &self,
+        request: &FreshDomainRequest,
         context: &ToolDispatchContext<'_>,
     ) -> AppResult<Vec<FreshDomainRecord>> {
         let db = context
             .db
             .ok_or_else(|| AppError::msg("fresh_domain_context_missing_db"))?;
 
-        if let Some(route) = self.frozen_route(db, &request, context)? {
-            return self.execute_frozen(db, &request, context, route).await;
+        if let Some(route) = self.frozen_route(db, request, context)? {
+            return self.execute_frozen(db, request, context, route).await;
         }
 
-        self.execute_web_fallback(db, &request, context).await
+        self.execute_web_fallback(db, request, context).await
     }
 
     fn frozen_route(
@@ -191,6 +237,73 @@ impl FreshDomainService {
         }
         Ok(records)
     }
+}
+
+pub(crate) fn explicit_location_from_args(args: &Value) -> Option<ConfirmedLocation> {
+    let city = args
+        .get("location")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)?;
+    Some(ConfirmedLocation {
+        city: Some(city),
+        province: None,
+        country: None,
+    })
+}
+
+pub(crate) fn enforce_location_requirement(
+    operation: DomainOperation,
+    confirmed: &ConfirmedLocation,
+) -> AppResult<()> {
+    if requires_city(operation) && confirmed.city.is_none() {
+        return Err(AppError::msg(ERROR_LOCATION_REQUIRED));
+    }
+    Ok(())
+}
+
+fn requires_city(operation: DomainOperation) -> bool {
+    matches!(
+        operation,
+        DomainOperation::WeatherCurrent
+            | DomainOperation::WeatherForecast
+            | DomainOperation::EntertainmentNowPlaying
+    )
+}
+
+pub(crate) fn allows_location_widening(operation: DomainOperation) -> bool {
+    matches!(
+        operation,
+        DomainOperation::NewsSearch | DomainOperation::EntertainmentUpcoming
+    )
+}
+
+pub(crate) fn with_location_scope(
+    operation: DomainOperation,
+    args: &Value,
+    scope: LocationScope,
+    confirmed: &ConfirmedLocation,
+) -> Value {
+    if !matches!(
+        operation,
+        DomainOperation::WeatherCurrent
+            | DomainOperation::WeatherForecast
+            | DomainOperation::NewsSearch
+            | DomainOperation::EntertainmentNowPlaying
+            | DomainOperation::EntertainmentUpcoming
+            | DomainOperation::EntertainmentStreaming
+    ) {
+        return args.clone();
+    }
+    let Some(value) = scope.value(confirmed) else {
+        return args.clone();
+    };
+    let mut args = args.clone();
+    if let Some(object) = args.as_object_mut() {
+        object.insert("location".into(), Value::String(value.to_string()));
+    }
+    args
 }
 
 fn build_web_query(request: &FreshDomainRequest) -> String {
@@ -628,6 +741,7 @@ mod tests {
             requested_at: DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
+            location_gap: None,
         };
 
         let error = FreshDomainService

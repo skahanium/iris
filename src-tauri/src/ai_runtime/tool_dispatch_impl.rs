@@ -12,6 +12,7 @@ mod fresh_domains_impl;
 mod markdown_impl;
 #[path = "tool_dispatch/memory.rs"]
 mod memory_impl;
+pub(crate) use memory_impl::read_global_memories;
 #[path = "tool_dispatch/note.rs"]
 mod note_impl;
 #[path = "tool_dispatch/runtime.rs"]

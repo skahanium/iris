@@ -6,6 +6,10 @@ use super::contracts::{
     DomainOperation, EntertainmentRecord, EvidenceOrigin, FinanceRecord, FreshDomainRecord,
     NewsRecord, SportsRecord, WeatherRecord,
 };
+use super::location::{
+    first_location_scope, resolve_confirmed_location, AiMemory, ConfirmedLocation, LocationScope,
+};
+use super::service::{allows_location_widening, with_location_scope};
 use super::validation::validate_domain_record;
 use super::validation::validate_finance_analysis_numbers;
 
@@ -387,4 +391,142 @@ fn finance_analysis_accepts_only_numbers_from_input_records() {
     let error = validate_finance_analysis_numbers(&allowed_ids, &records, &["999.99"])
         .expect_err("unseen number must be rejected");
     assert_eq!(error.to_string(), ERROR_FINANCE_UNSUPPORTED_NUMBER);
+}
+
+#[test]
+fn confirmed_location_explicit_overrides_memory() {
+    let explicit = ConfirmedLocation {
+        city: Some("上海".to_string()),
+        province: Some("上海".to_string()),
+        country: Some("中国".to_string()),
+    };
+    let memories = vec![
+        AiMemory {
+            key: "location.city".to_string(),
+            content: "北京".to_string(),
+            scope: "global".to_string(),
+        },
+        AiMemory {
+            key: "location.province".to_string(),
+            content: "广东".to_string(),
+            scope: "global".to_string(),
+        },
+        AiMemory {
+            key: "location.country".to_string(),
+            content: "日本".to_string(),
+            scope: "global".to_string(),
+        },
+    ];
+
+    let resolved = resolve_confirmed_location(Some(&explicit), &memories);
+
+    assert_eq!(resolved.city.as_deref(), Some("上海"));
+    assert_eq!(resolved.province.as_deref(), Some("上海"));
+    assert_eq!(resolved.country.as_deref(), Some("中国"));
+
+    let partial = ConfirmedLocation {
+        city: Some("深圳".to_string()),
+        province: None,
+        country: None,
+    };
+    let resolved = resolve_confirmed_location(Some(&partial), &memories);
+
+    assert_eq!(resolved.city.as_deref(), Some("深圳"));
+    assert_eq!(resolved.province.as_deref(), Some("广东"));
+    assert_eq!(resolved.country.as_deref(), Some("日本"));
+}
+
+#[test]
+fn confirmed_location_ignores_vault_web_ip_and_similar_keys() {
+    let memories = vec![
+        AiMemory {
+            key: "location.city".to_string(),
+            content: "上海".to_string(),
+            scope: "global".to_string(),
+        },
+        AiMemory {
+            key: "location.city".to_string(),
+            content: "北京".to_string(),
+            scope: "vault:abc".to_string(),
+        },
+        AiMemory {
+            key: "web.city".to_string(),
+            content: "广州".to_string(),
+            scope: "global".to_string(),
+        },
+        AiMemory {
+            key: "ip.city".to_string(),
+            content: "深圳".to_string(),
+            scope: "global".to_string(),
+        },
+        AiMemory {
+            key: "location.city_name".to_string(),
+            content: "杭州".to_string(),
+            scope: "global".to_string(),
+        },
+        AiMemory {
+            key: "location".to_string(),
+            content: "成都".to_string(),
+            scope: "global".to_string(),
+        },
+    ];
+
+    let resolved = resolve_confirmed_location(None, &memories);
+
+    assert_eq!(resolved.city.as_deref(), Some("上海"));
+    assert_eq!(resolved.province, None);
+    assert_eq!(resolved.country, None);
+
+    let vault_only = resolve_confirmed_location(
+        None,
+        &[AiMemory {
+            key: "location.city".to_string(),
+            content: "北京".to_string(),
+            scope: "vault:abc".to_string(),
+        }],
+    );
+    assert_eq!(vault_only.city, None);
+}
+
+#[test]
+fn location_scope_widens_city_then_province_then_country() {
+    let confirmed = ConfirmedLocation {
+        city: Some("上海".to_string()),
+        province: Some("江苏".to_string()),
+        country: Some("中国".to_string()),
+    };
+
+    assert_eq!(first_location_scope(&confirmed), Some(LocationScope::City));
+    assert_eq!(
+        LocationScope::City.next(&confirmed),
+        Some(LocationScope::Province)
+    );
+    assert_eq!(
+        LocationScope::Province.next(&confirmed),
+        Some(LocationScope::Country)
+    );
+    assert_eq!(LocationScope::Country.next(&confirmed), None);
+
+    let province_only = ConfirmedLocation {
+        city: None,
+        province: Some("广东".to_string()),
+        country: Some("中国".to_string()),
+    };
+    assert_eq!(
+        first_location_scope(&province_only),
+        Some(LocationScope::Province)
+    );
+    let args = with_location_scope(
+        DomainOperation::NewsSearch,
+        &serde_json::json!({ "topic": "科技" }),
+        LocationScope::Province,
+        &province_only,
+    );
+    assert_eq!(args["location"], "广东");
+
+    assert!(allows_location_widening(DomainOperation::NewsSearch));
+    assert!(allows_location_widening(
+        DomainOperation::EntertainmentUpcoming
+    ));
+    assert!(!allows_location_widening(DomainOperation::WeatherCurrent));
 }

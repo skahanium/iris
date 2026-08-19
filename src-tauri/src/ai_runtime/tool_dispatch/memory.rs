@@ -1,3 +1,4 @@
+use crate::ai_runtime::fresh_domains::location::AiMemory;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use std::collections::HashSet;
@@ -37,6 +38,27 @@ fn requested_scope(
         "vault" => active_vault_scope(state).map(|(scope, vault_id)| (scope, Some(vault_id))),
         _ => Err(AppError::msg("memory_scope_invalid")),
     }
+}
+
+/// Read only global confirmed memories for deterministic location resolution.
+///
+/// This is intentionally read-only: location resolution never writes memory.
+pub(crate) fn read_global_memories(db: &crate::storage::db::Database) -> AppResult<Vec<AiMemory>> {
+    db.with_read_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT key, content, scope FROM ai_memories
+             WHERE scope = 'global' AND key IN ('location.city', 'location.province', 'location.country')
+             ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(AiMemory {
+                key: row.get(0)?,
+                content: row.get(1)?,
+                scope: row.get(2)?,
+            })
+        })?;
+        Ok(rows.flatten().collect())
+    })
 }
 
 pub(super) async fn memory_read_tool(

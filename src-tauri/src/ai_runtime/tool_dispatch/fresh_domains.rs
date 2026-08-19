@@ -7,8 +7,10 @@
 
 use chrono::{DateTime, NaiveDate, Utc};
 
+use crate::ai_runtime::fresh_domains::location::resolve_confirmed_location;
 use crate::ai_runtime::fresh_domains::service::{FreshDomainRequest, FreshDomainService};
 use crate::ai_runtime::mcp_external_tools::DomainOperation;
+use crate::ai_runtime::tool_dispatch::read_global_memories;
 use crate::error::{AppError, AppResult};
 
 use super::{FrozenDomainWindow, ToolDispatchContext};
@@ -33,20 +35,63 @@ pub(super) async fn fresh_domain_tool(
     if !ctx.web_search_enabled {
         return Err(AppError::msg("web search not enabled for this request"));
     }
-    validate_fresh_domain_request(tool_name, args, ctx.fresh_fact_policy.as_ref())?;
-    let operation = parse_operation_for_tool(tool_name, args)?;
+    let normalized_args = fill_confirmed_city_into_args(tool_name, args, ctx)?;
+    validate_fresh_domain_request(tool_name, &normalized_args, ctx.fresh_fact_policy.as_ref())?;
+    let operation = parse_operation_for_tool(tool_name, &normalized_args)?;
     let records = FreshDomainService
         .execute(
             FreshDomainRequest {
                 tool_name: tool_name.to_string(),
                 operation,
-                args: args.clone(),
+                args: normalized_args,
                 requested_at: Utc::now(),
+                location_gap: None,
             },
             ctx,
         )
         .await?;
     Ok(serde_json::to_value(records)?)
+}
+
+/// Fill a missing city for city-required tools from confirmed global memory.
+///
+/// The pure validator stays strict; this enrichment only happens in the real
+/// dispatch path where global memories are available.
+fn fill_confirmed_city_into_args(
+    tool_name: &str,
+    args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
+) -> AppResult<serde_json::Value> {
+    if !matches!(tool_name, "weather_lookup" | "entertainment_lookup") {
+        return Ok(args.clone());
+    }
+    let has_location = args
+        .get("location")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    if has_location {
+        return Ok(args.clone());
+    }
+    let Some(db) = ctx.db else {
+        return Ok(args.clone());
+    };
+    let memories = read_global_memories(db)?;
+    let confirmed = resolve_confirmed_location(None, &memories);
+    let Some(city) = confirmed
+        .city
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(args.clone());
+    };
+    let mut normalized = args.clone();
+    if let Some(object) = normalized.as_object_mut() {
+        object.insert(
+            "location".into(),
+            serde_json::Value::String(city.to_string()),
+        );
+    }
+    Ok(normalized)
 }
 
 pub(super) fn validate_fresh_domain_request(
