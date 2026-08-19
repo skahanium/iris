@@ -875,6 +875,9 @@ impl<'a> NormalRunToolExecutor<'a> {
             write_target_path: self.context.write_target_path.as_deref(),
             document_policy: Some(&self.context.document_policy),
             web_search_enabled: self.has_capability("web.search"),
+            fresh_fact_policy: Some(crate::ai_runtime::tool_dispatch::FrozenDomainWindow::from(
+                &self.context.envelope.fresh_fact,
+            )),
             available_tool_names: &self.allowed_tool_names,
             max_web_fetches: 5,
             cold_start_packets: &self.cold_start_packets,
@@ -4825,6 +4828,50 @@ mod tests {
             .execute(
                 &accepted.run_id,
                 &ToolCall::new("forged-call", "system_time_now", "{}"),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn fresh_domain_tool_forged_call_rejected_by_empty_surface() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "forged-domain-call",
+                    "weather_lookup",
+                    r#"{"operation":"weather.current","location":"北京"}"#,
+                ),
                 1,
             )
             .await

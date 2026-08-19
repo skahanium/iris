@@ -200,6 +200,7 @@ mod tests {
             write_target_path: None,
             document_policy: None,
             web_search_enabled: false,
+            fresh_fact_policy: None,
             available_tool_names: &[],
             max_web_fetches: 0,
             cold_start_packets: &[],

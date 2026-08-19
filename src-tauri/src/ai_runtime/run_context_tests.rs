@@ -1504,6 +1504,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
         write_target_path: None,
         document_policy: None,
         web_search_enabled: false,
+        fresh_fact_policy: None,
         available_tool_names: &[],
         max_web_fetches: 5,
         cold_start_packets: &context.local_retrieval_packets,

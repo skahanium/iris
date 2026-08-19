@@ -80,9 +80,17 @@ impl ToolRegistry {
                         .iter()
                         .any(|capability| capability.as_str() == "external.read")
                 } else {
+                    let web_domain_tool = crate::ai_runtime::tool_catalog::catalog_find(&tool.name)
+                        .is_some_and(|entry| {
+                            entry.required_capability_ids().contains(&"web.domain.read")
+                        });
+                    let web_search_authorized = capabilities
+                        .iter()
+                        .any(|capability| capability.as_str() == "web.search");
                     is_exposable_tool(&tool.name)
                         && crate::ai_runtime::tool_catalog::catalog_find(&tool.name)
                             .is_some_and(|entry| entry.is_authorized_by(capabilities))
+                        && (!web_domain_tool || web_search_authorized)
                 }
             })
             .filter(|tool| !only_auto || !tool.requires_confirmation)

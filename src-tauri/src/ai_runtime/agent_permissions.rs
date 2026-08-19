@@ -67,6 +67,8 @@ pub enum AgentPermissionAtom {
     DocExtractCitations,
     #[serde(rename = "web.search")]
     WebSearch,
+    #[serde(rename = "web.domain.read")]
+    WebDomainRead,
     #[serde(rename = "web.fetch")]
     WebFetch,
     #[serde(rename = "web.to_markdown")]
@@ -151,6 +153,7 @@ impl AgentPermissionAtom {
             Self::DocFixLinks => "doc.fix_links",
             Self::DocExtractCitations => "doc.extract_citations",
             Self::WebSearch => "web.search",
+            Self::WebDomainRead => "web.domain.read",
             Self::WebFetch => "web.fetch",
             Self::WebToMarkdown => "web.to_markdown",
             Self::WebDownloadToAssets => "web.download_to_assets",
@@ -336,6 +339,11 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
             (vec![Atom::RuntimeContextRead], Risk::Low, true)
         }
         "web_search" => (vec![Atom::WebSearch], Risk::Low, true),
+        "weather_lookup"
+        | "news_lookup"
+        | "finance_lookup"
+        | "entertainment_lookup"
+        | "sports_lookup" => (vec![Atom::WebDomainRead], Risk::Low, true),
         "insert_text_at_cursor" | "replace_selection" | "add_tags" => {
             (vec![Atom::VaultWritePatch], Risk::Medium, true)
         }
@@ -807,6 +815,38 @@ mod tests {
                 profile.atoms,
                 vec![AgentPermissionAtom::VaultSearch],
                 "{name} must not be authorized as vault.search"
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_domain_tools_use_web_domain_read_not_external_or_vault() {
+        for name in [
+            "weather_lookup",
+            "news_lookup",
+            "finance_lookup",
+            "entertainment_lookup",
+            "sports_lookup",
+        ] {
+            let profile = permission_profile_for_tool(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(
+                profile.atoms,
+                vec![AgentPermissionAtom::WebDomainRead],
+                "{name} must map exactly to web.domain.read"
+            );
+            assert!(
+                !profile
+                    .atoms
+                    .iter()
+                    .any(|atom| atom.as_str() == "external.read"),
+                "{name} must not map to external.read"
+            );
+            assert!(
+                !profile
+                    .atoms
+                    .iter()
+                    .any(|atom| atom.as_str() == "vault.search"),
+                "{name} must not map to vault.search"
             );
         }
     }
