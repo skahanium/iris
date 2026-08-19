@@ -111,8 +111,18 @@ impl FreshDomainService {
             .db
             .ok_or_else(|| AppError::msg("fresh_domain_context_missing_db"))?;
 
-        if let Some(route) = self.frozen_route(db, request, context)? {
-            return self.execute_frozen(db, request, context, route).await;
+        let routes = self.frozen_routes(db, request, context)?;
+        if !routes.is_empty() {
+            let mut last_error = None;
+            for route in routes {
+                match self.execute_frozen(db, request, context, route).await {
+                    Ok(records) => return Ok(records),
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            return Err(
+                last_error.unwrap_or_else(|| AppError::msg(ERROR_STRUCTURED_PROVIDER_UNAVAILABLE))
+            );
         }
 
         if request.operation == DomainOperation::NewsSearch {
@@ -121,38 +131,37 @@ impl FreshDomainService {
         Err(AppError::msg(ERROR_STRUCTURED_PROVIDER_UNAVAILABLE))
     }
 
-    fn frozen_route(
+    fn frozen_routes(
         &self,
         db: &Database,
         request: &FreshDomainRequest,
         context: &ToolDispatchContext<'_>,
-    ) -> AppResult<Option<FrozenMcpToolSnapshot>> {
+    ) -> AppResult<Vec<FrozenMcpToolSnapshot>> {
         let Some(run_id) = context.run_id else {
             let route = resolve_domain_provider(db, request.operation, None)?;
             return match route {
-                DomainProviderRoute::FrozenMcp(snapshot) => Ok(Some(snapshot)),
-                DomainProviderRoute::WebEvidence => Ok(None),
+                DomainProviderRoute::FrozenMcp(snapshot) => Ok(vec![snapshot]),
+                DomainProviderRoute::WebEvidence => Ok(Vec::new()),
             };
         };
         let snapshots = load_run_snapshots(db, run_id)?;
-        let snapshot = snapshots
+        let snapshots = snapshots
             .iter()
-            .find(|snapshot| {
+            .filter(|snapshot| {
                 snapshot.capability == WEB_DOMAIN_READ_CAPABILITY
                     && snapshot.domain_operation == Some(request.operation)
             })
-            .cloned();
-        if let Some(snapshot) = snapshot {
+            .cloned()
+            .collect::<Vec<_>>();
+        for snapshot in &snapshots {
             if !snapshot_contract_is_valid(&snapshot) {
                 return Err(AppError::msg(ERROR_SNAPSHOT_INVALID));
             }
             if !provider_is_current(db, &snapshot)? {
                 return Err(AppError::msg(ERROR_PROVIDER_CHANGED));
             }
-            Ok(Some(snapshot))
-        } else {
-            Ok(None)
         }
+        Ok(snapshots)
     }
 
     async fn execute_frozen(

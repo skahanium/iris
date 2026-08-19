@@ -1351,24 +1351,26 @@ pub(crate) fn freeze_domain_run_grants(
             .collect::<Vec<_>>();
         let healthy_count = healthy.len();
         let chosen = if healthy_count == 1 {
-            Some(healthy[0].clone())
+            vec![healthy[0].clone()]
         } else if let Some(selected) = selected_web_provider_id {
-            healthy
-                .into_iter()
-                .find(|candidate| candidate.1 == selected)
+            let mut ordered = healthy;
+            ordered.sort_by_key(|candidate| candidate.1 != selected);
+            if ordered
+                .first()
+                .is_some_and(|candidate| candidate.1 == selected)
+            {
+                ordered
+            } else if *operation != DomainOperation::NewsSearch {
+                return Err(safe_error("agent_run_structured_provider_ambiguous"));
+            } else {
+                Vec::new()
+            }
         } else if !healthy.is_empty() && *operation != DomainOperation::NewsSearch {
             return Err(safe_error("agent_run_structured_provider_ambiguous"));
         } else {
-            None
+            Vec::new()
         };
-        if healthy_count > 1
-            && selected_web_provider_id.is_some()
-            && chosen.is_none()
-            && *operation != DomainOperation::NewsSearch
-        {
-            return Err(safe_error("agent_run_structured_provider_ambiguous"));
-        }
-        if let Some(candidate) = chosen {
+        for candidate in chosen.into_iter().take(3) {
             let (
                 binding_id,
                 provider_id,
