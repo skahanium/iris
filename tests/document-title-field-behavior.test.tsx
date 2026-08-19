@@ -226,6 +226,40 @@ describe("DocumentTitleField uncontrolled behavior", () => {
 
     expect(onBlur).toHaveBeenCalledWith("Iris E2E Persistence");
   });
+
+  it("defers title updates during IME composition and commits the final Chinese text", async () => {
+    const onChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(TitleHarness, {
+          value: "",
+          resetKey: "note-ime.md",
+          onChange,
+        }),
+      );
+    });
+
+    const field = textarea();
+    await act(async () => {
+      field.focus();
+      field.dispatchEvent(
+        new CompositionEvent("compositionstart", { bubbles: true }),
+      );
+      field.value = "nihao";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+
+    await act(async () => {
+      field.value = "你好";
+      field.dispatchEvent(
+        new CompositionEvent("compositionend", { bubbles: true }),
+      );
+    });
+
+    expect(onChange).toHaveBeenCalledWith("你好");
+  });
 });
 
 function HarnessWithState({

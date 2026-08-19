@@ -2,6 +2,8 @@
  * Shared Markdown prose — editor, AI conversation + feed reader surfaces.
  * Surfaces: [data-prose-surface="editor" | "conversation" | "feed"]
  */
+/* Keep Tailwind base below components so preflight cannot reset heading sizes. */
+@layer base, components, utilities;
 @layer components {
   :root {
     --font-ui: var(--font-sans);

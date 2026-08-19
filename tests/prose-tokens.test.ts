@@ -13,6 +13,15 @@ describe("prose polish v2 tokens", () => {
     expect(indexHtml).toContain("/src/assets/fonts/");
   });
 
+  it("keeps components layer above tailwind base for editor heading sizes", () => {
+    const layerOrder = markdownProse.indexOf(
+      "@layer base, components, utilities;",
+    );
+    const componentsStart = markdownProse.indexOf("@layer components");
+    expect(layerOrder).toBeGreaterThanOrEqual(0);
+    expect(componentsStart).toBeGreaterThan(layerOrder);
+  });
+
   it("defines editor and conversation prose surfaces", () => {
     expect(markdownProse).toContain('data-prose-surface="editor"');
     expect(markdownProse).toContain('data-prose-surface="conversation"');
