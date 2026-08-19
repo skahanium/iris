@@ -80,6 +80,6 @@
 
 ## 当前核心缺陷待收口边界
 
-- `ROUTE-003`、`WEB-001`、`EVID-005`、`EVAL-002` 仍为 Partial：已有生产接线或定向门禁，但尚未完成端到端领域矩阵和恢复持久化证据。
+- `ROUTE-003`、`WEB-001`、`EVID-005`、`EVAL-002` 已有生产接线、恢复持久化和 full eval 证据；完整领域矩阵仍是后续扩展项。
 - `CAP-001`、`CAP-002`、`EVID-006` 仍为 Partial：核心结构化 Provider、真实 evidence ID 和 Host 固定模板已完成，全部 operation 生产夹具尚未完成。
 - 附录 D 和施工计划描述的是目标契约；`ARCHITECTURE.md` 已同步当前领域只读能力实现事实。
