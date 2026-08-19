@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- 不创建 worktree，不新增数据库表、migration、Provider registry 或 evidence 实体。
+- 不创建 worktree；不新增第二套 Provider registry、evidence 仓库或健康真相源。
+- 是否允许新增数据库表/列/migration，由 `04-implementation-roadmap.md` 决策门 1/3 和 `07-provider-landing-and-decision-process.md` 确认；**未确认前不得新增 schema**。
 - 不硬编码 Provider endpoint、API key、token 或商业服务商。
 - 普通 `web.search/web.fetch` mapping 不能自动升级为 `web.domain.read`。
 - operation 是 readiness、授权、snapshot、dispatch 和验收的最小单位。
@@ -18,6 +19,7 @@
 - News 保留 Web fallback；其他领域没有合规结构化记录时失败关闭。
 - 每项先写失败测试，只运行定向测试；最终阶段再运行完整质量门。
 - 每个 Task 使用独立中文 Conventional Commit。
+- 施工前必须阅读 `07-provider-landing-and-decision-process.md`；遇到 DECISION REQUIRED 必须停下提问。
 
 ---
 
@@ -56,6 +58,8 @@ pub(crate) struct DomainOperationReadiness {
     pub(crate) reason_code: Option<String>,
 }
 ```
+
+- [ ] **决策门 1（必须先确认）**：operation 级 readiness/preview 如何持久化？见 `04-implementation-roadmap.md` 阶段 1 决策门 1。未确认前不要写 readiness IPC 实现。
 
 - [ ] **Step 1：写失败测试**
 
@@ -180,6 +184,8 @@ pub struct DomainBindingValidationResult {
 }
 ```
 
+- [ ] **决策门 3（必须先确认）**：预览结果如何持久化？多 Provider 覆盖同一 operation 时如何展示？是否允许 coverage 元数据？见 `04-implementation-roadmap.md` 阶段 3 决策门 3。
+
 - [ ] **Step 1：写预览门失败测试**
 
 覆盖非法路径、缺字段、陈旧时间、HTTP 来源、空 records、timeout 和敏感哨兵。未通过真实预览的 binding 不能显示 Ready。
@@ -215,6 +221,8 @@ git commit -m "feat(ai): 验证并展示领域服务真实状态"
 - Modify: `src-tauri/src/ai_runtime/mcp_external_tools.rs`
 - Modify: `src-tauri/src/ai_runtime/run_intake_tests.rs`
 - Modify: `src-tauri/src/ai_runtime/fresh_domains/tests.rs`
+
+- [ ] **决策门 4（必须先确认）**：健康事实是 provider 级还是 operation 级？候选排序和重试预算是否按 `04-implementation-roadmap.md` 阶段 4 的默认方案？未确认前不要实现 failover。
 
 - [ ] **Step 1：写失败测试**
 
@@ -256,17 +264,47 @@ git commit -m "fix(ai): 按健康状态冻结领域服务候选"
 **Files:**
 
 - Modify: `structured-tools/06-instance-readiness-record.md`
+- Create/Update: `structured-tools/07-provider-landing-and-decision-process.md`（PDR 与 Decision Log）
 
 **Interfaces:**
 
 - Consumes: Task 3 的真实预览、Task 4 的 readiness/health 和现有 MCP 管理中心。
-- Produces: 当前实例每个受支持 operation 的 Binding、Preview、Health 和 Production Run 证据。
+- Produces: 当前实例每个受支持 operation 的 Binding、Preview、Health 和 Production Run 证据，以及已确认的 PDR。
 
-- [ ] **Step 1：发现真实只读工具**
+- [ ] **决策门 5（每个 operation 强制，必须先确认）**
 
-在管理中心依次检查当前 Provider 的 MCP tool inventory。只有 discovery 中明确存在领域只读工具时才进入 mapping；普通 `web_search`、`web_fetch` 不作为候选。若现有 Provider 没有合规工具，通过现有 MCP profile 配置入口添加用户选择的 Provider，不在源码写入 endpoint 或凭证。
+在开始任何一个 operation 前，完成 `07-provider-landing-and-decision-process.md` 中的 PDR，并由设计者确认。PDR 未确认，禁止进入 mapping、preview 或 production run。
 
-- [ ] **Step 2：逐 operation 建立 mapping**
+PDR 必须回答：
+
+- Provider 是 MCP 还是 REST？如果只有 REST，是否允许新增 adapter？
+- 该 Provider 覆盖哪些子范围？未覆盖范围如何处置？
+- 是否需要多个 Provider 覆盖同一 operation？覆盖矩阵是什么？
+- mapping 是否能完整映射到 DTO？是否需要 schema/coverage 扩展？
+- 真实预览用什么安全公开参数？预期返回什么？
+- 如果没有合规 Provider，该 operation 是否从支持矩阵移除？
+
+- [ ] **Step 1：Provider 调研与 PDR 起草（不写业务代码）**
+
+对每个 operation，先做只读调研：
+
+- 检查现有 MCP tool inventory 是否有明确领域只读工具；
+- 若没有，调研外部 MCP Server 或 REST API 候选；
+- 普通 `web_search`、`web_fetch` 不作为候选；
+- 不硬编码 endpoint、API key 或凭证；
+- 把调研结果写入 PDR，不进入实现。
+
+- [ ] **Step 2：设计者确认覆盖矩阵与支持矩阵**
+
+根据 PDR 和 `03-target-architecture.md` 5.1 覆盖模型，与设计者确认：
+
+- 单 Provider 完整覆盖，还是多 Provider 子集覆盖；
+- 未覆盖范围是 Unavailable，还是收缩支持矩阵；
+- 是否需要新增 coverage 元数据或 schema 变更（必须与决策门 1/3 一致）。
+
+确认前不得保存 mapping。
+
+- [ ] **Step 3：逐 operation 建立 mapping**
 
 按以下顺序分别保存 input/output mapping，不跨 operation 复用未经验证的字段：
 
@@ -286,20 +324,20 @@ sports.score
 
 Expected: 保存后状态只能是 NeedsReview，不能直接是 Ready。
 
-- [ ] **Step 3：逐 operation 执行真实预览和健康探测**
+- [ ] **Step 4：逐 operation 执行真实预览和健康探测**
 
 每项使用非敏感公开参数触发一次预览，确认必需字段、时效、地域、单位和 HTTPS 来源均通过。失败项保持 NeedsReview/Unhealthy，修正 mapping 或更换 Provider；不得放宽 validator。
 
-- [ ] **Step 4：执行真实 Production Run**
+- [ ] **Step 5：执行真实 Production Run**
 
 分别执行天气、新闻、金融、娱乐和体育场景，并验证最终消息来源、时间、地域及恢复。一个领域有多个 operation 时逐项执行，不能以领域中的一次成功代替其他 operation。
 
-- [ ] **Step 5：更新实例记录**
+- [ ] **Step 6：更新实例记录与 Decision Log**
 
-只在证据完成后更新 `structured-tools/06-instance-readiness-record.md` 的非敏感状态字段。没有合规 Provider 的 operation 保持 Unconfigured，并从当前支持声明中移除。
+只在证据完成后更新 `structured-tools/06-instance-readiness-record.md` 的非敏感状态字段。没有合规 Provider 的 operation 保持 Unconfigured，并从当前支持声明中移除。同时把 PDR 决策写入 `07` 的 Decision Log。
 
 ```bash
-git add structured-tools/06-instance-readiness-record.md
+git add structured-tools/06-instance-readiness-record.md structured-tools/07-provider-landing-and-decision-process.md
 git commit -m "docs(ai): 记录结构化服务实例验收"
 ```
 
@@ -313,6 +351,8 @@ git commit -m "docs(ai): 记录结构化服务实例验收"
 - Modify: `src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs`
 - Modify: `docs/eval/agent-answer-capacity.md`
 - Create: `docs/testing/structured-domain-provider-readiness.md`
+
+- [ ] **前置条件**：只有已确认 PDR 的 operation 才能计入 11-operation production 测试；没有 PDR 的 operation 必须先从 Task 5 补齐。
 
 - [ ] **Step 1：增加 11 个 production 测试**
 

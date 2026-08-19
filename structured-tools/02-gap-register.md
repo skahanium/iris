@@ -21,13 +21,16 @@
 
 ## 2. P1 差距
 
-| ID               | 状态      | 事实                                                               | 用户影响                                     | 最小弥补边界                                          |
-| ---------------- | --------- | ------------------------------------------------------------------ | -------------------------------------------- | ----------------------------------------------------- |
-| DOM-MGMT-001     | Partial   | 管理中心可以保存 mapping，但没有完整的 11-operation readiness 总览 | 用户不知道缺哪个服务，也无法判断是否真实可用 | 显示未配置、待验证、可用、降级、不健康及安全原因      |
-| DOM-PREVIEW-001  | Confirmed | 保存 mapping 不等于真实响应能通过 DTO validator                    | 错误字段映射会在用户提问时才暴露             | 保存后由用户显式执行受限真实预览，预览通过才 Ready    |
-| DOM-FALLBACK-001 | Confirmed | 目标文档曾暗示多领域 Web fallback，生产只允许 News                 | 认知与实现不一致                             | 按 operation 明确 fallback；非 News 不以普通 Web 冒充 |
-| DOM-RETRY-001    | Partial   | 业务补搜、同 Provider 重试和备用 Provider 切换边界仍需生产证明     | 可能多搜、重复调用或扩大预算                 | 技术尝试与业务搜索轮次分开计数并持久化                |
-| DOM-ERROR-001    | Partial   | Provider 不可用常投影为通用提交或执行错误                          | 用户不知道要去哪里配置                       | 稳定安全码映射为可操作文案，不泄露参数或凭证          |
+| ID               | 状态      | 事实                                                               | 用户影响                                     | 最小弥补边界                                                |
+| ---------------- | --------- | ------------------------------------------------------------------ | -------------------------------------------- | ----------------------------------------------------------- |
+| DOM-MGMT-001     | Partial   | 管理中心可以保存 mapping，但没有完整的 11-operation readiness 总览 | 用户不知道缺哪个服务，也无法判断是否真实可用 | 显示未配置、待验证、可用、降级、不健康及安全原因            |
+| DOM-PREVIEW-001  | Confirmed | 保存 mapping 不等于真实响应能通过 DTO validator                    | 错误字段映射会在用户提问时才暴露             | 保存后由用户显式执行受限真实预览，预览通过才 Ready          |
+| DOM-FALLBACK-001 | Confirmed | 目标文档曾暗示多领域 Web fallback，生产只允许 News                 | 认知与实现不一致                             | 按 operation 明确 fallback；非 News 不以普通 Web 冒充       |
+| DOM-RETRY-001    | Partial   | 业务补搜、同 Provider 重试和备用 Provider 切换边界仍需生产证明     | 可能多搜、重复调用或扩大预算                 | 技术尝试与业务搜索轮次分开计数并持久化                      |
+| DOM-ERROR-001    | Partial   | Provider 不可用常投影为通用提交或执行错误                          | 用户不知道要去哪里配置                       | 稳定安全码映射为可操作文案，不泄露参数或凭证                |
+| DOM-DECISION-001 | Confirmed | operation 级 readiness/preview 没有持久化载体，与“不新增表”冲突    | Ready 状态不可恢复，管理中心矩阵不可信       | 先关闭决策门 1：允许最小 schema 演进或明确 Ready 持久化依据 |
+| DOM-PROVIDER-001 | Confirmed | 缺少 Provider 落地策略与强制决策流程，AI 可能自行选择 MCP/API      | 施工可能卡在 Provider 接入或做出错误架构假设 | 每个 operation 必须先完成并确认 PDR（见文档 07）            |
+| DOM-COVERAGE-001 | Confirmed | 多 Provider 覆盖同一 operation 的子集没有建模与路由规则            | 部分覆盖被误认为完整可用                     | 必须建立覆盖矩阵，未覆盖范围只能是 Unavailable              |
 
 ## 3. 已有基线，不得重复施工
 
@@ -40,7 +43,7 @@
 
 ## 4. 技术债控制原则
 
-- readiness 必须是现有 binding、Provider、health 的只读派生，禁止新增第二张状态表。
+- readiness 必须是现有 binding、Provider、health 的只读派生，禁止新增第二套真相源；是否允许最小 schema 演进（表/列/migration）由决策门 1/3 确认，未确认前不新增。
 - operation 是最小授权和路由单位，禁止用领域名或 `web.domain.read` 粗粒度替代。
 - 普通 Web mapping 与领域 mapping 永久分离。
 - Provider 真实输出只在内存中完成 mapping/validation，不持久化原始 JSON。

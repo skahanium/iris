@@ -22,7 +22,7 @@
 
 ## 2. Readiness 单一事实
 
-readiness 从现有实体派生，不新增表：
+readiness 从现有实体派生；是否允许最小 schema 演进（表/列/migration）由决策门 1 确认，未确认前不新增：
 
 ```rust
 enum DomainReadinessState {
@@ -52,6 +52,15 @@ struct DomainOperationReadiness {
 
 `news.search` 没有结构化 binding、但 Web 已授权和可用时，可以是 `WebFallback`。其他领域无 binding 时为 `Unconfigured`。
 
+### 2.1 Readiness 持久化：施工前必须定案的决策
+
+当前代码只有 provider 级健康表（`web_evidence_provider_health`）和 binding 元数据，**没有 operation 级 preview/readiness 的持久化字段**。而 `Ready` 又要求“最近真实预览或调用成功”，这会形成矛盾：
+
+- 如果严格“不新增表、不新增 migration”，`Ready` 只能退化为 provider 级健康猜测，无法证明某个 operation 本身可用；
+- 如果允许一次最小 schema 演进，则可以在现有 binding 上增加 operation 级 preview/readiness 字段，或新增一张小型派生表。
+
+**这是施工前必须由设计者拍板的 DECISION REQUIRED 项，AI 不得自行选择。** 默认建议是：允许一次最小 migration，在 `mcp_capability_bindings` 上增加 `last_preview_at`、`last_preview_status`、`last_preview_reason_code`、`preview_success_count` 等字段；若设计者选择“不新增表”，则必须明确 `Ready` 的持久化依据是什么，否则不能宣称 Ready。
+
 ## 3. Operation-specific 授权
 
 当前粗粒度 `web.domain.read` 只保留为权限原子，不能再承担可用性证明。Run intake 产生：
@@ -74,7 +83,7 @@ struct DomainToolGrant {
 
 ## 4. Provider 准入
 
-不预设商业供应商。Provider 通过现有 MCP discovery 和管理中心接入，每个 operation 独立满足：
+不预设商业供应商。Provider 通过现有 MCP discovery 和管理中心接入，每个 operation 独立满足；接入前必须完成 [`07-provider-landing-and-decision-process.md`](07-provider-landing-and-decision-process.md) 中的 Provider Decision Record 并经设计者确认：
 
 1. 工具是明确只读，schema 闭合且参数预算可控。
 2. 响应能用受限 JSON path 映射全部必需字段。
@@ -102,7 +111,27 @@ Run 接受后：
 - 单 Provider 瞬时错误最多重试一次；
 - 技术重试和备用切换不消耗业务补搜轮次。
 
-## 6. 输出和证据
+### 5.1 多 Provider 覆盖同一 operation：必须显式建模覆盖范围
+
+同一个 operation 可能由多个 Provider 各覆盖一部分，例如：
+
+- `sports.schedule`：Provider A 只覆盖 NBA，Provider B 只覆盖英超；
+- `entertainment.streaming`：Provider A 只覆盖美区，Provider B 只覆盖中国区；
+- `finance.quote`：Provider A 覆盖美股，Provider B 覆盖 A 股/港股。
+
+**禁止把“Provider 存在”直接当作“operation 完整可用”。** 施工前必须完成覆盖矩阵：
+
+| Operation         | 覆盖维度  | Provider A 覆盖 | Provider B 覆盖 | 未覆盖范围              |
+| ----------------- | --------- | --------------- | --------------- | ----------------------- |
+| `sports.schedule` | 联赛/地区 | NBA             | 英超            | 其他联赛 -> Unavailable |
+
+决策规则：
+
+1. 若一个 Provider 覆盖该 operation 的全部目标范围，按单 Provider 处理。
+2. 若需要多个 Provider 才能覆盖目标范围，必须设计“按请求参数路由到覆盖该范围的 Provider”。
+3. 若当前 schema/mapping 无法表达覆盖范围，**这是 DECISION REQUIRED**：选择在 mapping JSON 中增加 `coverage` 元数据，或允许一次最小 migration 增加覆盖字段；AI 不得自行决定。
+4. 未被任何 Provider 覆盖的子范围，状态只能是 `Unconfigured`/`Unavailable`，不得由模型补写，也不得用普通 Web 冒充。
+5. 若覆盖模型过于复杂，允许把该 operation 的支持范围收缩到单一 Provider 能覆盖的子集，并在产品支持矩阵中明确声明。
 
 Provider 不能提供 Iris evidence ID。执行顺序固定为：
 

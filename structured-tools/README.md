@@ -31,7 +31,8 @@
 4. [`04-implementation-roadmap.md`](04-implementation-roadmap.md)：按依赖和风险排序的施工阶段。
 5. [`05-evaluation-and-acceptance.md`](05-evaluation-and-acceptance.md)：软件门禁、实例门禁和问题—测试追踪。
 6. [`06-instance-readiness-record.md`](06-instance-readiness-record.md)：当前实例每个 operation 的实际配置与验收记录。
-7. [`plans/01-live-provider-enablement.md`](plans/01-live-provider-enablement.md)：可直接执行的测试先行施工计划。
+7. [`07-provider-landing-and-decision-process.md`](07-provider-landing-and-decision-process.md)：Provider 落地、覆盖矩阵和“施工前必须讨论”的决策流程。
+8. [`plans/01-live-provider-enablement.md`](plans/01-live-provider-enablement.md)：可直接执行的测试先行施工计划。
 
 ## 状态词
 
@@ -50,8 +51,9 @@
 1. 先读文档 01，确认代码环境和实际运行实例没有混淆。
 2. 从文档 02 选择一个 Confirmed 问题，不跨阶段同时修改多个事实源。
 3. 按文档 03 的 operation 粒度设计，不使用粗粒度 `web.domain.read` 代替真实可用性。
-4. 按文档 04 的顺序施工，并执行 `plans/01` 中对应任务。
-5. 只有文档 05 的软件门禁和实例门禁都通过，才能更新 Operational 状态。
+4. 按文档 04 的顺序施工，并执行 `plans/01` 中对应任务；每个阶段先关闭对应决策门。
+5. 进入阶段 5 前必须读文档 07，为每个 operation 完成并确认 Provider Decision Record。
+6. 只有文档 05 的软件门禁和实例门禁都通过，才能更新 Operational 状态。
 
 ## 非目标
 

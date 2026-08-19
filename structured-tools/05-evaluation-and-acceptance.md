@@ -26,8 +26,37 @@
 | DOM-RETRY-001    | Partial   | `provider_retry_does_not_consume_business_search_round`               | 技术尝试与业务轮次分离                  |
 | DOM-UPGRADE-001  | Confirmed | `migration_072_upgrades_059_without_fake_domain_bindings`             | 旧库升级真实且不伪造配置                |
 | DOM-INTAKE-001   | Resolved  | `completed_conversation_accepts_a_third_current_movie_turn`           | 0 候选不阻断第三轮 Run                  |
+| DOM-DECISION-001 | Confirmed | `operation_readiness_preview_persistence_is_durable`                  | readiness/preview 有明确持久化载体      |
+| DOM-PROVIDER-001 | Confirmed | `each_operation_has_an_approved_provider_decision_record`             | 阶段 5 必须有已确认 PDR 才能施工        |
+| DOM-COVERAGE-001 | Confirmed | `partial_provider_coverage_never_reports_full_operation_ready`        | 多 Provider 子集覆盖不冒充完整可用      |
 
-## 3. 11-operation 软件门禁
+## 3. Provider 决策与覆盖验收
+
+### 3.1 Provider Decision Record（PDR）是验收前置条件
+
+每个 operation 在进入软件门禁和实例门禁前，必须有已确认的 PDR（见 [`07-provider-landing-and-decision-process.md`](07-provider-landing-and-decision-process.md)）。没有 PDR 的 operation 不得标记为 Ready/Operational，也不得进入 11-operation 软件门禁计数。
+
+PDR 必须包含：
+
+- Provider 类型（MCP / REST adapter）与接入路径；
+- 覆盖范围矩阵；
+- mapping 到 DTO 的字段映射样例；
+- 真实预览参数与预期结果；
+- 无 Provider 时的支持矩阵决策。
+
+### 3.2 多 Provider 覆盖验收
+
+当同一 operation 由多个 Provider 覆盖不同子范围时，验收必须额外证明：
+
+1. 请求能根据参数路由到覆盖该范围的 Provider；
+2. 未覆盖范围不会返回成功结果；
+3. 管理中心/readiness 能表达“部分覆盖”；
+4. 模型 surface 不会把部分覆盖宣传为完整可用；
+5. 覆盖矩阵与 PDR 一致。
+
+若上述任一项无法满足，该 operation 只能按单一 Provider 子集声明支持，或保持 Unconfigured。
+
+## 4. 11-operation 软件门禁
 
 每个测试必须通过正式 intake 创建 Run，冻结本地 MCP contract fixture snapshot，登记真实数据库 evidence ID，由 Host/结构化 finalization 生成最终消息，并从数据库恢复：
 
@@ -55,7 +84,7 @@ production_sports_score_uses_frozen_provider
 - 最终正文不引入 DTO 外实体、数字、日期或状态；
 - sink 失败或页面恢复不重新执行 Provider。
 
-## 4. 负例矩阵
+## 5. 负例矩阵
 
 - 无 binding：Unconfigured，工具不进入 surface。
 - binding disabled、untrusted 或 hash drift：NeedsReview/Unavailable。
@@ -68,7 +97,7 @@ production_sports_score_uses_frozen_provider
 - 所有候选失败：非 News 不走普通 Web 冒充。
 - 原始输出包含 `SECRET_SENTINEL`、`NOTE_SENTINEL`、`ARGUMENT_SENTINEL`：事件、审计、UI 和 eval 均不得出现。
 
-## 5. 实例门禁
+## 6. 实例门禁
 
 当前实例必须导出 11-operation readiness，并同步到 [`06-instance-readiness-record.md`](06-instance-readiness-record.md)。每个受支持 operation 至少有一个 Ready Provider；随后人工执行：
 
@@ -82,7 +111,7 @@ production_sports_score_uses_frozen_provider
 
 实例门禁必须同时验证应用实际使用的数据库已具备 migration 072 schema。
 
-## 6. 完整质量门
+## 7. 完整质量门
 
 ```bash
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
@@ -99,7 +128,7 @@ npm run agent:eval
 
 不运行 live API eval。真实服务验收由实例门禁人工执行。
 
-## 7. 完成声明模板
+## 8. 完成声明模板
 
 只有全部门禁通过后才允许使用：
 
