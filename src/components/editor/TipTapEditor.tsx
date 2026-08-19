@@ -523,9 +523,6 @@ function TipTapEditorInner({
   const parsedContentRef = useRef<string | null>(null);
   const parsedContentRevisionRef = useRef(0);
   const [parsedContentRevision, setParsedContentRevision] = useState(0);
-  // TEMP-DIAGNOSTIC: show the current block type at the cursor. Remove after
-  // root-causing the normal-document heading input regression.
-  const [diagnosticBlock, setDiagnosticBlock] = useState("");
   const contentReadyRef = useRef(false);
   const baselineAppliedRef = useRef(false);
   const firstFrameGenerationRef = useRef(0);
@@ -769,27 +766,6 @@ function TipTapEditorInner({
     parsedContentRevision,
   ]);
 
-  useEffect(() => {
-    if (!editor || editor.isDestroyed) return;
-    const updateDiagnostic = () => {
-      const { $from } = editor.state.selection;
-      const node = $from.parent;
-      const attrs = node.attrs as Record<string, unknown>;
-      setDiagnosticBlock(
-        node.type.name === "heading"
-          ? `heading(${String(attrs.level ?? "")})`
-          : node.type.name,
-      );
-    };
-    updateDiagnostic();
-    editor.on("selectionUpdate", updateDiagnostic);
-    editor.on("transaction", updateDiagnostic);
-    return () => {
-      editor.off("selectionUpdate", updateDiagnostic);
-      editor.off("transaction", updateDiagnostic);
-    };
-  }, [editor]);
-
   const openLinkEditor = useCallback(
     (targetEditor: Editor) => {
       if (!mutationAllowed() || !targetEditor.isEditable) return;
@@ -956,13 +932,6 @@ function TipTapEditorInner({
           )}
         </button>
       ) : null}
-      {/* TEMP-DIAGNOSTIC: remove after heading input root cause is confirmed. */}
-      <div
-        data-testid="editor-block-diagnostic"
-        className="absolute left-3 top-3 z-10 rounded border border-border/60 bg-surface-elevated/90 px-2 py-1 font-mono text-[11px] text-muted-foreground backdrop-blur-sm"
-      >
-        {diagnosticBlock || "…"}
-      </div>
       <div className="iris-editor-zoom-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="iris-editor-canvas">
           {titleSlot ? (
