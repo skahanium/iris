@@ -24,6 +24,7 @@ use crate::ai_runtime::agent_run_repository::{
 use crate::ai_runtime::agent_tool_loop::{
     AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
 };
+use crate::ai_runtime::fresh_research_plan::{EvidenceGap, ResearchBudget, ResearchQueryLedger};
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
@@ -282,6 +283,12 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     required_web_provider_snapshots:
         Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
     web_preferred_provider_id: Arc<Mutex<Option<String>>>,
+    /// Optional frozen current-fact research budget. When present, `web_search`
+    /// calls are additionally limited by this plan and duplicate query/gap pairs
+    /// are rejected.
+    fresh_research_budget: Option<ResearchBudget>,
+    fresh_search_count: Mutex<u8>,
+    fresh_research_ledger: Mutex<ResearchQueryLedger>,
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
     /// The ChildRun retains the parent Run identity and persistence boundary.
     child_run_provider: Option<&'a dyn ToolLoopProvider>,
@@ -339,6 +346,9 @@ impl<'a> NormalRunToolExecutor<'a> {
             web_degradation_emitted: Arc::new(Mutex::new(false)),
             required_web_provider_snapshots,
             web_preferred_provider_id: Arc::new(Mutex::new(None)),
+            fresh_research_budget: None,
+            fresh_search_count: Mutex::new(0),
+            fresh_research_ledger: Mutex::new(ResearchQueryLedger::new()),
             child_run_provider: None,
             budget_policy,
             child_runs_started: Mutex::new(0),
@@ -376,6 +386,40 @@ impl<'a> NormalRunToolExecutor<'a> {
     pub(crate) fn with_allowed_tool_names(mut self, tool_names: &[String]) -> Self {
         self.allowed_tool_names = tool_names.to_vec();
         self
+    }
+
+    /// Freeze a current-fact research budget for this executor. When present,
+    /// `web_search` calls are bounded by `ResearchBudget` and duplicate
+    /// normalized query/gap pairs are rejected.
+    pub(crate) fn with_fresh_research_budget(mut self, budget: ResearchBudget) -> Self {
+        self.fresh_research_budget = Some(budget);
+        self
+    }
+
+    fn try_reserve_fresh_research_slot(
+        &self,
+        query: &str,
+        gap: Option<EvidenceGap>,
+    ) -> AppResult<bool> {
+        let Some(budget) = self.fresh_research_budget else {
+            return Ok(true);
+        };
+        let mut search_count = self
+            .fresh_search_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        if *search_count >= budget.max_searches {
+            return Ok(false);
+        }
+        if let Some(gap) = gap {
+            let mut ledger = self
+                .fresh_research_ledger
+                .lock()
+                .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+            ledger.register(query, gap)?;
+        }
+        *search_count += 1;
+        Ok(true)
     }
 
     fn at_subagent_depth(mut self, depth: u32) -> Self {
@@ -448,6 +492,16 @@ impl<'a> NormalRunToolExecutor<'a> {
             .and_then(serde_json::Value::as_str)
             .filter(|query| !query.trim().is_empty())
             .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
+        let gap = args
+            .get("gap")
+            .and_then(serde_json::Value::as_str)
+            .and_then(parse_evidence_gap);
+        if !self.try_reserve_fresh_research_slot(query, gap)? {
+            return Ok(failed_tool_call(
+                WEB_TOOL_NAME,
+                "fresh_research_budget_exhausted",
+            ));
+        }
         let automatic_local_materials = self
             .context
             .materials
@@ -1017,6 +1071,21 @@ fn local_evidence_input_from_packet(value: &serde_json::Value) -> Option<LocalEv
 /// provider must never be asked for that many raw search bodies in one strict
 /// prefetch. A response that exceeds the host cap gets exactly one smaller
 /// retry; this preserves the cap rather than hiding an unbounded payload.
+fn parse_evidence_gap(value: &str) -> Option<EvidenceGap> {
+    match value {
+        "missing_entity" => Some(EvidenceGap::MissingEntity),
+        "missing_location" => Some(EvidenceGap::MissingLocation),
+        "location_coverage" => Some(EvidenceGap::LocationCoverage),
+        "missing_timestamp" => Some(EvidenceGap::MissingTimestamp),
+        "stale_observation" => Some(EvidenceGap::StaleObservation),
+        "missing_unit" => Some(EvidenceGap::MissingUnit),
+        "missing_channel" => Some(EvidenceGap::MissingChannel),
+        "missing_independent_source" => Some(EvidenceGap::MissingIndependentSource),
+        "source_conflict" => Some(EvidenceGap::SourceConflict),
+        _ => None,
+    }
+}
+
 fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
     let first_attempt = remaining.clamp(1, INITIAL_WEB_SEARCH_RESULTS);
     if attempt_count >= 2 {
@@ -2938,6 +3007,7 @@ mod tests {
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
+    use crate::ai_runtime::fresh_research_plan::{EvidenceGap, ResearchBudget};
     use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
     use crate::ai_runtime::run_context::RunContextAssembler;
     use crate::ai_runtime::run_contract::{
@@ -4803,6 +4873,100 @@ mod tests {
             .await
             .expect("surface rejection is a normal tool result");
         assert_eq!(forged.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[test]
+    fn insufficient_first_search_triggers_bounded_refinement() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string()])
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 2,
+            max_fetches: 3,
+            max_repairs: 1,
+        });
+
+        assert!(executor
+            .try_reserve_fresh_research_slot(
+                "上海 电影 2026-08-18",
+                Some(EvidenceGap::MissingLocation),
+            )
+            .expect("first search"));
+        assert!(executor
+            .try_reserve_fresh_research_slot(
+                "上海 电影 2026-08-18 万达",
+                Some(EvidenceGap::MissingEntity),
+            )
+            .expect("second search"));
+        assert!(!executor
+            .try_reserve_fresh_research_slot("第三次搜索", Some(EvidenceGap::MissingTimestamp),)
+            .expect("budget check"));
+    }
+
+    #[test]
+    fn sufficient_first_search_stops_without_extra_tool_turn() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string()])
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 1,
+            max_fetches: 1,
+            max_repairs: 0,
+        });
+
+        assert!(executor
+            .try_reserve_fresh_research_slot(
+                "2026-08-18 上海 电影 万达 上映",
+                Some(EvidenceGap::MissingEntity),
+            )
+            .expect("only search"));
+        assert!(!executor
+            .try_reserve_fresh_research_slot("额外搜索", Some(EvidenceGap::MissingTimestamp),)
+            .expect("budget check"));
     }
 
     #[tokio::test]

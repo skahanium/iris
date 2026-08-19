@@ -75,13 +75,11 @@ pub(crate) fn build_fresh_research_plan(
 
 /// Track already submitted normalized query/gap pairs so the ToolLoop cannot
 /// repeat the same research step without consuming a fresh budget slot.
-#[cfg(test)]
 #[derive(Debug, Default)]
 pub(crate) struct ResearchQueryLedger {
     seen: Vec<(String, EvidenceGap)>,
 }
 
-#[cfg(test)]
 impl ResearchQueryLedger {
     pub(crate) fn new() -> Self {
         Self::default()
@@ -168,7 +166,6 @@ fn research_budget(message: &str, domain: FreshFactDomain) -> ResearchBudget {
     }
 }
 
-#[cfg(test)]
 fn normalize_query(query: &str) -> String {
     query
         .split_whitespace()

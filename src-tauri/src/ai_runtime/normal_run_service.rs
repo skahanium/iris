@@ -34,6 +34,17 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+fn is_current_fact_domain(domain: FreshFactDomain) -> bool {
+    matches!(
+        domain,
+        FreshFactDomain::Weather
+            | FreshFactDomain::News
+            | FreshFactDomain::Finance
+            | FreshFactDomain::Entertainment
+            | FreshFactDomain::Sports
+    )
+}
+
 fn plan_tool_surface(
     context: &crate::ai_runtime::run_context::RunContext,
     authorized_capabilities: &[CapabilityId],
@@ -483,7 +494,7 @@ async fn dispatch_normal_run_after_context(
         } else {
             provider
         };
-        let executor = NormalRunToolExecutor::new(
+        let mut executor = NormalRunToolExecutor::new(
             state,
             app_handle,
             accepted,
@@ -496,6 +507,15 @@ async fn dispatch_normal_run_after_context(
         .with_allowed_tool_names(&tool_surface_plan.tool_names)
         .with_skill_activation_plan(active_skills.plan.clone())
         .with_child_run_provider(&provider);
+        if is_current_fact_domain(context.envelope.fresh_fact.domain) {
+            let plan = build_fresh_research_plan(
+                &context.user_message,
+                &context.envelope.fresh_fact,
+                "zh-CN",
+                None,
+            )?;
+            executor = executor.with_fresh_research_budget(plan.budget);
+        }
         return if let Some(telemetry) = telemetry {
             RunEngine::execute_tool_loop_with_eval_telemetry(
                 db,
@@ -775,18 +795,31 @@ async fn dispatch_required_web_verified_run(
             .await
         };
     }
-    // Required Web evidence is prefetched deterministically. The final model
-    // only receives local follow-up tools; `web_search` remains hidden because
-    // the evidence is already provided. The planner records this state so the
-    // prompt can tell the model not to deny that retrieval happened.
-    let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, true);
-    let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
+    // Required Web evidence is prefetched deterministically. For ordinary
+    // strict facts the final model only receives local follow-up tools and
+    // `web_search` stays hidden. Current-fact research keeps `web_search`
+    // visible so the model can issue bounded follow-up searches for unresolved
+    // evidence gaps.
+    let research_mode = is_current_fact_domain(context.envelope.fresh_fact.domain);
+    let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, !research_mode);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-    let mut tools = ToolRegistry::constrain_for_run_context(
-        registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
-        context.envelope.context,
-        &context.retrieval_scope,
-    );
+    let mut tools = if research_mode {
+        ToolRegistry::constrain_for_run_context(
+            registry.tools_for_authorized_capabilities(authorized_capabilities, true),
+            context.envelope.context,
+            &context.retrieval_scope,
+        )
+    } else {
+        let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
+        ToolRegistry::constrain_for_run_context(
+            registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
+            context.envelope.context,
+            &context.retrieval_scope,
+        )
+    };
+    if !tool_surface_plan.expose_web_search {
+        tools.retain(|tool| tool.name != "web_search");
+    }
     let has_local_follow_up_tools = !tools.is_empty();
     let serialized_messages = serde_json::to_string(messages).map_err(AppError::from)?;
     let mut requirements = crate::ai_runtime::provider_router::ProviderRequirements {
@@ -840,7 +873,16 @@ async fn dispatch_required_web_verified_run(
         tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
     }
     tool_surface_plan.tool_names = tools.iter().map(|tool| tool.name.clone()).collect();
-    let executor = executor.with_allowed_tool_names(&tool_surface_plan.tool_names);
+    let mut executor = executor.with_allowed_tool_names(&tool_surface_plan.tool_names);
+    if research_mode {
+        let plan = build_fresh_research_plan(
+            &context.user_message,
+            &context.envelope.fresh_fact,
+            "zh-CN",
+            None,
+        )?;
+        executor = executor.with_fresh_research_budget(plan.budget);
+    }
     let provider = FailoverStreamingProvider::new(route, requirements, db, &accepted.session, sink);
     #[cfg(test)]
     let provider = if let Some(client) = state.test_streaming_client() {
