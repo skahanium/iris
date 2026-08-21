@@ -13,7 +13,7 @@
 - 不创建 worktree，不新增第三方依赖、数据库表或 migration。
 - 不把 Provider 返回的 ID 当作 Iris evidence ID；不持久化原始 Provider JSON。
 - 不把通用 Web 结果伪装成天气、金融、影视或体育结构化记录。
-- 搜索业务轮次与 Provider 重试/failover 分开计数。
+- 搜索业务轮次与未来可能的 Provider 重试/failover 分开计数；本阶段不实现后者。
 - 每个行为先写失败测试，使用定向测试；最终收口再运行完整质量门禁。
 - 保持 `EVID-003` Deferred，不实现通用自由文本语义 verifier。
 
@@ -25,32 +25,32 @@
 - 扩展 Run 状态为 `awaiting_input`，增加 `InputRequired/InputProvided` 事件、`SubmitInput` 控制动作和 `pendingInput` 投影。
 - 缺城市时等待并恢复同一 Run、同一 envelope、同一 Provider snapshot 和预算；重复提交幂等。
 
-### 2. 当前事实生产路由（部分完成）
+### 2. 当前事实 production operation 路由（已完成）
 
-- 真实接通 `CurrentRunDomain`；时间使用 Host runtime；无结构化天气/金融/影视/体育 Provider 时返回稳定缺失错误。
-- `ToolSurfacePlan` 只暴露当前 operation；Web 关闭时所有外部工具不可达。
+- 时间使用 Host runtime；每个当前事实 Run 冻结一个 `DomainOperation`；无结构化天气/金融/影视/体育 binding 时在模型调用前返回稳定缺失错误。
+- 工具表面只保留当前 operation；Web 关闭时所有外部工具不可达。
 - 修复 `normal_run_service` 中构建研究计划时丢失确认地点的问题。
 
-### 3. 结构化记录、Provider 与证据（核心闭环完成）
+### 3. 结构化记录、Provider 与证据（operation 闭环完成）
 
 - 将 Provider 输出 DTO 与数据库 evidence ID 分离；验证成功后由现有 `session_evidence` 生成真实 ID。
-- 每个 operation 在 Run 接受时冻结最多三个有序健康 mapping；无序多 Provider fail-closed。
-- 每个业务调用最多三个 Provider 尝试：有备选时顺序切换；仅单 Provider 时瞬时故障允许一次同 Provider 重试。
+- 每个 operation 在 Run 接受时只冻结一个 eligible mapping；多个 mapping 失败关闭，不借用通用 Web provider 选择。
+- 本阶段不做 Provider health 排序、自动 failover 或同 Provider 重试。
 - 结构化 Provider 全部失败时不生成猜测；新闻才允许走 Web fallback，且不伪造 `NewsRecord`。
-- Provider DTO 已登记真实 evidence ID；模型未提交终局时，Host 可从已登记 DTO 生成固定模板答案，`submit_final_answer` 仍作为可解释模型终局协议。
+- Provider DTO 已登记真实 evidence ID；`submit_final_answer` 是结构化当前事实的终局协议。
 
 ### 4. 统一研究预算（部分完成）
 
 - 首次预搜索计入业务搜索预算；简单事实最多首次加一次补充，推荐/比较/新闻汇总最多首次加两次补充。
 - 补充搜索必须携带 `EvidenceGap`；相同规范化查询/gap 不得重复；证据充分立即停止。
-- 同 MCP 技术重试和冻结备用 MCP 切换不消耗业务轮次；删除 ToolLoop 外层重复 Broker retry。
+- 不把 Provider 重试或备用 MCP 切换计入业务搜索轮次；这些机制尚未进入本阶段实现。
 - 查询哈希、gap 约束、业务轮次和 winner 已写入 `agent_run_steps.resume_state_json`，并在同一 Run 重建执行器时恢复；当前仍缺少真实 Provider 级 attempt/winner 端到端夹具，不能把“Provider 重试次数”与“业务搜索轮次”混为一谈。
 
-### 5. UI、评测与文档收口（本轮门禁完成）
+### 5. UI、评测与文档收口（operation 软件矩阵完成）
 
 - 前端支持当前 Run 的 pending input，隔离旧 Run 的回答和事件。
-- 为全部 11 个 `DomainOperation`、缺 Provider、陈旧数据、备用 Provider、补充搜索、恢复和诊断安全增加生产路径测试。
-- smoke 达到 24/24，full eval 达到 48/48；只在真实测试通过后更新附录和完成状态。
+- 为全部 11 个 `DomainOperation`、十个非 News 无 binding、operation 越权、历史 envelope、缺城市及恢复增加生产路径测试。
+- Provider health/failover、REST adapter、覆盖运营矩阵与真实实例验收保留后续 PDR；不得由夹具矩阵推断为实例可用。
 
 ## 关键接口
 
@@ -69,7 +69,7 @@ struct RegisteredDomainRecord { evidence_id: i64, operation: DomainOperation, re
 
 ## 定向测试与提交
 
-每阶段执行失败测试 → 确认失败 → 最小实现 → 定向测试 → 中文 Conventional Commit。必须覆盖：缺参恢复、生产 CurrentRunDomain、Provider failover、Provider 不得注入 evidence ID、11 个 operation 的真实登记、简单事实补搜一次、推荐补搜两次、无 gap 禁止补搜、重复查询拒绝、技术重试不占业务预算、winner 粘性、Host 终局渲染、终态恢复不重执行和原始输出诊断哨兵。
+每阶段执行失败测试 → 确认失败 → 最小实现 → 定向测试 → 中文 Conventional Commit。operation 收口必须覆盖：历史 envelope、缺参恢复、11 个 operation 的正式 intake/ToolLoop/snapshot/DTO/evidence/终局/恢复、News WebFallback、Web 关闭、operation 越权、Provider 不得注入 evidence ID 和原始输出诊断哨兵。Provider failover、重试、winner 粘性与真实实例验收不在本阶段承诺。
 
 提交顺序：
 

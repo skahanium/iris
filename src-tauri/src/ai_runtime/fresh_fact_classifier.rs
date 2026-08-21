@@ -6,7 +6,9 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::ai_runtime::run_contract::{FreshFactDomain, FreshFactPolicy, LocationRequirement};
+use crate::ai_runtime::run_contract::{
+    DomainOperation, FreshFactDomain, FreshFactPolicy, LocationRequirement,
+};
 
 /// Classify a user message into a frozen current-fact policy.
 ///
@@ -15,6 +17,7 @@ use crate::ai_runtime::run_contract::{FreshFactDomain, FreshFactPolicy, Location
 pub(crate) fn classify_fresh_fact(message: &str, accepted_at: DateTime<Utc>) -> FreshFactPolicy {
     let lower = message.to_lowercase();
     let domain = classify_domain(&lower);
+    let operation = classify_domain_operation(&lower, domain);
     let (window_start, window_end, location_requirement) = match domain {
         FreshFactDomain::News => (
             Some(accepted_at - Duration::hours(72)),
@@ -24,7 +27,11 @@ pub(crate) fn classify_fresh_fact(message: &str, accepted_at: DateTime<Utc>) -> 
         FreshFactDomain::Entertainment => (
             Some(accepted_at - Duration::days(30)),
             Some(accepted_at + Duration::days(60)),
-            LocationRequirement::City,
+            if operation == Some(DomainOperation::EntertainmentNowPlaying) {
+                LocationRequirement::City
+            } else {
+                LocationRequirement::None
+            },
         ),
         FreshFactDomain::Sports => (
             Some(accepted_at),
@@ -45,6 +52,7 @@ pub(crate) fn classify_fresh_fact(message: &str, accepted_at: DateTime<Utc>) -> 
     FreshFactPolicy {
         schema_version: 1,
         domain,
+        operation,
         window_start: window_start.map(|value| value.to_rfc3339()),
         window_end: window_end.map(|value| value.to_rfc3339()),
         location_requirement,
@@ -73,21 +81,6 @@ fn classify_domain(message: &str) -> FreshFactDomain {
     if contains_any(
         message,
         &[
-            "新闻",
-            "头条",
-            "要闻",
-            "时事",
-            "news",
-            "headline",
-            "headlines",
-            "breaking",
-        ],
-    ) {
-        return FreshFactDomain::News;
-    }
-    if contains_any(
-        message,
-        &[
             "股价",
             "股票",
             "行情",
@@ -103,6 +96,21 @@ fn classify_domain(message: &str) -> FreshFactDomain {
         ],
     ) {
         return FreshFactDomain::Finance;
+    }
+    if contains_any(
+        message,
+        &[
+            "新闻",
+            "头条",
+            "要闻",
+            "时事",
+            "news",
+            "headline",
+            "headlines",
+            "breaking",
+        ],
+    ) {
+        return FreshFactDomain::News;
     }
     if is_current_entertainment_request(message) {
         return FreshFactDomain::Entertainment;
@@ -138,6 +146,74 @@ fn classify_domain(message: &str) -> FreshFactDomain {
         return FreshFactDomain::GenericWeb;
     }
     FreshFactDomain::None
+}
+
+/// Select the one operation that an accepted current-fact Run may execute.
+pub(crate) fn classify_domain_operation(
+    message: &str,
+    domain: FreshFactDomain,
+) -> Option<DomainOperation> {
+    match domain {
+        FreshFactDomain::Weather => Some(
+            if contains_any(
+                message,
+                &[
+                    "预报",
+                    "未来",
+                    "明天",
+                    "后天",
+                    "forecast",
+                    "tomorrow",
+                    "next week",
+                ],
+            ) {
+                DomainOperation::WeatherForecast
+            } else {
+                DomainOperation::WeatherCurrent
+            },
+        ),
+        FreshFactDomain::News => Some(DomainOperation::NewsSearch),
+        FreshFactDomain::Finance => Some(
+            if contains_any(message, &["新闻", "news", "要闻", "headline", "headlines"]) {
+                DomainOperation::FinanceNews
+            } else if contains_any(
+                message,
+                &[
+                    "指标",
+                    "metrics",
+                    "市盈率",
+                    "pe ratio",
+                    "市值",
+                    "market cap",
+                ],
+            ) {
+                DomainOperation::FinanceMetrics
+            } else {
+                DomainOperation::FinanceQuote
+            },
+        ),
+        FreshFactDomain::Entertainment => Some(
+            if contains_any(message, &["流媒体", "现在能看", "streaming", "stream"]) {
+                DomainOperation::EntertainmentStreaming
+            } else if contains_any(message, &["即将上映", "将上映", "upcoming", "coming soon"])
+            {
+                DomainOperation::EntertainmentUpcoming
+            } else {
+                DomainOperation::EntertainmentNowPlaying
+            },
+        ),
+        FreshFactDomain::Sports => Some(
+            if contains_any(
+                message,
+                &["赛程", "下一场", "下场", "schedule", "fixture", "next game"],
+            ) {
+                DomainOperation::SportsSchedule
+            } else {
+                DomainOperation::SportsScore
+            },
+        ),
+        FreshFactDomain::None | FreshFactDomain::Runtime | FreshFactDomain::GenericWeb => None,
+    }
 }
 
 fn is_runtime_request(message: &str) -> bool {
@@ -228,6 +304,7 @@ fn contains_any(message: &str, markers: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_runtime::mcp_external_tools::DomainOperation;
     use crate::ai_runtime::run_contract::FreshFactDomain;
 
     fn accepted_at() -> DateTime<Utc> {
@@ -251,6 +328,80 @@ mod tests {
         for (message, expected) in cases {
             let policy = classify_fresh_fact(message, accepted_at());
             assert_eq!(policy.domain, expected, "unexpected domain for {message:?}");
+        }
+    }
+
+    #[test]
+    fn freezes_one_operation_and_only_requires_city_when_needed() {
+        let cases = [
+            (
+                "上海未来一周天气",
+                Some(DomainOperation::WeatherForecast),
+                LocationRequirement::City,
+            ),
+            (
+                "上海现在天气",
+                Some(DomainOperation::WeatherCurrent),
+                LocationRequirement::City,
+            ),
+            (
+                "苹果股票最新新闻",
+                Some(DomainOperation::FinanceNews),
+                LocationRequirement::None,
+            ),
+            (
+                "美元兑人民币汇率指标",
+                Some(DomainOperation::FinanceMetrics),
+                LocationRequirement::None,
+            ),
+            (
+                "苹果现在股价",
+                Some(DomainOperation::FinanceQuote),
+                LocationRequirement::None,
+            ),
+            (
+                "本周有什么新片即将上映",
+                Some(DomainOperation::EntertainmentUpcoming),
+                LocationRequirement::None,
+            ),
+            (
+                "现在能看什么流媒体电影",
+                Some(DomainOperation::EntertainmentStreaming),
+                LocationRequirement::None,
+            ),
+            (
+                "上海正在上映什么电影",
+                Some(DomainOperation::EntertainmentNowPlaying),
+                LocationRequirement::City,
+            ),
+            (
+                "湖人下一场比赛",
+                Some(DomainOperation::SportsSchedule),
+                LocationRequirement::None,
+            ),
+            (
+                "湖人比分",
+                Some(DomainOperation::SportsScore),
+                LocationRequirement::None,
+            ),
+            (
+                "今天有什么重要新闻",
+                Some(DomainOperation::NewsSearch),
+                LocationRequirement::None,
+            ),
+            ("今天是几月几日", None, LocationRequirement::None),
+        ];
+
+        for (message, expected_operation, expected_location) in cases {
+            let policy = classify_fresh_fact(message, accepted_at());
+            assert_eq!(
+                policy.operation, expected_operation,
+                "unexpected operation for {message:?}"
+            );
+            assert_eq!(
+                policy.location_requirement, expected_location,
+                "unexpected location for {message:?}"
+            );
         }
     }
 

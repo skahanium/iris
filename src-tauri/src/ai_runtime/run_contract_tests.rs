@@ -1,11 +1,11 @@
 use super::run_contract::{
     transition_if_version, transition_to, AssistantRunAccepted, AssistantRunControlRequest,
     AssistantRunEvent, AssistantRunGetRequest, AssistantRunStartRequest, AssistantSessionRef,
-    CapabilityId, ContextMode, Effect, Effort, EvidenceRef, EvidenceSourceKind, ExecutionEnvelope,
-    FreshFactDomain, FreshFactPolicy, Freshness, LocationRequirement, MaterialNeed, RiskClass,
-    RunControlAction, RunEventPayload, RunEventType, RunPresentationEvent, RunPresentationPayload,
-    RunStageCode, RunState, RunStateTransitionError, SafeRunErrorCode, SecurityDomain,
-    WebDecisionReason,
+    CapabilityId, ContextMode, DomainOperation, Effect, Effort, EvidenceRef, EvidenceSourceKind,
+    ExecutionEnvelope, FreshFactDomain, FreshFactPolicy, Freshness, LocationRequirement,
+    MaterialNeed, RiskClass, RunControlAction, RunEventPayload, RunEventType, RunPresentationEvent,
+    RunPresentationPayload, RunStageCode, RunState, RunStateTransitionError, SafeRunErrorCode,
+    SecurityDomain, WebDecisionReason,
 };
 
 fn direct_answer_envelope() -> ExecutionEnvelope {
@@ -323,6 +323,7 @@ fn execution_envelope_uses_the_same_camel_case_wire_fields_as_typescript() {
             "freshFact": {
                 "schemaVersion": 1,
                 "domain": "none",
+                "operation": null,
                 "windowStart": null,
                 "windowEnd": null,
                 "locationRequirement": "none"
@@ -419,6 +420,35 @@ fn old_execution_envelope_defaults_fresh_fact_policy() {
         envelope.fresh_fact.location_requirement,
         LocationRequirement::None
     );
+}
+
+#[test]
+fn historical_fresh_fact_policy_uses_the_legacy_domain_default_operation() {
+    let cases = [
+        ("weather", DomainOperation::WeatherCurrent),
+        ("news", DomainOperation::NewsSearch),
+        ("finance", DomainOperation::FinanceQuote),
+        ("entertainment", DomainOperation::EntertainmentNowPlaying),
+        ("sports", DomainOperation::SportsScore),
+    ];
+
+    for (domain, expected_operation) in cases {
+        let policy: FreshFactPolicy = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 1,
+            "domain": domain,
+            "windowStart": null,
+            "windowEnd": null,
+            "locationRequirement": "none"
+        }))
+        .expect("historical fresh fact policy remains readable");
+
+        assert_eq!(policy.operation, None, "{domain}");
+        assert_eq!(
+            policy.effective_operation(),
+            Some(expected_operation),
+            "{domain}"
+        );
+    }
 }
 
 #[test]

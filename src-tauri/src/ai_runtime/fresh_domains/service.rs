@@ -2,8 +2,8 @@
 //!
 //! The service consumes only normalized tool requests and frozen provider
 //! snapshots. It never exposes raw provider JSON: provider results are reduced
-//! through a whitelist output mapping into Appendix-D DTOs, validated by Task 2,
-//! and only those validated DTOs are returned to the caller.
+//! through a whitelist output mapping into Appendix-D DTOs, validates them,
+//! and returns only those validated DTOs to the caller.
 
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -171,7 +171,10 @@ impl FreshDomainService {
         context: &ToolDispatchContext<'_>,
         snapshot: FrozenMcpToolSnapshot,
     ) -> AppResult<Vec<FreshDomainRecord>> {
-        let mapped_arguments = validate_and_map_arguments(&snapshot, &request.args)?;
+        let mapped_arguments = validate_and_map_arguments(
+            &snapshot,
+            &provider_arguments_without_operation(&request.args),
+        )?;
         let provider = crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider {
             capability: WEB_DOMAIN_READ_CAPABILITY.into(),
             provider_kind: "mcp".into(),
@@ -320,6 +323,17 @@ impl FreshDomainService {
         }
         Ok(records)
     }
+}
+
+/// `operation` is Iris's Run-local authorization selector, not a Provider
+/// argument. Removing it here keeps reviewed MCP schemas free of action-like
+/// controls while dispatch has already verified the frozen operation.
+fn provider_arguments_without_operation(args: &Value) -> Value {
+    let mut provider_args = args.clone();
+    if let Some(object) = provider_args.as_object_mut() {
+        object.remove("operation");
+    }
+    provider_args
 }
 
 pub(crate) fn explicit_location_from_args(args: &Value) -> Option<ConfirmedLocation> {
@@ -748,6 +762,17 @@ mod tests {
                 .map(|(key, path)| (key.to_string(), path.to_string()))
                 .collect::<std::collections::BTreeMap<_, _>>(),
         }
+    }
+
+    #[test]
+    fn provider_arguments_exclude_the_run_local_operation_selector() {
+        assert_eq!(
+            provider_arguments_without_operation(&serde_json::json!({
+                "operation": "weather.current",
+                "location": "上海"
+            })),
+            serde_json::json!({ "location": "上海" })
+        );
     }
 
     fn weather_snapshot(output_mapping: DomainOutputMapping) -> FrozenMcpToolSnapshot {

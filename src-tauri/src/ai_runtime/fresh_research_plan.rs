@@ -251,6 +251,7 @@ mod tests {
         FreshFactPolicy {
             schema_version: 1,
             domain,
+            operation: None,
             window_start: None,
             window_end: window_end.map(str::to_string),
             location_requirement: match domain {

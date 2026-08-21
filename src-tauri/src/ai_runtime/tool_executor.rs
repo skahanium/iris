@@ -13,6 +13,68 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use std::collections::HashSet;
 
+const FRESH_DOMAIN_TOOL_NAMES: &[&str] = &[
+    "weather_lookup",
+    "news_lookup",
+    "finance_lookup",
+    "entertainment_lookup",
+    "sports_lookup",
+];
+
+/// Remove domain tools outside the one operation frozen for this Run and narrow
+/// the remaining tool's operation schema to that exact value.
+pub(crate) fn constrain_domain_tool_surface(
+    tools: Vec<ToolSpec>,
+    operation: Option<crate::ai_runtime::run_contract::DomainOperation>,
+    executable: bool,
+) -> Vec<ToolSpec> {
+    let allowed_tool = operation.map(domain_tool_name);
+    tools
+        .into_iter()
+        .filter_map(|mut tool| {
+            // News fallback is deliberately represented by `news_lookup` only:
+            // exposing generic web_search would let the model bypass the
+            // operation-specific DTO validation and evidence contract.
+            if operation == Some(crate::ai_runtime::run_contract::DomainOperation::NewsSearch)
+                && tool.name == "web_search"
+            {
+                return None;
+            }
+            if !FRESH_DOMAIN_TOOL_NAMES.contains(&tool.name.as_str()) {
+                return Some(tool);
+            }
+            if !executable || Some(tool.name.as_str()) != allowed_tool {
+                return None;
+            }
+            if let Some(schema) = tool
+                .input_schema
+                .get_mut("properties")
+                .and_then(serde_json::Value::as_object_mut)
+                .and_then(|properties| properties.get_mut("operation"))
+            {
+                schema["enum"] = serde_json::json!([operation.expect("checked above").as_str()]);
+            }
+            Some(tool)
+        })
+        .collect()
+}
+
+fn domain_tool_name(operation: crate::ai_runtime::run_contract::DomainOperation) -> &'static str {
+    use crate::ai_runtime::run_contract::DomainOperation;
+
+    match operation {
+        DomainOperation::WeatherCurrent | DomainOperation::WeatherForecast => "weather_lookup",
+        DomainOperation::NewsSearch => "news_lookup",
+        DomainOperation::FinanceQuote
+        | DomainOperation::FinanceMetrics
+        | DomainOperation::FinanceNews => "finance_lookup",
+        DomainOperation::EntertainmentNowPlaying
+        | DomainOperation::EntertainmentUpcoming
+        | DomainOperation::EntertainmentStreaming => "entertainment_lookup",
+        DomainOperation::SportsSchedule | DomainOperation::SportsScore => "sports_lookup",
+    }
+}
+
 // Tool Registry
 
 /// 内置工具注册表。所有工具在此声明。
@@ -183,7 +245,54 @@ impl Default for ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_runtime::run_contract::CapabilityId;
+    use crate::ai_runtime::run_contract::{CapabilityId, DomainOperation};
+
+    #[test]
+    fn domain_surface_exposes_only_the_frozen_operation_with_a_narrow_enum() {
+        let registry = ToolRegistry::new();
+        let tools = registry.tools_for_authorized_capabilities(
+            &[
+                CapabilityId::new("web.domain.read"),
+                CapabilityId::new("web.search"),
+            ],
+            true,
+        );
+
+        let constrained =
+            constrain_domain_tool_surface(tools, Some(DomainOperation::WeatherForecast), true);
+
+        let domain_tools = constrained
+            .iter()
+            .filter(|tool| FRESH_DOMAIN_TOOL_NAMES.contains(&tool.name.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(domain_tools.len(), 1);
+        assert_eq!(domain_tools[0].name, "weather_lookup");
+        assert_eq!(
+            domain_tools[0].input_schema["properties"]["operation"]["enum"],
+            serde_json::json!(["weather.forecast"])
+        );
+    }
+
+    #[test]
+    fn news_surface_hides_generic_web_search() {
+        let registry = ToolRegistry::new();
+        let tools = registry.tools_for_authorized_capabilities(
+            &[
+                CapabilityId::new("web.domain.read"),
+                CapabilityId::new("web.search"),
+            ],
+            true,
+        );
+
+        let constrained =
+            constrain_domain_tool_surface(tools, Some(DomainOperation::NewsSearch), true);
+        let names = constrained
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"news_lookup"));
+        assert!(!names.contains(&"web_search"));
+    }
 
     #[test]
     fn catalog_entries_are_policy_neutral() {

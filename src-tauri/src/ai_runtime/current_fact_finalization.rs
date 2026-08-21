@@ -74,7 +74,7 @@ pub(crate) fn validate_current_fact_submission(
         for source in &block.sources {
             let resolved = evidence_by_reference
                 .iter()
-                .any(|(id, label)| *id == source.as_str() || *label == source.as_str());
+                .any(|(id, label)| source_matches_registered_evidence(source, id, label));
             if !resolved {
                 return Err(CurrentFactFinalizationError::UnsupportedClaim);
             }
@@ -89,6 +89,14 @@ pub(crate) fn validate_current_fact_submission(
     }
 
     Ok(())
+}
+
+fn source_matches_registered_evidence(source: &str, id: &str, label: &str) -> bool {
+    source == id
+        || source == label
+        || source
+            .strip_prefix(['W', 'E', 'L'])
+            .is_some_and(|numeric_id| numeric_id == id)
 }
 
 fn is_current_fact_domain(domain: FreshFactDomain) -> bool {
@@ -134,6 +142,7 @@ mod tests {
         FreshFactPolicy {
             schema_version: 1,
             domain: FreshFactDomain::Entertainment,
+            operation: None,
             window_start: Some("2026-07-19T08:00:00Z".to_string()),
             window_end: Some("2026-10-17T08:00:00Z".to_string()),
             location_requirement: LocationRequirement::City,
@@ -162,6 +171,16 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn current_fact_finalization_accepts_provenance_prefixed_evidence_ids() {
+        let policy = entertainment_policy();
+        let evidence = [evidence("3", "上海 · 8月20日 · 电影A")];
+        let structured = submission("电影A 8月20日上海上映", &["W3"]);
+
+        validate_current_fact_submission(&policy, &structured, &evidence)
+            .expect("the finalizer must accept the provenance reference used downstream");
     }
 
     #[test]

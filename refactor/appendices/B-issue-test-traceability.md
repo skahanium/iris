@@ -34,21 +34,21 @@
 | UI-003   | Resolved | `queued_previous_run_frame_cannot_patch_new_run`                                 | 上一 Run 排队 frame/event 不能修改新 Run 行                                               |
 | UI-003   | Resolved | `terminal_recovery_uses_only_its_own_persisted_answer`                           | 终态恢复只使用同 Run 持久化正文                                                           |
 
-| ROUTE-003 | Partial | `today_date_question_uses_trusted_runtime_without_web` | 单测证明 runtime 规则；生产 intake/domain 路由仍待补充 |
-| ROUTE-003 | Partial | `recent_movie_question_freezes_date_and_location` | 计划 04 需证明地点真实传入生产研究计划 |
-| ROUTE-003 | Partial | `production_runtime_time_uses_frozen_surface_and_recovers` | runtime 正式 ToolLoop 生产链已闭合；领域生产路由仍待真实 Provider |
+| ROUTE-003 | Resolved | `today_date_question_uses_trusted_runtime_without_web` | runtime 请求不冻结领域 operation，也不获得 Web 权限 |
+| ROUTE-003 | Resolved | `recent_movie_question_freezes_date_and_location`; `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | production intake 保留 operation、日期窗口和地点要求 |
+| ROUTE-003 | Resolved | `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | 11 类 operation 均经 RunIntake → execute_normal_run；分类、唯一 snapshot、收窄 schema、dispatch 与终态恢复已验证 |
 | WEB-001 | Partial | `insufficient_first_search_triggers_bounded_refinement` | 已证明预搜索计数、gap 预算和 resume state 恢复；未证明 Provider attempt/winner 生产夹具 |
 | WEB-001 | Partial | `sufficient_first_search_stops_without_extra_tool_turn` | 已证明单测提前停止；未证明 provider failover 不扩大轮次 |
 | WEB-001 | Partial | `search_fetch_with_dated_snippet_produces_news_usable_freshness` | 搜索片段可解析时效标签，News WebFallback 可进入 DTO 校验 |
 | WEB-001 | Partial | `news_web_fallback_produces_validated_record_from_headless_mcp` | News WebFallback 服务层已能由 headless MCP 产出验证记录 |
-| WEB-001 | Partial | `production_news_search_web_fallback_passes_through_evidence_ledger` | News WebFallback 完整 Run 生产链已闭合，证据进入 ledger |
-| EVID-005 | Partial | `strict_current_fact_rejects_unsupported_free_text`; Host renderer test | 生产终局与 DTO 固定渲染已接线；完整领域矩阵待补 |
+| WEB-001 | Partial | `production_news_web_fallback_uses_intake_surface_dispatch_and_recovery`; `news_web_fallback_is_unavailable_when_web_is_disabled` | News fallback 经正式入口只暴露 `news_lookup`；Web 关闭时在模型前失败关闭；provider 重试/排序仍未证明 |
+| EVID-005 | Resolved | `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven`; `current_fact_finalization_accepts_provenance_prefixed_evidence_ids` | 生产终局只接受 Run-local provenance；完整 operation 矩阵已覆盖 |
 | EVID-005 | Partial | `host_renderer_never_leaks_provider_metadata_across_all_domain_records` | Host 固定模板终局覆盖全部领域 DTO，且不泄漏 Provider 元数据 |
 | EVID-005 | Partial | `source_group_fallback_cannot_complete_strict_current_fact` | 来源组不能替代当前事实支持 |
 | EVID-005 | Partial | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 协议不支持时失败关闭 |
 | EVAL-002 | Partial | `current_fact_movie_follow_up_scenario` | 固定场景存在；需重新接入生产结构化/Web 路径 |
 | EVAL-002 | Partial | `agent_does_not_deny_web_after_current_run_search` | 已搜索能力诚实性仍需生产路径复验 |
-| CAP-001 | Partial | `domain_tool_output_requires_source_and_observed_time` | DTO 单测保留；需改为真实 evidence ledger 证据 |
+| CAP-001 | Partial | `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | operation 软件闭环已证明；真实实例 Provider、health 与 failover 仍未配置/验收 |
 | CAP-001 | Resolved | `weather_without_confirmed_city_requests_location` | 天气缺城市时询问，不推断位置 |
 | CAP-001 | Resolved | `location_scope_widens_city_then_province_then_country` | 允许放宽的领域遵守固定地域顺序 |
 | CAP-001 | Resolved | `stale_weather_and_market_data_fail_closed` | 陈旧天气/行情不产生当前结论 |
@@ -59,10 +59,8 @@
 | INPUT-001 | Partial | `input_submission_resumes_the_same_run_and_replay_is_noop` | 控制层证明同一 Run 恢复与重复提交幂等；生产执行路径待补 |
 | INPUT-001 | Partial | `production_missing_city_waits_for_input_and_resumes_the_same_run` | 生产路径缺城市等待并同一 Run 恢复；断线恢复仍待补 |
 | WEB-002 | Partial | `supplement_without_gap_is_rejected_after_initial_prefetch`; `duplicate_normalized_query_is_rejected_even_when_gap_changes`; `fresh_research_resume_state_restores_budget_and_query_deduplication` | 已证明补搜缺 gap、规范化重复查询拒绝及 resume state 恢复；真实 Provider 尝试待补 |
-| CAP-002 | Partial | `structured_weather_without_provider_fails_closed_instead_of_using_web_fallback`; Host renderer test | 证明天气 fail-closed 与 Host DTO 渲染；11 operation 矩阵待补 |
-| CAP-002 | Partial | `production_weather_without_provider_fails_closed_instead_of_fabricating`; `every_non_news_domain_operation_fails_closed_without_a_structured_provider` | 生产/服务层均证明无 Provider fail-closed；真实 Provider 夹具仍待补 |
-| EVID-006 | Partial | `current_fact_finalization` production gate; `domain_tool_output_requires_source_and_observed_time` | 终局 gate 与 DTO 规则存在；Provider evidence 身份哨兵和完整登记夹具待补 |
-| EVID-006 | Partial | `provider_supplied_evidence_id_is_never_used_as_iris_evidence_id` | Provider 伪造 evidenceId 被忽略；终局绑定回归仍待补 |
+| CAP-002 | Resolved | `non_news_domain_operations_without_a_binding_fail_before_model_dispatch`; `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | 十个非 News operation 无 binding 在模型前失败；11 个绑定夹具均走 production 路径 |
+| EVID-006 | Resolved | `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | Provider 伪造 evidence ID 被剥离，Iris 真实 ID 进入 provenance 与终局 |
 
 ## 追踪规则
 

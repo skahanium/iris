@@ -48,6 +48,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["news.search"],
+                        "description": "固定为新闻检索"
+                    },
                     "topic": {"type": "string", "description": "新闻主题"},
                     "location": {"type": "string", "description": "地点/地区"},
                     "start": {

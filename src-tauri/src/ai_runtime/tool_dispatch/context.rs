@@ -6,6 +6,7 @@ use crate::storage::db::Database;
 /// Public, content-free projection of a Run's frozen current-fact time window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrozenDomainWindow {
+    pub operation: Option<crate::ai_runtime::run_contract::DomainOperation>,
     pub window_start: Option<String>,
     pub window_end: Option<String>,
 }
@@ -13,6 +14,7 @@ pub struct FrozenDomainWindow {
 impl From<&crate::ai_runtime::run_contract::FreshFactPolicy> for FrozenDomainWindow {
     fn from(policy: &crate::ai_runtime::run_contract::FreshFactPolicy) -> Self {
         Self {
+            operation: policy.effective_operation(),
             window_start: policy.window_start.clone(),
             window_end: policy.window_end.clone(),
         }

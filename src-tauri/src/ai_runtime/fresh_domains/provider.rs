@@ -2,14 +2,13 @@
 //!
 //! The resolver never inspects provider output. It only selects a frozen MCP
 //! binding that was reviewed, user-trusted, enabled, hash-current, and carries a
-//! whitelist output mapping. When no such binding can be chosen deterministically
-//! it falls back to the generic Web evidence broker.
+//! whitelist output mapping. Only a missing News binding may fall back to the
+//! generic Web evidence broker; ambiguity is always rejected.
 
 use crate::ai_runtime::mcp_external_tools::{
     list_bindings, DomainOperation, FrozenMcpToolSnapshot, McpCapabilityBindingSummary,
     WEB_DOMAIN_READ_CAPABILITY,
 };
-use crate::ai_runtime::run_contract::FreshFactDomain;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -26,40 +25,19 @@ pub(crate) enum DomainProviderRoute {
     WebEvidence,
 }
 
-/// Default operation set for a frozen `FreshFactPolicy.domain`.
-///
-/// This is intentionally conservative. Generic Web and runtime domains do not
-/// get a structured domain operation; each tool call must provide an explicit
-/// operation when one is required.
-pub(crate) fn default_operations_for_domain(domain: FreshFactDomain) -> Vec<DomainOperation> {
-    match domain {
-        FreshFactDomain::Weather => vec![DomainOperation::WeatherCurrent],
-        FreshFactDomain::News => vec![DomainOperation::NewsSearch],
-        FreshFactDomain::Finance => vec![DomainOperation::FinanceQuote],
-        FreshFactDomain::Entertainment => vec![DomainOperation::EntertainmentNowPlaying],
-        FreshFactDomain::Sports => vec![DomainOperation::SportsScore],
-        FreshFactDomain::GenericWeb | FreshFactDomain::None | FreshFactDomain::Runtime => {
-            Vec::new()
-        }
-    }
-}
-
 /// Resolve the deterministic provider route for one domain operation.
 ///
 /// Selection order:
 /// 1. The operation itself is the explicit filter.
-/// 2. If multiple healthy mappings remain and one belongs to the currently
-///    selected Web provider, that provider wins.
-/// 3. A single healthy mapping is selected automatically.
-/// 4. Multiple healthy mappings without a current Web provider fail closed for
-///    structured operations; News may still use generic Web evidence.
+/// 2. A single eligible mapping is selected automatically.
+/// 3. Multiple eligible mappings always fail closed.
 ///
 /// Disabled providers or providers whose config hash drifted are rejected when
 /// they were the only configured mapping for the operation.
 pub(crate) fn resolve_domain_provider(
     db: &Database,
     operation: DomainOperation,
-    selected_web_provider_id: Option<&str>,
+    _selected_web_provider_id: Option<&str>,
 ) -> AppResult<DomainProviderRoute> {
     let bindings = list_bindings(db, None)?;
     let operation_bindings = bindings
@@ -67,7 +45,7 @@ pub(crate) fn resolve_domain_provider(
         .filter(|binding| binding.domain_operation == Some(operation))
         .collect::<Vec<_>>();
 
-    let healthy = operation_bindings
+    let eligible = operation_bindings
         .iter()
         .filter(|binding| {
             binding.provider_enabled
@@ -77,7 +55,7 @@ pub(crate) fn resolve_domain_provider(
         })
         .collect::<Vec<_>>();
 
-    if healthy.is_empty() {
+    if eligible.is_empty() {
         if let Some(_binding) = operation_bindings
             .iter()
             .find(|binding| !binding.provider_enabled)
@@ -90,33 +68,21 @@ pub(crate) fn resolve_domain_provider(
         {
             return Err(AppError::msg("external_tool_provider_config_changed"));
         }
-        return Ok(DomainProviderRoute::WebEvidence);
+        return if operation == DomainOperation::NewsSearch {
+            Ok(DomainProviderRoute::WebEvidence)
+        } else {
+            Err(AppError::msg("agent_run_structured_provider_unavailable"))
+        };
     }
 
-    if healthy.len() == 1 {
+    if eligible.len() == 1 {
         return Ok(DomainProviderRoute::FrozenMcp(snapshot_from_summary(
-            (*healthy[0]).clone(),
+            (*eligible[0]).clone(),
             operation,
         )));
     }
 
-    if let Some(selected) = selected_web_provider_id {
-        if let Some(binding) = healthy
-            .iter()
-            .find(|binding| binding.provider_id == selected)
-        {
-            return Ok(DomainProviderRoute::FrozenMcp(snapshot_from_summary(
-                (**binding).clone(),
-                operation,
-            )));
-        }
-    }
-
-    if operation == DomainOperation::NewsSearch {
-        Ok(DomainProviderRoute::WebEvidence)
-    } else {
-        Err(AppError::msg("agent_run_structured_provider_ambiguous"))
-    }
+    Err(AppError::msg("agent_run_structured_provider_ambiguous"))
 }
 
 /// Build a route snapshot from live binding metadata.
@@ -169,8 +135,7 @@ mod domain_provider_tests {
         McpCapabilityBindingInput,
     };
     use crate::ai_runtime::mcp_runtime_registry::{
-        save_selected_web_search_provider_id, upsert_web_evidence_provider,
-        WebEvidenceProviderInput,
+        upsert_web_evidence_provider, WebEvidenceProviderInput,
     };
 
     fn provider(db: &Database, id: &str, name: &str, enabled: bool) {
@@ -268,7 +233,7 @@ mod domain_provider_tests {
     }
 
     #[test]
-    fn current_web_provider_breaks_ties_between_multiple_healthy_mappings() {
+    fn selected_web_provider_does_not_break_domain_mapping_ties() {
         let db = Database::open_in_memory().unwrap();
         provider(&db, "weather-a", "Weather A", true);
         provider(&db, "weather-b", "Weather B", true);
@@ -284,40 +249,22 @@ mod domain_provider_tests {
             "weather_b",
             DomainOperation::WeatherCurrent,
         );
-        save_selected_web_search_provider_id(&db, Some("weather-b")).unwrap();
-
-        let route =
+        let error =
             resolve_domain_provider(&db, DomainOperation::WeatherCurrent, Some("weather-b"))
-                .unwrap();
+                .expect_err("selected generic Web provider must not choose a domain binding");
 
-        match route {
-            DomainProviderRoute::FrozenMcp(snapshot) => {
-                assert_eq!(snapshot.provider_id, "weather-b");
-            }
-            DomainProviderRoute::WebEvidence => panic!("current Web provider must be preferred"),
-        }
+        assert_eq!(error.to_string(), "agent_run_structured_provider_ambiguous");
     }
 
     #[test]
-    fn multiple_unselected_healthy_mappings_fail_closed_for_structured_operation() {
+    fn multiple_eligible_news_mappings_fail_closed_instead_of_falling_back() {
         let db = Database::open_in_memory().unwrap();
-        provider(&db, "weather-a", "Weather A", true);
-        provider(&db, "weather-b", "Weather B", true);
-        domain_binding(
-            &db,
-            "weather-a",
-            "weather_a",
-            DomainOperation::WeatherCurrent,
-        );
-        domain_binding(
-            &db,
-            "weather-b",
-            "weather_b",
-            DomainOperation::WeatherCurrent,
-        );
+        provider(&db, "news-a", "News A", true);
+        provider(&db, "news-b", "News B", true);
+        domain_binding(&db, "news-a", "news_a", DomainOperation::NewsSearch);
+        domain_binding(&db, "news-b", "news_b", DomainOperation::NewsSearch);
 
-        let error =
-            resolve_domain_provider(&db, DomainOperation::WeatherCurrent, None).unwrap_err();
+        let error = resolve_domain_provider(&db, DomainOperation::NewsSearch, None).unwrap_err();
 
         assert_eq!(error.to_string(), "agent_run_structured_provider_ambiguous");
     }
@@ -356,7 +303,7 @@ mod domain_provider_tests {
     }
 
     #[test]
-    fn generic_external_binding_is_never_resolved_as_domain_provider() {
+    fn non_news_operation_without_a_domain_binding_fails_closed() {
         let db = Database::open_in_memory().unwrap();
         provider(&db, "readonly", "Read Only", true);
         let reviewed = review_discovered_tool(
@@ -400,9 +347,13 @@ mod domain_provider_tests {
         )
         .unwrap();
 
-        let route = resolve_domain_provider(&db, DomainOperation::WeatherCurrent, None).unwrap();
+        let error = resolve_domain_provider(&db, DomainOperation::WeatherCurrent, None)
+            .expect_err("a generic external binding must not become Weather fallback");
 
-        assert!(matches!(route, DomainProviderRoute::WebEvidence));
+        assert_eq!(
+            error.to_string(),
+            "agent_run_structured_provider_unavailable"
+        );
     }
 
     #[test]

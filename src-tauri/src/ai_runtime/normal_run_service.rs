@@ -18,8 +18,8 @@ use crate::ai_runtime::fresh_research_plan::explicit_city_from_message;
 use crate::ai_runtime::fresh_research_plan::ConfirmedLocation;
 use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, CapabilityId, Effort, FreshFactDomain, Freshness, Modality,
-    RunBudgetPolicy, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
+    AssistantRunAccepted, CapabilityId, DomainOperation, Effort, FreshFactDomain, Freshness,
+    Modality, RunBudgetPolicy, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
     VerificationRequirement, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
@@ -27,7 +27,7 @@ use crate::ai_runtime::run_engine::{
 };
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
-use crate::ai_runtime::tool_executor::ToolRegistry;
+use crate::ai_runtime::tool_executor::{constrain_domain_tool_surface, ToolRegistry};
 use crate::ai_runtime::tool_surface::{
     classify_time_sensitivity, ToolSurfaceInput, ToolSurfacePlan, ToolSurfacePlanner,
 };
@@ -236,6 +236,36 @@ async fn execute_normal_run_internal(
         }
         return;
     }
+    if let Some(operation) = context.envelope.fresh_fact.effective_operation() {
+        let executable = match domain_operation_is_executable(
+            &db,
+            &accepted.run_id,
+            &authorized_capabilities,
+            Some(operation),
+        ) {
+            Ok(executable) => executable,
+            Err(_) => {
+                let _ = RunEngine::fail_before_dispatch_with_sink(
+                    &db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    SafeRunErrorCode::PersistenceFailed,
+                    sink,
+                );
+                return;
+            }
+        };
+        if !executable {
+            let _ = RunEngine::fail_before_dispatch_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                SafeRunErrorCode::ProviderUnavailable,
+                sink,
+            );
+            return;
+        }
+    }
     let domain_plan = context.domain_plan();
     // Never route an external-fact Run to a direct model answer when Web is
     // unavailable. This is a safety denial, not a degraded offline answer.
@@ -327,6 +357,31 @@ fn requires_user_input(context: &crate::ai_runtime::run_context::RunContext) -> 
         context.envelope.fresh_fact.location_requirement,
         crate::ai_runtime::run_contract::LocationRequirement::City
     ) && explicit_city_from_message(&context.user_message).is_none()
+}
+
+fn domain_operation_is_executable(
+    db: &Database,
+    run_id: &str,
+    authorized_capabilities: &[CapabilityId],
+    operation: Option<DomainOperation>,
+) -> AppResult<bool> {
+    let Some(operation) = operation else {
+        return Ok(false);
+    };
+    if operation == DomainOperation::NewsSearch {
+        return Ok(authorized_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == "web.search"));
+    }
+    Ok(
+        crate::ai_runtime::mcp_external_tools::load_run_snapshots(db, run_id)?
+            .iter()
+            .any(|snapshot| {
+                snapshot.capability
+                    == crate::ai_runtime::mcp_external_tools::WEB_DOMAIN_READ_CAPABILITY
+                    && snapshot.domain_operation == Some(operation)
+            }),
+    )
 }
 
 fn confirmed_location_for_context(
@@ -530,6 +585,17 @@ async fn dispatch_normal_run_after_context(
             ),
             context.envelope.context,
             &context.retrieval_scope,
+        );
+        let domain_executable = domain_operation_is_executable(
+            db,
+            &accepted.run_id,
+            authorized_capabilities,
+            context.envelope.fresh_fact.effective_operation(),
+        )?;
+        tools = constrain_domain_tool_surface(
+            tools,
+            context.envelope.fresh_fact.effective_operation(),
+            domain_executable,
         );
         if !tool_surface_plan.expose_web_search {
             tools.retain(|tool| tool.name != "web_search");
@@ -887,6 +953,17 @@ async fn dispatch_required_web_verified_run(
             &context.retrieval_scope,
         )
     };
+    let domain_executable = domain_operation_is_executable(
+        db,
+        &accepted.run_id,
+        authorized_capabilities,
+        context.envelope.fresh_fact.effective_operation(),
+    )?;
+    tools = constrain_domain_tool_surface(
+        tools,
+        context.envelope.fresh_fact.effective_operation(),
+        domain_executable,
+    );
     if !tool_surface_plan.expose_web_search {
         tools.retain(|tool| tool.name != "web_search");
     }

@@ -8,7 +8,7 @@
 | 5    | Resolved            | `UI-003` 目标测试已移入附录 B 实证表                |
 | 6    | Partial             | 已有分类和预算骨架，但生产路由、地点传递和补充搜索持久化仍待收口 |
 | 7    | Partial             | UI 隔离已完成；当前事实生产闭环和真实评测仍待收口             |
-| 8    | Partial             | DTO/目录/mapping 已落地；结构化 Provider、证据和终局仍待收口   |
+| 8    | Partial             | operation 级授权、冻结、DTO/evidence/终局生产矩阵已闭合；当前实例未配置真实结构化 Provider |
 
 ## 阶段 0–4：第一轮结构性收口（已交付回归基线）
 
@@ -101,7 +101,7 @@
 - 复用确认式 memory 保存常用地点；缺城市时天气和附近影院必须询问。
 - 金融限定为事实、新闻、趋势和比较分析，不提供个性化买卖建议。
 
-当前夹具证明了 DTO 和部分 fail-closed 规则，但不证明真实 intake → ToolLoop → Provider snapshot → evidence ledger → 最终消息闭环。完整退出条件见 [`plans/04-current-fact-production-closure.md`](plans/04-current-fact-production-closure.md)：11 个 operation 必须走生产路径，补充搜索和 Provider failover 必须统一计量，缺参必须可恢复，结构化事实必须由 Host 根据真实 evidence ID 渲染。
+当前生产矩阵已证明 11 个 operation 均经过 intake → 单一 operation snapshot → 受限工具表面 → MCP DTO mapping/validator → Iris evidence ID → 结构化终局与终态恢复；无 binding 的非 News operation 在模型调用前失败关闭，News 保留 Web fallback。此证据只说明软件框架可信，**不**表示当前实例已经配置真实结构化 Provider，也不表示 Provider health 排序、自动 failover、REST adapter 或覆盖运营矩阵已经完成。
 
 施工计划：[`plans/03-common-domain-capabilities.md`](plans/03-common-domain-capabilities.md)。
 

@@ -104,6 +104,70 @@ pub(crate) enum FreshFactDomain {
     GenericWeb,
 }
 
+/// One concrete current-fact operation authorized for an accepted Run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DomainOperation {
+    #[serde(rename = "weather.current")]
+    WeatherCurrent,
+    #[serde(rename = "weather.forecast")]
+    WeatherForecast,
+    #[serde(rename = "news.search")]
+    NewsSearch,
+    #[serde(rename = "finance.quote")]
+    FinanceQuote,
+    #[serde(rename = "finance.metrics")]
+    FinanceMetrics,
+    #[serde(rename = "finance.news")]
+    FinanceNews,
+    #[serde(rename = "entertainment.now_playing")]
+    EntertainmentNowPlaying,
+    #[serde(rename = "entertainment.upcoming")]
+    EntertainmentUpcoming,
+    #[serde(rename = "entertainment.streaming")]
+    EntertainmentStreaming,
+    #[serde(rename = "sports.schedule")]
+    SportsSchedule,
+    #[serde(rename = "sports.score")]
+    SportsScore,
+}
+
+impl DomainOperation {
+    /// Return the stable wire value persisted in envelopes and provider bindings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WeatherCurrent => "weather.current",
+            Self::WeatherForecast => "weather.forecast",
+            Self::NewsSearch => "news.search",
+            Self::FinanceQuote => "finance.quote",
+            Self::FinanceMetrics => "finance.metrics",
+            Self::FinanceNews => "finance.news",
+            Self::EntertainmentNowPlaying => "entertainment.now_playing",
+            Self::EntertainmentUpcoming => "entertainment.upcoming",
+            Self::EntertainmentStreaming => "entertainment.streaming",
+            Self::SportsSchedule => "sports.schedule",
+            Self::SportsScore => "sports.score",
+        }
+    }
+
+    /// Parse one stable persisted operation value without accepting aliases.
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "weather.current" => Self::WeatherCurrent,
+            "weather.forecast" => Self::WeatherForecast,
+            "news.search" => Self::NewsSearch,
+            "finance.quote" => Self::FinanceQuote,
+            "finance.metrics" => Self::FinanceMetrics,
+            "finance.news" => Self::FinanceNews,
+            "entertainment.now_playing" => Self::EntertainmentNowPlaying,
+            "entertainment.upcoming" => Self::EntertainmentUpcoming,
+            "entertainment.streaming" => Self::EntertainmentStreaming,
+            "sports.schedule" => Self::SportsSchedule,
+            "sports.score" => Self::SportsScore,
+            _ => return None,
+        })
+    }
+}
+
 /// Minimum location context a current-fact domain needs before Web research.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -120,6 +184,8 @@ pub(crate) enum LocationRequirement {
 pub(crate) struct FreshFactPolicy {
     pub(crate) schema_version: u8,
     pub(crate) domain: FreshFactDomain,
+    #[serde(default)]
+    pub(crate) operation: Option<DomainOperation>,
     pub(crate) window_start: Option<String>,
     pub(crate) window_end: Option<String>,
     pub(crate) location_requirement: LocationRequirement,
@@ -130,10 +196,25 @@ impl Default for FreshFactPolicy {
         Self {
             schema_version: 1,
             domain: FreshFactDomain::None,
+            operation: None,
             window_start: None,
             window_end: None,
             location_requirement: LocationRequirement::None,
         }
+    }
+}
+
+impl FreshFactPolicy {
+    /// Return the operation frozen for this Run, including legacy-envelope defaults.
+    pub(crate) fn effective_operation(&self) -> Option<DomainOperation> {
+        self.operation.or(match self.domain {
+            FreshFactDomain::Weather => Some(DomainOperation::WeatherCurrent),
+            FreshFactDomain::News => Some(DomainOperation::NewsSearch),
+            FreshFactDomain::Finance => Some(DomainOperation::FinanceQuote),
+            FreshFactDomain::Entertainment => Some(DomainOperation::EntertainmentNowPlaying),
+            FreshFactDomain::Sports => Some(DomainOperation::SportsScore),
+            FreshFactDomain::None | FreshFactDomain::Runtime | FreshFactDomain::GenericWeb => None,
+        })
     }
 }
 

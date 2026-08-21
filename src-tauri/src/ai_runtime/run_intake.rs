@@ -4,7 +4,6 @@ use crate::ai_runtime::agent_run_repository::{
     AcceptRunInput, AcceptRunOutcome, AgentRunRepository, FrozenConfirmationApproval,
     FrozenConfirmationRejection, RetryRunInput,
 };
-use crate::ai_runtime::fresh_domains::provider::default_operations_for_domain;
 use crate::ai_runtime::fresh_fact_classifier::classify_fresh_fact;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
@@ -83,7 +82,10 @@ impl RunIntake {
         );
         let accepted_at = chrono::Utc::now();
         let fresh_fact = classify_fresh_fact(&directive_text, accepted_at);
-        let domain_operations = default_operations_for_domain(fresh_fact.domain);
+        let domain_operations = fresh_fact
+            .effective_operation()
+            .into_iter()
+            .collect::<Vec<_>>();
         let web_decision = ExclusionClassifier::resolve(
             request,
             &message,
@@ -303,14 +305,11 @@ impl RunIntake {
             .as_ref()
             .map_or_else(String::new, |session| session.session_key.clone());
         let external_tool_grants = request.external_tool_grants.clone();
-        let domain_operations = default_operations_for_domain(envelope.fresh_fact.domain);
-        let selected_web_provider_id = if request.web_enabled {
-            crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)
-                .ok()
-                .map(|provider| provider.id)
-        } else {
-            None
-        };
+        let domain_operations = envelope
+            .fresh_fact
+            .effective_operation()
+            .into_iter()
+            .collect::<Vec<_>>();
         AgentRunRepository::accept_with_external_grants_outcome(
             db,
             AcceptRunInput {
@@ -329,7 +328,7 @@ impl RunIntake {
             },
             &external_tool_grants,
             &domain_operations,
-            selected_web_provider_id.as_deref(),
+            None,
             create_session,
         )
     }

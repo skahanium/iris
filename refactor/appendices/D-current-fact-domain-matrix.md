@@ -1,6 +1,6 @@
 # 附录 D：当前事实领域契约矩阵
 
-**状态：Target / Planned。** 本附录是阶段 8 的领域能力增强目标，不表示这些工具、DTO 或 provider mapping 当前已经可用，也不阻塞阶段 5–7 的核心缺陷收口。当前实现状态只以附录 A、B、`ARCHITECTURE.md` 和代码为准。
+**状态：Framework implemented / instance unconfigured。** 本附录的 operation、DTO、字段验证、Run-local 授权与生产夹具已实现；这不表示任何用户实例已配置真实结构化 Provider，也不阻塞阶段 5–7 的核心缺陷收口。当前实例可用性仍以已保存且唯一的 binding 为准。
 
 它定义 Iris 为常见当前事实应提供什么、如何验证以及何时拒绝回答；不指定某个商业服务商，也不构成通用数据平台。
 
@@ -126,15 +126,9 @@ EvidenceGap = MissingEntity
 
 ## 7. Provider 与降级
 
-用户不需要为每轮请求选择 provider。运行时按以下顺序解析：
+用户不需要为每轮请求选择 provider。Run 接受时只处理已冻结的一个 operation：恰好一个 eligible binding 则冻结；没有 binding 时仅 `news.search` 可走 WebEvidenceBroker，其余 operation 在模型调用前以 provider unavailable 失败关闭；多个 eligible binding 一律 `agent_run_structured_provider_ambiguous`。不按通用 Web provider 偏好、名称、更新时间或插入顺序静默挑选。
 
-1. operation 的显式用户选择；
-2. 当前 Web provider 上同 operation 的健康映射；
-3. 唯一健康映射；
-4. 通用 WebEvidenceBroker；
-5. `agent_run_fresh_evidence_insufficient`。
-
-存在多个结构化映射但没有明确选择时，不按名称、更新时间或插入顺序静默挑选。通用 Web 仍可尝试；只有确实需要结构化数据且通用证据不满足字段时，才提示用户进入管理中心完成一次性选择。
+这里的 `eligible` 只表示 enabled、hash-current、user-trusted 且具有 output mapping；它不是运行时健康排序。本阶段没有自动 failover 或 REST adapter。
 
 Provider mapping 必须冻结：operation、provider/tool、输入 schema、argument mapping、output mapping、provider/config hash、transport、credential refs 与 review 状态。运行中 provider 被禁用或 hash 漂移时立即失败关闭，不切换到未经本 Run 冻结的工具。
 

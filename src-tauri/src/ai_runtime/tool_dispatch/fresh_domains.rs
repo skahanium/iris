@@ -1,9 +1,8 @@
 //! Parameter validation for stable Iris current-fact domain tools.
 //!
-//! Task 4 owns provider resolution and the real `FreshDomainService`. Until
-//! that service exists this dispatcher validates the normalized request and
-//! returns a stable "service not ready" error instead of fabricating provider
-//! data.
+//! This dispatcher validates the normalized request, enforces the Run-frozen
+//! operation, and then delegates only to the frozen `FreshDomainService` path.
+//! It never fabricates provider data.
 
 use chrono::{DateTime, NaiveDate, Utc};
 
@@ -25,6 +24,7 @@ const ERROR_LOCATION_REQUIRED: &str = "agent_run_location_required";
 const ERROR_INVALID_DATE: &str = "agent_run_fresh_domain_invalid_date";
 const ERROR_DATE_OUTSIDE_WINDOW: &str = "agent_run_fresh_domain_date_outside_frozen_window";
 const ERROR_FROZEN_WINDOW_MISSING: &str = "agent_run_fresh_domain_frozen_window_missing";
+const ERROR_OPERATION_NOT_AUTHORIZED: &str = "agent_run_fresh_domain_operation_not_authorized";
 
 pub(super) async fn fresh_domain_tool(
     _state: &crate::app::AppState,
@@ -38,6 +38,7 @@ pub(super) async fn fresh_domain_tool(
     let normalized_args = fill_confirmed_city_into_args(tool_name, args, ctx)?;
     validate_fresh_domain_request(tool_name, &normalized_args, ctx.fresh_fact_policy.as_ref())?;
     let operation = parse_operation_for_tool(tool_name, &normalized_args)?;
+    ensure_frozen_operation(operation, ctx.fresh_fact_policy.as_ref())?;
     let records = FreshDomainService
         .execute(
             FreshDomainRequest {
@@ -199,7 +200,10 @@ fn parse_operation_for_tool(
                 DomainOperation::WeatherForecast,
             ],
         ),
-        "news_lookup" => Ok(DomainOperation::NewsSearch),
+        "news_lookup" => match args.get("operation") {
+            None => Ok(DomainOperation::NewsSearch),
+            Some(_) => parse_operation_for(args, &[DomainOperation::NewsSearch]),
+        },
         "finance_lookup" => parse_operation_for(
             args,
             &[
@@ -225,6 +229,19 @@ fn parse_operation_for_tool(
         ),
         _ => Err(AppError::msg(ERROR_UNKNOWN_OPERATION)),
     }
+}
+
+fn ensure_frozen_operation(
+    operation: DomainOperation,
+    policy: Option<&FrozenDomainWindow>,
+) -> AppResult<()> {
+    if policy
+        .and_then(|policy| policy.operation)
+        .is_some_and(|frozen| frozen != operation)
+    {
+        return Err(AppError::msg(ERROR_OPERATION_NOT_AUTHORIZED));
+    }
+    Ok(())
 }
 
 fn parse_operation_for(
@@ -330,9 +347,23 @@ mod tests {
 
     fn policy(start: Option<&str>, end: Option<&str>) -> FrozenDomainWindow {
         FrozenDomainWindow {
+            operation: None,
             window_start: start.map(str::to_string),
             window_end: end.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn frozen_operation_rejects_a_cross_operation_before_provider_dispatch() {
+        let policy = FrozenDomainWindow {
+            operation: Some(DomainOperation::FinanceQuote),
+            window_start: None,
+            window_end: None,
+        };
+
+        let error = ensure_frozen_operation(DomainOperation::FinanceNews, Some(&policy))
+            .expect_err("a different finance operation must not reuse this Run authorization");
+        assert_eq!(error.to_string(), ERROR_OPERATION_NOT_AUTHORIZED);
     }
 
     #[test]

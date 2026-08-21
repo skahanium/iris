@@ -11,6 +11,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+pub use crate::ai_runtime::run_contract::DomainOperation;
 use crate::ai_runtime::run_contract::ExternalToolGrantRef;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -19,67 +20,6 @@ pub(crate) const EXTERNAL_READ_CAPABILITY: &str = "external.read";
 pub(crate) const WEB_DOMAIN_READ_CAPABILITY: &str = "web.domain.read";
 pub(crate) const MAX_EXTERNAL_MODEL_CHARS: usize = 8_000;
 pub(crate) const MAX_EXTERNAL_EVIDENCE_CHARS: usize = 2_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DomainOperation {
-    #[serde(rename = "weather.current")]
-    WeatherCurrent,
-    #[serde(rename = "weather.forecast")]
-    WeatherForecast,
-    #[serde(rename = "news.search")]
-    NewsSearch,
-    #[serde(rename = "finance.quote")]
-    FinanceQuote,
-    #[serde(rename = "finance.metrics")]
-    FinanceMetrics,
-    #[serde(rename = "finance.news")]
-    FinanceNews,
-    #[serde(rename = "entertainment.now_playing")]
-    EntertainmentNowPlaying,
-    #[serde(rename = "entertainment.upcoming")]
-    EntertainmentUpcoming,
-    #[serde(rename = "entertainment.streaming")]
-    EntertainmentStreaming,
-    #[serde(rename = "sports.schedule")]
-    SportsSchedule,
-    #[serde(rename = "sports.score")]
-    SportsScore,
-}
-
-impl DomainOperation {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::WeatherCurrent => "weather.current",
-            Self::WeatherForecast => "weather.forecast",
-            Self::NewsSearch => "news.search",
-            Self::FinanceQuote => "finance.quote",
-            Self::FinanceMetrics => "finance.metrics",
-            Self::FinanceNews => "finance.news",
-            Self::EntertainmentNowPlaying => "entertainment.now_playing",
-            Self::EntertainmentUpcoming => "entertainment.upcoming",
-            Self::EntertainmentStreaming => "entertainment.streaming",
-            Self::SportsSchedule => "sports.schedule",
-            Self::SportsScore => "sports.score",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        Some(match value {
-            "weather.current" => Self::WeatherCurrent,
-            "weather.forecast" => Self::WeatherForecast,
-            "news.search" => Self::NewsSearch,
-            "finance.quote" => Self::FinanceQuote,
-            "finance.metrics" => Self::FinanceMetrics,
-            "finance.news" => Self::FinanceNews,
-            "entertainment.now_playing" => Self::EntertainmentNowPlaying,
-            "entertainment.upcoming" => Self::EntertainmentUpcoming,
-            "entertainment.streaming" => Self::EntertainmentStreaming,
-            "sports.schedule" => Self::SportsSchedule,
-            "sports.score" => Self::SportsScore,
-            _ => return None,
-        })
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1278,7 +1218,7 @@ pub(crate) fn freeze_domain_run_grants(
     conn: &Connection,
     run_id: &str,
     operations: &[DomainOperation],
-    selected_web_provider_id: Option<&str>,
+    _selected_web_provider_id: Option<&str>,
 ) -> AppResult<()> {
     if operations.len() > 8 {
         return Err(safe_error("external_tool_grant_limit_exceeded"));
@@ -1334,7 +1274,7 @@ pub(crate) fn freeze_domain_run_grants(
         for row in rows {
             candidates.push(row?);
         }
-        let healthy = candidates
+        let eligible = candidates
             .into_iter()
             .filter(|candidate| {
                 let domain_operation = parse_domain_operation(candidate.8.clone(), 8)
@@ -1349,30 +1289,15 @@ pub(crate) fn freeze_domain_run_grants(
                     && candidate.12 == 1
             })
             .collect::<Vec<_>>();
-        let healthy_count = healthy.len();
-        let chosen = if healthy_count == 0 {
+        let eligible_count = eligible.len();
+        let chosen = if eligible_count == 0 {
             Vec::new()
-        } else if healthy_count == 1 {
-            vec![healthy[0].clone()]
-        } else if let Some(selected) = selected_web_provider_id {
-            let mut ordered = healthy;
-            ordered.sort_by_key(|candidate| candidate.1 != selected);
-            if ordered
-                .first()
-                .is_some_and(|candidate| candidate.1 == selected)
-            {
-                ordered
-            } else if *operation != DomainOperation::NewsSearch {
-                return Err(safe_error("agent_run_structured_provider_ambiguous"));
-            } else {
-                Vec::new()
-            }
-        } else if !healthy.is_empty() && *operation != DomainOperation::NewsSearch {
-            return Err(safe_error("agent_run_structured_provider_ambiguous"));
+        } else if eligible_count == 1 {
+            vec![eligible[0].clone()]
         } else {
-            Vec::new()
+            return Err(safe_error("agent_run_structured_provider_ambiguous"));
         };
-        for candidate in chosen.into_iter().take(3) {
+        for candidate in chosen {
             let (
                 binding_id,
                 provider_id,
@@ -2554,6 +2479,111 @@ mod tests {
                 .to_string(),
             "external_tool_binding_conflict"
         );
+    }
+
+    #[test]
+    fn multiple_eligible_domain_bindings_fail_closed_even_for_news() {
+        let db = Database::open_in_memory().unwrap();
+        for provider_id in ["readonly", "second"] {
+            upsert_web_evidence_provider(
+                &db,
+                &WebEvidenceProviderInput {
+                    id: provider_id.into(),
+                    name: format!("{provider_id} provider"),
+                    kind: "mcp".into(),
+                    enabled: true,
+                    transport_kind: "stdio".into(),
+                    transport_config_json: r#"{"command":"/bin/true"}"#.into(),
+                    credential_refs_json: "{}".into(),
+                    web_search_mapping_json: None,
+                    web_fetch_mapping_json: None,
+                },
+            )
+            .unwrap();
+        }
+        let operation = DomainOperation::NewsSearch;
+        for (provider_id, tool_name) in [("readonly", "news_a"), ("second", "news_b")] {
+            let reviewed = review_discovered_tool(
+                tool_name,
+                &serde_json::json!({"type":"object"}),
+                Some(true),
+            )
+            .unwrap();
+            let provider_config_hash =
+                crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&db)
+                    .unwrap()
+                    .into_iter()
+                    .find(|provider| provider.id == provider_id)
+                    .unwrap()
+                    .provider_config_hash;
+            let transport_kind = "stdio";
+            let transport_config_json = r#"{"command":"/bin/true"}"#;
+            let provider_launch_hash =
+                crate::ai_runtime::mcp_host_runtime::frozen_provider_launch_hash(
+                    provider_id,
+                    transport_kind,
+                    transport_config_json,
+                    "{}",
+                );
+            let output_mapping = DomainOutputMapping {
+                records_path: "$.records".into(),
+                fields: BTreeMap::from([("title".to_string(), "$.title".to_string())]),
+            };
+            let binding_config_hash = test_binding_hash(
+                provider_id,
+                &provider_config_hash,
+                &provider_launch_hash,
+                tool_name,
+                &reviewed.input_schema,
+                operation,
+                &output_mapping,
+            );
+            upsert_binding(
+                &db,
+                &McpCapabilityBindingInput {
+                    id: None,
+                    provider_id: provider_id.into(),
+                    mcp_tool_name: tool_name.into(),
+                    input_schema: reviewed.input_schema.clone(),
+                    argument_mapping: serde_json::json!({}),
+                    domain_operation: Some(operation),
+                    output_mapping: Some(output_mapping),
+                    risk_class: "read_only".into(),
+                    read_only: true,
+                    user_trusted: true,
+                    attested_binding_config_hash: binding_config_hash,
+                },
+                &reviewed,
+                &provider_config_hash,
+            )
+            .unwrap();
+        }
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sessions (session_key, created_at, updated_at)
+                 VALUES ('ambiguous-domain-session', datetime('now'), datetime('now'))",
+                [],
+            )?;
+            let session_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO agent_runs
+                 (run_id, client_request_id, session_id, turn_id, status, state_version,
+                  effect, effort, security_domain, risk, envelope_json, goal_summary,
+                  created_at, updated_at)
+                 VALUES ('ambiguous-domain-run', 'ambiguous-domain-client', ?1, 'turn', 'accepted', 0,
+                         'answer', 'direct', 'normal', 'read_only', '{}', '',
+                         datetime('now'), datetime('now'))",
+                [session_id],
+            )?;
+            assert_eq!(
+                freeze_domain_run_grants(conn, "ambiguous-domain-run", &[operation], None)
+                    .expect_err("multiple news bindings must not silently fall back")
+                    .to_string(),
+                "agent_run_structured_provider_ambiguous"
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

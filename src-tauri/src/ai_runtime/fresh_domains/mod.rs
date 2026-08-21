@@ -2,7 +2,7 @@
 
 #![allow(
     dead_code,
-    reason = "Task 4 provider/service wiring consumes these DTOs; current tests exercise the contract"
+    reason = "The domain DTO set deliberately models all supported operations; some variants are consumed through mapped provider output rather than directly constructed in every production module"
 )]
 
 pub(crate) mod contracts;
