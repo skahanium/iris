@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const markdownProse = readFileSync("src/styles/markdown-prose.css", "utf8");
 const globalsCss = readFileSync("src/styles/globals.css", "utf8");
+const mainTsx = readFileSync("src/main.tsx", "utf8");
 const indexHtml = readFileSync("index.html", "utf8");
 
 describe("prose polish v2 tokens", () => {
@@ -11,6 +12,28 @@ describe("prose polish v2 tokens", () => {
     expect(indexHtml).not.toContain("fonts.googleapis.com");
     expect(indexHtml).not.toContain("fonts.gstatic.com");
     expect(indexHtml).toContain("/src/assets/fonts/");
+  });
+
+  it("loads markdown prose after tailwind globals so editor heading rules win", () => {
+    const globalsImport = mainTsx.indexOf("styles/globals.css");
+    const proseImport = mainTsx.indexOf("styles/markdown-prose.css");
+    expect(globalsImport).toBeGreaterThanOrEqual(0);
+    expect(proseImport).toBeGreaterThan(globalsImport);
+    expect(globalsCss).not.toContain('@import "./markdown-prose.css"');
+    expect(markdownProse).not.toContain("@layer components");
+  });
+
+  it("keeps editor h1-h3 font-size rules outside Tailwind component layers", () => {
+    expect(markdownProse).toContain(
+      "font-size: calc(var(--prose-h1) * var(--editor-zoom))",
+    );
+    expect(markdownProse).toContain(
+      "font-size: calc(var(--prose-h2) * var(--editor-zoom))",
+    );
+    expect(markdownProse).toContain(
+      "font-size: calc(var(--prose-h3) * var(--editor-zoom))",
+    );
+    expect(markdownProse).not.toContain("@layer components");
   });
 
   it("defines editor and conversation prose surfaces", () => {

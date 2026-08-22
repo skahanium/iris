@@ -133,7 +133,8 @@ impl RunEngine {
                 },
             },
         )?;
-        sink.emit(&failed)
+        emit_durable_event_best_effort(sink, &failed);
+        Ok(())
     }
 
     /// Persist the structured strict-Web failure before terminalizing the Run.
@@ -182,7 +183,8 @@ impl RunEngine {
                 },
             },
         )?;
-        sink.emit(&failed)
+        emit_durable_event_best_effort(sink, &failed);
+        Ok(())
     }
 
     /// Move an accepted Run into the visible Preparing stage before heavy context work.
@@ -234,7 +236,7 @@ impl RunEngine {
         if snapshot.run.state.is_terminal()
             || matches!(
                 snapshot.run.state,
-                RunState::AwaitingConfirmation | RunState::Paused
+                RunState::AwaitingConfirmation | RunState::AwaitingInput | RunState::Paused
             )
         {
             return Ok(false);
@@ -261,7 +263,7 @@ impl RunEngine {
                 },
             },
         )?;
-        sink.emit(&failed)?;
+        emit_durable_event_best_effort(sink, &failed);
         Ok(true)
     }
 
@@ -273,43 +275,35 @@ impl RunEngine {
         session: &AssistantSessionRef,
         run_id: &str,
         sink: &impl RunEventSink,
-        applied: bool,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state != RunState::Running {
             return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
-        if applied {
-            let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointStageConflict))?;
-            AgentRunRepository::append_checkpoint_step(
-                db,
-                crate::ai_runtime::agent_run_repository::AppendRunCheckpointInput {
-                    run_id: run_id.to_string(),
-                    state_version: snapshot.run.state_version,
-                    checkpoint:
-                        crate::ai_runtime::agent_run_repository::DurableApplyCheckpoint::new(
-                            checkpoint.confirmation_id(),
-                            checkpoint.plan_hash(),
-                            crate::ai_runtime::agent_run_repository::DurableApplyCheckpointStage::Completed,
-                            checkpoint.base_content_hashes().to_vec(),
-                            checkpoint.expected_post_content_hashes().to_vec(),
-                            Vec::new(),
-                        )?,
-                },
-            )?;
-        }
+        let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointStageConflict))?;
+        AgentRunRepository::append_checkpoint_step(
+            db,
+            crate::ai_runtime::agent_run_repository::AppendRunCheckpointInput {
+                run_id: run_id.to_string(),
+                state_version: snapshot.run.state_version,
+                checkpoint: crate::ai_runtime::agent_run_repository::DurableApplyCheckpoint::new(
+                    checkpoint.confirmation_id(),
+                    checkpoint.plan_hash(),
+                    crate::ai_runtime::agent_run_repository::DurableApplyCheckpointStage::Completed,
+                    checkpoint.base_content_hashes().to_vec(),
+                    checkpoint.expected_post_content_hashes().to_vec(),
+                    Vec::new(),
+                )?,
+            },
+        )?;
         AgentRunRepository::finalize(
             db,
             FinalizeRunInput {
                 run_id: run_id.to_string(),
                 state_version: snapshot.run.state_version,
-                content: if applied {
-                    "已执行你确认的变更。".to_string()
-                } else {
-                    "已取消该变更，未作任何修改。".to_string()
-                },
+                content: "已执行你确认的变更。".to_string(),
                 evidence_ids: Vec::new(),
                 citation_map: serde_json::json!({}),
                 source_summary: Vec::new(),
@@ -318,7 +312,9 @@ impl RunEngine {
         let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .and_then(|response| response.events.last().cloned())
             .ok_or_else(|| AppError::msg("agent_run_completed_event_missing"))?;
-        sink.emit(&completed)
+        emit_durable_event_best_effort(sink, &completed);
+        crate::ai_runtime::model_gateway::clear_abort(run_id);
+        Ok(())
     }
 
     /// Drive accepted → preparing → running → completed for one direct answer.
@@ -396,7 +392,7 @@ impl RunEngine {
                         },
                     },
                 )?;
-                sink.emit(&failed)?;
+                emit_durable_event_best_effort(sink, &failed);
                 return Err(AppError::run(SafeRunErrorCode::ProviderUnavailable));
             }
         };
@@ -738,6 +734,9 @@ impl RunEngine {
         {
             observer.enable_source_group_citation_filter();
         }
+        let finalization_required = tools.iter().any(|tool| {
+            tool.name == crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME
+        });
         let outcome = if let Some(telemetry) = telemetry {
             AgentToolLoop::from_policy(&budget_policy)
                 .execute_with_eval_telemetry(
@@ -787,7 +786,7 @@ impl RunEngine {
                         },
                     },
                 )?;
-                sink.emit(&failed)?;
+                emit_durable_event_best_effort(sink, &failed);
                 return Err(AppError::run(code));
             }
         };
@@ -958,7 +957,33 @@ impl RunEngine {
                         );
                     }
                 };
-            let outcome = if let Some(submission) = outcome.final_submission.as_ref() {
+            let host_submission = if outcome.final_submission.is_none() && finalization_required {
+                AgentRunRepository::fresh_fact_policy_for_run(db, run_id)?
+                    .filter(|policy| {
+                        matches!(
+                            policy.domain,
+                            crate::ai_runtime::run_contract::FreshFactDomain::Weather
+                                | crate::ai_runtime::run_contract::FreshFactDomain::News
+                                | crate::ai_runtime::run_contract::FreshFactDomain::Finance
+                                | crate::ai_runtime::run_contract::FreshFactDomain::Entertainment
+                                | crate::ai_runtime::run_contract::FreshFactDomain::Sports
+                        )
+                    })
+                    .map(|policy| {
+                        crate::ai_runtime::fresh_domains::host_renderer::render_current_run_submission(
+                            db, run_id, &policy,
+                        )
+                    })
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
+            let submission = outcome
+                .final_submission
+                .as_ref()
+                .or(host_submission.as_ref());
+            let outcome = if let Some(submission) = submission {
                 let provenance =
                     match validated_current_run_final_submission(db, run_id, submission, true) {
                         Ok(provenance) => provenance,
@@ -991,6 +1016,18 @@ impl RunEngine {
                         );
                     }
                 }
+            } else if finalization_required {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::GroundedFinalizationUnavailable,
+                        "current-fact run required a grounded final submission",
+                    ),
+                );
             } else {
                 // No production route is admitted to strict structured-final
                 // mode until it passes the live-model calibration gate. A
@@ -1179,7 +1216,7 @@ impl RunEngine {
                         },
                     },
                 )?;
-                sink.emit(&failed)?;
+                emit_durable_event_best_effort(sink, &failed);
                 return Err(AppError::run(code));
             }
         };
@@ -1261,7 +1298,7 @@ impl RunEngine {
                     },
                 },
             )?;
-            sink.emit(&failed)?;
+            emit_durable_event_best_effort(sink, &failed);
             return Err(AppError::msg("agent_run_direct_response_invalid"));
         }
         let mut content = match validated_final_model_answer_with_telemetry(
@@ -1325,7 +1362,20 @@ impl RunEngine {
                     );
                 }
             };
-        content = linkify_final_web_citations(db, evidence_ids, content);
+        let citation_binding =
+            match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
+                Ok(cites) if !cites.is_empty() => {
+                    let outcome = crate::ai_runtime::citation_linkify::bind_current_run_citations(
+                        &content, &cites,
+                    );
+                    content = outcome.content;
+                    Some(outcome.binding)
+                }
+                _ => {
+                    content = linkify_final_web_citations(db, evidence_ids, content);
+                    None
+                }
+            };
         if settle_cancelled_run_with_partial(
             db,
             session,
@@ -1345,7 +1395,7 @@ impl RunEngine {
             running_state_version,
             content,
             evidence_ids.to_vec(),
-            None,
+            citation_binding,
             None,
             None,
             sink,

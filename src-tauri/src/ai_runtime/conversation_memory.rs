@@ -74,21 +74,11 @@ impl ConversationMemory {
         let summarized = &messages[..=summary_end_index];
         let seq_start = summarized.first().map(|msg| msg.seq).unwrap_or(1);
         let seq_end = summarized.last().map(|msg| msg.seq).unwrap_or(seq_start);
-        let hash_input = summarized
-            .iter()
-            .map(|msg| {
-                msg.content_hash
-                    .clone()
-                    .unwrap_or_else(|| content_hash_str(&msg.content))
-            })
-            .collect::<Vec<_>>()
-            .join("|");
-
         let memory = MemoryDraft {
             session_id,
             seq_start,
             seq_end,
-            content_hash: content_hash_str(&hash_input),
+            content_hash: summarized_content_hash(summarized),
             goal_summary: extract_summary(
                 summarized,
                 &["goal:", "Goal:"],
@@ -190,6 +180,31 @@ impl ConversationMemory {
         })
     }
 
+    /// Load a summary only after revalidating its exact covered committed-message range.
+    pub fn validated_for_session(db: &Database, session_id: i64) -> AppResult<Option<Self>> {
+        let Some(memory) = Self::latest_for_session(db, session_id)? else {
+            return Ok(None);
+        };
+        let messages = load_messages(db, session_id)?;
+        let covered = messages
+            .iter()
+            .filter(|message| message.seq >= memory.seq_start && message.seq <= memory.seq_end)
+            .cloned()
+            .collect::<Vec<_>>();
+        let valid = covered
+            .first()
+            .is_some_and(|message| message.seq == memory.seq_start)
+            && covered
+                .last()
+                .is_some_and(|message| message.seq == memory.seq_end)
+            && summarized_content_hash(&covered) == memory.content_hash;
+        if valid {
+            Ok(Some(memory))
+        } else {
+            Self::refresh_for_session(db, session_id, Default::default())
+        }
+    }
+
     /// Render a safe system prompt fragment for this memory summary.
     pub fn to_prompt_fragment(&self) -> String {
         format!(
@@ -217,7 +232,7 @@ pub fn build_memory_prompt_messages(
     recent_limit: usize,
 ) -> AppResult<Vec<(String, String)>> {
     let mut out = Vec::new();
-    if let Some(memory) = ConversationMemory::latest_for_session(db, session_id)? {
+    if let Some(memory) = ConversationMemory::validated_for_session(db, session_id)? {
         out.push(("system".to_string(), memory.to_prompt_fragment()));
     }
     let recent =
@@ -240,7 +255,7 @@ pub fn build_memory_system_message(
     db: &Database,
     session_id: i64,
 ) -> AppResult<Option<(String, String)>> {
-    Ok(ConversationMemory::latest_for_session(db, session_id)?
+    Ok(ConversationMemory::validated_for_session(db, session_id)?
         .map(|memory| ("system".to_string(), memory.to_prompt_fragment())))
 }
 
@@ -276,6 +291,21 @@ fn load_messages(db: &Database, session_id: i64) -> AppResult<Vec<MemoryMessage>
             })
             .collect()
     })
+}
+
+fn summarized_content_hash(messages: &[MemoryMessage]) -> String {
+    let hash_input = messages
+        .iter()
+        .map(|message| {
+            let content_hash = message
+                .content_hash
+                .clone()
+                .unwrap_or_else(|| content_hash_str(&message.content));
+            format!("{}:{content_hash}", message.seq)
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    content_hash_str(&format!("count={};{hash_input}", messages.len()))
 }
 
 fn upsert_memory(db: &Database, draft: MemoryDraft) -> AppResult<()> {
@@ -379,21 +409,14 @@ fn contains_any_hint(content: &str, hints: &[&str]) -> bool {
 }
 
 fn fallback_goal_summary(messages: &[MemoryMessage], fallback_label: &str) -> String {
-    let mut user_messages = messages
-        .iter()
-        .filter(|msg| msg.role == "user" && !msg.content.trim().is_empty());
-    let first = user_messages.next().map(|msg| msg.content.trim());
     let last = messages
         .iter()
         .rev()
         .find(|msg| msg.role == "user" && !msg.content.trim().is_empty())
         .map(|msg| msg.content.trim());
-    match (first, last) {
-        (Some(first), Some(last)) if first != last => {
-            bounded_summary(&format!("{fallback_label}: {first} / latest: {last}"))
-        }
-        (Some(first), _) => bounded_summary(&format!("{fallback_label}: {first}")),
-        _ => not_recorded(),
+    match last {
+        Some(last) => bounded_summary(&format!("{fallback_label}: {last}")),
+        None => not_recorded(),
     }
 }
 
@@ -442,7 +465,10 @@ fn redact_sensitive(text: &str) -> String {
 
 #[cfg(test)]
 mod memory_extraction_tests {
-    use super::{extract_summary, ConversationMemory, MemoryMessage, SummaryFallback};
+    use super::{
+        extract_summary, ConversationMemory, ConversationMemoryPolicy, MemoryMessage,
+        SummaryFallback,
+    };
     use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
     use crate::storage::db::Database;
 
@@ -515,6 +541,22 @@ mod memory_extraction_tests {
     }
 
     #[test]
+    fn first_user_message_is_not_permanent_goal() {
+        let messages = vec![
+            msg(1, "user", "What is the weather in Paris?"),
+            msg(2, "assistant", "I don't know yet."),
+            msg(3, "user", "请总结这份资料"),
+        ];
+
+        let goal = extract_summary(&messages, &[], &[], "goal", SummaryFallback::Goal);
+
+        assert!(
+            !goal.contains("What is the weather in Paris?"),
+            "the first user message must not become the permanent goal of later unrelated requests"
+        );
+    }
+
+    #[test]
     fn refresh_keeps_summary_and_recent_window_disjoint_at_twenty_five_messages() {
         let db = Database::open_in_memory().expect("database");
         let session = NormalSessionRepository::create(&db).expect("session");
@@ -547,5 +589,143 @@ mod memory_extraction_tests {
         assert_eq!((memory.seq_start, memory.seq_end), (1, 1));
         assert_eq!(recent.first().expect("recent").seq, 2);
         assert!(memory.seq_end < recent.first().expect("recent").seq);
+    }
+
+    #[test]
+    fn summary_invalidates_when_covered_messages_change() {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        db.with_conn(|conn| {
+            for seq in 1..=5_i64 {
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("covered-message-{seq}"),
+                        format!("2026-07-27T00:00:0{seq}Z"),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed conversation");
+
+        let policy = ConversationMemoryPolicy {
+            minimum_messages: 3,
+            recent_message_limit: 1,
+        };
+        let before = ConversationMemory::refresh_for_session(&db, session.session_id, policy)
+            .expect("refresh before")
+            .expect("memory exists");
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE session_messages SET content = ?1
+                 WHERE session_id = ?2 AND seq = ?3",
+                rusqlite::params!["covered-message-changed", session.session_id, 2],
+            )?;
+            Ok(())
+        })
+        .expect("change a covered message");
+
+        let after = ConversationMemory::refresh_for_session(&db, session.session_id, policy)
+            .expect("refresh after")
+            .expect("memory still exists");
+        assert_ne!(
+            before.content_hash, after.content_hash,
+            "a changed covered message must invalidate the old summary hash"
+        );
+    }
+
+    #[test]
+    fn stale_summary_is_revalidated_before_context_assembly() {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        db.with_conn(|conn| {
+            for seq in 1..=25_i64 {
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("context-message-{seq}"),
+                        format!("2026-08-18T00:00:{seq:02}Z"),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed conversation");
+        let before =
+            ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+                .expect("initial refresh")
+                .expect("summary");
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE session_messages SET content = 'changed covered message'
+                 WHERE session_id = ?1 AND seq = 1",
+                [session.session_id],
+            )?;
+            Ok(())
+        })
+        .expect("mutate covered message");
+
+        let after = ConversationMemory::validated_for_session(&db, session.session_id)
+            .expect("validated read")
+            .expect("refreshed summary");
+        assert_ne!(after.content_hash, before.content_hash);
+    }
+
+    #[test]
+    fn messages_after_summary_range_do_not_invalidate_existing_summary() {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        db.with_conn(|conn| {
+            for seq in 1..=25_i64 {
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("message-{seq}"),
+                        format!("2026-08-18T00:00:{seq:02}Z"),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed conversation");
+        let before =
+            ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+                .expect("refresh")
+                .expect("summary");
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO session_messages
+                 (session_id, seq, role, content, created_at)
+                 VALUES (?1, 26, 'assistant', 'new recent message', ?2)",
+                rusqlite::params![session.session_id, "2026-08-18T00:00:26Z"],
+            )?;
+            Ok(())
+        })
+        .expect("append recent message");
+
+        let after = ConversationMemory::validated_for_session(&db, session.session_id)
+            .expect("validated read")
+            .expect("summary");
+        assert_eq!(after.content_hash, before.content_hash);
+        assert_eq!(
+            (after.seq_start, after.seq_end),
+            (before.seq_start, before.seq_end)
+        );
     }
 }

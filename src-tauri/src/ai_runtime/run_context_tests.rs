@@ -35,6 +35,7 @@ fn envelope() -> ExecutionEnvelope {
         material_needs: vec![MaterialNeed::Reference],
         required_capabilities: vec![],
         explicit_constraints: vec![],
+        fresh_fact: Default::default(),
     }
 }
 
@@ -1497,12 +1498,18 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
     )
     .expect("tool started");
     let dispatch_context = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: None,
         write_target_path: None,
         document_policy: None,
         web_search_enabled: false,
+        fresh_fact_policy: None,
+        available_tool_names: &[],
         max_web_fetches: 5,
         cold_start_packets: &context.local_retrieval_packets,
         retrieval_scope: &context.retrieval_scope,

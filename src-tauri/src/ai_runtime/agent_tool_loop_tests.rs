@@ -100,6 +100,70 @@ async fn parent_turn_reuses_one_frozen_budget_for_every_provider_call() {
 }
 
 #[tokio::test]
+async fn unexposed_tool_call_is_rejected_without_reaching_executor() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call-not-exposed".into(),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: "not_exposed".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("final answer".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-unexposed-tool",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("unexposed tool call must be rejected and the loop must finish");
+
+    assert_eq!(
+        executor.calls.load(Ordering::SeqCst),
+        0,
+        "an unexposed tool call must never reach the executor"
+    );
+}
+
+#[tokio::test]
 async fn missing_provider_usage_is_estimated_from_the_local_turn_data() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {

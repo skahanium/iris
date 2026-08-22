@@ -119,6 +119,9 @@ pub(crate) struct ExternalToolEvidenceInput {
     pub(crate) raw_result_hash: String,
     pub(crate) retrieved_at: String,
     pub(crate) bounded_excerpt: String,
+    pub(crate) url: Option<String>,
+    pub(crate) normalized_url: Option<String>,
+    pub(crate) domain: Option<String>,
 }
 
 /// Lossless ledger identifier plus the UI-safe reference shape.
@@ -294,6 +297,54 @@ impl AgentEvidenceRepository {
         })
     }
 
+    /// Load every non-retired evidence registration owned by one Run. The
+    /// returned references are Run-local and safe for deterministic final
+    /// protocol validation; no excerpt or raw provider payload is exposed.
+    pub(crate) fn list_current_run_registered(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Vec<RegisteredEvidence>> {
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1 AND evidence.retired_at IS NULL
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let ids = statement
+                .query_map([run_id], |row| row.get::<_, i64>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            ids.into_iter()
+                .map(|id| registered_by_id(conn, id))
+                .collect()
+        })
+    }
+
+    /// Load only the bounded, already-sanitized DTO excerpts produced by a
+    /// structured external tool for one Run. Raw provider responses are never
+    /// returned through this helper.
+    pub(crate) fn list_current_run_external_excerpts(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Vec<(i64, String)>> {
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id, evidence.bounded_excerpt
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'external_tool'
+                   AND evidence.retired_at IS NULL
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let rows = statement.query_map([run_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+    }
+
     /// Register local source metadata without accepting or persisting note text.
     pub(crate) fn register_local(
         db: &Database,
@@ -442,10 +493,12 @@ impl AgentEvidenceRepository {
                               message_seq_first, source_type, title, content_hash,
                               retrieval_reason, retrieved_at, provider_id, provider_kind,
                               raw_result_hash, extraction_method, origin_run_id,
-                              material_role, stale, bounded_excerpt, created_at)
+                              material_role, stale, bounded_excerpt, created_at,
+                              url, normalized_url, domain)
                              VALUES (?1, ?2, ?3, ?4, ?5, 'web', ?6, ?7,
                                      'external.read', ?8, ?9, 'mcp', ?10,
-                                     'mcp_tool_output_v1', ?11, 'lookup', 0, ?12, ?13)",
+                                     'mcp_tool_output_v1', ?11, 'lookup', 0, ?12, ?13,
+                                     ?14, ?15, ?16)",
                     params![
                         input.session_id,
                         citation.index,
@@ -460,6 +513,9 @@ impl AgentEvidenceRepository {
                         input.run_id,
                         input.bounded_excerpt,
                         now,
+                        input.url.clone(),
+                        input.normalized_url.clone(),
+                        input.domain.clone(),
                     ],
                 )?;
                 let registered = registered_by_id(conn, conn.last_insert_rowid())?;
@@ -575,10 +631,13 @@ impl AgentEvidenceRepository {
                      FROM agent_run_evidence run_evidence
                      JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
                      WHERE run_evidence.run_id = ?1
-                       AND run_evidence.registration_source = 'web_search'
                        AND evidence.source_type = 'web'
                        AND evidence.retired_at IS NULL
-                       AND evidence.url LIKE 'https://%'
+                       AND (
+                         (run_evidence.registration_source = 'web_search'
+                          AND evidence.url LIKE 'https://%')
+                         OR run_evidence.registration_source = 'external_tool'
+                       )
                  )",
             )?;
             statement

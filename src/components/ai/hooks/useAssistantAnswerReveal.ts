@@ -45,6 +45,8 @@ function prefersReducedMotion(): boolean {
 }
 
 export interface AssistantAnswerReveal {
+  /** The Run whose presentation answer this reveal currently represents. */
+  runId: string | null;
   /** The smoothed text that should be rendered right now. */
   answer: string;
   /** True while the live answer still has buffered text to reveal. */
@@ -157,8 +159,14 @@ export function useAssistantAnswerReveal(
     };
   }, []);
 
+  const answerBelongsToRun = runIdRef.current === runId;
+  const visibleAnswer = answerBelongsToRun ? answer : "";
+
   return {
-    answer,
-    revealing: answer.length < target.length,
+    runId,
+    answer: visibleAnswer,
+    revealing:
+      runId !== null &&
+      (!answerBelongsToRun || visibleAnswer.length < target.length),
   };
 }

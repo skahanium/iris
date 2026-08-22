@@ -14,7 +14,7 @@ impl RunEngine {
                  FROM agent_runs r
                  JOIN sessions s ON s.id = r.session_id
                  WHERE r.status IN
-                   ('accepted', 'preparing', 'running', 'verifying', 'awaiting_confirmation')",
+                   ('accepted', 'preparing', 'running', 'verifying', 'awaiting_confirmation', 'awaiting_input')",
             )?;
             let rows = statement
                 .query_map([], |row| {
@@ -38,6 +38,15 @@ impl RunEngine {
             let effect = serde_json::from_value::<Effect>(serde_json::Value::String(effect))?;
             let confirmation = latest_confirmation_for_recovery(db, &run_id)?;
 
+            if state == RunState::AwaitingInput
+                && AgentRunRepository::get_for_session(db, &session_key, &run_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|response| response.run.pending_input.is_some())
+            {
+                continue;
+            }
+
             if state == RunState::AwaitingConfirmation
                 && confirmation
                     .as_ref()
@@ -50,15 +59,15 @@ impl RunEngine {
                 .as_ref()
                 .is_some_and(|confirmation| confirmation.status == "rejected")
             {
-                AgentRunRepository::finalize(
+                AgentRunRepository::append_event(
                     db,
-                    FinalizeRunInput {
+                    AppendRunEventInput {
                         run_id: run_id.clone(),
                         state_version,
-                        content: "已取消该变更，未作任何修改。".into(),
-                        evidence_ids: Vec::new(),
-                        citation_map: serde_json::json!({}),
-                        source_summary: Vec::new(),
+                        event_type: RunEventType::Cancelled,
+                        payload: RunEventPayload::Cancelled {
+                            reason: "user_rejected_change".into(),
+                        },
                     },
                 )?;
                 recovered += 1;

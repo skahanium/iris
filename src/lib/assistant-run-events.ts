@@ -3,6 +3,7 @@ import type {
   AssistantRunEventPayload,
   Freshness,
   PendingConfirmation,
+  PendingRunInput,
   ProviderSwitchReasonCode,
   RunRecoveryKind,
   RunState,
@@ -51,6 +52,7 @@ export interface AssistantRunEventState {
     { kind: "web_verification_failed" }
   > | null;
   pendingConfirmation: PendingConfirmation | null;
+  pendingInput: PendingRunInput | null;
   recovery: RunRecoveryKind | null;
   provider: {
     providerId: string;
@@ -89,6 +91,7 @@ export function createAssistantRunEventState(
     capabilityDegradation: null,
     webVerificationFailure: null,
     pendingConfirmation: null,
+    pendingInput: null,
     recovery: null,
     provider: null,
     reasoningSummaries: [],
@@ -263,6 +266,20 @@ function applyEvent(
             payload.kind === "cancelled"
           ? null
           : state.pendingConfirmation,
+    pendingInput:
+      payload.kind === "input_required"
+        ? {
+            inputId: payload.inputId,
+            kind: payload.inputKind,
+            fields: payload.fields,
+            prompt: payload.prompt,
+          }
+        : payload.kind === "input_provided" ||
+            payload.kind === "completed" ||
+            payload.kind === "failed" ||
+            payload.kind === "cancelled"
+          ? null
+          : state.pendingInput,
     recovery:
       payload.kind === "paused"
         ? (payload.recovery ?? null)
@@ -362,6 +379,10 @@ function requestedState(
       return payload.kind === "stage_changed" ? payload.state : null;
     case "confirmation_required":
       return "awaiting_confirmation";
+    case "input_required":
+      return "awaiting_input";
+    case "input_provided":
+      return "running";
     case "paused":
       return "paused";
     case "resumed":
@@ -410,12 +431,14 @@ function canTransition(current: RunState | null, next: RunState): boolean {
       (next === "running" || next === "failed" || next === "cancelled")) ||
     (current === "running" &&
       (next === "awaiting_confirmation" ||
+        next === "awaiting_input" ||
         next === "paused" ||
         next === "verifying" ||
         next === "completed" ||
         next === "failed" ||
         next === "cancelled")) ||
     (current === "awaiting_confirmation" && next === "running") ||
+    (current === "awaiting_input" && next === "running") ||
     (current === "paused" && next === "running") ||
     (current === "verifying" &&
       (next === "paused" ||

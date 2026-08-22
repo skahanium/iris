@@ -43,6 +43,7 @@ export type {
   AssistantSessionRetractRequest,
   AssistantSessionSummary,
 } from "@/types/ai";
+export type { DomainOperation, DomainOutputMapping } from "@/types/ipc";
 import type {
   AppUpdateInfo,
   AppUpdatePreflightResult,
@@ -53,6 +54,8 @@ import type {
   CacheDomainId,
   CacheSummary,
   BacklinkEntry,
+  DomainOperation,
+  DomainOutputMapping,
   ClassifiedFileTakenEvent,
   ClassifiedFileEntry,
   ClassifiedStatus,
@@ -888,6 +891,8 @@ export interface McpCapabilityBindingInput {
   mcpToolName: string;
   inputSchema: Record<string, unknown>;
   argumentMapping: Record<string, string>;
+  domainOperation?: DomainOperation;
+  outputMapping?: DomainOutputMapping;
   riskClass: "read_only";
   readOnly: true;
   userTrusted: true;
@@ -906,6 +911,8 @@ export interface McpCapabilityBindingSummary {
     maxModelChars: number;
     maxEvidenceChars: number;
   };
+  domainOperation?: DomainOperation;
+  outputMapping?: DomainOutputMapping;
   providerConfigHash: string;
   bindingConfigHash: string;
   providerEnabled: boolean;

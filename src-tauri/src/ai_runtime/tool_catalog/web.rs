@@ -1,6 +1,6 @@
 use crate::ai_runtime::ToolAccessLevel;
 
-use super::{ToolCatalogEntry, ToolImplementationStatus};
+use super::{ToolCatalogEntry, ToolExecutionMetadata, ToolImplementationStatus};
 
 pub(super) fn tools() -> Vec<ToolCatalogEntry> {
     vec![
@@ -16,6 +16,21 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "用户明确要求深读的公开 HTTPS URL"
+                    },
+                    "gap": {
+                        "type": "string",
+                        "enum": [
+                            "missing_entity",
+                            "missing_location",
+                            "location_coverage",
+                            "missing_timestamp",
+                            "stale_observation",
+                            "missing_unit",
+                            "missing_channel",
+                            "missing_independent_source",
+                            "source_conflict"
+                        ],
+                        "description": "当前搜索要解决的证据缺口（仅 current-fact 研究循环使用）"
                     }
                 },
                 "required": ["query"]
@@ -25,6 +40,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(8),
+            execution_metadata: Some(ToolExecutionMetadata {
+                cost_class: "network",
+                output_policy: "bounded_packets",
+                evidence_policy: "current_run_web",
+            }),
         },
     ]
 }

@@ -6,10 +6,13 @@ use std::time::{Duration, Instant};
 mod boundary_impl;
 #[path = "tool_dispatch/context.rs"]
 mod context_impl;
+#[path = "tool_dispatch/fresh_domains.rs"]
+mod fresh_domains_impl;
 #[path = "tool_dispatch/markdown.rs"]
 mod markdown_impl;
 #[path = "tool_dispatch/memory.rs"]
 mod memory_impl;
+pub(crate) use memory_impl::read_global_memories;
 #[path = "tool_dispatch/note.rs"]
 mod note_impl;
 #[path = "tool_dispatch/runtime.rs"]
@@ -25,13 +28,14 @@ mod vault_impl;
 #[path = "tool_dispatch/web.rs"]
 mod web_impl;
 
-pub use context_impl::ToolDispatchContext;
+pub use context_impl::{FrozenDomainWindow, ToolDispatchContext};
 
 #[rustfmt::skip]
 pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "search_hybrid", "search_semantic", "search_keyword", "get_regulation", "get_context_packets",
     "system_time_now", "app_context_read", "capabilities_read",
     "web_search", "read_note", "list_vault", "get_outline", "get_backlinks",
+    "weather_lookup", "news_lookup", "finance_lookup", "entertainment_lookup", "sports_lookup",
     "memory_read", "memory_write", "scheduled_task_create", "scheduled_task_list",
     "scheduled_task_delete",
     "vault_create_note", "vault_rename_move", "vault_delete_to_trash", "vault_asset_write",
@@ -150,6 +154,13 @@ async fn dispatch_tool_inner(
         "app_context_read" => runtime_impl::app_context_read_tool(state, ctx),
         "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx),
         "web_search" => web_impl::web_search_tool(state, args, ctx).await,
+        "weather_lookup"
+        | "news_lookup"
+        | "finance_lookup"
+        | "entertainment_lookup"
+        | "sports_lookup" => {
+            fresh_domains_impl::fresh_domain_tool(state, ctx, tool_name, args).await
+        }
         "read_note" => note_impl::read_note(state, ctx, args).await,
         "list_vault" => note_impl::list_vault(state, args, ctx).await,
         "get_outline" => note_impl::get_outline(state, ctx, args).await,

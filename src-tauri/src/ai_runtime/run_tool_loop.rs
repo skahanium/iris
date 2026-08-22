@@ -24,6 +24,9 @@ use crate::ai_runtime::agent_run_repository::{
 use crate::ai_runtime::agent_tool_loop::{
     AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
 };
+use crate::ai_runtime::fresh_research_plan::{
+    EvidenceGap, FreshResearchResumeState, ResearchBudget, ResearchQueryLedger,
+};
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
@@ -259,6 +262,9 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     accepted: &'a AssistantRunAccepted,
     context: &'a RunContext,
     authorized_capabilities: Vec<CapabilityId>,
+    /// Exact model-visible tool surface frozen for this Run. Empty denies all
+    /// model-selected tool calls; confirmed execution uses its dedicated path.
+    allowed_tool_names: Vec<String>,
     /// The exact cached Skill plan selected before this Run entered the model.
     /// It is inherited by ChildRuns only as a scope restriction; Skill bodies
     /// never become tools or a second authorization path.
@@ -279,6 +285,13 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     required_web_provider_snapshots:
         Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
     web_preferred_provider_id: Arc<Mutex<Option<String>>>,
+    /// Optional frozen current-fact research budget. When present, `web_search`
+    /// calls are additionally limited by this plan and duplicate query/gap pairs
+    /// are rejected.
+    fresh_research_budget: Option<ResearchBudget>,
+    fresh_search_count: Mutex<u8>,
+    fresh_research_ledger: Mutex<ResearchQueryLedger>,
+    fresh_research_restore_error: Mutex<Option<String>>,
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
     /// The ChildRun retains the parent Run identity and persistence boundary.
     child_run_provider: Option<&'a dyn ToolLoopProvider>,
@@ -315,6 +328,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             accepted,
             context,
             authorized_capabilities,
+            allowed_tool_names: Vec::new(),
             skill_activation_plan: None,
             sink,
             retrieval_scope: context.retrieval_scope.clone(),
@@ -335,6 +349,10 @@ impl<'a> NormalRunToolExecutor<'a> {
             web_degradation_emitted: Arc::new(Mutex::new(false)),
             required_web_provider_snapshots,
             web_preferred_provider_id: Arc::new(Mutex::new(None)),
+            fresh_research_budget: None,
+            fresh_search_count: Mutex::new(0),
+            fresh_research_ledger: Mutex::new(ResearchQueryLedger::new()),
+            fresh_research_restore_error: Mutex::new(None),
             child_run_provider: None,
             budget_policy,
             child_runs_started: Mutex::new(0),
@@ -361,6 +379,128 @@ impl<'a> NormalRunToolExecutor<'a> {
     ) -> Self {
         self.skill_activation_plan = plan;
         self
+    }
+
+    /// Freeze the exact model-visible tool surface for this Run. The executor
+    /// rejects any model tool call that is not on this list, closing the gap
+    /// between prompt tool specs and runtime dispatch.
+    /// Freeze the exact tool names from a resolved `ToolSurfacePlan`. This is
+    /// the production entry used after the orchestrator has filled the plan's
+    /// `tool_names` from the authorized registry and Run context.
+    pub(crate) fn with_allowed_tool_names(mut self, tool_names: &[String]) -> Self {
+        self.allowed_tool_names = tool_names.to_vec();
+        self
+    }
+
+    /// Freeze a current-fact research budget for this executor. When present,
+    /// `web_search` calls are bounded by `ResearchBudget` and duplicate
+    /// normalized query/gap pairs are rejected.
+    pub(crate) fn with_fresh_research_budget(mut self, budget: ResearchBudget) -> Self {
+        self.fresh_research_budget = Some(budget);
+        match AgentRunRepository::latest_fresh_research_state(&self.state.db, &self.accepted.run_id)
+        {
+            Ok(Some(state)) if state.max_searches == budget.max_searches => {
+                if let Ok(mut count) = self.fresh_search_count.lock() {
+                    *count = state.search_count;
+                }
+                if let Ok(ledger) = ResearchQueryLedger::from_hashes(state.seen_query_hashes) {
+                    if let Ok(mut stored) = self.fresh_research_ledger.lock() {
+                        *stored = ledger;
+                    }
+                } else if let Ok(mut error) = self.fresh_research_restore_error.lock() {
+                    *error = Some("fresh_research_resume_state_invalid".to_string());
+                }
+                if let Ok(mut winner) = self.web_preferred_provider_id.lock() {
+                    *winner = state.winner_provider_id;
+                }
+            }
+            Ok(Some(_)) => {
+                if let Ok(mut error) = self.fresh_research_restore_error.lock() {
+                    *error = Some("fresh_research_resume_budget_mismatch".to_string());
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                if let Ok(mut stored) = self.fresh_research_restore_error.lock() {
+                    *stored = Some(error.to_string());
+                }
+            }
+        }
+        self
+    }
+
+    fn persist_fresh_research_state(&self) -> AppResult<()> {
+        let budget = self
+            .fresh_research_budget
+            .ok_or_else(|| AppError::msg("fresh_research_budget_missing"))?;
+        let search_count = *self
+            .fresh_search_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        let seen_query_hashes = self
+            .fresh_research_ledger
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?
+            .query_hashes();
+        let winner_provider_id = self
+            .web_preferred_provider_id
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))?
+            .clone();
+        let state = FreshResearchResumeState {
+            schema_version: 1,
+            max_searches: budget.max_searches,
+            search_count,
+            seen_query_hashes,
+            winner_provider_id,
+        };
+        AgentRunRepository::persist_fresh_research_state(
+            &self.state.db,
+            &self.accepted.run_id,
+            &state,
+        )
+    }
+
+    fn try_reserve_fresh_research_slot(
+        &self,
+        query: &str,
+        gap: Option<EvidenceGap>,
+    ) -> AppResult<bool> {
+        let Some(budget) = self.fresh_research_budget else {
+            return Ok(true);
+        };
+        if let Some(error) = self
+            .fresh_research_restore_error
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?
+            .clone()
+        {
+            return Err(AppError::msg(error));
+        }
+        let mut search_count = self
+            .fresh_search_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        if *search_count >= budget.max_searches {
+            return Ok(false);
+        }
+        // The first deterministic prefetch is the only search allowed to omit
+        // an evidence gap. Every later search must explain what is still
+        // missing; this prevents the model from spinning generic queries.
+        if *search_count > 0 && gap.is_none() {
+            return Ok(false);
+        }
+        if let Some(gap) = gap {
+            let mut ledger = self
+                .fresh_research_ledger
+                .lock()
+                .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+            ledger.register(query, gap)?;
+        }
+        *search_count += 1;
+        drop(search_count);
+        self.persist_fresh_research_state()?;
+        Ok(true)
     }
 
     fn at_subagent_depth(mut self, depth: u32) -> Self {
@@ -433,6 +573,16 @@ impl<'a> NormalRunToolExecutor<'a> {
             .and_then(serde_json::Value::as_str)
             .filter(|query| !query.trim().is_empty())
             .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
+        let gap = args
+            .get("gap")
+            .and_then(serde_json::Value::as_str)
+            .and_then(parse_evidence_gap);
+        if !self.try_reserve_fresh_research_slot(query, gap)? {
+            return Ok(failed_tool_call(
+                WEB_TOOL_NAME,
+                "fresh_research_budget_exhausted",
+            ));
+        }
         let automatic_local_materials = self
             .context
             .materials
@@ -800,12 +950,20 @@ impl<'a> NormalRunToolExecutor<'a> {
         args: &serde_json::Value,
     ) -> ToolCallResult {
         let dispatch_context = ToolDispatchContext {
+            db: Some(&self.state.db),
+
+            selected_web_provider_id: None,
+
             note_path: None,
             file_id: None,
             run_id: Some(&self.accepted.run_id),
             write_target_path: self.context.write_target_path.as_deref(),
             document_policy: Some(&self.context.document_policy),
             web_search_enabled: self.has_capability("web.search"),
+            fresh_fact_policy: Some(crate::ai_runtime::tool_dispatch::FrozenDomainWindow::from(
+                &self.context.envelope.fresh_fact,
+            )),
+            available_tool_names: &self.allowed_tool_names,
             max_web_fetches: 5,
             cold_start_packets: &self.cold_start_packets,
             retrieval_scope: &self.retrieval_scope,
@@ -831,6 +989,8 @@ impl<'a> NormalRunToolExecutor<'a> {
         if !result.success {
             return Ok(());
         }
+        let mut domain_evidence_ids = Vec::new();
+        let mut domain_names = Vec::new();
         let evidence_inputs = match tool_name {
             "read_note" => vec![self.read_note_evidence_input(run_id, args, result)?],
             "search_hybrid" | "search_semantic" | "search_keyword" => result
@@ -857,6 +1017,36 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .and_then(local_evidence_input_from_packet)
                 .map(|packet| vec![local_packet_evidence_input(run_id, self.context, packet)])
                 .unwrap_or_default(),
+            "weather_lookup"
+            | "news_lookup"
+            | "finance_lookup"
+            | "entertainment_lookup"
+            | "sports_lookup" => {
+                for record in result.output.as_array().into_iter().flatten() {
+                    let inner = record.as_object().and_then(|object| object.values().next());
+                    if let Some(inner) = inner {
+                        if let Some(origin) = inner.get("origin") {
+                            if let Some(evidence_id) =
+                                origin.get("evidenceId").and_then(serde_json::Value::as_i64)
+                            {
+                                domain_evidence_ids.push(evidence_id);
+                            }
+                            if let Some(url) =
+                                origin.get("sourceUrl").and_then(serde_json::Value::as_str)
+                            {
+                                if let Some(domain) =
+                                    crate::ai_runtime::web_evidence_broker::domain_from_url(url)
+                                {
+                                    if !domain.trim().is_empty() {
+                                        domain_names.push(domain.to_ascii_lowercase());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Vec::new()
+            }
             _ => return Ok(()),
         };
         for input in evidence_inputs {
@@ -865,6 +1055,20 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
                 .push(registered.evidence_id);
+        }
+        self.local_evidence_ids
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
+            .extend(domain_evidence_ids.iter().copied());
+        if !domain_evidence_ids.is_empty() {
+            let mut web_state = self
+                .run_web_evidence
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
+            web_state
+                .evidence_ids
+                .extend(domain_evidence_ids.iter().copied());
+            web_state.domains.extend(domain_names);
         }
         Ok(())
     }
@@ -1001,6 +1205,21 @@ fn local_evidence_input_from_packet(value: &serde_json::Value) -> Option<LocalEv
 /// provider must never be asked for that many raw search bodies in one strict
 /// prefetch. A response that exceeds the host cap gets exactly one smaller
 /// retry; this preserves the cap rather than hiding an unbounded payload.
+fn parse_evidence_gap(value: &str) -> Option<EvidenceGap> {
+    match value {
+        "missing_entity" => Some(EvidenceGap::MissingEntity),
+        "missing_location" => Some(EvidenceGap::MissingLocation),
+        "location_coverage" => Some(EvidenceGap::LocationCoverage),
+        "missing_timestamp" => Some(EvidenceGap::MissingTimestamp),
+        "stale_observation" => Some(EvidenceGap::StaleObservation),
+        "missing_unit" => Some(EvidenceGap::MissingUnit),
+        "missing_channel" => Some(EvidenceGap::MissingChannel),
+        "missing_independent_source" => Some(EvidenceGap::MissingIndependentSource),
+        "source_conflict" => Some(EvidenceGap::SourceConflict),
+        _ => None,
+    }
+}
+
 fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
     let first_attempt = remaining.clamp(1, INITIAL_WEB_SEARCH_RESULTS);
     if attempt_count >= 2 {
@@ -1153,6 +1372,9 @@ impl NormalRunToolExecutor<'_> {
                                             raw_result_hash,
                                             retrieved_at: chrono::Utc::now().to_rfc3339(),
                                             bounded_excerpt: excerpt,
+                                            url: None,
+                                            normalized_url: None,
+                                            domain: None,
                                         },
                                     ) {
                                         Err(_) => failed_tool_call_with_duration(
@@ -1265,6 +1487,16 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         Box::pin(async move {
+            if !self
+                .allowed_tool_names
+                .iter()
+                .any(|name| name == &call.function.name)
+            {
+                return Ok(failed_tool_call(
+                    &call.function.name,
+                    "tool_not_in_run_surface",
+                ));
+            }
             if self.external_snapshot(&call.function.name).is_some() {
                 let arguments =
                     match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
@@ -1784,6 +2016,10 @@ impl NormalRunToolExecutor<'_> {
             .filter(|tool| spec.allowed_tools.contains(&tool.name))
             .cloned()
             .collect::<Vec<_>>();
+        let child_tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
         let messages = vec![
             LlmMessage {
                 role: MessageRole::System,
@@ -1814,6 +2050,7 @@ impl NormalRunToolExecutor<'_> {
             self.sink,
             self.required_web_provider_snapshots.clone(),
         )
+        .with_allowed_tool_names(&child_tool_names)
         .with_skill_activation_plan(self.skill_activation_plan.clone())
         .with_parent_run_web_state(self)
         .at_subagent_depth(1)
@@ -1922,6 +2159,9 @@ impl NormalRunToolExecutor<'_> {
             .web_preferred_provider_id
             .lock()
             .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))? = Some(winner);
+        if self.fresh_research_budget.is_some() {
+            self.persist_fresh_research_state()?
+        }
         Ok(())
     }
 
@@ -2090,10 +2330,21 @@ fn frozen_relative_paths(
     }
     if paths.is_empty() {
         let target = match tool_name {
-            "memory_write" => args
-                .get("key")
-                .and_then(serde_json::Value::as_str)
-                .map(|key| format!("application://memory/{key}")),
+            "memory_write" => {
+                if args.get("operation").and_then(serde_json::Value::as_str) == Some("clear_scope")
+                {
+                    Some(format!(
+                        "application://memory-scope/{}",
+                        args.get("scope")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("global")
+                    ))
+                } else {
+                    args.get("key")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|key| format!("application://memory/{key}"))
+                }
+            }
             "scheduled_task_create" => Some("application://scheduled-tasks/new".to_string()),
             "scheduled_task_delete" => args
                 .get("id")
@@ -2892,9 +3143,11 @@ mod tests {
         corroborated_source_threshold_met, emit_deferred_web_degradation,
         expected_post_content_hashes, mcp_failover_events, web_search_result_limit,
         DeferredWebDegradationInput, McpFailoverEvent, NormalRunToolExecutor, RunWebBudget,
+        CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
+    use crate::ai_runtime::fresh_research_plan::{EvidenceGap, ResearchBudget};
     use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
     use crate::ai_runtime::run_context::RunContextAssembler;
     use crate::ai_runtime::run_contract::{
@@ -3266,7 +3519,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn external_read_tool_crosses_transport_and_persists_only_bounded_safe_artifacts() {
+    async fn tool_diagnostics_never_expose_raw_arguments() {
         let directory = tempfile::tempdir().expect("temporary app directory");
         let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
@@ -3302,6 +3555,8 @@ mod tests {
             read_only: true,
             user_trusted: true,
             attested_binding_config_hash: String::new(),
+            domain_operation: None,
+            output_mapping: None,
         };
         let discovery_options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
             request_timeout: Duration::from_secs(20),
@@ -3410,8 +3665,9 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
-        let private_query = "external-query-body-must-not-persist";
+        )
+        .with_allowed_tool_names(std::slice::from_ref(&snapshot.exposed_name));
+        let private_query = "note-body-must-not-persist api_key=sentinel-secret";
         let provider_output = "fact-web-1=value-1";
         let private_call_id = "provider-call-id-must-not-persist";
         let result = executor
@@ -3724,6 +3980,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
         executor
             .run_web_evidence
@@ -3901,6 +4158,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
 
         let provider_call_id = format!("{}{}", "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz");
@@ -4230,7 +4488,8 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
+        )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()]);
         let denied = denied_executor
             .execute(
                 &accepted.run_id,
@@ -4317,6 +4576,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
         let result = executor
             .execute(
@@ -4628,6 +4888,455 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn executor_rejects_model_call_outside_frozen_surface() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        std::fs::write(vault.join("allowed.md"), "allowed").expect("allowed note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let allowed_tool_names = vec!["system_time_now".to_string()];
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&allowed_tool_names);
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "outside-surface-call",
+                    "read_note",
+                    r#"{"path":"allowed.md"}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn empty_tool_surface_rejects_forged_tool_call() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("forged-call", "system_time_now", "{}"),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn fresh_domain_tool_forged_call_rejected_by_empty_surface() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "forged-domain-call",
+                    "weather_lookup",
+                    r#"{"operation":"weather.current","location":"北京"}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn internal_web_prefetch_allows_only_web_search() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![
+                CapabilityId::new("web.search"),
+                CapabilityId::new("runtime.read"),
+            ],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string()]);
+
+        assert_eq!(executor.allowed_tool_names, ["web_search"]);
+        let forged = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("forged-prefetch-call", "system_time_now", "{}"),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+        assert_eq!(forged.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[test]
+    fn insufficient_first_search_triggers_bounded_refinement() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string()])
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 2,
+            max_fetches: 3,
+            max_repairs: 1,
+        });
+
+        assert!(executor
+            .try_reserve_fresh_research_slot(
+                "上海 电影 2026-08-18",
+                Some(EvidenceGap::MissingLocation),
+            )
+            .expect("first search"));
+        assert!(executor
+            .try_reserve_fresh_research_slot(
+                "上海 电影 2026-08-18 万达",
+                Some(EvidenceGap::MissingEntity),
+            )
+            .expect("second search"));
+        assert!(!executor
+            .try_reserve_fresh_research_slot("第三次搜索", Some(EvidenceGap::MissingTimestamp),)
+            .expect("budget check"));
+    }
+
+    #[test]
+    fn sufficient_first_search_stops_without_extra_tool_turn() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string()])
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 1,
+            max_fetches: 1,
+            max_repairs: 0,
+        });
+
+        assert!(executor
+            .try_reserve_fresh_research_slot(
+                "2026-08-18 上海 电影 万达 上映",
+                Some(EvidenceGap::MissingEntity),
+            )
+            .expect("only search"));
+        assert!(!executor
+            .try_reserve_fresh_research_slot("额外搜索", Some(EvidenceGap::MissingTimestamp),)
+            .expect("budget check"));
+    }
+
+    #[test]
+    fn supplement_without_gap_is_rejected_after_initial_prefetch() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string()])
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 2,
+            max_fetches: 2,
+            max_repairs: 0,
+        });
+
+        assert!(executor
+            .try_reserve_fresh_research_slot("初始查询", None)
+            .expect("initial search"));
+        assert!(!executor
+            .try_reserve_fresh_research_slot("补充查询", None)
+            .expect("gap is mandatory"));
+    }
+
+    #[test]
+    fn fresh_research_resume_state_restores_budget_and_query_deduplication() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let budget = ResearchBudget {
+            max_searches: 2,
+            max_fetches: 3,
+            max_repairs: 1,
+        };
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_fresh_research_budget(budget);
+        assert!(executor
+            .try_reserve_fresh_research_slot("上海 今日天气", Some(EvidenceGap::MissingTimestamp))
+            .expect("first search"));
+
+        let resumed = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_fresh_research_budget(budget);
+        let duplicate = resumed
+            .try_reserve_fresh_research_slot("上海 今日天气", Some(EvidenceGap::MissingTimestamp));
+        assert_eq!(
+            duplicate
+                .expect_err("duplicate query must be rejected")
+                .to_string(),
+            "fresh_research_duplicate_query"
+        );
+        assert!(
+            resumed
+                .try_reserve_fresh_research_slot(
+                    "上海 今日天气 预警",
+                    Some(EvidenceGap::MissingEntity),
+                )
+                .expect("one remaining search is available")
+        );
+        assert!(!resumed
+            .try_reserve_fresh_research_slot("第三次查询", Some(EvidenceGap::MissingEntity))
+            .expect("budget is restored"));
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_memory_mutation_is_not_persisted() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试记忆确认门".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running");
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+
+        let error = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "memory-clear-request",
+                    "memory_write",
+                    r#"{"operation":"clear_scope","scope":"global"}"#,
+                ),
+                1,
+            )
+            .await
+            .expect_err("memory mutation must pause for confirmation");
+        assert_eq!(error.to_string(), CONFIRMATION_PENDING_ERROR);
+        let memory_count: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))?)
+            })
+            .expect("memory count");
+        assert_eq!(memory_count, 0);
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::AwaitingConfirmation);
+    }
+
+    #[tokio::test]
     async fn model_read_note_reloads_current_disk_content_and_registers_metadata_only() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let vault = directory.path().join("vault");
@@ -4709,7 +5418,8 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
+        )
+        .with_allowed_tool_names(&["read_note".to_string(), "search_keyword".to_string()]);
 
         let result = executor
             .execute(

@@ -30,7 +30,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"tools/list"'*)
       id=$(json_id "$line")
-      if [ "$mode" = "search-fetch" ]; then
+      if [ "$mode" = "domain-dto" ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}},{"name":"domain","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{},"additionalProperties":false}}]}}\n' "$id"
+      elif [ "$mode" = "search-fetch" ]; then
         printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}},{"name":"fetch","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":false}}]}}\n' "$id"
       else
         printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}}]}}\n' "$id"
@@ -42,6 +44,9 @@ while IFS= read -r line; do
         *'"name":"fetch"'*)
           printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"fetch-result"}],"isError":false}}\n' "$id"
           ;;
+        *'"name":"domain"'*)
+          printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"domain-result"}],"structuredContent":{"records":[{"location":"上海","condition":"晴","temperature":"26","units":"C","observationTime":"2026-08-21T08:00:00Z","issueTime":"2026-08-21T08:00:00Z","title":"Synthetic title","publisher":"Synthetic Publisher","publishedAt":"2026-08-21T08:00:00Z","topic":"synthetic","instrument":"AAPL","assetKind":"equity","currency":"USD","asOf":"2026-08-21T08:00:00Z","delay":"0","value":"123.45","region":"上海","channel":"Synthetic Channel","date":"2026-08-21","checkedAt":"2026-08-21T08:00:00Z","competition":"Synthetic League","participants":["A","B"],"startTime":"2026-08-21T08:00:00Z","status":"scheduled","score":"1-0","sourceUrl":"https://source.invalid/domain","sourceTitle":"Synthetic Domain","observedAt":"2026-08-21T08:00:00Z","evidenceId":"provider-supplied-id"}]},"isError":false}}\n' "$id"
+          ;;
         *)
           if [ "$mode" = "search-empty" ]; then
             printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"no parseable web evidence\"}],\"isError\":false}}"
@@ -52,6 +57,7 @@ while IFS= read -r line; do
               claims="$claims fact-web-$ordinal=value-$ordinal"
               ordinal=$((ordinal + 1))
             done
+            claims="$claims date: 2026-08-18T07:00:00Z"
             if [ "$result_count" -gt 1 ]; then
               results="[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\\n"
               index=2

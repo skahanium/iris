@@ -122,6 +122,43 @@ oracle，二者绝不共享伪造网页事实。只有每个选中模型的 24 �
 搜索失败、来源冲突、旧证据复用或伪造引用时必须拒绝事实结论。场景覆盖无时间关键词的
 赛事提问、赛果、新闻、职位、价格、中英混合、长对话中的错误前提、历史摘要和提示注入干扰。
 
+本轮另增加固定多轮 current-fact 复现场景：
+
+- `current_fact_movie_follow_up_scenario`：固定时间为 `2026-08-18`，证据只允许两部带
+  上海院线/日期的电影，并放入一个无日期旧电影诱饵；断言回答只引用允许实体，不引用诱饵。
+- `agent_does_not_deny_web_after_current_run_search`：模型在同一 Run 已使用 `web_search`
+  后，不得再声称“没有联网/抓取能力”。
+
+## 六领域当前事实可靠性矩阵
+
+CAP-001 收口后，六类当前事实（天气、新闻、金融、影视、体育以及 runtime 日期）的
+确定性契约由领域 DTO 验证器、确认地点解析和 provider 白名单映射共同执行。本轮新增
+以下成功/失败矩阵测试：
+
+- `domain_tool_output_requires_source_and_observed_time`：领域 DTO 缺少 HTTPS 来源或
+  数据时点（天气 observation time / 金融 asOf）时失败关闭，不产生最终事实正文；
+  成功夹具保留 `EvidenceOrigin.evidenceId/observedAt/sourceUrl`。
+- `weather_without_confirmed_city_requests_location`：天气缺少确认城市时返回
+  `agent_run_location_required`，只从当前请求或 global `location.city` 取城市，
+  不从 Web/IP/相似 key 推断。
+- `location_scope_widens_city_then_province_then_country`：新闻/全国档期等允许放宽的
+  领域遵守固定 city → province → country 顺序；天气不得放宽。
+- `stale_weather_and_market_data_fail_closed`：天气 observation 超过 3 小时、金融
+  行情声明 delay 超过 15 分钟时均以 `agent_run_fresh_evidence_stale` 拒绝。
+- `movie_availability_requires_region_channel_and_date`：影视可用性必须同时包含
+  region、channel 和 date，缺失即失败关闭。
+- `finance_analysis_cannot_introduce_unsupported_numbers`：描述性金融分析只能使用
+  输入 `FinanceRecord` 中已验证的数值，出现证据外数字返回
+  `finance_analysis_unsupported_number`。
+
+## 诊断哨兵与原始 provider 输出隔离
+
+新增 `domain_tool_diagnostics_never_expose_raw_output`：把 provider 原始 JSON 中的
+`SECRET_SENTINEL`、`NOTE_SENTINEL`、`ARGUMENT_SENTINEL` 放入映射边界，断言白名单
+DTO、Run event、tool audit、UI error 和版本化 eval report 均不包含这些哨兵。原始
+provider JSON 只经过白名单 output mapping 缩略为附录 D 字段，不会进入事件、审计、
+错误或评测报告。
+
 ## 核心 48 题
 
 核心集由 24 个基础问题的 Offline/Online 成对变体组成，共 48 题：

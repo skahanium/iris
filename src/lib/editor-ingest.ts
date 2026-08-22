@@ -14,7 +14,7 @@ import {
   classifyWorkspacePath,
   parseWikiMediaReference,
 } from "@/lib/media-reference";
-import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/contract";
+import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/classify";
 import type {
   MarkdownCapabilityWarning,
   MarkdownSyntaxFragment,
@@ -24,7 +24,7 @@ import { PRESERVE_ONLY_SYNTAX_KINDS } from "@/lib/markdown-contract/types";
 
 // ── Internal helpers ──────────────────────────────────────────
 
-const ingestMarked = createMarkedInstance({ gfm: true, breaks: true });
+const ingestMarked = createMarkedInstance({ gfm: true, breaks: false });
 
 function escapeHtml(text: string): string {
   return text
@@ -274,15 +274,6 @@ function footnoteDefHtml(frag: MarkdownSyntaxFragment): string {
   return `<section data-footnote-def="${escapedLabel}" id="${defId}" data-footnote-return="${refId}" data-original-raw="${escapedRaw}">${contentHtml}</section>`;
 }
 
-const SAFE_INLINE_HTML_TAGS = new Set([
-  "kbd",
-  "sub",
-  "sup",
-  "mark",
-  "small",
-  "abbr",
-]);
-
 const BLOCK_KINDS = new Set<MarkdownSyntaxKind>([
   "heading",
   "code_block",
@@ -298,11 +289,42 @@ function isListKind(kind: MarkdownSyntaxKind): kind is "list" | "task_list" {
   return kind === "list" || kind === "task_list";
 }
 
-function openingSafeInlineTag(raw: string): string | null {
+const INLINE_HTML_TAGS = new Set([
+  "a",
+  "abbr",
+  "b",
+  "bdi",
+  "bdo",
+  "cite",
+  "code",
+  "data",
+  "dfn",
+  "em",
+  "i",
+  "kbd",
+  "mark",
+  "q",
+  "rp",
+  "rt",
+  "ruby",
+  "s",
+  "samp",
+  "small",
+  "span",
+  "strong",
+  "sub",
+  "sup",
+  "time",
+  "u",
+  "var",
+  "wbr",
+]);
+
+function openingInlineHtmlTag(raw: string): string | null {
   const match = /^<\s*([a-z][\w-]*)\b[^>]*>$/i.exec(raw.trim());
   if (!match) return null;
   const tag = match[1]!.toLowerCase();
-  return SAFE_INLINE_HTML_TAGS.has(tag) ? tag : null;
+  return INLINE_HTML_TAGS.has(tag) ? tag : null;
 }
 
 function isClosingTag(raw: string, tag: string): boolean {
@@ -323,7 +345,7 @@ function consumeInlinePreserve(
     return null;
   }
 
-  const tag = openingSafeInlineTag(first.raw);
+  const tag = openingInlineHtmlTag(first.raw);
   if (!tag) return null;
 
   let raw = first.raw;

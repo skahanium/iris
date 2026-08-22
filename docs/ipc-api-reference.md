@@ -63,7 +63,7 @@ Skills are prompt-only；`SKILL.md` scope is the fact source。`skills_*` 不安
 通用 MCP 只读工具使用独立的管理面 IPC：
 
 - `mcp_read_only_tools_discover(providerId)`：实时 discovery 后仅返回服务端声明只读、名称和受支持输入 Schema 均通过审查的候选；不返回服务端 description。`readOnlyHint` 只是候选前提，不是对第三方实现的证明。
-- `mcp_capability_bindings_list(providerId?)`、`mcp_capability_binding_upsert(input)`、`mcp_capability_binding_delete(bindingId)`：管理稳定 binding。Upsert 会再次 discovery、复核声明与 provider 配置 hash，并要求 `userTrusted: true` 表示用户已对精确 provider/tool/schema 完成二次确认；renderer 不能仅凭服务端声明自行证明只读。
+- `mcp_capability_bindings_list(providerId?)`、`mcp_capability_binding_upsert(input)`、`mcp_capability_binding_delete(bindingId)`：管理稳定 binding。Upsert 会再次 discovery、复核声明与 provider 配置 hash，并要求 `userTrusted: true` 表示用户已对精确 provider/tool/schema 完成二次确认；renderer 不能仅凭服务端声明自行证明只读。领域 binding 的 `McpCapabilityBindingInput/Summary` 新增可选 `domainOperation` 与 `outputMapping`：前者把 binding 绑定到 `web.domain.read` 的稳定领域 operation，后者以 `recordsPath` + `fields` 白名单路径把 provider JSON 缩略为附录 D DTO；普通 `external.read` binding 不携带这两个字段。
 - `AssistantRunStartRequest.externalToolGrants`：只接受 `{ bindingId, bindingConfigHash }`；仅 normal-domain、非 local-only Run 可在 Accept 事务中冻结并获得 `external.read`。
 
 启用 MCP provider 或保存 binding 不会自动授权任何 Run。运行时不重新 discovery，并拒绝 provider disable/config hash 漂移、snapshot 或用户信任位篡改、Schema 不匹配和超限/不支持输出。Iris 会拒绝声明或 Schema 暴露副作用的工具，但不能独立证明用户已信任的第三方服务端忠实实现其只读声明。

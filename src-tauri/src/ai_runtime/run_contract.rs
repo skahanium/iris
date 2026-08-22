@@ -82,6 +82,140 @@ pub(crate) enum VerificationRequirement {
     /// A successful explicitly granted `external.read` call in this exact Run
     /// must register usable evidence before a final answer is accepted.
     CurrentRunExternal,
+    /// A successful current-fact domain operation in this exact Run must
+    /// register validated Appendix-D evidence before a final answer is
+    /// accepted. The domain operation may be served by a frozen `web.domain.read`
+    /// MCP mapping or by the generic Web evidence fallback.
+    CurrentRunDomain,
+}
+
+/// Deterministic current-fact domain frozen into an accepted Run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FreshFactDomain {
+    #[default]
+    None,
+    Runtime,
+    Weather,
+    News,
+    Finance,
+    Entertainment,
+    Sports,
+    GenericWeb,
+}
+
+/// One concrete current-fact operation authorized for an accepted Run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DomainOperation {
+    #[serde(rename = "weather.current")]
+    WeatherCurrent,
+    #[serde(rename = "weather.forecast")]
+    WeatherForecast,
+    #[serde(rename = "news.search")]
+    NewsSearch,
+    #[serde(rename = "finance.quote")]
+    FinanceQuote,
+    #[serde(rename = "finance.metrics")]
+    FinanceMetrics,
+    #[serde(rename = "finance.news")]
+    FinanceNews,
+    #[serde(rename = "entertainment.now_playing")]
+    EntertainmentNowPlaying,
+    #[serde(rename = "entertainment.upcoming")]
+    EntertainmentUpcoming,
+    #[serde(rename = "entertainment.streaming")]
+    EntertainmentStreaming,
+    #[serde(rename = "sports.schedule")]
+    SportsSchedule,
+    #[serde(rename = "sports.score")]
+    SportsScore,
+}
+
+impl DomainOperation {
+    /// Return the stable wire value persisted in envelopes and provider bindings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WeatherCurrent => "weather.current",
+            Self::WeatherForecast => "weather.forecast",
+            Self::NewsSearch => "news.search",
+            Self::FinanceQuote => "finance.quote",
+            Self::FinanceMetrics => "finance.metrics",
+            Self::FinanceNews => "finance.news",
+            Self::EntertainmentNowPlaying => "entertainment.now_playing",
+            Self::EntertainmentUpcoming => "entertainment.upcoming",
+            Self::EntertainmentStreaming => "entertainment.streaming",
+            Self::SportsSchedule => "sports.schedule",
+            Self::SportsScore => "sports.score",
+        }
+    }
+
+    /// Parse one stable persisted operation value without accepting aliases.
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "weather.current" => Self::WeatherCurrent,
+            "weather.forecast" => Self::WeatherForecast,
+            "news.search" => Self::NewsSearch,
+            "finance.quote" => Self::FinanceQuote,
+            "finance.metrics" => Self::FinanceMetrics,
+            "finance.news" => Self::FinanceNews,
+            "entertainment.now_playing" => Self::EntertainmentNowPlaying,
+            "entertainment.upcoming" => Self::EntertainmentUpcoming,
+            "entertainment.streaming" => Self::EntertainmentStreaming,
+            "sports.schedule" => Self::SportsSchedule,
+            "sports.score" => Self::SportsScore,
+            _ => return None,
+        })
+    }
+}
+
+/// Minimum location context a current-fact domain needs before Web research.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LocationRequirement {
+    #[default]
+    None,
+    Country,
+    City,
+}
+
+/// Frozen, backward-compatible current-fact policy attached to one accepted Run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FreshFactPolicy {
+    pub(crate) schema_version: u8,
+    pub(crate) domain: FreshFactDomain,
+    #[serde(default)]
+    pub(crate) operation: Option<DomainOperation>,
+    pub(crate) window_start: Option<String>,
+    pub(crate) window_end: Option<String>,
+    pub(crate) location_requirement: LocationRequirement,
+}
+
+impl Default for FreshFactPolicy {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            domain: FreshFactDomain::None,
+            operation: None,
+            window_start: None,
+            window_end: None,
+            location_requirement: LocationRequirement::None,
+        }
+    }
+}
+
+impl FreshFactPolicy {
+    /// Return the operation frozen for this Run, including legacy-envelope defaults.
+    pub(crate) fn effective_operation(&self) -> Option<DomainOperation> {
+        self.operation.or(match self.domain {
+            FreshFactDomain::Weather => Some(DomainOperation::WeatherCurrent),
+            FreshFactDomain::News => Some(DomainOperation::NewsSearch),
+            FreshFactDomain::Finance => Some(DomainOperation::FinanceQuote),
+            FreshFactDomain::Entertainment => Some(DomainOperation::EntertainmentNowPlaying),
+            FreshFactDomain::Sports => Some(DomainOperation::SportsScore),
+            FreshFactDomain::None | FreshFactDomain::Runtime | FreshFactDomain::GenericWeb => None,
+        })
+    }
 }
 
 /// Stable explanation for the deterministic Web decision attached to a Run.
@@ -255,6 +389,9 @@ pub(crate) struct ExecutionEnvelope {
     pub(crate) required_capabilities: Vec<CapabilityId>,
     /// Explicit constraints that remain binding throughout the Run.
     pub(crate) explicit_constraints: Vec<ExplicitConstraint>,
+    /// Frozen current-fact policy; defaults to a no-op for historical envelopes.
+    #[serde(default)]
+    pub(crate) fresh_fact: FreshFactPolicy,
 }
 
 impl RunBudgetPolicy {
@@ -644,6 +781,9 @@ pub struct AssistantRunSnapshot {
     /// Current confirmation summary, if the Run is waiting for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pending_confirmation: Option<PendingConfirmationSummary>,
+    /// Current deterministic input request, if this Run is waiting for a user value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pending_input: Option<PendingRunInput>,
     /// Safe recovery information, if applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) recovery: Option<RunRecoveryKind>,
@@ -671,6 +811,8 @@ pub(crate) enum RunState {
     Running,
     /// The Run is waiting for a user confirmation.
     AwaitingConfirmation,
+    /// The Run is waiting for a bounded user-provided value before continuing.
+    AwaitingInput,
     /// The Run is durably paused and may later resume.
     Paused,
     /// The Run is validating an output before completion.
@@ -737,6 +879,10 @@ pub(crate) enum RunEventType {
     WebVerificationFailed,
     /// A frozen change plan needs user confirmation.
     ConfirmationRequired,
+    /// A bounded input is required to continue this Run.
+    InputRequired,
+    /// The required input was supplied and this Run may resume.
+    InputProvided,
     /// Policy denied an action.
     PermissionDenied,
     /// The Provider Router selected a permitted fallback candidate.
@@ -884,6 +1030,24 @@ pub(crate) enum RunEventPayload {
         /// RFC 3339 expiry of the frozen approval window.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expires_at: Option<String>,
+    },
+    /// A bounded user input request with no raw provider data.
+    InputRequired {
+        /// Stable input request identity.
+        input_id: String,
+        /// Input category, such as `location`.
+        input_kind: String,
+        /// Required bounded field names.
+        fields: Vec<String>,
+        /// Safe prompt shown to the user.
+        prompt: String,
+    },
+    /// Sanitized values supplied for a previously requested input.
+    InputProvided {
+        /// Stable input request identity.
+        input_id: String,
+        /// Bounded, validated values keyed by field name.
+        values: std::collections::BTreeMap<String, String>,
     },
     /// A safe policy denial.
     PermissionDenied {
@@ -1205,10 +1369,31 @@ pub enum RunControlAction {
         /// Stable confirmation identifier.
         confirmation_id: String,
     },
+    /// Provide the bounded value requested by an `InputRequired` event.
+    SubmitInput {
+        /// Stable input request identity.
+        input_id: String,
+        /// Validated values for the requested fields.
+        values: std::collections::BTreeMap<String, String>,
+    },
     /// Resume a valid paused or confirmation-blocked Run.
     Resume,
     /// Cancel an active Run.
     Cancel,
+}
+
+/// A safe, replayable input request exposed while a Run is awaiting user data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingRunInput {
+    /// Stable input request identity.
+    pub(crate) input_id: String,
+    /// Input category.
+    pub(crate) kind: String,
+    /// Required bounded field names.
+    pub(crate) fields: Vec<String>,
+    /// User-facing prompt.
+    pub(crate) prompt: String,
 }
 
 /// Safe, bounded reason for a Web evidence failure. These values never contain provider output,
@@ -1405,6 +1590,9 @@ pub enum SafeRunErrorCode {
     /// The same client request id was replayed with a different payload.
     #[serde(rename = "agent_run_idempotency_conflict")]
     IdempotencyConflict,
+    /// The normal session already owns another non-terminal top-level Run.
+    #[serde(rename = "agent_run_active_run_exists")]
+    ActiveRunExists,
     /// The model referenced a tool call id that this Run never issued.
     #[serde(rename = "agent_run_unknown_tool_call_id")]
     UnknownToolCallId,
@@ -1414,6 +1602,18 @@ pub enum SafeRunErrorCode {
     /// Web evidence is required but the Run has none registered.
     #[serde(rename = "agent_run_web_evidence_required")]
     WebEvidenceRequired,
+    /// The model route cannot expose the grounded finalization protocol required by a current-fact Run.
+    #[serde(rename = "agent_run_grounded_finalization_unavailable")]
+    GroundedFinalizationUnavailable,
+    /// A current-fact Run could not collect enough evidence to support its final answer.
+    #[serde(rename = "agent_run_fresh_evidence_insufficient")]
+    FreshEvidenceInsufficient,
+    /// A current-fact Run requires an explicit location that is not available.
+    #[serde(rename = "agent_run_location_required")]
+    LocationRequired,
+    /// A submitted Run input does not match the pending request.
+    #[serde(rename = "agent_run_input_invalid")]
+    InputInvalid,
 }
 
 impl std::fmt::Display for SafeRunErrorCode {
@@ -1497,9 +1697,14 @@ impl SafeRunErrorCode {
             Self::InvalidSubagentBatchReport => "agent_run_invalid_subagent_batch_report",
             Self::RetryNotAvailable => "agent_run_retry_not_available",
             Self::IdempotencyConflict => "agent_run_idempotency_conflict",
+            Self::ActiveRunExists => "agent_run_active_run_exists",
             Self::UnknownToolCallId => "agent_run_unknown_tool_call_id",
             Self::UnverifiedWebCitation => "agent_run_unverified_web_citation",
             Self::WebEvidenceRequired => "agent_run_web_evidence_required",
+            Self::GroundedFinalizationUnavailable => "agent_run_grounded_finalization_unavailable",
+            Self::FreshEvidenceInsufficient => "agent_run_fresh_evidence_insufficient",
+            Self::LocationRequired => "agent_run_location_required",
+            Self::InputInvalid => "agent_run_input_invalid",
         }
     }
 }
@@ -1516,6 +1721,8 @@ impl RunEventPayload {
             Self::CapabilityDegraded { .. } => RunEventType::CapabilityDegraded,
             Self::WebVerificationFailed { .. } => RunEventType::WebVerificationFailed,
             Self::ConfirmationRequired { .. } => RunEventType::ConfirmationRequired,
+            Self::InputRequired { .. } => RunEventType::InputRequired,
+            Self::InputProvided { .. } => RunEventType::InputProvided,
             Self::PermissionDenied { .. } => RunEventType::PermissionDenied,
             Self::ProviderSwitched { .. } => RunEventType::ProviderSwitched,
             Self::EvidenceRegistered { .. } => RunEventType::EvidenceRegistered,
@@ -1555,13 +1762,17 @@ pub(crate) fn transition_to(
         ) | (
             RunState::Running,
             RunState::AwaitingConfirmation
+                | RunState::AwaitingInput
                 | RunState::Paused
                 | RunState::Verifying
                 | RunState::Completed
                 | RunState::Failed
                 | RunState::Cancelled
-        ) | (RunState::AwaitingConfirmation, RunState::Running)
-            | (RunState::Paused, RunState::Running)
+        ) | (
+            RunState::AwaitingConfirmation,
+            RunState::Running | RunState::Cancelled
+        ) | (RunState::Paused, RunState::Running)
+            | (RunState::AwaitingInput, RunState::Running)
             | (
                 RunState::Verifying,
                 RunState::Paused | RunState::Completed | RunState::Failed | RunState::Cancelled

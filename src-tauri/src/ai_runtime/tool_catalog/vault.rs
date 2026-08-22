@@ -20,6 +20,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "vault_rename_move",
@@ -37,6 +38,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "vault_delete_to_trash",
@@ -53,6 +55,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "vault_asset_write",
@@ -70,6 +73,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "vault_version_list",
@@ -86,6 +90,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(50),
+            execution_metadata: None,
         },
     ]
 }

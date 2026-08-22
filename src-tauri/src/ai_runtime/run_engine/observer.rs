@@ -11,12 +11,33 @@ pub(crate) trait RunEventSink: Send + Sync {
         Ok(())
     }
 
+    /// Emit the terminal presentation only after the durable Completed event.
+    /// Tauri derives this projection from that durable event itself.
+    fn emit_terminal_presentation(&self, run_id: &str) -> AppResult<()> {
+        self.emit_presentation(run_id, RunPresentationPayload::AnswerComplete)
+    }
+
     /// Emit a safe terminal event when SQLite itself cannot record that event.
     fn emit_ephemeral_failure(
         &self,
         event: &crate::ai_runtime::run_contract::AssistantRunEvent,
     ) -> AppResult<()> {
         self.emit(event)
+    }
+}
+
+/// Project an already committed Run event without letting transient UI delivery
+/// rewrite or interrupt the durable lifecycle fact.
+pub(crate) fn emit_durable_event_best_effort(
+    sink: &(impl RunEventSink + ?Sized),
+    event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+) {
+    if sink.emit(event).is_err() {
+        tracing::warn!(
+            run_id = %event.run_id(),
+            reason = "durable_event_delivery_failed",
+            "durable Agent Run event will be recovered from SQLite"
+        );
     }
 }
 
@@ -92,9 +113,14 @@ impl<'a, R: Runtime> TauriRunEventSink<'a, R> {
 
 impl<R: Runtime> RunEventSink for TauriRunEventSink<'_, R> {
     fn emit(&self, event: &crate::ai_runtime::run_contract::AssistantRunEvent) -> AppResult<()> {
-        self.app_handle
-            .emit("assistant:run_event", event)
-            .map_err(|_| AppError::msg("agent_run_event_emit_failed"))?;
+        if self.app_handle.emit("assistant:run_event", event).is_err() {
+            tracing::warn!(
+                run_id = %event.run_id(),
+                reason = "durable_event_delivery_failed",
+                "durable Agent Run event will be recovered from SQLite"
+            );
+            return Ok(());
+        }
         if let Some(payload) = presentation_payload_for_durable_event(event) {
             let _ = self.emit_presentation(event.run_id(), payload);
         }
@@ -124,6 +150,12 @@ impl<R: Runtime> RunEventSink for TauriRunEventSink<'_, R> {
             }
         }
         result
+    }
+
+    fn emit_terminal_presentation(&self, _run_id: &str) -> AppResult<()> {
+        // `emit` projects the persisted Completed event to AnswerComplete.
+        // Do not send a second terminal presentation here.
+        Ok(())
     }
 }
 
@@ -409,9 +441,20 @@ impl AgentRunStreamObserver<'_> {
     /// web-grounded answer previously failed flush as `agent_run_persistence_failed`
     /// after evidence had already registered.
     ///
-    /// Even when `pending_delta` is empty (already streamed or a retry after a partial
-    /// flush), AnswerComplete must still be delivered so the UI can leave streaming.
+    /// `flush` retains the historical direct observer contract for tests and
+    /// callers that do not have a durable terminal step. Production finalization
+    /// uses `flush_without_terminal`, then emits AnswerComplete after Completed.
+    #[cfg(test)]
     pub(crate) fn flush(&mut self) -> AppResult<()> {
+        self.flush_internal(true)
+    }
+
+    /// Persist and emit answer deltas without claiming that the Run is complete.
+    pub(crate) fn flush_without_terminal(&mut self) -> AppResult<()> {
+        self.flush_internal(false)
+    }
+
+    fn flush_internal(&mut self, emit_terminal: bool) -> AppResult<()> {
         if !self.pending_delta.is_empty() {
             let final_content = mem::take(&mut self.pending_delta);
             let presentation_delta =
@@ -460,9 +503,11 @@ impl AgentRunStreamObserver<'_> {
                 self.presentation_content.push_str(&chunk);
             }
         }
-        let _ = self
-            .sink
-            .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete);
+        if emit_terminal {
+            let _ = self
+                .sink
+                .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete);
+        }
         Ok(())
     }
 

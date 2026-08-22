@@ -386,34 +386,37 @@ pub async fn assistant_run_start<R: AssistantRunRuntime>(
                 return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
             }
             let model_override = request.model_override.clone();
-            let accepted = state
+            let outcome = state
                 .ai
                 .classified_ephemeral
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
-                .accept(
+                .accept_outcome(
                     &vault,
                     &request.client_request_id,
                     request.turn.message,
                     context_ref,
+                    model_override.as_ref(),
                 )?;
-            let event = state
-                .ai
-                .classified_ephemeral
-                .lock()
-                .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
-                .get(&accepted.run_id)?
-                .and_then(|response| response.events.into_iter().next())
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
-            sink.emit(&event)?;
-            spawn_classified_direct_run(
-                Arc::clone(&state),
-                vault,
-                app_handle,
-                accepted.clone(),
-                model_override,
-            );
-            Ok(accepted)
+            if outcome.is_new {
+                let event = state
+                    .ai
+                    .classified_ephemeral
+                    .lock()
+                    .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
+                    .get(&outcome.accepted.run_id)?
+                    .and_then(|response| response.events.into_iter().next())
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
+                let _ = sink.emit(&event);
+                spawn_classified_direct_run(
+                    Arc::clone(&state),
+                    vault,
+                    app_handle,
+                    outcome.accepted.clone(),
+                    model_override,
+                );
+            }
+            Ok(outcome.accepted)
         }
     }
 }
@@ -426,19 +429,21 @@ pub async fn assistant_run_retry(
     request: AssistantRunRetryRequest,
 ) -> AppResult<AssistantRunAccepted> {
     let sink = TauriRunEventSink::new(&app_handle);
-    let accepted = RunIntake::retry_with_sink(&state.db, request, &sink)?;
-    spawn_normal_direct_run(
-        Arc::clone(&state),
-        app_handle,
-        accepted.clone(),
-        state.vault_path().ok(),
-    );
-    Ok(accepted)
+    let outcome = RunIntake::retry_with_sink_outcome(&state.db, request, &sink)?;
+    if outcome.is_new {
+        spawn_normal_direct_run(
+            Arc::clone(&state),
+            app_handle,
+            outcome.accepted.clone(),
+            state.vault_path().ok(),
+        );
+    }
+    Ok(outcome.accepted)
 }
 
 /// Apply one explicit control action to an isolated Agent Run.
 #[tauri::command]
-pub async fn assistant_run_control<R: tauri::Runtime>(
+pub async fn assistant_run_control<R: AssistantRunRuntime>(
     state: State<'_, Arc<AppState>>,
     app_handle: AppHandle<R>,
     request: AssistantRunControlRequest,
@@ -446,7 +451,7 @@ pub async fn assistant_run_control<R: tauri::Runtime>(
     assistant_run_control_inner(Arc::clone(&state), app_handle, request).await
 }
 
-async fn assistant_run_control_inner<R: tauri::Runtime>(
+async fn assistant_run_control_inner<R: AssistantRunRuntime>(
     state: Arc<AppState>,
     app_handle: AppHandle<R>,
     request: AssistantRunControlRequest,
@@ -474,15 +479,6 @@ async fn assistant_run_control_inner<R: tauri::Runtime>(
                     state.vault_path().ok(),
                 ),
                 (
-                    NormalRunControlOutcome::ConfirmationRejected,
-                    crate::ai_runtime::run_contract::RunControlAction::RejectChange { .. },
-                ) => spawn_rejected_change_finalization(
-                    Arc::clone(&state.db),
-                    app_handle,
-                    session,
-                    run_id,
-                ),
-                (
                     NormalRunControlOutcome::RecoveryResumed { confirmation_id },
                     crate::ai_runtime::run_contract::RunControlAction::Resume,
                 ) => spawn_confirmed_change_execution(
@@ -491,6 +487,27 @@ async fn assistant_run_control_inner<R: tauri::Runtime>(
                     session,
                     run_id,
                     confirmation_id,
+                    state.vault_path().ok(),
+                ),
+                (
+                    NormalRunControlOutcome::InputProvided,
+                    crate::ai_runtime::run_contract::RunControlAction::SubmitInput { .. },
+                ) => spawn_normal_direct_run(
+                    Arc::clone(&state),
+                    app_handle,
+                    crate::ai_runtime::run_contract::AssistantRunAccepted {
+                        client_request_id: String::new(),
+                        run_id: run_id.clone(),
+                        turn_id: crate::ai_runtime::run_intake::RunIntake::get(
+                            &state.db, &session, &run_id,
+                        )?
+                        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
+                        .run
+                        .turn_id,
+                        session: session.clone(),
+                        state: crate::ai_runtime::run_contract::RunState::AwaitingInput,
+                        state_version: 0,
+                    },
                     state.vault_path().ok(),
                 ),
                 _ => {}
@@ -733,8 +750,7 @@ async fn execute_confirmed_change_with_sink(
     );
     match executor.execute_confirmed_frozen_change(&plan).await {
         Ok(result) if result.success => {
-            if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, sink, true)
-                .is_err()
+            if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, sink).is_err()
             {
                 fail();
             }
@@ -743,22 +759,6 @@ async fn execute_confirmed_change_with_sink(
     }
 }
 
-/// A rejected frozen plan ends the Run without dispatching a tool or calling a model.
-fn spawn_rejected_change_finalization<R: tauri::Runtime>(
-    db: Arc<crate::storage::db::Database>,
-    app_handle: AppHandle<R>,
-    session: AssistantSessionRef,
-    run_id: String,
-) {
-    tauri::async_runtime::spawn(async move {
-        let sink = TauriRunEventSink::new(&app_handle);
-        if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, &sink, false)
-            .is_err()
-        {
-            let _ = RunEngine::fail_active_with_sink(&db, &session, &run_id, &sink);
-        }
-    });
-}
 /// Start normal-domain execution after its accepted event exists.
 ///
 /// Context, policy and bounded Web evidence are prepared from persisted Run
@@ -1202,6 +1202,8 @@ mod normal_run_desktop_adapter_tests {
             read_only: true,
             user_trusted: true,
             attested_binding_config_hash: String::new(),
+            domain_operation: None,
+            output_mapping: None,
         };
         let attestation = crate::ai_runtime::mcp_external_tools::attest_reviewed_tool(
             &state.db,

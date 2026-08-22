@@ -1,9 +1,9 @@
 use super::run_contract::{
-    AssistantRunControlRequest, AssistantRunStartRequest, AssistantTurnDraft, ContextMode,
-    DisplayMention, DisplayMentionKind, DisplayMentionRange, Effect, Effort, ExplicitAction,
-    ExplicitTarget, Freshness, RiskClass, RunControlAction, RunEventPayload, RunEventType,
-    RunRecoveryKind, RunState, SecurityDomain, SelectionSnapshot, VerificationRequirement,
-    WebDecisionReason,
+    AssistantRunControlRequest, AssistantRunRetryRequest, AssistantRunStartRequest,
+    AssistantTurnDraft, ContextMode, DisplayMention, DisplayMentionKind, DisplayMentionRange,
+    Effect, Effort, ExplicitAction, ExplicitTarget, FreshFactDomain, Freshness, RiskClass,
+    RunControlAction, RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain,
+    SelectionSnapshot, VerificationRequirement, WebDecisionReason,
 };
 use super::run_engine::RunEventSink;
 use super::run_intake::RunIntake;
@@ -11,6 +11,8 @@ use super::{
     agent_run_repository::{AgentRunRepository, AppendRunEventInput, DurableApplyCheckpointStage},
     frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput},
 };
+use std::sync::Arc;
+
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
@@ -169,6 +171,8 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
         read_only: true,
         user_trusted: true,
         attested_binding_config_hash: String::new(),
+        domain_operation: None,
+        output_mapping: None,
     };
     let reviewed = review_discovered_tool(
         &binding_input.mcp_tool_name,
@@ -364,6 +368,8 @@ fn provider_config_drift_rolls_back_run_acceptance() {
         read_only: true,
         user_trusted: true,
         attested_binding_config_hash: String::new(),
+        domain_operation: None,
+        output_mapping: None,
     };
     let reviewed = review_discovered_tool(
         &binding_input.mcp_tool_name,
@@ -475,6 +481,93 @@ impl RunEventSink for RecordingSink {
             .push(serde_json::to_value(event)?);
         Ok(())
     }
+}
+
+#[test]
+fn accepted_retry_does_not_spawn_again() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("make source run retryable");
+    let sink = RecordingSink::default();
+    let retry = AssistantRunRetryRequest {
+        session: accepted.session.clone(),
+        source_run_id: accepted.run_id.clone(),
+        client_request_id: "retry-replay-once".into(),
+    };
+
+    let first = RunIntake::retry_with_sink_outcome(&db, retry.clone(), &sink).expect("first retry");
+    let second =
+        RunIntake::retry_with_sink_outcome(&db, retry, &sink).expect("idempotent retry replay");
+
+    assert!(first.is_new, "the first retry must win execution");
+    assert!(
+        !second.is_new,
+        "an idempotent retry replay must not win execution again"
+    );
+    assert_eq!(first.accepted.run_id, second.accepted.run_id);
+    assert_eq!(
+        sink.0.lock().expect("sink lock").len(),
+        1,
+        "an idempotent retry replay must not emit a duplicate accepted event"
+    );
+}
+
+#[test]
+fn concurrent_retry_starts_executor_once() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let db =
+        Arc::new(Database::open(&directory.path().join("concurrent-retry.db")).expect("database"));
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("make source run retryable");
+    let sink = Arc::new(RecordingSink::default());
+    let retry = AssistantRunRetryRequest {
+        session: accepted.session.clone(),
+        source_run_id: accepted.run_id.clone(),
+        client_request_id: "concurrent-retry-once".into(),
+    };
+
+    let mut new_count = 0;
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let db = Arc::clone(&db);
+            let sink = Arc::clone(&sink);
+            let retry = retry.clone();
+            handles.push(scope.spawn(move || {
+                RunIntake::retry_with_sink_outcome(&db, retry, &*sink)
+                    .expect("concurrent retry accepted")
+            }));
+        }
+        for handle in handles {
+            if handle.join().expect("retry thread").is_new {
+                new_count += 1;
+            }
+        }
+    });
+
+    assert_eq!(
+        new_count, 1,
+        "two concurrent retries must produce exactly one execution owner"
+    );
+    assert_eq!(
+        sink.0.lock().expect("sink lock").len(),
+        1,
+        "concurrent retries must emit only one accepted notification"
+    );
 }
 
 struct RejectingSink;
@@ -906,6 +999,31 @@ fn intake_event_delivery_failure_does_not_strand_or_duplicate_the_run() {
 }
 
 #[test]
+fn control_event_delivery_failure_keeps_the_committed_terminal_state() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+
+    let outcome = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: accepted.session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: accepted.state_version,
+            action: RunControlAction::Cancel,
+        },
+        &RejectingSink,
+    )
+    .expect("durable control survives notification loss");
+
+    assert_eq!(outcome, super::run_intake::NormalRunControlOutcome::Applied);
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Cancelled);
+    crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
+}
+
+#[test]
 fn concurrent_intake_replays_converge_on_one_run() {
     let directory = tempfile::tempdir().expect("temporary database directory");
     let db = Database::open(&directory.path().join("concurrent.sqlite3")).expect("database");
@@ -968,34 +1086,11 @@ fn intake_scoped_get_does_not_expose_a_run_to_another_session() {
 fn reconnect_lookup_returns_only_the_owner_latest_nonterminal_run() {
     let db = Database::open_in_memory().expect("database");
     let first = RunIntake::start(&db, request()).expect("first accepted run");
-    let mut second_request = request();
-    second_request.client_request_id = "latest-active-client-request".to_string();
-    second_request.session = Some(first.session.clone());
-    let second = RunIntake::start(&db, second_request).expect("second accepted run");
 
     let recovered = RunIntake::get_latest_active(&db, &first.session)
         .expect("recover latest")
         .expect("active run");
-    assert_eq!(recovered.run.run_id, second.run_id);
-
-    RunIntake::control(
-        &db,
-        AssistantRunControlRequest {
-            session: first.session.clone(),
-            run_id: second.run_id.clone(),
-            expected_state_version: 0,
-            action: RunControlAction::Cancel,
-        },
-    )
-    .expect("cancel latest run");
-    assert_eq!(
-        RunIntake::get_latest_active(&db, &first.session)
-            .expect("recover remaining active")
-            .expect("first run remains active")
-            .run
-            .run_id,
-        first.run_id
-    );
+    assert_eq!(recovered.run.run_id, first.run_id);
 
     RunIntake::control(
         &db,
@@ -1010,8 +1105,17 @@ fn reconnect_lookup_returns_only_the_owner_latest_nonterminal_run() {
     assert!(RunIntake::get_latest_active(&db, &first.session)
         .expect("recover with no active run")
         .is_none());
+
+    let mut second_request = request();
+    second_request.client_request_id = "latest-active-client-request".to_string();
+    second_request.session = Some(first.session.clone());
+    let second = RunIntake::start(&db, second_request).expect("second accepted run");
+    let recovered = RunIntake::get_latest_active(&db, &first.session)
+        .expect("recover replacement run")
+        .expect("replacement active run");
+    assert_eq!(recovered.run.run_id, second.run_id);
+
     crate::ai_runtime::model_gateway::clear_abort(&first.run_id);
-    crate::ai_runtime::model_gateway::clear_abort(&second.run_id);
 }
 
 #[test]
@@ -1290,6 +1394,96 @@ fn minimal_intake_resolves_a_direct_offline_answer_envelope() {
 }
 
 #[test]
+fn input_submission_resumes_the_same_run_and_replay_is_noop() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在查询".into(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("running");
+    let required = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: running.state_version(),
+            event_type: RunEventType::InputRequired,
+            payload: RunEventPayload::InputRequired {
+                input_id: "location-test".into(),
+                input_kind: "location".into(),
+                fields: vec!["city".into()],
+                prompt: "请告诉我城市".into(),
+            },
+        },
+    )
+    .expect("input request");
+    let session = accepted.session.clone();
+    let mut values = std::collections::BTreeMap::new();
+    values.insert("city".into(), "上海".into());
+    let outcome = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: required.state_version(),
+            action: RunControlAction::SubmitInput {
+                input_id: "location-test".into(),
+                values: values.clone(),
+            },
+        },
+        &RecordingSink::default(),
+    )
+    .expect("input submission");
+    assert_eq!(
+        outcome,
+        super::run_intake::NormalRunControlOutcome::InputProvided
+    );
+    let replay = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: required.state_version(),
+            action: RunControlAction::SubmitInput {
+                input_id: "location-test".into(),
+                values,
+            },
+        },
+        &RecordingSink::default(),
+    )
+    .expect("replayed input");
+    assert_eq!(replay, super::run_intake::NormalRunControlOutcome::Noop);
+    let snapshot = RunIntake::get(&db, &session, &accepted.run_id)
+        .expect("snapshot")
+        .expect("run exists");
+    assert_eq!(snapshot.run.state, RunState::Running);
+    assert!(snapshot.run.pending_input.is_none());
+}
+
+#[test]
 fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted run");
@@ -1437,7 +1631,7 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
 }
 
 #[test]
-fn rejection_consumes_the_owned_frozen_plan_without_dispatching_it() {
+fn rejected_confirmation_cancels_without_write() {
     let (db, accepted, confirmation_id, awaiting_state_version) =
         accepted_run_awaiting_frozen_change_confirmation();
 
@@ -1457,20 +1651,29 @@ fn rejection_consumes_the_owned_frozen_plan_without_dispatching_it() {
     let rejected = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("get rejected run")
         .expect("rejected run exists");
-    assert_eq!(rejected.run.state, RunState::Running);
+    assert_eq!(rejected.run.state, RunState::Cancelled);
     assert!(rejected.run.pending_confirmation.is_none());
+    assert!(rejected.run.final_message_id.is_none());
     assert_eq!(
-        serde_json::to_value(rejected.events.last().expect("resumed event"))
-            .expect("serialize resumed event")["type"],
-        "resumed"
+        serde_json::to_value(rejected.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["type"],
+        "cancelled"
+    );
+    assert_eq!(
+        serde_json::to_value(rejected.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["payload"]["reason"],
+        "user_rejected_change"
     );
     db.with_read_conn(|conn| {
-        let status: String = conn.query_row(
-            "SELECT status FROM agent_run_confirmations WHERE confirmation_id = ?1",
+        let (status, assistant_messages): (String, i64) = conn.query_row(
+            "SELECT c.status,
+                    (SELECT COUNT(*) FROM session_messages WHERE role = 'assistant')
+             FROM agent_run_confirmations c WHERE c.confirmation_id = ?1",
             [&confirmation_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         assert_eq!(status, "rejected");
+        assert_eq!(assistant_messages, 0);
         Ok(())
     })
     .expect("confirmation rejected atomically");
@@ -1707,6 +1910,66 @@ fn web_enabled_time_sensitive_movie_question_enters_tool_loop() {
 }
 
 #[test]
+fn completed_conversation_accepts_a_third_current_movie_turn() {
+    use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
+
+    let db = Database::open_in_memory().expect("database");
+    upsert_web_evidence_provider(
+        &db,
+        &WebEvidenceProviderInput {
+            id: "generic-search".into(),
+            name: "Generic Search".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
+            transport_config_json: r#"{"command":"/bin/true"}"#.into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(r#"{"tool":"web_search"}"#.into()),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .expect("generic Web provider");
+    let mut first = request();
+    first.client_request_id = "three-turn-first".into();
+    first.turn.message = "你好？".into();
+    let first = RunIntake::start(&db, first).expect("first turn accepted");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE run_id = ?1",
+            [&first.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("complete first turn");
+
+    let mut second = request();
+    second.client_request_id = "three-turn-second".into();
+    second.session = Some(first.session.clone());
+    second.turn.message = "今天是几月几日？".into();
+    let second = RunIntake::start(&db, second).expect("second turn accepted");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE run_id = ?1",
+            [&second.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("complete second turn");
+
+    let mut third = request();
+    third.client_request_id = "three-turn-third".into();
+    third.session = Some(first.session);
+    third.web_enabled = true;
+    third.turn.message = "最近有什么好看的电影上映吗？".into();
+
+    let accepted = RunIntake::start(&db, third).expect("third turn accepted");
+    let persisted = AgentRunRepository::get(&db, &accepted.run_id)
+        .expect("load third Run")
+        .expect("third Run persisted");
+    assert_eq!(persisted.run.state, RunState::Accepted);
+}
+
+#[test]
 fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
     let mut request = request();
     request.web_enabled = false;
@@ -1796,6 +2059,59 @@ fn web_enabled_external_question_persists_the_web_capability_contract() {
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn web_enabled_current_fact_adds_domain_capability_without_external_read() {
+    for message in [
+        "上海未来一周天气",
+        "今天有什么重要新闻",
+        "最近有什么好看的电影",
+        "苹果现在股价多少",
+        "今晚湖人比赛几点",
+    ] {
+        let mut request = request();
+        request.web_enabled = true;
+        request.turn.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.domain.read"),
+            "{message} must carry web.domain.read"
+        );
+        assert!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message} must carry web.search"
+        );
+        assert!(
+            !envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "external.read"),
+            "{message} must not grant external.read"
+        );
+    }
+}
+
+#[test]
+fn web_disabled_current_fact_does_not_add_domain_capability() {
+    let mut request = request();
+    request.web_enabled = false;
+    request.turn.message = "上海未来一周天气".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.domain.read"));
 }
 
 #[test]
@@ -2011,6 +2327,82 @@ fn web_enabled_trusted_runtime_questions_remain_offline() {
         assert_eq!(
             envelope.web_reason,
             WebDecisionReason::TrustedRuntimeFact,
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn today_date_question_uses_trusted_runtime_without_web() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "你好，今天是几月几日？".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Runtime);
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.web_reason, WebDecisionReason::TrustedRuntimeFact);
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn recent_movie_question_freezes_date_and_location() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "最近有什么好看的电影".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Entertainment);
+    assert_eq!(
+        envelope.fresh_fact.location_requirement,
+        crate::ai_runtime::run_contract::LocationRequirement::City
+    );
+    assert!(
+        envelope.fresh_fact.window_start.is_some(),
+        "current movie research must freeze a start date"
+    );
+    assert!(
+        envelope.fresh_fact.window_end.is_some(),
+        "current movie research must freeze an end date"
+    );
+}
+
+#[test]
+fn web_disabled_current_fact_keeps_domain_without_web_capability_or_satisfied_verification() {
+    for message in [
+        "上海未来一周天气",
+        "今天有什么重要新闻",
+        "最近有什么好看的电影",
+        "苹果现在股价多少",
+        "今晚湖人比赛几点",
+    ] {
+        let mut request = request();
+        request.web_enabled = false;
+        request.turn.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_ne!(
+            envelope.fresh_fact.domain,
+            FreshFactDomain::None,
+            "{message}"
+        );
+        assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
+        assert!(
+            !envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message}"
+        );
+        assert_eq!(
+            envelope.verification_requirement,
+            VerificationRequirement::CurrentRunWeb,
             "{message}"
         );
     }

@@ -13,7 +13,7 @@ These adapters remain until a separately announced, reversible migration boundar
 
 ## Markdown document boundary
 
-The persisted boundary is `Markdown file -> frontmatter/title separation -> Preserve-aware editor ingest -> TipTap/ProseMirror document -> ProseMirror Markdown serializer -> Markdown file`. Unsupported syntax becomes a Preserve node carrying its original source. A serializer failure is recoverable and does not fall back to HTML/Turndown or overwrite committed Markdown.
+The persisted boundary is `Markdown file -> frontmatter/title separation -> Preserve-aware editor ingest -> TipTap/ProseMirror document -> ProseMirror Markdown serializer -> Markdown file`. Unsupported syntax becomes a Preserve node carrying its original source. A serializer failure is recoverable and does not fall back to HTML/Turndown or overwrite committed Markdown. The `editor_ingest` / `editor_export` contract profiles reuse the same production ingest and PM serializer paths so contract tests match actual editor behavior.
 
 The current editor ingress still uses its isolated Marked renderer internally to prepare TipTap HTML; it is not a second persistence path. `marked` also serves AI messages and read-only Markdown display. The editor persistence path does not call `getHTML()` or Turndown. Replacing editor ingress with a ProseMirror MarkdownParser requires a complete custom-node parser and corpus migration before it can be claimed as complete.
 
@@ -69,9 +69,19 @@ Feed 与 AI 网页抓取的 URL 读取使用同一逐跳安全网门：每跳重
 
 通用 MCP 只开放另一条独立的 `external.read` 边界：`readOnlyHint=true` 只是服务端声明，不是 Iris 对第三方实现的证明；管理中心还会审查名称和递归输入 Schema，并要求用户对精确 provider/tool/schema 显式确认信任后才创建白名单 binding。Composer 必须为每个 normal-domain Run 显式选择 binding，Accept 事务会冻结用户信任位、binding hash、provider hash、transport/config、Schema、参数映射与输出策略。模型不能直接消费 discovery，也不能自行增权；classified、local-only、Skills 和隐式关键词均不能获得 `external.read`。运行中只执行冻结配置，并用 live provider hash/enablement 作撤销检查。输出仅接受最多 8,000 字符的文本或 JSON，证据摘录最多 2,000 字符；事件、审计和 checkpoint 不保存参数或原始输出。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现其声明。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
 
+## 当前事实领域只读能力
+
+天气、新闻、金融、影视和体育通过五个稳定只读工具（`weather_lookup`、`news_lookup`、
+`finance_lookup`、`entertainment_lookup`、`sports_lookup`）对外提供规范化 DTO。它们
+使用独立 `web.domain.read` capability，只读、无需变更确认，并受 Web 开关授权；不再与
+通用 `external.read` 的逐 Run 授权混用。provider 输出按白名单 output mapping 缩略为
+附录 D 字段，经过确定性验证后才进入当前 Run 的证据/最终化；原始 provider JSON 不进入
+事件、审计、错误或评测报告。失败关闭覆盖缺来源/时点、缺确认城市、陈旧天气/行情、
+影视缺 region/channel/date 与金融分析引入证据外数值。
+
 ## 凭据安全
 
-API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解密值由 `Zeroizing` 持有。日志、错误、事件、Run checkpoint 和诊断不包含 API Key、token、笔记正文或涉密路径。完整策略见 [SECURITY.md](./SECURITY.md)。
+API Key 使用本地 AES-256-GCM 加密存储，主密钥存于平台配置目录、密文存于应用数据目录（不使用操作系统凭据管理器，避免系统密码弹窗打断用户流畅度）；解密值由 `Zeroizing` 持有。日志、错误、事件、Run checkpoint 和诊断不包含 API Key、token、笔记正文或涉密路径。完整策略见 [SECURITY.md](./SECURITY.md)。
 
 ## CAS 版本快照加密
 
@@ -81,7 +91,7 @@ API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解�
 
 ## SQLite 与迁移
 
-当前共有 **70 组**增量迁移（`001` 至 `070`）。
+当前共有 **72 组**增量迁移（`001` 至 `072`）。
 
 Schema 只允许通过带 up/down 的增量迁移变更。`051_agent_harness_cutover` 使用 copy-transform-swap 将旧会话、任务、trace 和审计外键迁移到统一 Run 模型；运行中或暂停的旧任务被安全归档为 `cancelled` 并带 `cancelled_legacy` 原因。迁移不要求用户删除数据库重建。
 

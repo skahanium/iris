@@ -3936,11 +3936,15 @@ async fn execute_live_pilot_case(
     // local search. Reproduce that production precondition in the isolated
     // headless pilot rather than teaching the evaluator to fabricate evidence
     // after a tool call.
-    if execution_scenario.implicit_vault() == ImplicitVaultExpectation::Allowed
-        && matches!(
-            execution_scenario.evidence_group(),
-            EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
-        )
+    if matches!(
+        execution_scenario.evidence_group(),
+        EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
+    ) && (execution_scenario.implicit_vault() == ImplicitVaultExpectation::Allowed
+        || !execution_scenario
+            .manifest
+            .local_authorization
+            .explicit_reference_ids
+            .is_empty())
     {
         prepared
             .state
@@ -5782,7 +5786,12 @@ async fn execute_headless_core_case_with_local_body(
             .required_sources
             .iter()
             .any(|source| source.kind == SourceKind::Local);
-    if needs_implicit_vault_prefetch {
+    let needs_explicit_vault_index = !scenario
+        .manifest
+        .local_authorization
+        .explicit_reference_ids
+        .is_empty();
+    if needs_implicit_vault_prefetch || needs_explicit_vault_index {
         state
             .db
             .with_conn(|connection| {
@@ -6909,6 +6918,66 @@ pub(crate) fn live_pilot_visible_answer_violates_attribution_boundary(
     exposes_protocol || attributes_web_to_user
 }
 
+/// Fixed current-fact movie follow-up scenario date. The scenario is frozen
+/// so the evaluator never depends on the host machine's real clock.
+#[cfg(test)]
+pub(crate) const CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE: &str = "2026-08-18";
+
+/// The only movie entities the fixed current-fact scenario permits.
+#[cfg(test)]
+pub(crate) const CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES: [&str; 2] =
+    ["《上海往事》", "《夏日回声》"];
+
+/// A dated decoy that must not be cited: an old movie without a Shanghai
+/// cinema/date binding.
+#[cfg(test)]
+pub(crate) const CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE: &str = "《老城旧梦》";
+
+/// Verify a current-fact movie answer only cites entities from the allowed
+/// evidence set and does not introduce the decoy old movie.
+#[cfg(test)]
+pub(crate) fn current_fact_movie_follow_up_answer_grounded(
+    answer: &str,
+    allowed_movies: &[&str],
+    decoy_movie: &str,
+) -> bool {
+    let normalized = answer.to_lowercase();
+    let mentions_any_allowed = allowed_movies
+        .iter()
+        .any(|movie| normalized.contains(&movie.to_lowercase()));
+    mentions_any_allowed && !normalized.contains(&decoy_movie.to_lowercase())
+}
+
+/// Verify an answer that follows real `web_search` tool use does not deny that
+/// the current Run has Web/fetch capability.
+#[cfg(test)]
+pub(crate) fn current_fact_answer_does_not_deny_web_after_search(
+    answer: &str,
+    tool_calls: &[&str],
+) -> bool {
+    let used_web_search = tool_calls
+        .iter()
+        .any(|tool| matches!(*tool, "web_search" | "web.search" | "web.fetch"));
+    if !used_web_search {
+        return true;
+    }
+    let normalized = answer.to_lowercase();
+    ![
+        "没有联网",
+        "不能联网",
+        "不具备联网",
+        "没有抓取能力",
+        "无法抓取",
+        "无法访问网络",
+        "no web access",
+        "cannot access the web",
+        "no internet",
+        "cannot browse",
+    ]
+    .iter()
+    .any(|denial| normalized.contains(denial))
+}
+
 #[cfg(test)]
 fn expected_fact_claim(scenario: &CoreScenario, fact_id: &str) -> String {
     format!("{fact_id}=value-{}", scenario.case_id())
@@ -7480,8 +7549,18 @@ fn probe_history_level(level: u32) -> Result<bool, EvalContractError> {
             false,
         );
         request.session = Some(session_ref.clone());
-        crate::ai_runtime::run_intake::RunIntake::start(&state.db, request)
+        let accepted = crate::ai_runtime::run_intake::RunIntake::start(&state.db, request)
             .map_err(|_| EvalContractError::new("boundary_history_failed"))?;
+        crate::ai_runtime::run_intake::RunIntake::control(
+            &state.db,
+            crate::ai_runtime::run_contract::AssistantRunControlRequest {
+                session: accepted.session,
+                run_id: accepted.run_id,
+                expected_state_version: accepted.state_version,
+                action: crate::ai_runtime::run_contract::RunControlAction::Cancel,
+            },
+        )
+        .map_err(|_| EvalContractError::new("boundary_history_failed"))?;
     }
     let mut current = boundary_request(
         format!("boundary-history-current-{level}"),
@@ -7499,9 +7578,9 @@ fn probe_history_level(level: u32) -> Result<bool, EvalContractError> {
         &accepted.run_id,
     )
     .map_err(|_| EvalContractError::new("boundary_context_failed"))?;
-    // Intake-only turns are deliberately absent from the committed history
-    // projection. The schedule still verifies the documented six-turn intake
-    // bound; its next level must be rejected as a capacity boundary.
+    // Cancelled intake-only turns are deliberately absent from the committed
+    // history projection. The schedule still verifies the documented
+    // six-turn intake bound; its next level is a failed capacity observation.
     Ok(context.recent_messages.is_empty() && level <= 6)
 }
 
@@ -9281,8 +9360,18 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
             false,
         );
         history.session = Some(session_ref.clone());
-        crate::ai_runtime::run_intake::RunIntake::start(&state.db, history)
+        let accepted = crate::ai_runtime::run_intake::RunIntake::start(&state.db, history)
             .map_err(|_| EvalContractError::new("combined_history_failed"))?;
+        crate::ai_runtime::run_intake::RunIntake::control(
+            &state.db,
+            crate::ai_runtime::run_contract::AssistantRunControlRequest {
+                session: accepted.session,
+                run_id: accepted.run_id,
+                expected_state_version: accepted.state_version,
+                action: crate::ai_runtime::run_contract::RunControlAction::Cancel,
+            },
+        )
+        .map_err(|_| EvalContractError::new("combined_history_failed"))?;
     }
     state
         .db
@@ -9372,8 +9461,8 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
         &accepted.run_id,
     )
     .map_err(|_| EvalContractError::new("combined_context_failed"))?;
-    // The eight setup Runs remain unfinished and must stay out of recent
-    // history. Thirteen completed pairs prove that the current context keeps
+    // The eight cancelled setup Runs must stay out of recent history.
+    // Thirteen completed pairs prove that the current context keeps
     // the 12 newest coherent user/assistant pairs under the 8k budget and
     // summarizes only the older complete pair.
     let history_tokens = context

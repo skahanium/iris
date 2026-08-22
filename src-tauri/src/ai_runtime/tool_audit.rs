@@ -395,6 +395,7 @@ mod tests {
                     material_needs: vec![MaterialNeed::Reference],
                     required_capabilities: vec![],
                     explicit_constraints: vec![],
+                    fresh_fact: Default::default(),
                 },
             },
         )

@@ -2,576 +2,573 @@
  * Shared Markdown prose — editor, AI conversation + feed reader surfaces.
  * Surfaces: [data-prose-surface="editor" | "conversation" | "feed"]
  */
-@layer components {
-  :root {
-    --font-ui: var(--font-sans);
-    --font-prose:
-      "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Inter, sans-serif;
-    --font-title: var(--font-sans);
-    --font-mono: "JetBrains Mono", ui-monospace, monospace;
-    --editor-zoom: 1;
+:root {
+  --font-ui: var(--font-sans);
+  --font-prose:
+    "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Inter, sans-serif;
+  --font-title: var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --editor-zoom: 1;
 
-    /* Measure stays 52rem: narrowing felt cramped in real writing. */
-    --prose-measure: 52rem;
-    /* Agent 主区阅读内容列专用：文档/侧车仍用 --prose-measure（52rem），
+  /* Measure stays 52rem: narrowing felt cramped in real writing. */
+  --prose-measure: 52rem;
+  /* Agent 主区阅读内容列专用：文档/侧车仍用 --prose-measure（52rem），
        focus 独占主区、文档隐藏，允许更宽的内容列以容纳代码与表格。 */
-    --ai-focus-measure: 70rem;
-    --prose-size-editor: 1rem;
-    --prose-size-chat: 15px;
-    --prose-line-height: 1.7;
-    --prose-line-height-chat: 1.55;
-    --prose-letter-spacing: 0.01em;
-    --prose-block-gap: 0.875em;
-    --prose-heading-gap-before: 1.85em;
-    --prose-heading-gap-before-h3: 1.35em;
-    --prose-heading-gap-after: 0.45em;
-    --prose-title-gap: 2.25rem;
-    --prose-h1: 1.75rem;
-    --prose-h2: 1.4375rem;
-    --prose-h3: 1.1875rem;
-    --prose-h4: 1.0625rem;
-    --prose-h5: 1rem;
-    --prose-heading-line-height: 1.35;
-    --prose-link: var(--primary);
-    --prose-wiki: var(--brand);
-    --callout-note: var(--primary);
-    --callout-tip: var(--brand);
-    --callout-warning: var(--warning);
-    --callout-danger: var(--destructive);
-  }
-
-  .iris-markdown-content {
-    font-family: var(--font-prose);
-    font-feature-settings:
-      "kern" 1,
-      "liga" 1;
-    font-variant-numeric: proportional-nums;
-  }
-
-  .iris-markdown-content > * + * {
-    margin-top: var(--prose-block-gap);
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content > * + * {
-    margin-top: calc(var(--prose-block-gap) * 0.85);
-  }
-
-  .iris-markdown-content a:not(.ai-citation):not(.wiki-link) {
-    color: hsl(var(--prose-link));
-    text-decoration-line: underline;
-    text-decoration-color: hsl(var(--prose-link) / 0.4);
-    text-underline-offset: 2px;
-    transition: text-decoration-color var(--motion-fast) var(--motion-ease);
-  }
-
-  .iris-markdown-content a:not(.ai-citation):not(.wiki-link):hover {
-    text-decoration-color: hsl(var(--prose-link) / 0.7);
-  }
-
-  .iris-markdown-content sup.ai-citation-wrap {
-    line-height: 0;
-    vertical-align: super;
-    font-size: 0.75em;
-    font-weight: 500;
-  }
-
-  .iris-markdown-content a.ai-citation {
-    display: inline-block;
-    min-width: 1.1em;
-    padding: 0.05em 0.35em;
-    border-radius: 0.25rem;
-    font-size: var(--text-caption);
-    font-weight: 500;
-    line-height: 1.2;
-    text-decoration: none;
-    color: hsl(var(--ai-citation));
-    background: hsl(var(--ai-citation) / 0.12);
-    transition:
-      color var(--motion-fast) var(--motion-ease),
-      background-color var(--motion-fast) var(--motion-ease);
-  }
-
-  .iris-markdown-content a.ai-citation:hover {
-    color: hsl(var(--ai-citation-hover));
-    background: hsl(var(--ai-citation) / 0.2);
-  }
-
-  .iris-markdown-content code {
-    @apply rounded px-1.5 py-0.5 font-mono text-[0.9em];
-    background: hsl(var(--editor-code-bg));
-    color: hsl(var(--editor-code-fg));
-  }
-
-  .iris-markdown-content pre {
-    @apply overflow-x-auto rounded-lg border border-border p-4 font-mono text-sm;
-    line-height: 1.5;
-    background: hsl(var(--editor-code-bg));
-    color: hsl(var(--editor-code-fg));
-  }
-
-  .iris-markdown-content pre code {
-    background: transparent;
-    padding: 0;
-    color: inherit;
-  }
-
-  .iris-markdown-content blockquote:not([data-callout-type]) {
-    @apply border-l-[3px] border-border pl-4 text-editor-muted;
-    font-style: normal;
-  }
-
-  .iris-markdown-content blockquote[data-callout-type] {
-    @apply rounded-md border border-border px-4 py-3 text-editor-ink;
-    border-left-width: 4px;
-  }
-
-  .iris-markdown-content blockquote[data-callout-type] > p:first-child {
-    @apply text-sm font-semibold;
-  }
-
-  .iris-markdown-content blockquote[data-callout-type="note"],
-  .iris-markdown-content blockquote[data-callout-type="info"] {
-    border-left-color: hsl(var(--callout-note));
-    background: hsl(var(--callout-note) / 0.08);
-  }
-
-  .iris-markdown-content blockquote[data-callout-type="tip"] {
-    border-left-color: hsl(var(--callout-tip));
-    background: hsl(var(--callout-tip) / 0.1);
-  }
-
-  .iris-markdown-content blockquote[data-callout-type="warning"] {
-    border-left-color: hsl(var(--callout-warning));
-    background: hsl(var(--callout-warning) / 0.1);
-  }
-
-  .iris-markdown-content blockquote[data-callout-type="danger"] {
-    border-left-color: hsl(var(--callout-danger));
-    background: hsl(var(--callout-danger) / 0.08);
-  }
-
-  .iris-markdown-content blockquote[data-callout-type="example"] {
-    @apply border-l-muted-foreground bg-muted/30;
-  }
-
-  .iris-markdown-content blockquote > p {
-    margin: 0;
-  }
-
-  .iris-markdown-content [data-footnote-ref] {
-    @apply cursor-pointer text-primary;
-  }
-
-  .iris-markdown-content [data-footnote-ref] a {
-    @apply rounded px-0.5 no-underline hover:bg-primary/10;
-  }
-
-  .iris-markdown-content [data-footnote-def] {
-    @apply mt-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm text-editor-muted;
-  }
-
-  .iris-markdown-content hr {
-    @apply my-4 border-0 border-t border-border;
-    height: 0;
-    background: transparent;
-  }
-
-  .iris-markdown-content img:not(.iris-editor-media-image) {
-    @apply my-3 max-w-full rounded-md border border-border;
-  }
-
-  .iris-markdown-content img.iris-editor-media-image {
-    @apply my-0 max-w-full border-0;
-  }
-
-  .iris-markdown-content table {
-    @apply w-full min-w-full border-collapse text-sm;
-  }
-
-  .iris-markdown-content th {
-    @apply border border-border bg-muted/45 px-2.5 py-1.5 text-left font-semibold;
-  }
-
-  .iris-markdown-content td {
-    @apply border border-border px-2.5 py-1.5 align-top;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content table {
-    @apply text-xs;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content th {
-    @apply bg-muted/50 px-2 py-1;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content td {
-    @apply px-2 py-1;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content
-    tr:nth-child(even)
-    td {
-    @apply bg-muted/20;
-  }
-
-  .iris-markdown-content .wiki-link {
-    cursor: pointer;
-    color: hsl(var(--prose-wiki));
-    text-decoration-line: underline;
-    text-decoration-style: dotted;
-    text-decoration-color: hsl(var(--prose-wiki) / 0.45);
-    text-underline-offset: 3px;
-  }
-
-  .iris-markdown-content .wiki-link:hover {
-    text-decoration-color: hsl(var(--prose-wiki) / 0.75);
-  }
-
-  .iris-markdown-content .wiki-link-bracket {
-    @apply text-editor-muted/50;
-  }
-
-  .iris-markdown-content .ai-table-wrap {
-    @apply my-2.5 max-w-full overflow-x-auto;
-  }
-
-  /* ── Editor surface ── */
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"] {
-    font-size: calc(var(--prose-size-editor) * var(--editor-zoom));
-    line-height: var(--prose-line-height);
-    letter-spacing: var(--prose-letter-spacing);
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > p,
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > :is(ul, ol)
-    li,
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > blockquote {
-    overflow-wrap: break-word;
-    word-break: normal;
-    line-break: loose;
-    text-align: justify;
-    text-justify: inter-character;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
-    @apply relative text-editor-ink;
-    line-height: var(--prose-heading-line-height);
-    text-align: left;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
-    margin-top: var(--prose-heading-gap-before);
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > :is(h3, h4, h5, h6) {
-    margin-top: var(--prose-heading-gap-before-h3);
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6):first-child {
-    margin-top: 0;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6)
-    + * {
-    margin-top: var(--prose-heading-gap-after);
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > h1:not(.iris-doc-title) {
-    font-size: calc(var(--prose-h1) * var(--editor-zoom));
-    letter-spacing: 0;
-    font-weight: 700;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > h2 {
-    font-size: calc(var(--prose-h2) * var(--editor-zoom));
-    letter-spacing: 0;
-    font-weight: 600;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > h3 {
-    font-size: calc(var(--prose-h3) * var(--editor-zoom));
-    font-weight: 600;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > h4 {
-    font-size: calc(var(--prose-h4) * var(--editor-zoom));
-    font-weight: 600;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > h5,
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > h6 {
-    font-size: calc(var(--prose-h5) * var(--editor-zoom));
-    font-weight: 500;
-    color: hsl(var(--editor-muted));
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > pre {
-    font-size: calc(0.875rem * var(--editor-zoom));
-  }
-
-  /* ── Feed reader surface ── */
-
-  [data-prose-surface="feed"].iris-markdown-content {
-    font-size: var(--prose-size-editor);
-    line-height: var(--prose-line-height);
-    letter-spacing: var(--prose-letter-spacing);
-    min-width: 0;
-    overflow-wrap: break-word;
-    @apply text-foreground;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content
-    :where(p, li, blockquote, td, th) {
-    min-width: 0;
-    overflow-wrap: break-word;
-    word-break: normal;
-    line-break: loose;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content
-    > :is(h1, h2, h3, h4, h5, h6) {
-    @apply text-foreground;
-    line-height: var(--prose-heading-line-height);
-    text-align: left;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content
-    > :is(h1, h2, h3, h4, h5, h6) {
-    margin-top: var(--prose-heading-gap-before);
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > :is(h3, h4, h5, h6) {
-    margin-top: var(--prose-heading-gap-before-h3);
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content
-    > :is(h1, h2, h3, h4, h5, h6):first-child {
-    margin-top: 0;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content
-    > :is(h1, h2, h3, h4, h5, h6)
-    + * {
-    margin-top: var(--prose-heading-gap-after);
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > h1 {
-    font-size: var(--prose-h1);
-    font-weight: 700;
-    letter-spacing: 0;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > h2 {
-    font-size: var(--prose-h2);
-    font-weight: 600;
-    letter-spacing: 0;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > h3 {
-    font-size: var(--prose-h3);
-    font-weight: 600;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > h4 {
-    font-size: var(--prose-h4);
-    font-weight: 600;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > :is(h5, h6) {
-    font-size: var(--prose-h5);
-    font-weight: 500;
-    color: hsl(var(--muted-foreground));
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > :is(ul, ol) {
-    padding-left: 1.5rem;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > ul {
-    list-style: disc;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content > ol {
-    list-style: decimal;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content li + li {
-    margin-top: 0.3em;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content .feed-image-block {
-    display: flex;
-    justify-content: center;
-    margin-block: 1.5rem;
-  }
-
-  [data-prose-surface="feed"].iris-markdown-content .feed-image-block > img {
-    display: block;
-    width: auto;
-    max-width: 100%;
-    height: auto;
-    margin: 0 auto;
-  }
-
-  /* ── Conversation surface ── */
-
-  .ai-message-body.iris-markdown-content[data-prose-surface="conversation"] {
-    font-size: var(--prose-size-chat);
-    line-height: var(--prose-line-height-chat);
-    letter-spacing: var(--prose-letter-spacing);
-    min-width: 0;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    @apply text-foreground;
-  }
-
-  /* Keep @-mention green above conversation prose `text-foreground`. */
-  .ai-message-body.iris-markdown-content[data-prose-surface="conversation"]
-    .ai-display-mention {
-    color: hsl(var(--ai-mention));
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content
-    :where(p, li, blockquote, td, th) {
-    min-width: 0;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content code {
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    white-space: normal;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content pre {
-    max-width: 100%;
-    overflow-x: auto;
-    white-space: pre;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content pre code {
-    display: block;
-    overflow-wrap: normal;
-    word-break: normal;
-    white-space: pre;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content .ai-code-block {
-    position: relative;
-    max-width: 100%;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content .ai-code-block pre {
-    padding-top: 2.75rem;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content
-    .ai-code-copy-button {
-    position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
-    z-index: 1;
-    display: inline-flex;
-    min-height: 1.75rem;
-    align-items: center;
-    justify-content: center;
-    border-radius: 0.375rem;
-    @apply border border-border bg-background/90 px-2 text-xs font-medium text-muted-foreground shadow-floating transition-colors hover:bg-muted hover:text-foreground;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content h1 {
-    @apply mb-3 mt-4 text-lg font-semibold;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content h2 {
-    @apply mb-2.5 mt-3.5 text-base font-semibold;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content h3 {
-    @apply mb-2 mt-3 text-sm font-semibold;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content h4,
-  [data-prose-surface="conversation"].iris-markdown-content h5,
-  [data-prose-surface="conversation"].iris-markdown-content h6 {
-    @apply mb-1.5 mt-2.5 text-sm font-medium;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content ol {
-    @apply mb-2 list-decimal pl-5;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content ol li,
-  [data-prose-surface="conversation"].iris-markdown-content ul li {
-    @apply mb-0.5;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content ul {
-    @apply mb-2 list-disc pl-5;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content
-    input[type="checkbox"] {
-    @apply mr-1.5 h-3.5 w-3.5 rounded border-border align-middle accent-primary;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content li.task-list-item {
-    @apply list-none;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content strong {
-    @apply font-bold;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content em {
-    @apply italic;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content del {
-    @apply text-muted-foreground line-through;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content ins {
-    @apply text-primary underline;
-  }
-
-  [data-prose-surface="conversation"].iris-markdown-content
-    a:not(.ai-citation):not([href^="#iris-cite-"]) {
-    @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
-  }
+  --ai-focus-measure: 70rem;
+  --prose-size-editor: 1rem;
+  --prose-size-chat: 15px;
+  --prose-line-height: 1.7;
+  --prose-line-height-chat: 1.55;
+  --prose-letter-spacing: 0.01em;
+  --prose-block-gap: 0.875em;
+  --prose-heading-gap-before: 1.85em;
+  --prose-heading-gap-before-h3: 1.35em;
+  --prose-heading-gap-after: 0.45em;
+  --prose-title-gap: 2.25rem;
+  --prose-h1: 1.75rem;
+  --prose-h2: 1.4375rem;
+  --prose-h3: 1.1875rem;
+  --prose-h4: 1.0625rem;
+  --prose-h5: 1rem;
+  --prose-heading-line-height: 1.35;
+  --prose-link: var(--primary);
+  --prose-wiki: var(--brand);
+  --callout-note: var(--primary);
+  --callout-tip: var(--brand);
+  --callout-warning: var(--warning);
+  --callout-danger: var(--destructive);
+}
+
+.iris-markdown-content {
+  font-family: var(--font-prose);
+  font-feature-settings:
+    "kern" 1,
+    "liga" 1;
+  font-variant-numeric: proportional-nums;
+}
+
+.iris-markdown-content > * + * {
+  margin-top: var(--prose-block-gap);
+}
+
+[data-prose-surface="conversation"].iris-markdown-content > * + * {
+  margin-top: calc(var(--prose-block-gap) * 0.85);
+}
+
+.iris-markdown-content a:not(.ai-citation):not(.wiki-link) {
+  color: hsl(var(--prose-link));
+  text-decoration-line: underline;
+  text-decoration-color: hsl(var(--prose-link) / 0.4);
+  text-underline-offset: 2px;
+  transition: text-decoration-color var(--motion-fast) var(--motion-ease);
+}
+
+.iris-markdown-content a:not(.ai-citation):not(.wiki-link):hover {
+  text-decoration-color: hsl(var(--prose-link) / 0.7);
+}
+
+.iris-markdown-content sup.ai-citation-wrap {
+  line-height: 0;
+  vertical-align: super;
+  font-size: 0.75em;
+  font-weight: 500;
+}
+
+.iris-markdown-content a.ai-citation {
+  display: inline-block;
+  min-width: 1.1em;
+  padding: 0.05em 0.35em;
+  border-radius: 0.25rem;
+  font-size: var(--text-caption);
+  font-weight: 500;
+  line-height: 1.2;
+  text-decoration: none;
+  color: hsl(var(--ai-citation));
+  background: hsl(var(--ai-citation) / 0.12);
+  transition:
+    color var(--motion-fast) var(--motion-ease),
+    background-color var(--motion-fast) var(--motion-ease);
+}
+
+.iris-markdown-content a.ai-citation:hover {
+  color: hsl(var(--ai-citation-hover));
+  background: hsl(var(--ai-citation) / 0.2);
+}
+
+.iris-markdown-content code {
+  @apply rounded px-1.5 py-0.5 font-mono text-[0.9em];
+  background: hsl(var(--editor-code-bg));
+  color: hsl(var(--editor-code-fg));
+}
+
+.iris-markdown-content pre {
+  @apply overflow-x-auto rounded-lg border border-border p-4 font-mono text-sm;
+  line-height: 1.5;
+  background: hsl(var(--editor-code-bg));
+  color: hsl(var(--editor-code-fg));
+}
+
+.iris-markdown-content pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.iris-markdown-content blockquote:not([data-callout-type]) {
+  @apply border-l-[3px] border-border pl-4 text-editor-muted;
+  font-style: normal;
+}
+
+.iris-markdown-content blockquote[data-callout-type] {
+  @apply rounded-md border border-border px-4 py-3 text-editor-ink;
+  border-left-width: 4px;
+}
+
+.iris-markdown-content blockquote[data-callout-type] > p:first-child {
+  @apply text-sm font-semibold;
+}
+
+.iris-markdown-content blockquote[data-callout-type="note"],
+.iris-markdown-content blockquote[data-callout-type="info"] {
+  border-left-color: hsl(var(--callout-note));
+  background: hsl(var(--callout-note) / 0.08);
+}
+
+.iris-markdown-content blockquote[data-callout-type="tip"] {
+  border-left-color: hsl(var(--callout-tip));
+  background: hsl(var(--callout-tip) / 0.1);
+}
+
+.iris-markdown-content blockquote[data-callout-type="warning"] {
+  border-left-color: hsl(var(--callout-warning));
+  background: hsl(var(--callout-warning) / 0.1);
+}
+
+.iris-markdown-content blockquote[data-callout-type="danger"] {
+  border-left-color: hsl(var(--callout-danger));
+  background: hsl(var(--callout-danger) / 0.08);
+}
+
+.iris-markdown-content blockquote[data-callout-type="example"] {
+  @apply border-l-muted-foreground bg-muted/30;
+}
+
+.iris-markdown-content blockquote > p {
+  margin: 0;
+}
+
+.iris-markdown-content [data-footnote-ref] {
+  @apply cursor-pointer text-primary;
+}
+
+.iris-markdown-content [data-footnote-ref] a {
+  @apply rounded px-0.5 no-underline hover:bg-primary/10;
+}
+
+.iris-markdown-content [data-footnote-def] {
+  @apply mt-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm text-editor-muted;
+}
+
+.iris-markdown-content hr {
+  @apply my-4 border-0 border-t border-border;
+  height: 0;
+  background: transparent;
+}
+
+.iris-markdown-content img:not(.iris-editor-media-image) {
+  @apply my-3 max-w-full rounded-md border border-border;
+}
+
+.iris-markdown-content img.iris-editor-media-image {
+  @apply my-0 max-w-full border-0;
+}
+
+.iris-markdown-content table {
+  @apply w-full min-w-full border-collapse text-sm;
+}
+
+.iris-markdown-content th {
+  @apply border border-border bg-muted/45 px-2.5 py-1.5 text-left font-semibold;
+}
+
+.iris-markdown-content td {
+  @apply border border-border px-2.5 py-1.5 align-top;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content table {
+  @apply text-xs;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content th {
+  @apply bg-muted/50 px-2 py-1;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content td {
+  @apply px-2 py-1;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content
+  tr:nth-child(even)
+  td {
+  @apply bg-muted/20;
+}
+
+.iris-markdown-content .wiki-link {
+  cursor: pointer;
+  color: hsl(var(--prose-wiki));
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: hsl(var(--prose-wiki) / 0.45);
+  text-underline-offset: 3px;
+}
+
+.iris-markdown-content .wiki-link:hover {
+  text-decoration-color: hsl(var(--prose-wiki) / 0.75);
+}
+
+.iris-markdown-content .wiki-link-bracket {
+  @apply text-editor-muted/50;
+}
+
+.iris-markdown-content .ai-table-wrap {
+  @apply my-2.5 max-w-full overflow-x-auto;
+}
+
+/* ── Editor surface ── */
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"] {
+  font-size: calc(var(--prose-size-editor) * var(--editor-zoom));
+  line-height: var(--prose-line-height);
+  letter-spacing: var(--prose-letter-spacing);
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > p,
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > :is(ul, ol)
+  li,
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > blockquote {
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-break: loose;
+  text-align: justify;
+  text-justify: inter-character;
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
+  @apply relative text-editor-ink;
+  line-height: var(--prose-heading-line-height);
+  text-align: left;
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
+  margin-top: var(--prose-heading-gap-before);
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > :is(h3, h4, h5, h6) {
+  margin-top: var(--prose-heading-gap-before-h3);
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6)
+  + * {
+  margin-top: var(--prose-heading-gap-after);
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > h1:not(.iris-doc-title) {
+  font-size: calc(var(--prose-h1) * var(--editor-zoom));
+  letter-spacing: 0;
+  font-weight: 700;
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > h2 {
+  font-size: calc(var(--prose-h2) * var(--editor-zoom));
+  letter-spacing: 0;
+  font-weight: 600;
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > h3 {
+  font-size: calc(var(--prose-h3) * var(--editor-zoom));
+  font-weight: 600;
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > h4 {
+  font-size: calc(var(--prose-h4) * var(--editor-zoom));
+  font-weight: 600;
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > h5,
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > h6 {
+  font-size: calc(var(--prose-h5) * var(--editor-zoom));
+  font-weight: 500;
+  color: hsl(var(--editor-muted));
+}
+
+.iris-editor-body
+  .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+  > pre {
+  font-size: calc(0.875rem * var(--editor-zoom));
+}
+
+/* ── Feed reader surface ── */
+
+[data-prose-surface="feed"].iris-markdown-content {
+  font-size: var(--prose-size-editor);
+  line-height: var(--prose-line-height);
+  letter-spacing: var(--prose-letter-spacing);
+  min-width: 0;
+  overflow-wrap: break-word;
+  @apply text-foreground;
+}
+
+[data-prose-surface="feed"].iris-markdown-content
+  :where(p, li, blockquote, td, th) {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-break: loose;
+}
+
+[data-prose-surface="feed"].iris-markdown-content
+  > :is(h1, h2, h3, h4, h5, h6) {
+  @apply text-foreground;
+  line-height: var(--prose-heading-line-height);
+  text-align: left;
+}
+
+[data-prose-surface="feed"].iris-markdown-content
+  > :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: var(--prose-heading-gap-before);
+}
+
+[data-prose-surface="feed"].iris-markdown-content > :is(h3, h4, h5, h6) {
+  margin-top: var(--prose-heading-gap-before-h3);
+}
+
+[data-prose-surface="feed"].iris-markdown-content
+  > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+
+[data-prose-surface="feed"].iris-markdown-content
+  > :is(h1, h2, h3, h4, h5, h6)
+  + * {
+  margin-top: var(--prose-heading-gap-after);
+}
+
+[data-prose-surface="feed"].iris-markdown-content > h1 {
+  font-size: var(--prose-h1);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+[data-prose-surface="feed"].iris-markdown-content > h2 {
+  font-size: var(--prose-h2);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+[data-prose-surface="feed"].iris-markdown-content > h3 {
+  font-size: var(--prose-h3);
+  font-weight: 600;
+}
+
+[data-prose-surface="feed"].iris-markdown-content > h4 {
+  font-size: var(--prose-h4);
+  font-weight: 600;
+}
+
+[data-prose-surface="feed"].iris-markdown-content > :is(h5, h6) {
+  font-size: var(--prose-h5);
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+[data-prose-surface="feed"].iris-markdown-content > :is(ul, ol) {
+  padding-left: 1.5rem;
+}
+
+[data-prose-surface="feed"].iris-markdown-content > ul {
+  list-style: disc;
+}
+
+[data-prose-surface="feed"].iris-markdown-content > ol {
+  list-style: decimal;
+}
+
+[data-prose-surface="feed"].iris-markdown-content li + li {
+  margin-top: 0.3em;
+}
+
+[data-prose-surface="feed"].iris-markdown-content .feed-image-block {
+  display: flex;
+  justify-content: center;
+  margin-block: 1.5rem;
+}
+
+[data-prose-surface="feed"].iris-markdown-content .feed-image-block > img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+/* ── Conversation surface ── */
+
+.ai-message-body.iris-markdown-content[data-prose-surface="conversation"] {
+  font-size: var(--prose-size-chat);
+  line-height: var(--prose-line-height-chat);
+  letter-spacing: var(--prose-letter-spacing);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  @apply text-foreground;
+}
+
+/* Keep @-mention green above conversation prose `text-foreground`. */
+.ai-message-body.iris-markdown-content[data-prose-surface="conversation"]
+  .ai-display-mention {
+  color: hsl(var(--ai-mention));
+}
+
+[data-prose-surface="conversation"].iris-markdown-content
+  :where(p, li, blockquote, td, th) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content pre code {
+  display: block;
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: pre;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content .ai-code-block {
+  position: relative;
+  max-width: 100%;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content .ai-code-block pre {
+  padding-top: 2.75rem;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content .ai-code-copy-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+  display: inline-flex;
+  min-height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem;
+  @apply border border-border bg-background/90 px-2 text-xs font-medium text-muted-foreground shadow-floating transition-colors hover:bg-muted hover:text-foreground;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content h1 {
+  @apply mb-3 mt-4 text-lg font-semibold;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content h2 {
+  @apply mb-2.5 mt-3.5 text-base font-semibold;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content h3 {
+  @apply mb-2 mt-3 text-sm font-semibold;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content h4,
+[data-prose-surface="conversation"].iris-markdown-content h5,
+[data-prose-surface="conversation"].iris-markdown-content h6 {
+  @apply mb-1.5 mt-2.5 text-sm font-medium;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content ol {
+  @apply mb-2 list-decimal pl-5;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content ol li,
+[data-prose-surface="conversation"].iris-markdown-content ul li {
+  @apply mb-0.5;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content ul {
+  @apply mb-2 list-disc pl-5;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content
+  input[type="checkbox"] {
+  @apply mr-1.5 h-3.5 w-3.5 rounded border-border align-middle accent-primary;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content li.task-list-item {
+  @apply list-none;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content strong {
+  @apply font-bold;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content em {
+  @apply italic;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content del {
+  @apply text-muted-foreground line-through;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content ins {
+  @apply text-primary underline;
+}
+
+[data-prose-surface="conversation"].iris-markdown-content
+  a:not(.ai-citation):not([href^="#iris-cite-"]) {
+  @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
 }

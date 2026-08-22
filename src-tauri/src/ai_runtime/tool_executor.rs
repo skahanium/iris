@@ -13,6 +13,68 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use std::collections::HashSet;
 
+const FRESH_DOMAIN_TOOL_NAMES: &[&str] = &[
+    "weather_lookup",
+    "news_lookup",
+    "finance_lookup",
+    "entertainment_lookup",
+    "sports_lookup",
+];
+
+/// Remove domain tools outside the one operation frozen for this Run and narrow
+/// the remaining tool's operation schema to that exact value.
+pub(crate) fn constrain_domain_tool_surface(
+    tools: Vec<ToolSpec>,
+    operation: Option<crate::ai_runtime::run_contract::DomainOperation>,
+    executable: bool,
+) -> Vec<ToolSpec> {
+    let allowed_tool = operation.map(domain_tool_name);
+    tools
+        .into_iter()
+        .filter_map(|mut tool| {
+            // News fallback is deliberately represented by `news_lookup` only:
+            // exposing generic web_search would let the model bypass the
+            // operation-specific DTO validation and evidence contract.
+            if operation == Some(crate::ai_runtime::run_contract::DomainOperation::NewsSearch)
+                && tool.name == "web_search"
+            {
+                return None;
+            }
+            if !FRESH_DOMAIN_TOOL_NAMES.contains(&tool.name.as_str()) {
+                return Some(tool);
+            }
+            if !executable || Some(tool.name.as_str()) != allowed_tool {
+                return None;
+            }
+            if let Some(schema) = tool
+                .input_schema
+                .get_mut("properties")
+                .and_then(serde_json::Value::as_object_mut)
+                .and_then(|properties| properties.get_mut("operation"))
+            {
+                schema["enum"] = serde_json::json!([operation.expect("checked above").as_str()]);
+            }
+            Some(tool)
+        })
+        .collect()
+}
+
+fn domain_tool_name(operation: crate::ai_runtime::run_contract::DomainOperation) -> &'static str {
+    use crate::ai_runtime::run_contract::DomainOperation;
+
+    match operation {
+        DomainOperation::WeatherCurrent | DomainOperation::WeatherForecast => "weather_lookup",
+        DomainOperation::NewsSearch => "news_lookup",
+        DomainOperation::FinanceQuote
+        | DomainOperation::FinanceMetrics
+        | DomainOperation::FinanceNews => "finance_lookup",
+        DomainOperation::EntertainmentNowPlaying
+        | DomainOperation::EntertainmentUpcoming
+        | DomainOperation::EntertainmentStreaming => "entertainment_lookup",
+        DomainOperation::SportsSchedule | DomainOperation::SportsScore => "sports_lookup",
+    }
+}
+
 // Tool Registry
 
 /// 内置工具注册表。所有工具在此声明。
@@ -35,6 +97,13 @@ impl ToolRegistry {
         let snapshots = crate::ai_runtime::mcp_external_tools::load_run_snapshots(db, run_id)?;
         let mut registry = Self::new();
         for snapshot in snapshots {
+            // Domain snapshots are consumed by the internal FreshDomainService,
+            // never exposed as Composer-selectable generic external tools.
+            if snapshot.capability
+                == crate::ai_runtime::mcp_external_tools::WEB_DOMAIN_READ_CAPABILITY
+            {
+                continue;
+            }
             if !crate::ai_runtime::mcp_external_tools::snapshot_contract_is_valid(&snapshot) {
                 return Err(AppError::msg("external_tool_binding_config_changed"));
             }
@@ -80,9 +149,17 @@ impl ToolRegistry {
                         .iter()
                         .any(|capability| capability.as_str() == "external.read")
                 } else {
+                    let web_domain_tool = crate::ai_runtime::tool_catalog::catalog_find(&tool.name)
+                        .is_some_and(|entry| {
+                            entry.required_capability_ids().contains(&"web.domain.read")
+                        });
+                    let web_search_authorized = capabilities
+                        .iter()
+                        .any(|capability| capability.as_str() == "web.search");
                     is_exposable_tool(&tool.name)
                         && crate::ai_runtime::tool_catalog::catalog_find(&tool.name)
                             .is_some_and(|entry| entry.is_authorized_by(capabilities))
+                        && (!web_domain_tool || web_search_authorized)
                 }
             })
             .filter(|tool| !only_auto || !tool.requires_confirmation)
@@ -168,7 +245,54 @@ impl Default for ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_runtime::run_contract::CapabilityId;
+    use crate::ai_runtime::run_contract::{CapabilityId, DomainOperation};
+
+    #[test]
+    fn domain_surface_exposes_only_the_frozen_operation_with_a_narrow_enum() {
+        let registry = ToolRegistry::new();
+        let tools = registry.tools_for_authorized_capabilities(
+            &[
+                CapabilityId::new("web.domain.read"),
+                CapabilityId::new("web.search"),
+            ],
+            true,
+        );
+
+        let constrained =
+            constrain_domain_tool_surface(tools, Some(DomainOperation::WeatherForecast), true);
+
+        let domain_tools = constrained
+            .iter()
+            .filter(|tool| FRESH_DOMAIN_TOOL_NAMES.contains(&tool.name.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(domain_tools.len(), 1);
+        assert_eq!(domain_tools[0].name, "weather_lookup");
+        assert_eq!(
+            domain_tools[0].input_schema["properties"]["operation"]["enum"],
+            serde_json::json!(["weather.forecast"])
+        );
+    }
+
+    #[test]
+    fn news_surface_hides_generic_web_search() {
+        let registry = ToolRegistry::new();
+        let tools = registry.tools_for_authorized_capabilities(
+            &[
+                CapabilityId::new("web.domain.read"),
+                CapabilityId::new("web.search"),
+            ],
+            true,
+        );
+
+        let constrained =
+            constrain_domain_tool_surface(tools, Some(DomainOperation::NewsSearch), true);
+        let names = constrained
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"news_lookup"));
+        assert!(!names.contains(&"web_search"));
+    }
 
     #[test]
     fn catalog_entries_are_policy_neutral() {
@@ -266,6 +390,118 @@ mod tests {
         );
 
         assert!(constrained.iter().any(|tool| tool.name == "spawn_subagent"));
+    }
+
+    #[test]
+    fn domain_snapshots_are_not_exposed_as_composer_external_tools() {
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "weather-mcp".into(),
+                name: "Weather MCP".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: "{}".into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+        )
+        .unwrap();
+        let reviewed = crate::ai_runtime::mcp_external_tools::review_discovered_tool(
+            "weather",
+            &serde_json::json!({"type":"object"}),
+            Some(true),
+        )
+        .unwrap();
+        let provider_config_hash =
+            crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&db)
+                .unwrap()
+                .into_iter()
+                .find(|provider| provider.id == "weather-mcp")
+                .unwrap()
+                .provider_config_hash;
+        let provider_launch_hash = crate::ai_runtime::mcp_host_runtime::frozen_provider_launch_hash(
+            "weather-mcp",
+            "stdio",
+            "{}",
+            "{}",
+        );
+        let operation = crate::ai_runtime::mcp_external_tools::DomainOperation::WeatherCurrent;
+        let output_mapping = crate::ai_runtime::mcp_external_tools::DomainOutputMapping {
+            records_path: "$.records".into(),
+            fields: [("sourceUrl".to_string(), "$.url".to_string())].into(),
+        };
+        let binding_config_hash = crate::ai_runtime::mcp_external_tools::test_binding_hash(
+            "weather-mcp",
+            &provider_config_hash,
+            &provider_launch_hash,
+            "weather",
+            &reviewed.input_schema,
+            operation,
+            &output_mapping,
+        );
+        crate::ai_runtime::mcp_external_tools::upsert_binding(
+            &db,
+            &crate::ai_runtime::mcp_external_tools::McpCapabilityBindingInput {
+                id: None,
+                provider_id: "weather-mcp".into(),
+                mcp_tool_name: "weather".into(),
+                input_schema: reviewed.input_schema.clone(),
+                argument_mapping: serde_json::json!({}),
+                domain_operation: Some(operation),
+                output_mapping: Some(output_mapping),
+                risk_class: "read_only".into(),
+                read_only: true,
+                user_trusted: true,
+                attested_binding_config_hash: binding_config_hash,
+            },
+            &reviewed,
+            &provider_config_hash,
+        )
+        .unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sessions (session_key, created_at, updated_at)
+                 VALUES ('domain-surface-session', datetime('now'), datetime('now'))",
+                [],
+            )?;
+            let session_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO agent_runs
+                 (run_id, client_request_id, session_id, turn_id, status, state_version,
+                  effect, effort, security_domain, risk, envelope_json, goal_summary,
+                  created_at, updated_at)
+                 VALUES ('run-with-domain', 'domain-client', ?1, 'domain-turn', 'accepted', 0,
+                         'answer', 'direct', 'normal', 'read_only', '{}', '',
+                         datetime('now'), datetime('now'))",
+                [session_id],
+            )?;
+            crate::ai_runtime::mcp_external_tools::freeze_domain_run_grants(
+                conn,
+                "run-with-domain",
+                &[operation],
+                None,
+            )
+        })
+        .unwrap();
+
+        let registry = ToolRegistry::for_run(&db, "run-with-domain").unwrap();
+        let surface = registry
+            .tools_for_authorized_capabilities(&[CapabilityId::new("external.read")], false);
+
+        assert!(
+            surface
+                .iter()
+                .all(|tool| !tool.name.starts_with("external_")),
+            "web.domain.read snapshots must not become Composer external tools"
+        );
+        assert!(
+            !surface.iter().any(|tool| tool.name == "weather_lookup"),
+            "without web.domain.read capability the built-in domain tool must not surface"
+        );
     }
 
     #[test]

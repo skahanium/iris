@@ -16,8 +16,9 @@ use super::normal_run_service::{
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
-    AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, ContextMode,
-    RunEventPayload, RunEventType, RunState, SecurityDomain,
+    AssistantRunAccepted, AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef,
+    AssistantTurnDraft, CapabilityId, ContextMode, Effort, RunEventPayload, RunEventType,
+    RunPresentationPayload, RunState, SecurityDomain,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
@@ -28,6 +29,7 @@ use crate::ai_types::{EndpointFamily, ProviderConfig};
 use crate::app::AppState;
 use crate::error::AppResult;
 use crate::llm::config::{LlmRoutingConfig, ModelReference, ProviderOverride};
+use crate::storage::db::Database;
 
 #[derive(Default)]
 struct RecordingSink {
@@ -40,6 +42,33 @@ impl RunEventSink for RecordingSink {
             .lock()
             .expect("recording sink lock")
             .push(serde_json::to_value(event)?);
+        Ok(())
+    }
+}
+
+struct AnswerCompleteDurabilityProbe<'a> {
+    db: &'a Database,
+    session: AssistantSessionRef,
+    run_id: String,
+    observed_durable_state: Mutex<Option<bool>>,
+}
+
+impl RunEventSink for AnswerCompleteDurabilityProbe<'_> {
+    fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
+        Ok(())
+    }
+
+    fn emit_presentation(&self, run_id: &str, payload: RunPresentationPayload) -> AppResult<()> {
+        if matches!(payload, RunPresentationPayload::AnswerComplete) {
+            assert_eq!(run_id, self.run_id);
+            let durable = RunIntake::get(self.db, &self.session, &self.run_id)
+                .expect("probe Run snapshot")
+                .is_some_and(|response| {
+                    response.run.state == RunState::Completed
+                        && response.run.final_message_id.is_some()
+                });
+            *self.observed_durable_state.lock().expect("probe lock") = Some(durable);
+        }
         Ok(())
     }
 }
@@ -68,6 +97,14 @@ fn web_tool_loop_request() -> AssistantRunStartRequest {
     let mut request = direct_request();
     request.client_request_id = "headless-normal-web-tool-loop".into();
     request.turn.message = "请联网核实 synthetic 的最新状态".into();
+    request.web_enabled = true;
+    request
+}
+
+fn direct_required_web_request() -> AssistantRunStartRequest {
+    let mut request = direct_request();
+    request.client_request_id = "headless-normal-web-direct-required".into();
+    request.turn.message = "When was the first iPhone announced?".into();
     request.web_enabled = true;
     request
 }
@@ -157,6 +194,10 @@ fn strict_web_follow_up_surface_keeps_only_vault_and_explicit_external_reads() {
 }
 
 fn install_headless_contract_mcp(state: &AppState) {
+    install_headless_contract_mcp_with_mode(state, "search-only");
+}
+
+fn install_headless_contract_mcp_with_mode(state: &AppState, mode: &str) {
     let (command, args) = if cfg!(windows) {
         let fixture = format!(
             "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
@@ -171,7 +212,8 @@ fn install_headless_contract_mcp(state: &AppState) {
                 "Bypass".to_string(),
                 "-File".to_string(),
                 fixture,
-                "search-only".to_string(),
+                mode.to_string(),
+                "2".to_string(),
             ],
         )
     } else {
@@ -179,7 +221,7 @@ fn install_headless_contract_mcp(state: &AppState) {
             "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
             env!("CARGO_MANIFEST_DIR")
         );
-        ("/bin/sh", vec![fixture, "search-only".to_string()])
+        ("/bin/sh", vec![fixture, mode.to_string(), "2".to_string()])
     };
     upsert_web_evidence_provider(
         &state.db,
@@ -200,6 +242,179 @@ fn install_headless_contract_mcp(state: &AppState) {
         },
     )
     .expect("headless MCP registry setup");
+}
+
+fn install_headless_domain_bindings(
+    state: &AppState,
+    operations: &[crate::ai_runtime::run_contract::DomainOperation],
+) {
+    use crate::ai_runtime::mcp_external_tools::{
+        review_discovered_tool, test_binding_hash, upsert_binding, DomainOutputMapping,
+        McpCapabilityBindingInput,
+    };
+
+    let reviewed = review_discovered_tool(
+        "domain",
+        &serde_json::json!({
+            "type": "object",
+            "properties": {
+                "location": {"type":"string"},
+                "days": {"type":"integer"}, "topic": {"type":"string"},
+                "limit": {"type":"integer"}, "instrument": {"type":"string"},
+                "assetKind": {"type":"string"}, "title": {"type":"string"},
+                "channel": {"type":"string"}, "competition": {"type":"string"},
+                "participant": {"type":"string"}, "date": {"type":"string"}
+            },
+            "additionalProperties": false
+        }),
+        Some(true),
+    )
+    .expect("review domain fixture tool");
+    let provider_id = "headless-contract-mcp";
+    let provider = crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db)
+        .expect("list fixture providers")
+        .into_iter()
+        .find(|provider| provider.id == provider_id)
+        .expect("fixture provider");
+    let provider_config_hash = provider.provider_config_hash.clone();
+    let provider_launch_hash = crate::ai_runtime::mcp_host_runtime::frozen_provider_launch_hash(
+        provider_id,
+        &provider.transport_kind,
+        &provider.transport_config_json,
+        &provider.credential_refs_json,
+    );
+    let fields = [
+        "location",
+        "condition",
+        "temperature",
+        "units",
+        "observationTime",
+        "issueTime",
+        "title",
+        "publisher",
+        "publishedAt",
+        "topic",
+        "instrument",
+        "assetKind",
+        "currency",
+        "asOf",
+        "delay",
+        "value",
+        "region",
+        "channel",
+        "date",
+        "checkedAt",
+        "competition",
+        "participants",
+        "startTime",
+        "status",
+        "score",
+        "sourceUrl",
+        "sourceTitle",
+        "observedAt",
+        "evidenceId",
+    ]
+    .into_iter()
+    .map(|field| (field.to_string(), format!("$.{field}")))
+    .collect();
+    let output_mapping = DomainOutputMapping {
+        records_path: "$.structuredContent.records".into(),
+        fields,
+    };
+    for operation in operations {
+        let binding_config_hash = test_binding_hash(
+            provider_id,
+            &provider_config_hash,
+            &provider_launch_hash,
+            "domain",
+            &reviewed.input_schema,
+            *operation,
+            &output_mapping,
+        );
+        upsert_binding(
+            &state.db,
+            &McpCapabilityBindingInput {
+                id: None,
+                provider_id: provider_id.into(),
+                mcp_tool_name: "domain".into(),
+                input_schema: reviewed.input_schema.clone(),
+                argument_mapping: serde_json::json!({}),
+                domain_operation: Some(*operation),
+                output_mapping: Some(output_mapping.clone()),
+                risk_class: "read_only".into(),
+                read_only: true,
+                user_trusted: true,
+                attested_binding_config_hash: binding_config_hash,
+            },
+            &reviewed,
+            &provider_config_hash,
+        )
+        .expect("bind reviewed domain fixture tool");
+    }
+}
+
+fn install_test_routing(state: &AppState, base_url: &str, model_name: &str) {
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(base_url.to_string()),
+            enabled_models: Some(vec![model_name.to_string()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: model_name.to_string(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+}
+
+fn tool_call_sse(tool_name: &str, arguments: serde_json::Value) -> String {
+    let arguments = serde_json::to_string(&arguments).expect("serialize tool arguments");
+    let payload = serde_json::json!({
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "domain-operation-call",
+                    "type": "function",
+                    "function": { "name": tool_name, "arguments": arguments }
+                }]
+            }
+        }]
+    });
+    format!("data: {payload}\n\ndata: [DONE]\n\n")
+}
+
+#[allow(clippy::type_complexity)]
+fn start_headless_tool_loop(
+    state: &AppState,
+    request: AssistantRunStartRequest,
+) -> (
+    RecordingSink,
+    AssistantRunAccepted,
+    crate::ai_runtime::run_context::RunContext,
+    crate::ai_runtime::domain_executor::DomainExecutionPlan,
+    Vec<i64>,
+) {
+    let sink = RecordingSink::default();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted headless tool-loop run");
+    let context = RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("run context");
+    let domain_plan = context.domain_plan();
+    let initial_evidence =
+        RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
+            .expect("initial evidence registration");
+    (sink, accepted, context, domain_plan, initial_evidence)
 }
 
 #[tokio::test]
@@ -238,6 +453,53 @@ async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, "user");
     assert_eq!(messages[0].content, "请概述当前信息");
+}
+
+#[tokio::test]
+async fn direct_streaming_does_not_emit_answer_complete_before_durable_finalization() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"普通直答\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["headless-direct-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "headless-direct-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+
+    let mut request = direct_request();
+    request.turn.message = "hello".into();
+    let accepted = RunIntake::start(&state.db, request).expect("accepted run");
+    let probe = AnswerCompleteDurabilityProbe {
+        db: &state.db,
+        session: accepted.session.clone(),
+        run_id: accepted.run_id.clone(),
+        observed_durable_state: Mutex::new(None),
+    };
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &probe).await;
+
+    assert_eq!(
+        *probe
+            .observed_durable_state
+            .lock()
+            .expect("probe lock"),
+        Some(true),
+        "AnswerComplete must be emitted only after the assistant message and Completed state are durable"
+    );
 }
 
 #[tokio::test]
@@ -534,7 +796,8 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
         super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
         &sink,
         Vec::new(),
-    );
+    )
+    .with_allowed_tool_names(&["system_time_now".to_string()]);
 
     let result = executor
         .execute(
@@ -609,6 +872,12 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
         &sink,
         vec![provider_snapshot],
+    )
+    .with_allowed_tool_names(
+        &tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
     );
 
     RunEngine::execute_tool_loop_with_sink(
@@ -651,6 +920,682 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         .events
         .iter()
         .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+}
+
+#[tokio::test]
+async fn production_runtime_time_uses_frozen_surface_and_recovers() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let mut request = direct_request();
+    request.client_request_id = "production-runtime-time".into();
+    request.turn.message = "请调研当前时间，并使用 system_time_now 工具确认后汇总。".into();
+    request.web_enabled = false;
+    let (sink, accepted, context, domain_plan, initial_evidence) =
+        start_headless_tool_loop(&state, request);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"runtime-time-call\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"当前时间是 2026-08-18 08:00:00。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        &gateway,
+        ProviderConfig {
+            name: "headless-runtime-model".into(),
+            base_url: llm.base_url.clone(),
+            api_key: None,
+            model: "runtime-model".into(),
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        256,
+    )
+    .expect("model gateway provider");
+    let capabilities = vec![CapabilityId::new("runtime.read")];
+    let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
+    assert!(tools.iter().any(|tool| tool.name == "system_time_now"));
+    let executor = NormalRunToolExecutor::new(
+        &state,
+        None,
+        &accepted,
+        &context,
+        capabilities,
+        super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
+        &sink,
+        Vec::new(),
+    )
+    .with_allowed_tool_names(
+        &tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    RunEngine::execute_tool_loop_with_sink(
+        &state.db,
+        &accepted.session,
+        &accepted.run_id,
+        context.messages_with_domain_plan(&domain_plan),
+        tools,
+        &initial_evidence,
+        Some(&domain_plan),
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect("production runtime tool-loop chain");
+
+    let calls = llm.finish().await.expect("LLM double completion");
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(
+        calls.len(),
+        2,
+        "runtime tool call must complete a real continuation"
+    );
+    assert_eq!(response.run.state, RunState::Completed);
+    let runtime_tool_audit = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM tool_audit WHERE run_id = ?1 AND tool_name = 'system_time_now'",
+                [&accepted.run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("tool audit query");
+    assert_eq!(runtime_tool_audit, 1, "system_time_now must be dispatched");
+}
+
+#[tokio::test]
+async fn news_web_fallback_produces_validated_record_from_headless_mcp() {
+    use crate::ai_runtime::fresh_domains::service::{FreshDomainRequest, FreshDomainService};
+    use crate::ai_runtime::mcp_external_tools::DomainOperation;
+    use crate::ai_runtime::retrieval_scope::RetrievalScope;
+    use crate::ai_runtime::tool_dispatch::ToolDispatchContext;
+
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let db = &state.db;
+    let retrieval_scope = RetrievalScope::default();
+    let available_tool_names: Vec<String> = vec!["news_lookup".into()];
+    let cold_start_packets: Vec<crate::ai_runtime::ContextPacket> = Vec::new();
+    let runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot> = Vec::new();
+    let ctx = ToolDispatchContext {
+        db: Some(db),
+        selected_web_provider_id: None,
+        note_path: None,
+        file_id: None,
+        run_id: None,
+        write_target_path: None,
+        document_policy: None,
+        web_search_enabled: true,
+        fresh_fact_policy: None,
+        available_tool_names: &available_tool_names,
+        max_web_fetches: 2,
+        cold_start_packets: &cold_start_packets,
+        retrieval_scope: &retrieval_scope,
+        runtime_documents: &runtime_documents,
+        app_handle: None,
+        attachment_count: 0,
+        skill_activation_plan: None,
+    };
+    let request = FreshDomainRequest {
+        tool_name: "news_lookup".into(),
+        operation: DomainOperation::NewsSearch,
+        args: serde_json::json!({ "operation": "news.search", "topic": "synthetic", "limit": 5 }),
+        requested_at: chrono::DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
+            .expect("fixed time")
+            .with_timezone(&chrono::Utc),
+        location_gap: None,
+    };
+    let records = FreshDomainService
+        .execute(request, &ctx)
+        .await
+        .expect("news web fallback must produce validated records from the headless MCP");
+    assert!(!records.is_empty(), "news fallback must not be empty");
+}
+
+#[tokio::test]
+async fn production_missing_city_waits_for_input_and_resumes_the_same_run() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"无法获取天气。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "headless-contract-model");
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-missing-city-input".into();
+    request.turn.message = "今天天气怎么样？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted weather run without city");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let waiting = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("waiting run");
+    assert_eq!(waiting.run.state, RunState::AwaitingInput);
+    assert!(waiting.run.pending_input.is_some(), "must request city");
+
+    let mut values = std::collections::BTreeMap::new();
+    values.insert("city".into(), "上海".into());
+    let outcome = RunIntake::control_with_sink(
+        &state.db,
+        super::run_contract::AssistantRunControlRequest {
+            session: accepted.session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: waiting.run.state_version,
+            action: super::run_contract::RunControlAction::SubmitInput {
+                input_id: format!("location-{}", accepted.run_id),
+                values,
+            },
+        },
+        &RecordingSink::default(),
+    )
+    .expect("input submission");
+    assert_eq!(
+        outcome,
+        super::run_intake::NormalRunControlOutcome::InputProvided
+    );
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let resumed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("resumed run");
+    assert_ne!(
+        resumed.run.state,
+        RunState::AwaitingInput,
+        "resumed run must leave the input wait state"
+    );
+    assert!(resumed.run.pending_input.is_none());
+}
+
+#[tokio::test]
+async fn production_weather_without_provider_fails_closed_instead_of_fabricating() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"weather-call\",\"type\":\"function\",\"function\":{\"name\":\"weather_lookup\",\"arguments\":\"{\\\"operation\\\":\\\"weather.current\\\",\\\"location\\\":\\\"上海\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"上海今天天气晴朗。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "headless-contract-model");
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-weather-no-provider".into();
+    request.turn.message = "上海今天天气怎么样？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted weather run without provider");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("weather run");
+    assert_ne!(
+        response.run.state,
+        RunState::Completed,
+        "weather without a structured provider must not complete with a fabricated answer"
+    );
+    let assistant_message_count: i64 = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1 AND role = 'assistant'",
+                [1_i64],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("assistant message query");
+    assert_eq!(
+        assistant_message_count, 0,
+        "no fabricated assistant weather answer may be persisted"
+    );
+}
+
+#[tokio::test]
+async fn production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven() {
+    use crate::ai_runtime::run_contract::DomainOperation;
+
+    let cases = vec![
+        (
+            DomainOperation::WeatherCurrent,
+            "上海今天天气怎么样？",
+            "weather_lookup",
+            serde_json::json!({"operation":"weather.current","location":"上海"}),
+        ),
+        (
+            DomainOperation::WeatherForecast,
+            "上海未来一周天气",
+            "weather_lookup",
+            serde_json::json!({"operation":"weather.forecast","location":"上海","days":3}),
+        ),
+        (
+            DomainOperation::NewsSearch,
+            "最新 synthetic 新闻",
+            "news_lookup",
+            serde_json::json!({"operation":"news.search","topic":"synthetic"}),
+        ),
+        (
+            DomainOperation::FinanceQuote,
+            "AAPL 股票当前股价",
+            "finance_lookup",
+            serde_json::json!({"operation":"finance.quote","instrument":"AAPL"}),
+        ),
+        (
+            DomainOperation::FinanceMetrics,
+            "AAPL 股票市盈率指标",
+            "finance_lookup",
+            serde_json::json!({"operation":"finance.metrics","instrument":"AAPL"}),
+        ),
+        (
+            DomainOperation::FinanceNews,
+            "AAPL 股票新闻",
+            "finance_lookup",
+            serde_json::json!({"operation":"finance.news","instrument":"AAPL"}),
+        ),
+        (
+            DomainOperation::EntertainmentNowPlaying,
+            "上海正在上映什么电影",
+            "entertainment_lookup",
+            serde_json::json!({"operation":"entertainment.now_playing","location":"上海"}),
+        ),
+        (
+            DomainOperation::EntertainmentUpcoming,
+            "有什么电影即将上映",
+            "entertainment_lookup",
+            serde_json::json!({"operation":"entertainment.upcoming"}),
+        ),
+        (
+            DomainOperation::EntertainmentStreaming,
+            "现在能看什么流媒体电影",
+            "entertainment_lookup",
+            serde_json::json!({"operation":"entertainment.streaming"}),
+        ),
+        (
+            DomainOperation::SportsSchedule,
+            "湖人下一场赛程",
+            "sports_lookup",
+            serde_json::json!({"operation":"sports.schedule","participant":"湖人"}),
+        ),
+        (
+            DomainOperation::SportsScore,
+            "湖人比分",
+            "sports_lookup",
+            serde_json::json!({"operation":"sports.score","participant":"湖人"}),
+        ),
+    ];
+
+    for (index, (operation, message, tool_name, arguments)) in cases.into_iter().enumerate() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        install_headless_contract_mcp_with_mode(&state, "domain-dto");
+        install_headless_domain_bindings(&state, &[operation]);
+        let tool_call = tool_call_sse(tool_name, arguments);
+        let final_submission = tool_call_sse(
+            "submit_final_answer",
+            serde_json::json!({
+                "blocks": [{
+                    "markdown": "结构化领域结果已核实。",
+                    "sources": ["W1", "E3"]
+                }]
+            }),
+        );
+        let llm = spawn_llm_protocol_double(vec![
+            HttpResponseScript::sse(&tool_call),
+            HttpResponseScript::sse(&final_submission),
+        ])
+        .await
+        .expect("local LLM boundary");
+        install_test_routing(&state, &llm.base_url, "iris-test-verified-tools-domain");
+
+        let sink = RecordingSink::default();
+        let mut request = direct_request();
+        request.client_request_id = format!("production-domain-operation-{index}");
+        request.turn.message = message.into();
+        request.web_enabled = true;
+        assert_eq!(
+            RunIntake::resolve_envelope(&request)
+                .expect("classify production domain Run")
+                .fresh_fact
+                .operation,
+            Some(operation)
+        );
+        let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+            .expect("accept production domain Run");
+        let snapshots =
+            crate::ai_runtime::mcp_external_tools::load_run_snapshots(&state.db, &accepted.run_id)
+                .expect("load frozen snapshots");
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].domain_operation, Some(operation));
+
+        tokio::time::timeout(
+            Duration::from_secs(15),
+            execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{operation:?} production Run timed out"));
+
+        let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("completed snapshot")
+            .expect("completed Run");
+        assert_eq!(
+            response.run.state,
+            RunState::Completed,
+            "{operation:?}: events={:?}, audit={:?}, evidence={:?}, provenance={:?}",
+            response.events.iter().map(AssistantRunEvent::payload).collect::<Vec<_>>(),
+            crate::ai_runtime::tool_audit::query_by_run(&state.db, &accepted.run_id)
+                .expect("tool audit"),
+            crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_registered(
+                &state.db,
+                &accepted.run_id,
+            )
+            .expect("current Run evidence"),
+            crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::provenance_policy(
+                &state.db,
+                &accepted.run_id,
+                true,
+            )
+            .expect("provenance policy")
+        );
+        let calls = tokio::time::timeout(Duration::from_secs(2), llm.finish())
+            .await
+            .expect("LLM completion timed out")
+            .expect("LLM completion");
+        assert_eq!(calls.len(), 2, "{operation:?} must use a tool continuation");
+        let tool = calls[0].body["tools"]
+            .as_array()
+            .expect("model tool surface")
+            .iter()
+            .find(|tool| tool["function"]["name"] == tool_name)
+            .expect("only matching domain tool is exposed");
+        assert_eq!(
+            tool["function"]["parameters"]["properties"]["operation"]["enum"],
+            serde_json::json!([operation.as_str()])
+        );
+        assert!(
+            !calls[1].body.to_string().contains("provider-supplied-id"),
+            "Iris must replace provider-supplied evidence IDs"
+        );
+        assert!(response.run.final_message_id.is_some());
+
+        execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+        let recovered = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("recovered snapshot")
+            .expect("recovered Run");
+        assert_eq!(recovered.run.state, RunState::Completed);
+        assert_eq!(
+            recovered.run.final_message_id,
+            response.run.final_message_id
+        );
+    }
+}
+
+#[tokio::test]
+async fn non_news_domain_operations_without_a_binding_fail_before_model_dispatch() {
+    let messages = [
+        "上海今天天气怎么样？",
+        "上海未来一周天气",
+        "AAPL 股票当前股价",
+        "AAPL 股票市盈率指标",
+        "AAPL 股票新闻",
+        "上海正在上映什么电影",
+        "有什么电影即将上映",
+        "现在能看什么流媒体电影",
+        "湖人下一场赛程",
+        "湖人比分",
+    ];
+
+    for (index, message) in messages.into_iter().enumerate() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let sink = RecordingSink::default();
+        let mut request = direct_request();
+        request.client_request_id = format!("missing-domain-binding-{index}");
+        request.turn.message = message.into();
+        request.web_enabled = true;
+        let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+            .expect("accept unconfigured domain Run");
+
+        execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+        let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("failed snapshot")
+            .expect("failed Run");
+        assert_eq!(response.run.state, RunState::Failed, "{message}");
+        assert!(matches!(
+            response.events.last().map(AssistantRunEvent::payload),
+            Some(RunEventPayload::Failed {
+                code: super::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                ..
+            })
+        ));
+    }
+}
+
+#[tokio::test]
+async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "news-web-disabled".into();
+    request.turn.message = "最新 synthetic 新闻".into();
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accept offline news Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("offline news snapshot")
+        .expect("offline news Run");
+    assert_eq!(response.run.state, RunState::Failed);
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: super::run_contract::SafeRunErrorCode::ProviderUnavailable,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn news_web_fallback_engine_chain_passes_through_evidence_ledger() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let mut request = web_tool_loop_request();
+    request.client_request_id = "production-news-web-fallback".into();
+    request.turn.message = "请调研最新 synthetic 新闻。".into();
+    let (sink, accepted, context, domain_plan, initial_evidence) =
+        start_headless_tool_loop(&state, request);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"news-call\",\"type\":\"function\",\"function\":{\"name\":\"news_lookup\",\"arguments\":\"{\\\"operation\\\":\\\"news.search\\\",\\\"topic\\\":\\\"synthetic\\\",\\\"limit\\\":5}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        &gateway,
+        ProviderConfig {
+            name: "headless-news-model".into(),
+            base_url: llm.base_url.clone(),
+            api_key: None,
+            model: "news-model".into(),
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        256,
+    )
+    .expect("model gateway provider");
+    let capabilities = vec![
+        CapabilityId::new("web.search"),
+        CapabilityId::new("web.domain.read"),
+    ];
+    let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
+    assert!(tools.iter().any(|tool| tool.name == "news_lookup"));
+    let provider_snapshot =
+        super::mcp_runtime_registry::resolve_selected_web_search_provider(&state.db)
+            .expect("freeze selected MCP provider before the model tool loop");
+    let executor = NormalRunToolExecutor::new(
+        &state,
+        None,
+        &accepted,
+        &context,
+        capabilities,
+        super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
+        &sink,
+        vec![provider_snapshot],
+    )
+    .with_allowed_tool_names(
+        &tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    RunEngine::execute_tool_loop_with_sink(
+        &state.db,
+        &accepted.session,
+        &accepted.run_id,
+        context.messages_with_domain_plan(&domain_plan),
+        tools,
+        &initial_evidence,
+        Some(&domain_plan),
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect("production news web-fallback chain");
+
+    let calls = llm.finish().await.expect("LLM double completion");
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(
+        calls.len(),
+        2,
+        "news lookup must complete a real continuation"
+    );
+    assert_eq!(response.run.state, RunState::Completed);
+    let news_evidence_count = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM session_evidence WHERE origin_run_id = ?1 AND source_type = 'web'",
+                [&accepted.run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("evidence ledger query");
+    assert!(
+        news_evidence_count >= 1,
+        "news web-fallback must enter the evidence ledger"
+    );
+}
+
+#[tokio::test]
+async fn production_news_web_fallback_uses_intake_surface_dispatch_and_recovery() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse(
+            "news_lookup",
+            serde_json::json!({"operation":"news.search","topic":"synthetic"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse(
+            "submit_final_answer",
+            serde_json::json!({
+                "blocks": [{
+                    "markdown": "最新 synthetic 新闻已核实。",
+                    "sources": ["W1", "E3"]
+                }]
+            }),
+        )),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-news-fallback",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-news-web-fallback".into();
+    request.turn.message = "最新 synthetic 新闻".into();
+    request.web_enabled = true;
+    assert_eq!(
+        RunIntake::resolve_envelope(&request)
+            .expect("classify news fallback Run")
+            .fresh_fact
+            .effective_operation(),
+        Some(crate::ai_runtime::run_contract::DomainOperation::NewsSearch)
+    );
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accept news fallback Run");
+    assert!(
+        crate::ai_runtime::mcp_external_tools::load_run_snapshots(&state.db, &accepted.run_id)
+            .expect("load news fallback snapshots")
+            .is_empty(),
+        "News fallback must not borrow a structured binding"
+    );
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let calls = llm.finish().await.expect("LLM completion");
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("news fallback snapshot")
+        .expect("news fallback Run");
+    assert_eq!(response.run.state, RunState::Completed);
+    let names = calls[0].body["tools"]
+        .as_array()
+        .expect("model tool surface")
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().expect("tool name"))
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"news_lookup"));
+    assert!(!names.contains(&"web_search"));
+    assert_eq!(calls.len(), 2);
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    assert_eq!(
+        RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("recovery snapshot")
+            .expect("recovered Run")
+            .run
+            .final_message_id,
+        response.run.final_message_id
+    );
 }
 
 #[tokio::test]
@@ -750,6 +1695,91 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
         .events
         .iter()
         .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+
+    let citation_map: String = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT citation_map_json FROM session_messages
+                 WHERE session_id = ?1 AND role = 'assistant'",
+                [1_i64],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("strict Web assistant citation map");
+    assert!(
+        citation_map.contains("\"mode\":\"source_group_fallback\""),
+        "ToolLoop strict Web finalization must bind an uncalibrated answer to its source group"
+    );
+}
+
+#[tokio::test]
+async fn direct_required_web_run_persists_source_group_binding_when_markers_are_missing() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"第一代 iPhone 于 2007 年发布。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["headless-contract-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "headless-contract-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+
+    let sink = RecordingSink::default();
+    let request = direct_required_web_request();
+    assert_eq!(
+        RunIntake::resolve_envelope(&request)
+            .expect("direct strict Web envelope")
+            .effort,
+        Effort::Direct
+    );
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted direct required Web run");
+    assert_eq!(
+        accepted.state,
+        RunState::Accepted,
+        "the direct strict Web fixture must start from an accepted Run"
+    );
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(response.run.state, RunState::Completed);
+    let _ = llm.finish().await.expect("LLM double completion");
+    let citation_map: String = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT citation_map_json FROM session_messages
+                 WHERE session_id = ?1 AND role = 'assistant'",
+                [1_i64],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("direct strict Web assistant citation map");
+    assert!(
+        citation_map.contains("\"mode\":\"source_group_fallback\""),
+        "Direct strict Web finalization must bind an uncalibrated answer to its source group"
+    );
 }
 
 #[tokio::test]

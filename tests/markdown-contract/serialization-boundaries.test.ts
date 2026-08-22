@@ -31,10 +31,22 @@ describe("markdown serialization path boundaries", () => {
 
   it("contract classification delegates safety and source reconciliation to focused modules", () => {
     const source = read("src/lib/markdown-contract/contract.ts");
+    const classify = read("src/lib/markdown-contract/classify.ts");
 
-    expect(source).toContain('from "./html-safety"');
-    expect(source).toContain('from "./fragment-reconcile"');
+    expect(classify).toContain('from "./html-safety"');
+    expect(classify).toContain('from "./fragment-reconcile"');
     expect(source).not.toContain("function isDangerousHtml");
     expect(source).not.toContain("function reconcileFragmentsWithSource");
+  });
+
+  it("contract editor profiles reuse the production ingest/export pipeline", () => {
+    const source = read("src/lib/markdown-contract/contract.ts");
+
+    expect(source).toContain('from "@/lib/editor-ingest"');
+    expect(source).toContain('from "@/lib/editor-roundtrip"');
+    expect(source).toContain(
+      "ingestMarkdownForEditorSafely({ bodyMarkdown: md })",
+    );
+    expect(source).toContain("markdownToMarkdownViaProductionEditor(md)");
   });
 });

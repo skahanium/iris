@@ -4,14 +4,16 @@ use crate::ai_runtime::agent_run_repository::{
     AcceptRunInput, AcceptRunOutcome, AgentRunRepository, FrozenConfirmationApproval,
     FrozenConfirmationRejection, RetryRunInput,
 };
+use crate::ai_runtime::fresh_fact_classifier::classify_fresh_fact;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetResponse,
     AssistantRunRetryRequest, AssistantRunStartRequest, AssistantSessionRef, CapabilityId,
-    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed,
-    Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType, SafeRunErrorCode,
-    SecurityDomain, VerificationRequirement, WebDecisionReason,
+    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, FreshFactDomain, Freshness,
+    MaterialNeed, Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType,
+    SafeRunErrorCode, SecurityDomain, VerificationRequirement, WebDecisionReason,
 };
+use crate::ai_runtime::run_engine::emit_durable_event_best_effort;
 use crate::ai_runtime::tool_surface::{classify_time_sensitivity, TimeSensitivity};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -27,6 +29,7 @@ pub(crate) enum NormalRunControlOutcome {
     ConfirmationApproved,
     ConfirmationRejected,
     RecoveryResumed { confirmation_id: String },
+    InputProvided,
     Noop,
 }
 
@@ -77,8 +80,19 @@ impl RunIntake {
                 "\u{4e0d}\u{4fee}\u{6539}",
             ],
         );
-        let web_decision =
-            ExclusionClassifier::resolve(request, &message, &directive_text, local_only);
+        let accepted_at = chrono::Utc::now();
+        let fresh_fact = classify_fresh_fact(&directive_text, accepted_at);
+        let domain_operations = fresh_fact
+            .effective_operation()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let web_decision = ExclusionClassifier::resolve(
+            request,
+            &message,
+            &directive_text,
+            local_only,
+            fresh_fact.domain,
+        );
         let effect = if do_not_modify {
             Effect::Answer
         } else {
@@ -114,7 +128,8 @@ impl RunIntake {
                 .iter()
                 .any(|part| matches!(part, crate::ai_types::ContentPart::ImageUrl { .. }))
         });
-        let time_sensitive = classify_time_sensitivity(&directive_text) == TimeSensitivity::Current;
+        let time_sensitive =
+            !local_only && classify_time_sensitivity(fresh_fact.domain) == TimeSensitivity::Current;
         let effort = match effect {
             Effect::Apply => Effort::Durable,
             _ if freshness == Freshness::WebPreferred
@@ -185,8 +200,19 @@ impl RunIntake {
         // The user-controlled Web toggle is the sole authority that can add
         // Web capability. Freshness only describes evidence obligation; it
         // must never be a second permission switch.
-        if request.web_enabled && request.security_domain == SecurityDomain::Normal && !local_only {
+        if request.web_enabled
+            && request.security_domain == SecurityDomain::Normal
+            && !local_only
+            && fresh_fact.domain != FreshFactDomain::Runtime
+        {
             required_capabilities.push(CapabilityId::new("web.search"));
+        }
+        if request.web_enabled
+            && request.security_domain == SecurityDomain::Normal
+            && !local_only
+            && !domain_operations.is_empty()
+        {
+            required_capabilities.push(CapabilityId::new("web.domain.read"));
         }
         if child_run_requested {
             required_capabilities.push(CapabilityId::new("harness.child_run"));
@@ -230,6 +256,7 @@ impl RunIntake {
             material_needs,
             required_capabilities,
             explicit_constraints,
+            fresh_fact,
         })
     }
 
@@ -278,6 +305,11 @@ impl RunIntake {
             .as_ref()
             .map_or_else(String::new, |session| session.session_key.clone());
         let external_tool_grants = request.external_tool_grants.clone();
+        let domain_operations = envelope
+            .fresh_fact
+            .effective_operation()
+            .into_iter()
+            .collect::<Vec<_>>();
         AgentRunRepository::accept_with_external_grants_outcome(
             db,
             AcceptRunInput {
@@ -295,6 +327,8 @@ impl RunIntake {
                 envelope,
             },
             &external_tool_grants,
+            &domain_operations,
+            None,
             create_session,
         )
     }
@@ -394,16 +428,19 @@ impl RunIntake {
         .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
         // The durable event is authoritative. A transient IPC notification
         // failure must not strand a newly accepted Run before execution.
-        let _ = sink.emit(&event);
+        emit_durable_event_best_effort(sink, &event);
         Ok(outcome)
     }
 
-    /// Accept a fresh retry for the latest failed user turn without duplicating it.
-    pub(crate) fn retry_with_sink(
+    /// Accept a retry and report whether this call created the Run.
+    ///
+    /// Only `is_new=true` may start an executor; idempotent replays return the
+    /// original identity and do not emit a second accepted notification.
+    pub(crate) fn retry_with_sink_outcome(
         db: &Database,
         request: AssistantRunRetryRequest,
         sink: &impl crate::ai_runtime::run_engine::RunEventSink,
-    ) -> AppResult<AssistantRunAccepted> {
+    ) -> AppResult<AcceptRunOutcome> {
         if request.session.domain != SecurityDomain::Normal
             || request.source_run_id.trim().is_empty()
             || request.client_request_id.trim().is_empty()
@@ -411,7 +448,7 @@ impl RunIntake {
         {
             return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
-        let accepted = AgentRunRepository::accept_retry(
+        let outcome = AgentRunRepository::accept_retry_outcome(
             db,
             RetryRunInput {
                 session_key: request.session.session_key,
@@ -420,15 +457,20 @@ impl RunIntake {
                 run_id: uuid::Uuid::new_v4().to_string(),
             },
         )?;
+        if !outcome.is_new {
+            return Ok(outcome);
+        }
         let event = AgentRunRepository::get_for_session(
             db,
-            &accepted.session.session_key,
-            &accepted.run_id,
+            &outcome.accepted.session.session_key,
+            &outcome.accepted.run_id,
         )?
         .and_then(|response| response.events.into_iter().next())
         .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
-        sink.emit(&event)?;
-        Ok(accepted)
+        // The durable event is authoritative. A transient IPC notification
+        // failure must not strand a newly accepted retry before execution.
+        emit_durable_event_best_effort(sink, &event);
+        Ok(outcome)
     }
 
     /// Read only through the owning normal-domain session reference.
@@ -473,7 +515,7 @@ impl RunIntake {
     ) -> AppResult<NormalRunControlOutcome> {
         let (outcome, event) = Self::control_event(db, request)?;
         if let Some(event) = event {
-            sink.emit(&event)?;
+            emit_durable_event_best_effort(sink, &event);
         }
         Ok(outcome)
     }
@@ -542,13 +584,37 @@ impl RunIntake {
                     request.expected_state_version,
                     chrono::Utc::now().timestamp_millis(),
                 )? {
-                    FrozenConfirmationRejection::Resumed(event) => {
+                    FrozenConfirmationRejection::Cancelled(event) => {
                         Ok((NormalRunControlOutcome::ConfirmationRejected, Some(event)))
                     }
                     FrozenConfirmationRejection::AlreadyRejected => {
                         Ok((NormalRunControlOutcome::Noop, None))
                     }
                 }
+            }
+            RunControlAction::SubmitInput { input_id, values } => {
+                if snapshot.run.state == crate::ai_runtime::run_contract::RunState::Running
+                    && snapshot.events.iter().any(|event| {
+                        matches!(
+                            event.payload(),
+                            RunEventPayload::InputProvided { input_id: provided, .. }
+                                if provided == &input_id
+                        )
+                    })
+                {
+                    return Ok((NormalRunControlOutcome::Noop, None));
+                }
+                validate_input_submission(&snapshot, &input_id, &values)?;
+                let event = AgentRunRepository::append_event(
+                    db,
+                    crate::ai_runtime::agent_run_repository::AppendRunEventInput {
+                        run_id: request.run_id.clone(),
+                        state_version: request.expected_state_version,
+                        event_type: RunEventType::InputProvided,
+                        payload: RunEventPayload::InputProvided { input_id, values },
+                    },
+                )?;
+                Ok((NormalRunControlOutcome::InputProvided, Some(event)))
             }
             RunControlAction::Resume => {
                 let (event, confirmation_id) = AgentRunRepository::resume_durable_apply(
@@ -564,6 +630,32 @@ impl RunIntake {
             }
         }
     }
+}
+
+fn validate_input_submission(
+    snapshot: &AssistantRunGetResponse,
+    input_id: &str,
+    values: &std::collections::BTreeMap<String, String>,
+) -> AppResult<()> {
+    if snapshot.run.state != crate::ai_runtime::run_contract::RunState::AwaitingInput
+        || input_id.trim().is_empty()
+        || values.len() != 1
+        || values
+            .get("city")
+            .is_none_or(|city| city.trim().is_empty() || city.chars().count() > 128)
+    {
+        return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+    }
+    let pending = snapshot
+        .run
+        .pending_input
+        .as_ref()
+        .filter(|pending| pending.input_id == input_id && pending.kind == "location")
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InputInvalid))?;
+    if pending.fields != ["city".to_string()] {
+        return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+    }
+    Ok(())
 }
 
 /// Keep ordinary externally verifiable facts on the strict one-search Direct
@@ -830,6 +922,7 @@ impl ExclusionClassifier {
         message: &str,
         directive_text: &str,
         local_only: bool,
+        fresh_fact_domain: FreshFactDomain,
     ) -> WebIntentDecision {
         // Hard exclusions — never overridden by an explicit web instruction.
         if request.security_domain == SecurityDomain::Classified {
@@ -858,7 +951,7 @@ impl ExclusionClassifier {
             return offline(WebDecisionReason::ConversationMeta);
         }
         if !explicit_web {
-            if is_trusted_runtime_request(directive_text) {
+            if is_trusted_runtime_request(fresh_fact_domain) {
                 return offline(WebDecisionReason::TrustedRuntimeFact);
             }
             if is_local_transformation_request(directive_text)
@@ -1177,35 +1270,8 @@ fn has_explicit_web_instruction(message: &str) -> bool {
     )
 }
 
-fn is_trusted_runtime_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "今天星期几",
-            "今天几号",
-            "当前日期",
-            "本机日期",
-            "现在几点",
-            "当前时间",
-            "本机时间",
-            "应用版本",
-            "iris 版本",
-            "联网是否开启",
-            "what day of the week is it today",
-            "which day of the week is it today",
-            "what day is it",
-            "what day of week is it",
-            "what is today's weekday",
-            "what is today's date",
-            "current local time",
-            "what is the local time",
-            "what time is it locally",
-            "show local date",
-            "app version",
-            "application version",
-            "iris version",
-        ],
-    )
+fn is_trusted_runtime_request(domain: FreshFactDomain) -> bool {
+    domain == FreshFactDomain::Runtime
 }
 
 fn is_conversation_meta_request(message: &str) -> bool {

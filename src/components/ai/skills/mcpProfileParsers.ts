@@ -3,6 +3,8 @@
 //! Extracted from McpProfileCard so the card stays a form orchestrator.
 
 import type {
+  DomainOperation,
+  DomainOutputMapping,
   WebEvidenceProviderDiagnostics,
   WebEvidenceProviderInput,
   WebEvidenceProviderSummary,
@@ -39,6 +41,293 @@ export interface McpProfileCardProps {
   onClearCredential: (service: string) => void | Promise<void>;
   onDiagnostics: () => void | Promise<void>;
   onConfigurationChanged: () => void;
+}
+
+export interface DomainOperationOption {
+  value: DomainOperation;
+  label: string;
+  group: string;
+  requiredFields: string[];
+  fieldLabels: Record<string, string>;
+}
+
+export const DOMAIN_OPERATION_OPTIONS: DomainOperationOption[] = [
+  {
+    value: "weather.current",
+    label: "当前天气",
+    group: "天气",
+    requiredFields: ["location", "temperature", "observedAt", "sourceUrl"],
+    fieldLabels: {
+      location: "地点",
+      temperature: "温度",
+      observedAt: "观测时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "weather.forecast",
+    label: "天气预报",
+    group: "天气",
+    requiredFields: ["location", "temperature", "issueAt", "sourceUrl"],
+    fieldLabels: {
+      location: "地点",
+      temperature: "温度",
+      issueAt: "发布时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "news.search",
+    label: "新闻搜索",
+    group: "新闻",
+    requiredFields: ["title", "publishedAt", "sourceUrl"],
+    fieldLabels: {
+      title: "标题",
+      publishedAt: "发布时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "finance.quote",
+    label: "行情报价",
+    group: "金融",
+    requiredFields: ["instrument", "currency", "asOf", "sourceUrl"],
+    fieldLabels: {
+      instrument: "标的",
+      currency: "币种",
+      asOf: "数据时点",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "finance.metrics",
+    label: "财务指标",
+    group: "金融",
+    requiredFields: ["instrument", "currency", "asOf", "sourceUrl"],
+    fieldLabels: {
+      instrument: "标的",
+      currency: "币种",
+      asOf: "数据时点",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "finance.news",
+    label: "金融新闻",
+    group: "金融",
+    requiredFields: ["title", "publishedAt", "sourceUrl"],
+    fieldLabels: {
+      title: "标题",
+      publishedAt: "发布时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "entertainment.now_playing",
+    label: "正在上映",
+    group: "影视",
+    requiredFields: [
+      "title",
+      "region",
+      "channel",
+      "date",
+      "checkedAt",
+      "sourceUrl",
+    ],
+    fieldLabels: {
+      title: "标题",
+      region: "地区",
+      channel: "频道/平台",
+      date: "日期",
+      checkedAt: "检查时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "entertainment.upcoming",
+    label: "即将上映",
+    group: "影视",
+    requiredFields: [
+      "title",
+      "region",
+      "channel",
+      "date",
+      "checkedAt",
+      "sourceUrl",
+    ],
+    fieldLabels: {
+      title: "标题",
+      region: "地区",
+      channel: "频道/平台",
+      date: "日期",
+      checkedAt: "检查时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "entertainment.streaming",
+    label: "流媒体可看",
+    group: "影视",
+    requiredFields: [
+      "title",
+      "region",
+      "channel",
+      "date",
+      "checkedAt",
+      "sourceUrl",
+    ],
+    fieldLabels: {
+      title: "标题",
+      region: "地区",
+      channel: "频道/平台",
+      date: "日期",
+      checkedAt: "检查时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "sports.schedule",
+    label: "赛程",
+    group: "体育",
+    requiredFields: [
+      "competition",
+      "participants",
+      "startTime",
+      "checkedAt",
+      "sourceUrl",
+    ],
+    fieldLabels: {
+      competition: "赛事",
+      participants: "参赛方",
+      startTime: "开始时间",
+      checkedAt: "检查时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+  {
+    value: "sports.score",
+    label: "比分",
+    group: "体育",
+    requiredFields: [
+      "competition",
+      "participants",
+      "startTime",
+      "checkedAt",
+      "sourceUrl",
+    ],
+    fieldLabels: {
+      competition: "赛事",
+      participants: "参赛方",
+      startTime: "开始时间",
+      checkedAt: "检查时间",
+      sourceUrl: "来源 URL",
+    },
+  },
+];
+
+export function domainOperationMeta(
+  operation: DomainOperation,
+): DomainOperationOption {
+  return (
+    DOMAIN_OPERATION_OPTIONS.find((item) => item.value === operation) ??
+    DOMAIN_OPERATION_OPTIONS[0]!
+  );
+}
+
+/** 与 Rust 侧一致：仅允许 `$`、点属性、非负数组下标。 */
+export function isSafeJsonPath(path: string): boolean {
+  const value = path.trim();
+  if (value === "$") return true;
+  if (!value.startsWith("$")) return false;
+  const rest = value.slice(1);
+  let index = 0;
+  while (index < rest.length) {
+    const character = rest[index]!;
+    if (character === ".") {
+      index += 1;
+      const start = index;
+      while (
+        index < rest.length &&
+        rest[index] !== "." &&
+        rest[index] !== "["
+      ) {
+        index += 1;
+      }
+      if (index === start) return false;
+      const property = rest.slice(start, index);
+      if (![...property].every((item) => /[A-Za-z0-9_-]/.test(item))) {
+        return false;
+      }
+    } else if (character === "[") {
+      const close = rest.indexOf("]", index);
+      if (close < 0) return false;
+      const digits = rest.slice(index + 1, close);
+      if (
+        digits.length === 0 ||
+        ![...digits].every((item) => /\d/.test(item))
+      ) {
+        return false;
+      }
+      index = close + 1;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** 去除首尾空白并按字段名排序，与后端 BTreeMap 规范化保持一致。 */
+export function normalizeOutputMapping(
+  mapping: DomainOutputMapping,
+): DomainOutputMapping {
+  const recordsPath = mapping.recordsPath.trim();
+  const fields = Object.fromEntries(
+    Object.entries(mapping.fields)
+      .map(([field, path]) => [field.trim(), path.trim()] as const)
+      .filter(([field, path]) => field.length > 0 && path.length > 0)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+  return { recordsPath, fields };
+}
+
+export function validateDomainMappingSave(input: {
+  readOnly: boolean;
+  riskClass: string;
+  operation: DomainOperation | "";
+  recordsPath: string;
+  fields: Record<string, string>;
+  existingOperations: DomainOperation[];
+}): string | null {
+  if (input.readOnly !== true || input.riskClass !== "read_only") {
+    return "工具缺少只读声明或属于写操作，不能保存为当前事实映射。";
+  }
+  if (!input.operation) {
+    return "请先选择当前事实操作。";
+  }
+  const meta = domainOperationMeta(input.operation);
+  const missing = meta.requiredFields.filter(
+    (field) => !input.fields[field]?.trim(),
+  );
+  if (missing.length > 0) {
+    const labels = missing
+      .map((field) => meta.fieldLabels[field] ?? field)
+      .join("、");
+    return `请补全必需字段映射：${labels}。`;
+  }
+  if (!isSafeJsonPath(input.recordsPath)) {
+    return "记录路径不是受支持的 JSON path。";
+  }
+  for (const [field, path] of Object.entries(input.fields)) {
+    if (!path.trim()) continue;
+    if (!isSafeJsonPath(path)) {
+      const label = meta.fieldLabels[field] ?? field;
+      return `${label} 不是受支持的 JSON path。`;
+    }
+  }
+  if (input.existingOperations.includes(input.operation)) {
+    return `该提供方已存在 ${input.operation} 映射，请勿重复配置。`;
+  }
+  return null;
 }
 
 export interface HttpsConfigState {

@@ -38,6 +38,12 @@ const RECENT_CONVERSATION_CANDIDATE_LIMIT: u32 = 24;
 const MAX_RECENT_CONVERSATION_PAIRS: usize = 12;
 const MAX_RECENT_CONVERSATION_TOKENS: u32 = 8_000;
 
+/// Read-only RunSituation projection consumed by the production executor.
+///
+/// This is intentionally the same value as [`RunContext`]: no second context
+/// table or parallel state machine is introduced.
+pub(crate) type RunSituation = RunContext;
+
 /// One authorized local source body held only while building a Provider request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunContextMaterial {
@@ -198,7 +204,7 @@ impl RunContext {
 
     fn system_prompt(&self) -> String {
         let time = crate::ai_runtime::runtime_context::current_time_context();
-        let timeliness_instruction = if is_time_sensitive_request(&self.user_message) {
+        let timeliness_instruction = if is_time_sensitive_request(self.envelope.fresh_fact.domain) {
             "This request is time-sensitive. If web_search is present in the current tool surface, use it before answering; otherwise do not fabricate current facts."
         } else {
             ""
@@ -209,6 +215,9 @@ impl RunContext {
             }
             crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunExternal => {
                 "External factual conclusions require eligible evidence from an explicitly granted read-only external tool for this answer. Do not use training knowledge, historical assistant messages, conversation summaries, or older citations as independent evidence. If eligible evidence is unavailable, do not guess."
+            }
+            crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunDomain => {
+                "External factual conclusions require eligible current-fact domain evidence collected for this answer. Do not use training knowledge, historical assistant messages, conversation summaries, or older citations as independent evidence. If eligible evidence is unavailable, do not guess."
             }
             crate::ai_runtime::run_contract::VerificationRequirement::None => {
                 "Historical assistant messages, conversation summaries, and older citations are continuity aids, not independent evidence."
@@ -229,8 +238,8 @@ impl RunContext {
     }
 }
 
-fn is_time_sensitive_request(message: &str) -> bool {
-    crate::ai_runtime::tool_surface::classify_time_sensitivity(message)
+fn is_time_sensitive_request(domain: crate::ai_runtime::run_contract::FreshFactDomain) -> bool {
+    crate::ai_runtime::tool_surface::classify_time_sensitivity(domain)
         == crate::ai_runtime::tool_surface::TimeSensitivity::Current
 }
 
@@ -437,6 +446,7 @@ mod history_selection_tests {
                 material_needs: Vec::new(),
                 required_capabilities: Vec::new(),
                 explicit_constraints: Vec::new(),
+                fresh_fact: Default::default(),
             },
             write_target_path: None,
             document_policy: crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine::new(
@@ -533,7 +543,7 @@ impl RunContextAssembler {
         vault: Option<&Path>,
         session_key: &str,
         run_id: &str,
-    ) -> AppResult<RunContext> {
+    ) -> AppResult<RunSituation> {
         let input = AgentRunRepository::prompt_input_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if input.explicit_references.len() > MAX_EXPLICIT_MATERIALS {
@@ -543,6 +553,12 @@ impl RunContextAssembler {
         let envelope = AgentRunRepository::policy_request_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
             .envelope;
+        let input_values = AgentRunRepository::latest_input_values(db, session_key, run_id)?;
+        let user_message = input_values
+            .get("city")
+            .filter(|city| !city.trim().is_empty())
+            .map(|city| format!("{}\n\n[本轮已确认查询城市：{}]", input.user_message, city))
+            .unwrap_or_else(|| input.user_message.clone());
         let write_target_path = explicit_apply_target_path(&input, &envelope)?;
         let document_policy =
             crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?;
@@ -558,7 +574,7 @@ impl RunContextAssembler {
                 RECENT_CONVERSATION_CANDIDATE_LIMIT,
             )?;
         let recent_messages = select_bounded_recent_history(recent_message_candidates);
-        let conversation_memory = ConversationMemory::latest_for_session(db, input.session_id)?;
+        let conversation_memory = ConversationMemory::validated_for_session(db, input.session_id)?;
         // v2 Runs must retain the identity configuration accepted with their
         // user turn. Legacy rows have no snapshot and remain read-compatible.
         let prompt_profile = input
@@ -733,7 +749,7 @@ impl RunContextAssembler {
         Ok(RunContext {
             session_id: input.session_id,
             message_seq_first: input.message_seq_first,
-            user_message: input.user_message,
+            user_message,
             content_parts: input.content_parts,
             envelope,
             write_target_path,
@@ -1393,13 +1409,14 @@ mod fallback_version_tests {
 #[cfg(test)]
 mod timeliness_tests {
     use super::is_time_sensitive_request;
+    use crate::ai_runtime::run_contract::FreshFactDomain;
 
     #[test]
-    fn detects_chinese_and_english_time_sensitive_queries() {
-        assert!(is_time_sensitive_request("最近有什么好看的电影吗？"));
-        assert!(is_time_sensitive_request("今天天气怎么样？"));
-        assert!(is_time_sensitive_request("What is the latest news?"));
-        assert!(!is_time_sensitive_request("解释一下量子计算"));
-        assert!(!is_time_sensitive_request("如何写 Rust 测试"));
+    fn detects_current_fresh_fact_domains() {
+        assert!(is_time_sensitive_request(FreshFactDomain::Entertainment));
+        assert!(is_time_sensitive_request(FreshFactDomain::Weather));
+        assert!(is_time_sensitive_request(FreshFactDomain::News));
+        assert!(!is_time_sensitive_request(FreshFactDomain::None));
+        assert!(!is_time_sensitive_request(FreshFactDomain::Runtime));
     }
 }

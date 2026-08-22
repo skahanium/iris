@@ -80,12 +80,18 @@ fn dispatch_context_with_plan<'a>(
         crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
     ));
     ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: None,
         write_target_path: None,
         document_policy: None,
         web_search_enabled: false,
+        fresh_fact_policy: None,
+        available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
         retrieval_scope,
@@ -100,12 +106,18 @@ fn dispatch_context_with_retrieval_scope<'a>(
     retrieval_scope: &'a crate::ai_runtime::retrieval_scope::RetrievalScope,
 ) -> ToolDispatchContext<'a> {
     ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: None,
         write_target_path: None,
         document_policy: None,
         web_search_enabled: false,
+        fresh_fact_policy: None,
+        available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
         retrieval_scope,
@@ -208,12 +220,18 @@ async fn read_note_rejects_document_policy_before_opening_the_file() {
     );
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: Some("policy-read-run"),
         write_target_path: None,
         document_policy: Some(&policy),
         web_search_enabled: false,
+        fresh_fact_policy: None,
+        available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
         retrieval_scope: &retrieval_scope,
@@ -441,12 +459,18 @@ fn write_tool_approval_applies_patch_with_cas() {
     let base_hash = crate::cas::hash::content_hash_str(base);
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: Some("notes/test.md"),
         file_id: None,
         run_id: None,
         write_target_path: None,
         document_policy: None,
         web_search_enabled: false,
+        fresh_fact_policy: None,
+        available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
         retrieval_scope: &retrieval_scope,
@@ -518,12 +542,18 @@ fn write_tool_rejects_a_target_other_than_the_explicit_run_target() {
     let base_hash = crate::cas::hash::content_hash_str(base);
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: None,
         file_id: None,
         run_id: Some("bound-target-run"),
         write_target_path: Some("notes/test.md"),
         document_policy: None,
         web_search_enabled: false,
+        fresh_fact_policy: None,
+        available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
         retrieval_scope: &retrieval_scope,
@@ -562,12 +592,18 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
     let (state, _dir) = test_state();
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: Some("notes/test.md"),
         file_id: None,
         run_id: None,
         write_target_path: None,
         document_policy: None,
         web_search_enabled: false,
+        fresh_fact_policy: None,
+        available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
         retrieval_scope: &retrieval_scope,
@@ -608,12 +644,18 @@ async fn cancelled_run_never_commits_a_markdown_patch() {
     let base_hash = crate::cas::hash::content_hash_str(base);
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
+        db: None,
+
+        selected_web_provider_id: None,
+
         note_path: Some("notes/test.md"),
         file_id: None,
         run_id: Some("cancelled-markdown-write"),
         write_target_path: None,
         document_policy: None,
         web_search_enabled: false,
+        fresh_fact_policy: None,
+        available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
         retrieval_scope: &retrieval_scope,

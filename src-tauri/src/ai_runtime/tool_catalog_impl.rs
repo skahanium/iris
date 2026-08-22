@@ -6,6 +6,8 @@ use crate::ai_runtime::ToolAccessLevel;
 mod boundary_impl;
 #[path = "tool_catalog/capability.rs"]
 mod capability_impl;
+#[path = "tool_catalog/fresh_domains.rs"]
+mod fresh_domains_impl;
 #[path = "tool_catalog/groups.rs"]
 mod groups_impl;
 #[path = "tool_catalog/read.rs"]
@@ -39,6 +41,14 @@ pub struct ToolCatalogEntry {
     pub implementation: ToolImplementationStatus,
     pub default_enabled_without_skill: bool,
     pub max_results: Option<u32>,
+    pub(crate) execution_metadata: Option<ToolExecutionMetadata>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolExecutionMetadata {
+    pub(crate) cost_class: &'static str,
+    pub(crate) output_policy: &'static str,
+    pub(crate) evidence_policy: &'static str,
 }
 
 /// The complete built-in tool catalog. Add new tools through group modules only.

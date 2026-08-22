@@ -4,6 +4,7 @@
 //! dispatch providers, emit IPC events, or provide a compatibility path for
 //! the legacy Harness. Stage 4 owns those responsibilities.
 
+use crate::ai_runtime::fresh_research_plan::FreshResearchResumeState;
 use crate::ai_runtime::prompt_contract::PROMPT_CONTRACT_VERSION;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::run_contract::{
@@ -230,8 +231,8 @@ pub(crate) enum FrozenConfirmationApproval {
 
 /// Result of rejecting a persisted confirmation through one idempotent control request.
 pub(crate) enum FrozenConfirmationRejection {
-    /// The pending plan was rejected and the Run durably resumed.
-    Resumed(AssistantRunEvent),
+    /// The pending plan was rejected and the Run durably cancelled.
+    Cancelled(AssistantRunEvent),
     /// The same plan had already been rejected by an earlier identical control request.
     AlreadyRejected,
 }
@@ -257,7 +258,7 @@ impl AgentRunRepository {
         reason = "test fixtures accept Runs without external grants"
     )]
     pub(crate) fn accept(db: &Database, input: AcceptRunInput) -> AppResult<AssistantRunAccepted> {
-        Self::accept_with_external_grants(db, input, &[])
+        Self::accept_with_external_grants(db, input, &[], &[], None)
     }
 
     /// Atomically persist the accepted Run and its explicit MCP snapshots.
@@ -265,9 +266,18 @@ impl AgentRunRepository {
         db: &Database,
         input: AcceptRunInput,
         external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
+        domain_operations: &[crate::ai_runtime::mcp_external_tools::DomainOperation],
+        selected_web_provider_id: Option<&str>,
     ) -> AppResult<AssistantRunAccepted> {
-        Self::accept_with_external_grants_outcome(db, input, external_tool_grants, false)
-            .map(|outcome| outcome.accepted)
+        Self::accept_with_external_grants_outcome(
+            db,
+            input,
+            external_tool_grants,
+            domain_operations,
+            selected_web_provider_id,
+            false,
+        )
+        .map(|outcome| outcome.accepted)
     }
 
     /// Atomically accept a Run and report whether this call created it.
@@ -279,6 +289,8 @@ impl AgentRunRepository {
         db: &Database,
         input: AcceptRunInput,
         external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
+        domain_operations: &[crate::ai_runtime::mcp_external_tools::DomainOperation],
+        selected_web_provider_id: Option<&str>,
         create_session: bool,
     ) -> AppResult<AcceptRunOutcome> {
         if input.envelope.security_domain != SecurityDomain::Normal {
@@ -312,6 +324,7 @@ impl AgentRunRepository {
                     (conn.last_insert_rowid(), session_key)
                 } else {
                     ensure_normal_session(conn, input.session_id, &input.session_key)?;
+                    ensure_no_active_top_level_run(conn, input.session_id)?;
                     (input.session_id, input.session_key.clone())
                 };
                 let (prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash) =
@@ -400,6 +413,12 @@ impl AgentRunRepository {
                     &input.run_id,
                     external_tool_grants,
                 )?;
+                crate::ai_runtime::mcp_external_tools::freeze_domain_run_grants(
+                    conn,
+                    &input.run_id,
+                    domain_operations,
+                    selected_web_provider_id,
+                )?;
                 let event = AssistantRunEvent::new(
                     &input.run_id,
                     1,
@@ -443,15 +462,50 @@ impl AgentRunRepository {
     /// This deliberately does not insert a second `session_messages` record.
     /// A newer visible message makes the historical failure ineligible, so a
     /// late provider response can never be inserted into a newer conversation.
+    #[cfg(test)]
     pub(crate) fn accept_retry(
         db: &Database,
         input: RetryRunInput,
     ) -> AppResult<AssistantRunAccepted> {
+        Self::accept_retry_outcome(db, input).map(|outcome| outcome.accepted)
+    }
+
+    /// Accept a retry and report whether this call created the Run.
+    ///
+    /// Repeated retries with the same `client_request_id` return the original
+    /// identity with `is_new=false`; only the first caller may start an
+    /// executor or emit a second accepted notification.
+    pub(crate) fn accept_retry_outcome(
+        db: &Database,
+        input: RetryRunInput,
+    ) -> AppResult<AcceptRunOutcome> {
+        let intake_fingerprint = retry_intake_fingerprint(&input)?;
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
-                if let Some((existing, _)) = accepted_for_client_request(conn, &input.client_request_id)? {
-                    return Ok(existing);
+                if let Some((existing, stored_fingerprint)) =
+                    accepted_for_client_request(conn, &input.client_request_id)?
+                {
+                    if stored_fingerprint.as_deref() != Some(intake_fingerprint.as_str()) {
+                        return Err(AppError::run(SafeRunErrorCode::IdempotencyConflict));
+                    }
+                    return Ok(AcceptRunOutcome {
+                        accepted: existing,
+                        is_new: false,
+                    });
                 }
+                let session_id = conn
+                    .query_row(
+                        "SELECT id FROM sessions WHERE session_key = ?1",
+                        [&input.session_key],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(|error| match error {
+                        rusqlite::Error::QueryReturnedNoRows => {
+                            AppError::run(SafeRunErrorCode::SessionNotFound)
+                        }
+                        other => other.into(),
+                    })?;
+                ensure_no_active_top_level_run(conn, session_id)?;
                 let source = conn
                     .query_row(
                         "SELECT r.session_id, r.turn_id, r.effect, r.effort, r.security_domain, r.risk,
@@ -510,12 +564,14 @@ impl AgentRunRepository {
                     "INSERT INTO agent_runs
                      (run_id, client_request_id, session_id, turn_id, status, state_version,
                       effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                      goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version,
+                      goal_summary, budget_policy_json, intake_fingerprint,
+                      prompt_profile_snapshot_json, prompt_contract_version,
                       prompt_contract_hash, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)",
                     rusqlite::params![input.run_id, input.client_request_id, session_id, turn_id,
                         effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                        goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version,
+                        goal_summary, budget_policy_json, intake_fingerprint,
+                        prompt_profile_snapshot_json, prompt_contract_version,
                         prompt_contract_hash, now],
                 )?;
                 let envelope: crate::ai_runtime::run_contract::ExecutionEnvelope =
@@ -531,13 +587,16 @@ impl AgentRunRepository {
                 ).map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
                 conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;
-                Ok(AssistantRunAccepted {
-                    client_request_id: input.client_request_id,
-                    run_id: input.run_id,
-                    turn_id,
-                    session: AssistantSessionRef { domain: SecurityDomain::Normal, session_key: input.session_key },
-                    state: RunState::Accepted,
-                    state_version: 0,
+                Ok(AcceptRunOutcome {
+                    accepted: AssistantRunAccepted {
+                        client_request_id: input.client_request_id,
+                        run_id: input.run_id,
+                        turn_id,
+                        session: AssistantSessionRef { domain: SecurityDomain::Normal, session_key: input.session_key },
+                        state: RunState::Accepted,
+                        state_version: 0,
+                    },
+                    is_new: true,
                 })
             })
         })
@@ -712,6 +771,70 @@ impl AgentRunRepository {
                 }
                 Ok(())
             })
+        })
+    }
+
+    /// Persist the latest body-free current-fact research continuation state.
+    pub(crate) fn persist_fresh_research_state(
+        db: &Database,
+        run_id: &str,
+        state: &FreshResearchResumeState,
+    ) -> AppResult<()> {
+        state.validate()?;
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let status: String = conn
+                    .query_row(
+                        "SELECT status FROM agent_runs WHERE run_id = ?1",
+                        [run_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(not_found_or_db)?;
+                let run_state = parse_wire::<RunState>(&status)?;
+                if run_state.is_terminal() {
+                    return Err(AppError::run(SafeRunErrorCode::TerminalState));
+                }
+                let step_seq: i64 = conn.query_row(
+                    "SELECT COALESCE(MAX(step_seq), 0) + 1 FROM agent_run_steps WHERE run_id = ?1",
+                    [run_id],
+                    |row| row.get(0),
+                )?;
+                let now = chrono::Utc::now().to_rfc3339();
+                conn.execute(
+                    "INSERT INTO agent_run_steps
+                     (run_id, step_seq, kind, status, input_summary, output_summary,
+                      resume_state_json, evidence_refs_json, created_at, updated_at)
+                     VALUES (?1, ?2, 'fresh_research', 'active', '', '', ?3, '[]', ?4, ?4)",
+                    rusqlite::params![run_id, step_seq, serde_json::to_string(state)?, now],
+                )?;
+                Ok(())
+            })
+        })
+    }
+
+    /// Read the latest body-free current-fact research continuation state.
+    pub(crate) fn latest_fresh_research_state(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Option<FreshResearchResumeState>> {
+        db.with_conn(|conn| {
+            let stored = conn
+                .query_row(
+                    "SELECT resume_state_json FROM agent_run_steps
+                     WHERE run_id = ?1 AND kind = 'fresh_research'
+                     ORDER BY step_seq DESC LIMIT 1",
+                    [run_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            stored
+                .map(|json| {
+                    let state: FreshResearchResumeState = serde_json::from_str(&json)
+                        .map_err(|_| AppError::msg("fresh_research_resume_state_invalid"))?;
+                    state.validate()?;
+                    Ok(state)
+                })
+                .transpose()
         })
     }
 
@@ -1418,7 +1541,7 @@ impl AgentRunRepository {
         })
     }
 
-    /// Reject an exact pending plan and resume its Run without dispatching the plan.
+    /// Reject an exact pending plan and cancel its Run without dispatching the plan.
     pub(crate) fn reject_frozen_confirmation(
         db: &Database,
         session_key: &str,
@@ -1477,7 +1600,7 @@ impl AgentRunRepository {
                 let next_state_version = stored_state_version + 1;
                 let updated = conn.execute(
                     "UPDATE agent_runs
-                     SET status = 'running', state_version = ?1, updated_at = ?2
+                     SET status = 'cancelled', state_version = ?1, updated_at = ?2
                      WHERE run_id = ?3 AND state_version = ?4",
                     rusqlite::params![next_state_version, now, run_id, stored_state_version],
                 )?;
@@ -1494,21 +1617,44 @@ impl AgentRunRepository {
                     run_id,
                     event_seq,
                     next_state_version,
-                    RunEventType::Resumed,
+                    RunEventType::Cancelled,
                     &now,
-                    RunEventPayload::Resumed {
-                        reason: "变更计划已拒绝，正在继续处理".to_string(),
+                    RunEventPayload::Cancelled {
+                        reason: "user_rejected_change".to_string(),
                     },
                 )
                 .map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
-                Ok(FrozenConfirmationRejection::Resumed(event))
+                Ok(FrozenConfirmationRejection::Cancelled(event))
             })
         })
     }
     /// Return only the safe Run snapshot and ordered persisted events.
     pub(crate) fn get(db: &Database, run_id: &str) -> AppResult<Option<AssistantRunGetResponse>> {
         Self::get_scoped(db, run_id, None)
+    }
+
+    /// Read the immutable current-fact policy frozen in a Run's envelope.
+    pub(crate) fn fresh_fact_policy_for_run(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Option<crate::ai_runtime::run_contract::FreshFactPolicy>> {
+        db.with_read_conn(|conn| {
+            let envelope_json = conn
+                .query_row(
+                    "SELECT envelope_json FROM agent_runs WHERE run_id = ?1",
+                    [run_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            envelope_json
+                .map(|json| {
+                    let envelope: ExecutionEnvelope = serde_json::from_str(&json)
+                        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+                    Ok(envelope.fresh_fact)
+                })
+                .transpose()
+        })
     }
 
     /// Return the latest recoverable Run for one normal-domain session.
@@ -1521,7 +1667,7 @@ impl AgentRunRepository {
                 "SELECT r.run_id FROM agent_runs r
                  JOIN sessions s ON s.id = r.session_id
                  WHERE s.session_key = ?1
-                   AND r.status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'paused', 'verifying')
+                   AND r.status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'awaiting_input', 'paused', 'verifying')
                  ORDER BY r.updated_at DESC, r.created_at DESC LIMIT 1",
                 [session_key],
                 |row| row.get::<_, String>(0),
@@ -1696,6 +1842,7 @@ impl AgentRunRepository {
                     state_version,
                     final_message_id: final_message_id.map(|id| id.to_string()),
                     pending_confirmation,
+                    pending_input: pending_input_summary(&events),
                     recovery,
                 },
                 events,
@@ -1885,6 +2032,59 @@ impl AgentRunRepository {
                     .transpose()
                     .map_err(|_| AppError::msg("agent_run_invalid_prompt_profile_snapshot"))?,
             }))
+        })
+    }
+
+    /// Return the latest validated user input supplied to one Run.
+    pub(crate) fn latest_input_values(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+    ) -> AppResult<std::collections::BTreeMap<String, String>> {
+        db.with_read_conn(|conn| {
+            let payload_json = conn
+                .query_row(
+                    "SELECT e.payload_json
+                     FROM agent_run_events e
+                     JOIN agent_runs r ON r.run_id = e.run_id
+                     JOIN sessions s ON s.id = r.session_id
+                     WHERE e.run_id = ?1 AND s.session_key = ?2
+                       AND e.event_type = 'input_provided'
+                     ORDER BY e.event_seq DESC LIMIT 1",
+                    rusqlite::params![run_id, session_key],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let Some(payload_json) = payload_json else {
+                return Ok(std::collections::BTreeMap::new());
+            };
+            let payload: RunEventPayload = serde_json::from_str(&payload_json)?;
+            match payload {
+                RunEventPayload::InputProvided { values, .. } => Ok(values),
+                _ => Ok(std::collections::BTreeMap::new()),
+            }
+        })
+    }
+
+    /// Return the owning session and user-message sequence for one Run. This
+    /// is the only storage lookup domain tools need when registering a bounded
+    /// provider result as evidence.
+    pub(crate) fn evidence_owner_for_run(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Option<(i64, i64)>> {
+        db.with_read_conn(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT r.session_id, m.seq
+                 FROM agent_runs r
+                 JOIN session_messages m
+                   ON m.session_id = r.session_id AND m.turn_id = r.turn_id
+                 WHERE r.run_id = ?1 AND m.role = 'user'",
+                    [run_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?)
         })
     }
     /// Read the immutable execution budget only when the normal-domain session matches.
@@ -2096,6 +2296,21 @@ fn ensure_normal_session(conn: &Connection, session_id: i64, session_key: &str) 
     }
 }
 
+fn ensure_no_active_top_level_run(conn: &Connection, session_id: i64) -> AppResult<()> {
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM agent_runs
+         WHERE session_id = ?1
+           AND status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'awaiting_input', 'paused', 'verifying')",
+        [session_id],
+        |row| row.get(0),
+    )?;
+    if active_count == 0 {
+        Ok(())
+    } else {
+        Err(AppError::run(SafeRunErrorCode::ActiveRunExists))
+    }
+}
+
 /// Build the immutable, non-secret prompt-profile metadata in the same intake
 /// transaction that writes the user message and Run ledger row.
 fn load_prompt_contract_snapshot(conn: &Connection) -> AppResult<(String, i64, String)> {
@@ -2279,6 +2494,21 @@ fn intake_fingerprint(
     Ok(hex::encode(Sha256::digest(canonical)))
 }
 
+fn retry_intake_fingerprint(input: &RetryRunInput) -> AppResult<String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RetryFingerprint<'a> {
+        session_key: &'a str,
+        source_run_id: &'a str,
+    }
+
+    let canonical = serde_json::to_vec(&RetryFingerprint {
+        session_key: &input.session_key,
+        source_run_id: &input.source_run_id,
+    })?;
+    Ok(hex::encode(Sha256::digest(canonical)))
+}
+
 fn insert_event(conn: &Connection, event: &AssistantRunEvent) -> AppResult<()> {
     let serialized = serde_json::to_value(event)?;
     conn.execute(
@@ -2328,6 +2558,35 @@ fn safe_body_summary(body: &str) -> String {
 }
 
 fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
+    if let RunEventPayload::InputRequired {
+        input_id,
+        input_kind,
+        fields,
+        prompt,
+    } = payload
+    {
+        if input_id.trim().is_empty()
+            || input_id.chars().count() > 160
+            || input_kind != "location"
+            || fields != &["city".to_string()]
+            || prompt.trim().is_empty()
+            || prompt.chars().count() > 256
+        {
+            return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+        }
+    }
+    if let RunEventPayload::InputProvided { input_id, values } = payload {
+        if input_id.trim().is_empty()
+            || values.len() != 1
+            || values.get("city").is_none_or(|city| {
+                city.trim().is_empty()
+                    || city.chars().count() > 128
+                    || city.chars().any(char::is_control)
+            })
+        {
+            return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+        }
+    }
     if let RunEventPayload::ReasoningSummary { summary_id, text } = payload {
         if summary_id.trim().is_empty()
             || summary_id.chars().count() > 160
@@ -2432,6 +2691,8 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
     match payload {
         RunEventPayload::StageChanged { state, .. } => Some(*state),
         RunEventPayload::ConfirmationRequired { .. } => Some(RunState::AwaitingConfirmation),
+        RunEventPayload::InputRequired { .. } => Some(RunState::AwaitingInput),
+        RunEventPayload::InputProvided { .. } => Some(RunState::Running),
         RunEventPayload::Paused { .. } => Some(RunState::Paused),
         RunEventPayload::Resumed { .. } => Some(RunState::Running),
         RunEventPayload::Completed { .. } => Some(RunState::Completed),
@@ -2448,6 +2709,38 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
         | RunEventPayload::ProviderSwitched { .. }
         | RunEventPayload::EvidenceRegistered { .. } => None,
     }
+}
+
+fn pending_input_summary(
+    events: &[crate::ai_runtime::run_contract::AssistantRunEvent],
+) -> Option<crate::ai_runtime::run_contract::PendingRunInput> {
+    let mut pending = None;
+    for event in events {
+        match event.payload() {
+            RunEventPayload::InputRequired {
+                input_id,
+                input_kind,
+                fields,
+                prompt,
+            } => {
+                pending = Some(crate::ai_runtime::run_contract::PendingRunInput {
+                    input_id: input_id.clone(),
+                    kind: input_kind.clone(),
+                    fields: fields.clone(),
+                    prompt: prompt.clone(),
+                });
+            }
+            RunEventPayload::InputProvided { input_id, .. }
+                if pending
+                    .as_ref()
+                    .is_some_and(|value| value.input_id == *input_id) =>
+            {
+                pending = None;
+            }
+            _ => {}
+        }
+    }
+    pending
 }
 
 fn validate_tool_call_lifecycle(

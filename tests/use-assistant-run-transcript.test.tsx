@@ -1,7 +1,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  type AssistantAnswerReveal,
+  useAssistantAnswerReveal,
+} from "@/components/ai/hooks/useAssistantAnswerReveal";
 import { useAssistantConversationProjection } from "@/components/ai/hooks/useAssistantConversationProjection";
 import { restoreChatLineContent } from "@/lib/ai-payload-store";
 import type { ChatLine } from "@/components/ai/AiMessageList";
@@ -20,19 +24,49 @@ let streaming = false;
 function Probe({
   run,
   presentation,
-  presentationAnswer,
-  presentationRevealing,
+  presentationReveal,
 }: {
   run: ReturnType<typeof replayAssistantRunEvents>;
-  presentation?: AssistantPresentationState;
-  presentationAnswer?: string;
-  presentationRevealing?: boolean;
+  presentation?: AssistantPresentationState | null;
+  presentationReveal?: AssistantAnswerReveal;
 }) {
   useAssistantConversationProjection({
     run,
     presentation,
-    presentationAnswer,
-    presentationRevealing,
+    presentationReveal:
+      presentationReveal ??
+      (presentation
+        ? {
+            runId: presentation.runId,
+            answer: presentation.answer,
+            revealing: false,
+          }
+        : undefined),
+    messages,
+    setMessages: (updater) => {
+      messages = typeof updater === "function" ? updater(messages) : updater;
+    },
+    setStreaming: (next) => {
+      streaming = next;
+    },
+    setActivityHint: () => undefined,
+    setError: () => undefined,
+  });
+  return null;
+}
+
+function RevealProjectionProbe({
+  run,
+  presentation,
+}: {
+  run: ReturnType<typeof replayAssistantRunEvents>;
+  presentation: AssistantPresentationState;
+}) {
+  const reveal = useAssistantAnswerReveal(presentation);
+  useAssistantConversationProjection({
+    run,
+    presentation,
+    presentationReveal: reveal,
     messages,
     setMessages: (updater) => {
       messages = typeof updater === "function" ? updater(messages) : updater;
@@ -1001,8 +1035,11 @@ describe("useAssistantConversationProjection", () => {
             answer: "完整答复",
             answerComplete: false,
           }}
-          presentationAnswer="完整"
-          presentationRevealing={true}
+          presentationReveal={{
+            runId: "run-reveal",
+            answer: "完整",
+            revealing: true,
+          }}
         />,
       ),
     );
@@ -1086,13 +1123,235 @@ describe("useAssistantConversationProjection", () => {
             answer: "完整答复",
             answerComplete: true,
           }}
-          presentationAnswer="完整"
-          presentationRevealing={true}
+          presentationReveal={{
+            runId: "run-complete",
+            answer: "完整",
+            revealing: true,
+          }}
         />,
       ),
     );
 
     expect(messages[1]?.content).toBe("完整");
     expect(messages[1]?.presentationStreaming).toBe(true);
+  });
+
+  it("new_run_never_projects_previous_reveal_answer", () => {
+    messages = [
+      { role: "assistant", content: "上一轮完整回答", runId: "run-old" },
+      { role: "user", content: "新问题", runId: "run-new" },
+      { role: "assistant", content: "", runId: "run-new" },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+
+    const frameCallbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const requestFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        const frame = nextFrame;
+        nextFrame += 1;
+        frameCallbacks.set(frame, callback);
+        return frame;
+      });
+    const cancelFrame = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((frame) => {
+        frameCallbacks.delete(frame);
+      });
+
+    try {
+      const oldRun = replayAssistantRunEvents("run-old", [
+        {
+          runId: "run-old",
+          seq: 1,
+          stateVersion: 0,
+          timestamp: "2026-08-03T00:00:00.000Z",
+          type: "accepted",
+          payload: {
+            kind: "accepted",
+            turnId: "turn-old",
+            sessionKey: "session-1",
+          },
+        },
+        {
+          runId: "run-old",
+          seq: 2,
+          stateVersion: 1,
+          timestamp: "2026-08-03T00:00:01.000Z",
+          type: "stage_changed",
+          payload: {
+            kind: "stage_changed",
+            state: "running",
+            stage: "正在生成答复",
+          },
+        },
+        {
+          runId: "run-old",
+          seq: 3,
+          stateVersion: 2,
+          timestamp: "2026-08-03T00:00:02.000Z",
+          type: "content_delta",
+          payload: { kind: "content_delta", delta: "上一轮完整回答" },
+        },
+        {
+          runId: "run-old",
+          seq: 4,
+          stateVersion: 3,
+          timestamp: "2026-08-03T00:00:03.000Z",
+          type: "completed",
+          payload: { kind: "completed", messageId: "message-old" },
+        },
+      ] satisfies AssistantRunEvent[]);
+
+      act(() =>
+        root?.render(
+          <RevealProjectionProbe
+            run={oldRun}
+            presentation={{
+              runId: "run-old",
+              lastSeq: 4,
+              resyncFromSeq: null,
+              pendingEvents: [],
+              processItems: [],
+              answer: "上一轮完整回答",
+              answerComplete: false,
+            }}
+          />,
+        ),
+      );
+      while (frameCallbacks.size > 0) {
+        const callbacks = Array.from(frameCallbacks.values());
+        frameCallbacks.clear();
+        act(() => {
+          callbacks.forEach((callback) => callback(16));
+        });
+      }
+      expect(
+        messages.find(
+          (message) =>
+            message.role === "assistant" && message.runId === "run-old",
+        )?.content,
+      ).toBe("上一轮完整回答");
+
+      const newRun = replayAssistantRunEvents("run-new", [
+        {
+          runId: "run-new",
+          seq: 1,
+          stateVersion: 0,
+          timestamp: "2026-08-03T00:00:04.000Z",
+          type: "accepted",
+          payload: {
+            kind: "accepted",
+            turnId: "turn-new",
+            sessionKey: "session-1",
+          },
+        },
+      ] satisfies AssistantRunEvent[]);
+
+      act(() =>
+        root?.render(
+          <RevealProjectionProbe
+            run={newRun}
+            presentation={{
+              runId: "run-new",
+              lastSeq: 1,
+              resyncFromSeq: null,
+              pendingEvents: [],
+              processItems: [],
+              answer: "",
+              answerComplete: false,
+            }}
+          />,
+        ),
+      );
+
+      expect(
+        messages.find(
+          (message) =>
+            message.role === "assistant" && message.runId === "run-old",
+        )?.content,
+      ).toBe("上一轮完整回答");
+      expect(
+        messages.find(
+          (message) =>
+            message.role === "assistant" && message.runId === "run-new",
+        )?.content,
+      ).toBe("");
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+    }
+  });
+
+  it("terminal_recovery_uses_only_its_own_persisted_answer", () => {
+    messages = [
+      { role: "assistant", content: "上一轮完整回答", runId: "run-old" },
+      { role: "user", content: "新问题", runId: "run-new" },
+      { role: "assistant", content: "", runId: "run-new" },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+
+    const newRun = replayAssistantRunEvents("run-new", [
+      {
+        runId: "run-new",
+        seq: 1,
+        stateVersion: 0,
+        timestamp: "2026-08-03T00:00:00.000Z",
+        type: "accepted",
+        payload: {
+          kind: "accepted",
+          turnId: "turn-new",
+          sessionKey: "session-1",
+        },
+      },
+      {
+        runId: "run-new",
+        seq: 2,
+        stateVersion: 1,
+        timestamp: "2026-08-03T00:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在生成答复",
+        },
+      },
+      {
+        runId: "run-new",
+        seq: 3,
+        stateVersion: 2,
+        timestamp: "2026-08-03T00:00:02.000Z",
+        type: "content_delta",
+        payload: { kind: "content_delta", delta: "本轮持久化正文" },
+      },
+      {
+        runId: "run-new",
+        seq: 4,
+        stateVersion: 3,
+        timestamp: "2026-08-03T00:00:03.000Z",
+        type: "completed",
+        payload: { kind: "completed", messageId: "message-new" },
+      },
+    ] satisfies AssistantRunEvent[]);
+
+    act(() => root?.render(<Probe run={newRun} presentation={null} />));
+
+    expect(
+      messages.find(
+        (message) =>
+          message.role === "assistant" && message.runId === "run-old",
+      )?.content,
+    ).toBe("上一轮完整回答");
+    expect(
+      messages.find(
+        (message) =>
+          message.role === "assistant" && message.runId === "run-new",
+      )?.content,
+    ).toBe("本轮持久化正文");
   });
 });

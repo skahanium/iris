@@ -209,14 +209,7 @@ pub(super) fn fail_finalization_with_sink(
     );
     match append {
         Ok(failed) => {
-            if sink.emit(&failed).is_err() {
-                log_finalization_failure(
-                    run_id,
-                    RunFinalizationStage::EventDelivery,
-                    SafeRunErrorCode::EventDeliveryFailed,
-                );
-                return Err(AppError::run(SafeRunErrorCode::EventDeliveryFailed));
-            }
+            emit_durable_event_best_effort(sink, &failed);
             Err(AppError::run(failure.code))
         }
         Err(_) => {
@@ -275,6 +268,50 @@ pub(super) fn validated_current_run_final_submission(
     submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
     strict_web: bool,
 ) -> Result<crate::ai_runtime::provenance::ValidatedFinalAnswerSubmission, RunFinalizationFailure> {
+    let frozen_fresh_fact =
+        AgentRunRepository::fresh_fact_policy_for_run(db, run_id).map_err(|error| {
+            RunFinalizationFailure::new(
+                RunFinalizationStage::EvidenceValidation,
+                SafeRunErrorCode::EvidenceInvalid,
+                error.to_string(),
+            )
+        })?;
+    if let Some(policy) = frozen_fresh_fact {
+        if matches!(
+            policy.domain,
+            crate::ai_runtime::run_contract::FreshFactDomain::Weather
+                | crate::ai_runtime::run_contract::FreshFactDomain::News
+                | crate::ai_runtime::run_contract::FreshFactDomain::Finance
+                | crate::ai_runtime::run_contract::FreshFactDomain::Entertainment
+                | crate::ai_runtime::run_contract::FreshFactDomain::Sports
+        ) {
+            let evidence = AgentEvidenceRepository::list_current_run_registered(db, run_id)
+                .map_err(|error| {
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::EvidenceInvalid,
+                        error.to_string(),
+                    )
+                })?;
+            crate::ai_runtime::current_fact_finalization::validate_current_fact_submission(
+                &policy,
+                submission,
+                &evidence,
+            )
+            .map_err(|error| {
+                let code = match error {
+                    crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::UnsupportedProtocol => SafeRunErrorCode::FinalizationProtocolInvalid,
+                    crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::InsufficientEvidence
+                    | crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::UnsupportedClaim => SafeRunErrorCode::EvidenceInvalid,
+                };
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::EvidenceValidation,
+                    code,
+                    "current_fact_submission_rejected",
+                )
+            })?;
+        }
+    }
     let policy =
         AgentEvidenceRepository::provenance_policy(db, run_id, strict_web).map_err(|error| {
             RunFinalizationFailure::new(
@@ -301,7 +338,7 @@ pub(super) fn flush_validated_stream_or_fail(
     observer: &mut AgentRunStreamObserver<'_>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
-    observer.flush().map_err(|error| {
+    observer.flush_without_terminal().map_err(|error| {
         let code = if error.to_string().contains("delivery") || error.to_string().contains("emit") {
             SafeRunErrorCode::EventDeliveryFailed
         } else {
@@ -319,7 +356,7 @@ pub(super) fn flush_validated_stream_or_fail(
 }
 
 /// Shared Direct/ToolLoop terminal contract:
-/// AnswerComplete (via flush) → durable `completed` emit → clear abort handle.
+/// validated deltas → durable message/`completed` → AnswerComplete → clear abort handle.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_run_terminal(
     db: &Database,
@@ -451,16 +488,11 @@ pub(super) fn emit_run_terminal(
         .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
         .and_then(|response| response.events.last().cloned())
         .ok_or_else(|| AppError::run(SafeRunErrorCode::PersistenceFailed))?;
-    if sink.emit(&completed).is_err() {
-        log_finalization_failure(
-            run_id,
-            RunFinalizationStage::EventDelivery,
-            SafeRunErrorCode::EventDeliveryFailed,
-        );
-        return Err(AppError::msg(
-            SafeRunErrorCode::EventDeliveryFailed.as_str(),
-        ));
-    }
+    emit_durable_event_best_effort(sink, &completed);
+    // Terminal presentation delivery is best-effort: it is a live UI
+    // projection of an already-durable Completed fact, so a failed emit must
+    // never turn a successfully persisted Run into an error.
+    let _ = sink.emit_terminal_presentation(run_id);
     crate::ai_runtime::model_gateway::clear_abort(run_id);
     Ok(())
 }
@@ -562,9 +594,14 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::InvalidSubagentBatchReport
         | SafeRunErrorCode::RetryNotAvailable
         | SafeRunErrorCode::IdempotencyConflict
+        | SafeRunErrorCode::ActiveRunExists
         | SafeRunErrorCode::UnknownToolCallId
         | SafeRunErrorCode::UnverifiedWebCitation
-        | SafeRunErrorCode::WebEvidenceRequired => "运行暂时无法完成，请稍后重试",
+        | SafeRunErrorCode::WebEvidenceRequired
+        | SafeRunErrorCode::GroundedFinalizationUnavailable
+        | SafeRunErrorCode::FreshEvidenceInsufficient
+        | SafeRunErrorCode::LocationRequired
+        | SafeRunErrorCode::InputInvalid => "运行暂时无法完成，请稍后重试",
     }
 }
 

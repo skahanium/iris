@@ -60,7 +60,14 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                 additionalProperties = $false
             }
         })
-        if ($Mode -eq "search-fetch") {
+        if ($Mode -eq "domain-dto") {
+            $tools += @{
+                name = "domain"
+                annotations = @{ readOnlyHint = $true }
+                inputSchema = @{ type = "object"; properties = @{}; additionalProperties = $false }
+            }
+        }
+        elseif ($Mode -eq "search-fetch") {
             $tools += @{
                 name = "fetch"
                 annotations = @{ readOnlyHint = $true }
@@ -79,6 +86,21 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
     if ($line.Contains('"method":"tools/call"')) {
         if ($line.Contains('"name":"fetch"')) {
             Write-McpResponse $id @{ content = @(@{ type = "text"; text = "fetch-result" }); isError = $false }
+        }
+        elseif ($line.Contains('"name":"domain"')) {
+            Write-McpResponse $id @{
+                content = @(@{ type = "text"; text = "domain-result" })
+                structuredContent = @{ records = @(@{
+                    location = "上海"; condition = "晴"; temperature = "26"; units = "C"
+                    observationTime = "2026-08-21T08:00:00Z"; issueTime = "2026-08-21T08:00:00Z"
+                    title = "Synthetic title"; publisher = "Synthetic Publisher"; publishedAt = "2026-08-21T08:00:00Z"; topic = "synthetic"
+                    instrument = "AAPL"; assetKind = "equity"; currency = "USD"; asOf = "2026-08-21T08:00:00Z"; delay = "0"; value = "123.45"
+                    region = "上海"; channel = "Synthetic Channel"; date = "2026-08-21"; checkedAt = "2026-08-21T08:00:00Z"
+                    competition = "Synthetic League"; participants = @("A", "B"); startTime = "2026-08-21T08:00:00Z"; status = "scheduled"; score = "1-0"
+                    sourceUrl = "https://source.invalid/domain"; sourceTitle = "Synthetic Domain"; observedAt = "2026-08-21T08:00:00Z"; evidenceId = "provider-supplied-id"
+                }) }
+                isError = $false
+            }
         }
         elseif ($Mode -eq "search-empty") {
             Write-McpResponse $id @{ content = @(@{ type = "text"; text = "no parseable web evidence" }); isError = $false }

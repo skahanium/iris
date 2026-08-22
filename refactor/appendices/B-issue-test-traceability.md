@@ -1,45 +1,70 @@
 # 附录 B：问题到测试追踪
 
-本表为目标测试清单。测试文件名可按现有模块组织调整，但测试语义和问题 ID 应保留。只有代码中仍可确认的问题才进入必做列。
+本表只列仓库中真实存在、能直接证明相应契约的测试。状态以测试执行结果为准；文档不以宽泛 E2E 或相近名称替代定向证据。上表中的第一轮 Resolved 测试是持续回归基线，不等于下方第二轮问题已经完成。
 
-| 问题 ID   | 目标测试                                                | 层级           | 通过条件                                             |
-| --------- | ------------------------------------------------------- | -------------- | ---------------------------------------------------- |
-| RUN-001   | `concurrent_retry_starts_executor_once`                 | 仓储/服务集成  | 两个并发接受只返回一个 `is_new=true`，副作用计数为 1 |
-| RUN-001   | `accepted_retry_does_not_spawn_again`                   | 服务单元       | 已接受 retry 返回已有 Run 且不调用 spawn             |
-| RUN-002   | `answer_complete_follows_persisted_terminal_state`      | 最终化集成     | 事件顺序晚于消息和 Completed 持久化                  |
-| RUN-002   | `message_persist_failure_never_emits_complete`          | 故障注入       | 写入失败时无成功事件或成功 UI 状态                   |
-| RUN-003   | `sink_disconnect_recovers_without_reexecution`          | 恢复集成       | 重连恢复同一终态且工具调用计数不增加                 |
-| RUN-003   | `rejected_confirmation_cancels_without_write`           | 服务集成       | reason 为 `user_rejected_change` 且无笔记写入        |
-| ROUTE-001 | `executor_uses_frozen_tool_surface`                     | 服务单元       | Run 中途设置变化不产生第二套路由结果                 |
-| TOOL-001  | `capabilities_read_reports_current_surface_only`        | 工具集成       | Planned、未授权和当前模型不支持的工具均不出现        |
-| TOOL-002  | `reasoning_tools_have_no_vault_search_permission_alias` | 权限单元       | 遗留工具不再继承不相关权限                           |
-| TOOL-003  | `all_dispatch_paths_apply_same_gate`                    | 工具集成       | 正常、恢复、旁路调用均执行同一权限/确认检查          |
-| TOOL-003  | `web_disabled_blocks_every_external_path`               | 安全集成       | 外部请求计数为 0                                     |
-| TOOL-004  | `unknown_or_unused_parameters_are_rejected`             | schema 单元    | 未声明/无语义字段产生稳定错误码                      |
-| EVID-001  | `direct_strict_web_emits_source_group_fallback`         | Run 集成       | 无精确绑定时 binding 明确为 fallback                 |
-| EVID-001  | `tool_loop_uncalibrated_emits_source_group_fallback`    | Run 集成       | 保持现有正确行为                                     |
-| EVID-002  | `missing_binding_renders_unverified_source_group`       | 前端组件       | 标题和说明不暗示精确引用                             |
-| EVID-002  | `unknown_binding_version_fails_safe`                    | 前端组件       | 未知版本仍按未逐段核验展示                           |
-| EVID-003  | `structured_verifier_requires_registered_rule`          | 校验单元       | 无规则不能晋升 VERIFIED                              |
-| EVID-003  | `structured_verifier_checks_units_time_and_source`      | 校验单元       | 任一必要字段不一致即保持 uncalibrated/失败           |
-| EVID-004  | `exact_binding_rejects_stale_or_foreign_run_evidence`   | 证据集成       | 旧 Run/失效证据不能成为 Exact                        |
-| SEC-001   | `permission_mapping_matches_catalog_capability`         | 目录单元       | 每个可执行工具映射与目录声明一致                     |
-| SEC-002   | `local_retrieval_content_never_enters_web_query`        | 隐私集成       | 捕获的 URL/query 不含夹具中的敏感标记                |
-| SEC-002   | `untrusted_web_text_cannot_expand_permissions`          | 安全集成       | 注入文本无法启用工具或跳过确认                       |
-| CTX-001   | `run_situation_uses_committed_projection`               | 上下文单元     | 草稿、旧临时结果和旧权限不进入投影                   |
-| CTX-002   | `first_user_message_is_not_permanent_goal`              | 回归单元       | 后续无关请求不继承首条消息为目标                     |
-| CTX-003   | `summary_invalidates_when_covered_messages_change`      | 摘要集成       | 删除/修改范围内消息后旧摘要不再使用                  |
-| CTX-003   | `short_conversation_does_not_require_summary`           | 上下文单元     | 预算内直接使用原消息                                 |
-| MEM-001   | `same_memory_key_can_exist_in_different_scopes`         | migration/仓储 | 两个 scope 的同 key 互不覆盖                         |
-| MEM-001   | `clear_scope_preserves_other_scopes`                    | 仓储单元       | 清理精确且可重复                                     |
-| MEM-002   | `unconfirmed_inference_is_not_persisted`                | 记忆服务       | 模型猜测和 Web 内容不会写入                          |
-| UI-001    | `capability_degraded_event_is_visible_and_recoverable`  | 前后端契约     | 实时与刷新后的展示一致                               |
-| UI-002    | `tool_diagnostics_are_redacted`                         | 前端/事件单元  | 不出现密钥、正文或原始参数                           |
+| 问题 ID  | 状态     | 实际测试                                                                         | 证明边界                                                                                  |
+| -------- | -------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| RUN-001  | Resolved | `same_session_concurrent_start_admits_only_one_active_run`                       | 同会话并发首次启动只接受一个活动 Run，另一请求返回稳定错误码                              |
+| RUN-001  | Resolved | `same_session_concurrent_retry_admits_only_one_active_run`                       | 两个不同 retry ID 不能并发创建两个执行权                                                  |
+| RUN-001  | Resolved | `accepted_retry_does_not_spawn_again`                                            | 同一 `client_request_id` 与 intake 指纹重放返回原 Run，`is_new=false` 且不重复发 Accepted |
+| RUN-001  | Resolved | `classified_request_replay_does_not_spawn_again`                                 | 涉密临时 Run 同 ID、同请求指纹重放复用身份且不重复启动                                    |
+| RUN-002  | Resolved | `direct_streaming_does_not_emit_answer_complete_before_durable_finalization`     | AnswerComplete 只能在最终消息与 Completed 持久化后投影                                    |
+| RUN-003  | Resolved | `terminal_sink_failure_recovers_without_reexecution`                             | 终态 sink 失败后从持久化事实恢复，副作用计数不增加                                        |
+| RUN-003  | Resolved | `窗口重新获得焦点时重放仍显示为非终态的 Run`                                     | 前端仅在 focus 时调用 `assistant_run_get` 重放非终态 Run                                  |
+| RUN-003  | Resolved | `rejected_confirmation_cancels_without_write`                                    | 拒绝确认后终态为 Cancelled，且无目标写入、最终消息或 AnswerComplete                       |
+| RUN-003  | Resolved | `rejected_confirmation_recovery_stays_cancelled`                                 | 历史 confirmation rejected / Run active 不一致恢复为 Cancelled                            |
+| TOOL-001 | Resolved | `capabilities_read_empty_surface_returns_no_tools`                               | 空表面返回空目录，不回退到完整 catalog                                                    |
+| TOOL-001 | Resolved | `capabilities_read_reports_current_surface_only`                                 | 能力读取只报告当前 Run 允许表面                                                           |
+| TOOL-002 | Resolved | `harness_tools_do_not_inherit_vault_search_permission`                           | harness 工具不继承不相关的 vault.search 权限                                              |
+| TOOL-003 | Resolved | `empty_tool_surface_rejects_forged_tool_call`                                    | 伪造工具调用返回 `tool_not_in_run_surface` 且不到达 dispatch                              |
+| TOOL-003 | Resolved | `internal_web_prefetch_allows_only_web_search`                                   | 严格 Web 预取表面只允许 `web_search`                                                      |
+| TOOL-004 | Resolved | `catalog_owns_execution_metadata`                                                | 成本、输出和证据策略只来自 `ToolCatalogEntry`                                             |
+| EVID-001 | Resolved | `direct_required_web_run_persists_source_group_binding_when_markers_are_missing` | Direct 严格 Web 无精确标记时仍持久化 `SourceGroupFallback`                                |
+| EVID-002 | Resolved | `labels an uncalibrated source group as this-run retrieval sources`              | UI 标为“本次检索来源组”，不暗示精确引用或逐段核验                                         |
+| EVID-003 | Deferred | `structured_verifier_requires_registered_rule`                                   | 仅证明无注册规则不能晋升 VERIFIED；通用语义校验不进入完成标准                             |
+| EVID-004 | Resolved | `current_run_citation_links_exclude_foreign_and_retired_evidence`                | foreign/retired 证据不能成为当前 Run 引用                                                 |
+| CTX-002  | Resolved | `first_user_message_is_not_permanent_goal`                                       | 首条历史用户消息不会被永久提升为当前目标                                                  |
+| CTX-003  | Resolved | `stale_summary_is_revalidated_before_context_assembly`                           | 上下文组装前复核摘要；覆盖范围内变更会刷新或清除                                          |
+| CTX-003  | Resolved | `messages_after_summary_range_do_not_invalidate_existing_summary`                | 覆盖范围后的新消息不使旧摘要失效，并保留在近期窗口                                        |
+| MEM-001  | Resolved | `memory_scope_precedence_is_vault_then_global`                                   | 精确 key 与列表读取均按 vault 优先于 global，且同名去重                                   |
+| MEM-001  | Resolved | `confirmed_memory_clear_is_scope_local`                                          | clear_scope 只清理明确指定作用域并返回 `affectedCount`                                    |
+| MEM-002  | Resolved | `unconfirmed_memory_mutation_is_not_persisted`                                   | 未确认的 upsert/delete/clear 均不会 dispatch 或落库                                       |
+| UI-002   | Resolved | `tool_diagnostics_never_expose_raw_arguments`                                    | 工具事件和审计不含原始参数、笔记正文哨兵或凭证哨兵                                        |
+| UI-003   | Resolved | `new_run_never_projects_previous_reveal_answer`                                  | 新 Run 首帧和处理期间不投影上一 Run reveal                                                |
+| UI-003   | Resolved | `queued_previous_run_frame_cannot_patch_new_run`                                 | 上一 Run 排队 frame/event 不能修改新 Run 行                                               |
+| UI-003   | Resolved | `terminal_recovery_uses_only_its_own_persisted_answer`                           | 终态恢复只使用同 Run 持久化正文                                                           |
+
+| ROUTE-003 | Resolved | `today_date_question_uses_trusted_runtime_without_web` | runtime 请求不冻结领域 operation，也不获得 Web 权限 |
+| ROUTE-003 | Resolved | `recent_movie_question_freezes_date_and_location`; `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | production intake 保留 operation、日期窗口和地点要求 |
+| ROUTE-003 | Resolved | `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | 11 类 operation 均经 RunIntake → execute_normal_run；分类、唯一 snapshot、收窄 schema、dispatch 与终态恢复已验证 |
+| WEB-001 | Partial | `insufficient_first_search_triggers_bounded_refinement` | 已证明预搜索计数、gap 预算和 resume state 恢复；未证明 Provider attempt/winner 生产夹具 |
+| WEB-001 | Partial | `sufficient_first_search_stops_without_extra_tool_turn` | 已证明单测提前停止；未证明 provider failover 不扩大轮次 |
+| WEB-001 | Partial | `search_fetch_with_dated_snippet_produces_news_usable_freshness` | 搜索片段可解析时效标签，News WebFallback 可进入 DTO 校验 |
+| WEB-001 | Partial | `news_web_fallback_produces_validated_record_from_headless_mcp` | News WebFallback 服务层已能由 headless MCP 产出验证记录 |
+| WEB-001 | Partial | `production_news_web_fallback_uses_intake_surface_dispatch_and_recovery`; `news_web_fallback_is_unavailable_when_web_is_disabled` | News fallback 经正式入口只暴露 `news_lookup`；Web 关闭时在模型前失败关闭；provider 重试/排序仍未证明 |
+| EVID-005 | Resolved | `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven`; `current_fact_finalization_accepts_provenance_prefixed_evidence_ids` | 生产终局只接受 Run-local provenance；完整 operation 矩阵已覆盖 |
+| EVID-005 | Partial | `host_renderer_never_leaks_provider_metadata_across_all_domain_records` | Host 固定模板终局覆盖全部领域 DTO，且不泄漏 Provider 元数据 |
+| EVID-005 | Partial | `source_group_fallback_cannot_complete_strict_current_fact` | 来源组不能替代当前事实支持 |
+| EVID-005 | Partial | `unsupported_finalization_protocol_never_falls_back_to_guessing` | 协议不支持时失败关闭 |
+| EVAL-002 | Partial | `current_fact_movie_follow_up_scenario` | 固定场景存在；需重新接入生产结构化/Web 路径 |
+| EVAL-002 | Partial | `agent_does_not_deny_web_after_current_run_search` | 已搜索能力诚实性仍需生产路径复验 |
+| CAP-001 | Partial | `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | operation 软件闭环已证明；真实实例 Provider、health 与 failover 仍未配置/验收 |
+| CAP-001 | Resolved | `weather_without_confirmed_city_requests_location` | 天气缺城市时询问，不推断位置 |
+| CAP-001 | Resolved | `location_scope_widens_city_then_province_then_country` | 允许放宽的领域遵守固定地域顺序 |
+| CAP-001 | Resolved | `stale_weather_and_market_data_fail_closed` | 陈旧天气/行情不产生当前结论 |
+| CAP-001 | Resolved | `movie_availability_requires_region_channel_and_date` | 影视可用性必须包含地域、渠道和日期 |
+| CAP-001 | Resolved | `finance_analysis_cannot_introduce_unsupported_numbers` | 描述性金融分析不引入证据外数值 |
+| CAP-001 | Resolved | `domain_tool_diagnostics_never_expose_raw_output` | provider 原始 JSON 哨兵不进入 Run event、tool audit、UI error、eval report |
+
+| INPUT-001 | Partial | `input_submission_resumes_the_same_run_and_replay_is_noop` | 控制层证明同一 Run 恢复与重复提交幂等；生产执行路径待补 |
+| INPUT-001 | Partial | `production_missing_city_waits_for_input_and_resumes_the_same_run` | 生产路径缺城市等待并同一 Run 恢复；断线恢复仍待补 |
+| WEB-002 | Partial | `supplement_without_gap_is_rejected_after_initial_prefetch`; `duplicate_normalized_query_is_rejected_even_when_gap_changes`; `fresh_research_resume_state_restores_budget_and_query_deduplication` | 已证明补搜缺 gap、规范化重复查询拒绝及 resume state 恢复；真实 Provider 尝试待补 |
+| CAP-002 | Resolved | `non_news_domain_operations_without_a_binding_fail_before_model_dispatch`; `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | 十个非 News operation 无 binding 在模型前失败；11 个绑定夹具均走 production 路径 |
+| EVID-006 | Resolved | `production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven` | Provider 伪造 evidence ID 被剥离，Iris 真实 ID 进入 provenance 与终局 |
 
 ## 追踪规则
 
-- 测试名可变，问题 ID 不变；测试注释或用例描述中引用 ID。
-- 一个问题可以由多个层级测试覆盖，但不得只有宽泛 E2E 而没有可定位的契约测试。
-- 问题修复后在附录 A 中保留事实并标记为 Resolved（附提交或 PR），不要删除历史 ID。
-- 若问题被证明不存在，标记 Stale 并记录证据，不写“占位修复”。
-- 自由文本语义校验不进入本表的默认必过项；实验验收见附录 C。
+- 测试改名或迁移文件时必须同步本表，并以 `rg` 和测试运行结果重新核实。
+- 一个问题可以由多个层级测试覆盖，但不得把不存在的目标测试写成已通过。
+- 只有对应测试通过后，附录 A 才能把 RUN-003、MEM-001、UI-002 等状态标记为 Resolved。
+- EVID-003 保持 Deferred：本轮只验 fail-closed 门；未来结构化工具规则和自由文本实验见附录 C。

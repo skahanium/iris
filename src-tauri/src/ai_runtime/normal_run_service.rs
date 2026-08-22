@@ -13,17 +13,21 @@ use tauri::AppHandle;
 
 use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
+use crate::ai_runtime::fresh_research_plan::build_fresh_research_plan;
+use crate::ai_runtime::fresh_research_plan::explicit_city_from_message;
+use crate::ai_runtime::fresh_research_plan::ConfirmedLocation;
 use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, CapabilityId, Effort, Freshness, Modality, RunBudgetPolicy,
-    SafeRunErrorCode, VerificationRequirement, WebEvidenceFailureReason,
+    AssistantRunAccepted, CapabilityId, DomainOperation, Effort, FreshFactDomain, Freshness,
+    Modality, RunBudgetPolicy, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
+    VerificationRequirement, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingProvider, RunEngine, RunEventSink, WebVerificationFailure,
 };
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
-use crate::ai_runtime::tool_executor::ToolRegistry;
+use crate::ai_runtime::tool_executor::{constrain_domain_tool_surface, ToolRegistry};
 use crate::ai_runtime::tool_surface::{
     classify_time_sensitivity, ToolSurfaceInput, ToolSurfacePlan, ToolSurfacePlanner,
 };
@@ -32,6 +36,17 @@ use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
+
+fn is_current_fact_domain(domain: FreshFactDomain) -> bool {
+    matches!(
+        domain,
+        FreshFactDomain::Weather
+            | FreshFactDomain::News
+            | FreshFactDomain::Finance
+            | FreshFactDomain::Entertainment
+            | FreshFactDomain::Sports
+    )
+}
 
 fn plan_tool_surface(
     context: &crate::ai_runtime::run_context::RunContext,
@@ -42,7 +57,7 @@ fn plan_tool_surface(
         web_enabled: authorized_capabilities
             .iter()
             .any(|capability| capability.as_str() == "web.search"),
-        time_sensitive: classify_time_sensitivity(&context.user_message),
+        time_sensitive: classify_time_sensitivity(context.envelope.fresh_fact.domain),
         effort: context.envelope.effort,
         web_prefetched,
         authorized_capabilities: authorized_capabilities.to_vec(),
@@ -91,7 +106,13 @@ async fn execute_normal_run_internal(
     telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
 ) {
     let db = Arc::clone(&state.db);
-    if RunEngine::mark_preparing_with_sink(&db, &accepted.session, &accepted.run_id, sink).is_err()
+    let current_state = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .ok()
+        .flatten()
+        .map(|response| response.run.state);
+    if !matches!(current_state, Some(RunState::Running))
+        && RunEngine::mark_preparing_with_sink(&db, &accepted.session, &accepted.run_id, sink)
+            .is_err()
     {
         return;
     }
@@ -171,6 +192,80 @@ async fn execute_normal_run_internal(
             return;
         }
     };
+    if requires_user_input(&context) {
+        let snapshot = match RunIntake::get(&db, &accepted.session, &accepted.run_id) {
+            Ok(Some(snapshot)) => snapshot,
+            _ => return,
+        };
+        if snapshot.run.state == RunState::Preparing {
+            let running = match AgentRunRepository::append_event(
+                &db,
+                crate::ai_runtime::agent_run_repository::AppendRunEventInput {
+                    run_id: accepted.run_id.clone(),
+                    state_version: snapshot.run.state_version,
+                    event_type: RunEventType::StageChanged,
+                    payload: RunEventPayload::StageChanged {
+                        state: RunState::Running,
+                        stage: "正在等待补充信息".into(),
+                        stage_code: Some(crate::ai_runtime::run_contract::RunStageCode::Preparing),
+                    },
+                },
+            ) {
+                Ok(event) => event,
+                Err(_) => return,
+            };
+            let input = match AgentRunRepository::append_event(
+                &db,
+                crate::ai_runtime::agent_run_repository::AppendRunEventInput {
+                    run_id: accepted.run_id.clone(),
+                    state_version: running.state_version(),
+                    event_type: RunEventType::InputRequired,
+                    payload: RunEventPayload::InputRequired {
+                        input_id: format!("location-{}", accepted.run_id),
+                        input_kind: "location".into(),
+                        fields: vec!["city".into()],
+                        prompt: "请告诉我需要查询的城市".into(),
+                    },
+                },
+            ) {
+                Ok(event) => event,
+                Err(_) => return,
+            };
+            let _ = sink.emit(&running);
+            let _ = sink.emit(&input);
+        }
+        return;
+    }
+    if let Some(operation) = context.envelope.fresh_fact.effective_operation() {
+        let executable = match domain_operation_is_executable(
+            &db,
+            &accepted.run_id,
+            &authorized_capabilities,
+            Some(operation),
+        ) {
+            Ok(executable) => executable,
+            Err(_) => {
+                let _ = RunEngine::fail_before_dispatch_with_sink(
+                    &db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    SafeRunErrorCode::PersistenceFailed,
+                    sink,
+                );
+                return;
+            }
+        };
+        if !executable {
+            let _ = RunEngine::fail_before_dispatch_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                SafeRunErrorCode::ProviderUnavailable,
+                sink,
+            );
+            return;
+        }
+    }
     let domain_plan = context.domain_plan();
     // Never route an external-fact Run to a direct model answer when Web is
     // unavailable. This is a safety denial, not a degraded offline answer.
@@ -255,6 +350,48 @@ async fn execute_normal_run_internal(
         // covers a provider implementation that exited during cancellation.
         crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
     }
+}
+
+fn requires_user_input(context: &crate::ai_runtime::run_context::RunContext) -> bool {
+    matches!(
+        context.envelope.fresh_fact.location_requirement,
+        crate::ai_runtime::run_contract::LocationRequirement::City
+    ) && explicit_city_from_message(&context.user_message).is_none()
+}
+
+fn domain_operation_is_executable(
+    db: &Database,
+    run_id: &str,
+    authorized_capabilities: &[CapabilityId],
+    operation: Option<DomainOperation>,
+) -> AppResult<bool> {
+    let Some(operation) = operation else {
+        return Ok(false);
+    };
+    if operation == DomainOperation::NewsSearch {
+        return Ok(authorized_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == "web.search"));
+    }
+    Ok(
+        crate::ai_runtime::mcp_external_tools::load_run_snapshots(db, run_id)?
+            .iter()
+            .any(|snapshot| {
+                snapshot.capability
+                    == crate::ai_runtime::mcp_external_tools::WEB_DOMAIN_READ_CAPABILITY
+                    && snapshot.domain_operation == Some(operation)
+            }),
+    )
+}
+
+fn confirmed_location_for_context(
+    context: &crate::ai_runtime::run_context::RunContext,
+) -> Option<ConfirmedLocation> {
+    explicit_city_from_message(&context.user_message).map(|city| ConfirmedLocation {
+        city: Some(city),
+        province: None,
+        country: None,
+    })
 }
 
 /// Rebuild and evaluate the persisted normal Run policy before Provider routing.
@@ -440,7 +577,7 @@ async fn dispatch_normal_run_after_context(
             .flatten()
             .unwrap_or_default();
         let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-        let tool_surface_plan = plan_tool_surface(context, authorized_capabilities, false);
+        let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, false);
         let mut tools = ToolRegistry::constrain_for_run_context(
             registry.tools_for_authorized_capabilities(
                 authorized_capabilities,
@@ -449,9 +586,21 @@ async fn dispatch_normal_run_after_context(
             context.envelope.context,
             &context.retrieval_scope,
         );
+        let domain_executable = domain_operation_is_executable(
+            db,
+            &accepted.run_id,
+            authorized_capabilities,
+            context.envelope.fresh_fact.effective_operation(),
+        )?;
+        tools = constrain_domain_tool_surface(
+            tools,
+            context.envelope.fresh_fact.effective_operation(),
+            domain_executable,
+        );
         if !tool_surface_plan.expose_web_search {
             tools.retain(|tool| tool.name != "web_search");
         }
+        tool_surface_plan.tool_names = tools.iter().map(|tool| tool.name.clone()).collect();
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
             streaming: true,
@@ -481,7 +630,7 @@ async fn dispatch_normal_run_after_context(
         } else {
             provider
         };
-        let executor = NormalRunToolExecutor::new(
+        let mut executor = NormalRunToolExecutor::new(
             state,
             app_handle,
             accepted,
@@ -491,8 +640,18 @@ async fn dispatch_normal_run_after_context(
             sink,
             required_web_provider_snapshots,
         )
+        .with_allowed_tool_names(&tool_surface_plan.tool_names)
         .with_skill_activation_plan(active_skills.plan.clone())
         .with_child_run_provider(&provider);
+        if is_current_fact_domain(context.envelope.fresh_fact.domain) {
+            let plan = build_fresh_research_plan(
+                &context.user_message,
+                &context.envelope.fresh_fact,
+                "zh-CN",
+                confirmed_location_for_context(context).as_ref(),
+            )?;
+            executor = executor.with_fresh_research_budget(plan.budget);
+        }
         return if let Some(telemetry) = telemetry {
             RunEngine::execute_tool_loop_with_eval_telemetry(
                 db,
@@ -635,8 +794,9 @@ async fn dispatch_required_web_verified_run(
         sink,
         provider_snapshots,
     )
+    .with_allowed_tool_names(&["web_search".to_string()])
     .with_skill_activation_plan(skill_plan);
-    let query = required_web_query(context);
+    let query = required_web_query(context)?;
     let first_prefetch = crate::ai_runtime::agent_tool_loop::ToolLoopExecutor::execute(
         &executor,
         &accepted.run_id,
@@ -771,18 +931,42 @@ async fn dispatch_required_web_verified_run(
             .await
         };
     }
-    // Required Web evidence is prefetched deterministically. The final model
-    // only receives local follow-up tools; `web_search` remains hidden because
-    // the evidence is already provided. The planner records this state so the
-    // prompt can tell the model not to deny that retrieval happened.
-    let _tool_surface_plan = plan_tool_surface(context, authorized_capabilities, true);
-    let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
+    // Required Web evidence is prefetched deterministically. For ordinary
+    // strict facts the final model only receives local follow-up tools and
+    // `web_search` stays hidden. Current-fact research keeps `web_search`
+    // visible so the model can issue bounded follow-up searches for unresolved
+    // evidence gaps.
+    let research_mode = is_current_fact_domain(context.envelope.fresh_fact.domain);
+    let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, !research_mode);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-    let mut tools = ToolRegistry::constrain_for_run_context(
-        registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
-        context.envelope.context,
-        &context.retrieval_scope,
+    let mut tools = if research_mode {
+        ToolRegistry::constrain_for_run_context(
+            registry.tools_for_authorized_capabilities(authorized_capabilities, true),
+            context.envelope.context,
+            &context.retrieval_scope,
+        )
+    } else {
+        let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
+        ToolRegistry::constrain_for_run_context(
+            registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
+            context.envelope.context,
+            &context.retrieval_scope,
+        )
+    };
+    let domain_executable = domain_operation_is_executable(
+        db,
+        &accepted.run_id,
+        authorized_capabilities,
+        context.envelope.fresh_fact.effective_operation(),
+    )?;
+    tools = constrain_domain_tool_surface(
+        tools,
+        context.envelope.fresh_fact.effective_operation(),
+        domain_executable,
     );
+    if !tool_surface_plan.expose_web_search {
+        tools.retain(|tool| tool.name != "web_search");
+    }
     let has_local_follow_up_tools = !tools.is_empty();
     let serialized_messages = serde_json::to_string(messages).map_err(AppError::from)?;
     let mut requirements = crate::ai_runtime::provider_router::ProviderRequirements {
@@ -832,8 +1016,39 @@ async fn dispatch_required_web_verified_run(
                 PromptContractV3::web_evidence_data_prompt(&evidence_json, false).into();
         }
     }
+    // Current-fact research no longer depends on the empty calibrated
+    // whitelist: the Run must expose `submit_final_answer` and fail closed if
+    // the model route cannot support tool continuation.
+    if research_mode && !structured_finalization {
+        if !has_local_follow_up_tools {
+            let _ = RunEngine::fail_before_dispatch_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                SafeRunErrorCode::GroundedFinalizationUnavailable,
+                sink,
+            );
+            return Err(AppError::run(
+                SafeRunErrorCode::GroundedFinalizationUnavailable,
+            ));
+        }
+        structured_finalization = true;
+        messages[1].content =
+            PromptContractV3::web_evidence_data_prompt(&evidence_json, true).into();
+    }
     if structured_finalization {
         tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
+    }
+    tool_surface_plan.tool_names = tools.iter().map(|tool| tool.name.clone()).collect();
+    let mut executor = executor.with_allowed_tool_names(&tool_surface_plan.tool_names);
+    if research_mode {
+        let plan = build_fresh_research_plan(
+            &context.user_message,
+            &context.envelope.fresh_fact,
+            "zh-CN",
+            confirmed_location_for_context(context).as_ref(),
+        )?;
+        executor = executor.with_fresh_research_budget(plan.budget);
     }
     let provider = FailoverStreamingProvider::new(route, requirements, db, &accepted.session, sink);
     #[cfg(test)]
@@ -930,7 +1145,23 @@ pub(crate) fn strict_follow_up_capabilities(
         .collect()
 }
 
-fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> String {
+fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> AppResult<String> {
+    if matches!(
+        context.envelope.fresh_fact.domain,
+        FreshFactDomain::Weather
+            | FreshFactDomain::News
+            | FreshFactDomain::Finance
+            | FreshFactDomain::Entertainment
+            | FreshFactDomain::Sports
+    ) {
+        let plan = build_fresh_research_plan(
+            &context.user_message,
+            &context.envelope.fresh_fact,
+            "zh-CN",
+            confirmed_location_for_context(context).as_ref(),
+        )?;
+        return Ok(plan.initial_query);
+    }
     let prior_users_newest_first = context
         .recent_messages
         .iter()
@@ -955,12 +1186,12 @@ fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> S
             crate::ai_runtime::domain_executor::DomainMaterialOrigin::LocalRetrieval { .. }
         )
     });
-    required_web_query_from_context_sources(
+    Ok(required_web_query_from_context_sources(
         &context.user_message,
         &prior_users_newest_first,
         authorized_materials,
         has_automatic_local_material,
-    )
+    ))
 }
 
 /// Use only material the user explicitly authorized for this Run to make a
@@ -1184,5 +1415,73 @@ fn dispatch_failure_code(error: &AppError) -> SafeRunErrorCode {
         SafeRunErrorCode::NoCapableModel
     } else {
         SafeRunErrorCode::ProviderUnavailable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::calibrated_structured_finalization_enabled;
+    use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
+    use crate::ai_runtime::provider_router::{ProviderRequirements, SecurityDomain};
+    use crate::ai_types::{EndpointFamily, ResolvedReasoningRequest};
+    use crate::llm::config::{ResolvedLlmConfig, ResolvedModelPool};
+
+    fn resolved(provider_id: &str, model: &str) -> ResolvedLlmConfig {
+        ResolvedLlmConfig {
+            provider_id: provider_id.into(),
+            model: model.into(),
+            base_url: "https://example.invalid/v1".into(),
+            thinking: false,
+            reasoning: ResolvedReasoningRequest::disabled(),
+            input_budget: 128_000,
+            output_budget: 8_192,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: true,
+            supports_reasoning: false,
+        }
+    }
+
+    fn requirements() -> ProviderRequirements {
+        ProviderRequirements {
+            endpoint_family: None,
+            streaming: true,
+            tools: true,
+            vision: false,
+            reasoning: false,
+            min_input_budget_tokens: 1,
+            min_output_budget_tokens: 1,
+            security_domain: SecurityDomain::External,
+        }
+    }
+
+    #[test]
+    fn structured_verifier_requires_registered_rule() {
+        let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+            resolved: resolved("any-provider", "any-model"),
+            failover_candidates: Vec::new(),
+        })
+        .expect("pool route");
+
+        assert!(
+            !calibrated_structured_finalization_enabled(&route, &requirements()),
+            "no provider/model pair may be promoted to structured VERIFIED before a registered rule exists"
+        );
+    }
+
+    #[test]
+    fn generic_web_prefetch_removes_automatic_local_clause_before_search() {
+        let query = super::required_web_query_from_context_sources(
+            "依据本地 design note 与最新 Web status 做 gap analysis，并清楚区分两类来源。",
+            &[],
+            Vec::<String>::new(),
+            true,
+        );
+        assert_eq!(
+            query,
+            "最新 Web status 做 gap analysis，并清楚区分两类来源。"
+        );
+        assert!(!query.contains("本地 design note"));
     }
 }

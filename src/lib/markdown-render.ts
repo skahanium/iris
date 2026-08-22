@@ -49,7 +49,12 @@ function hastToHtml(node: unknown): string {
 
 /** Strip inline code spans to avoid counting delimiters inside backtick-wrapped text. */
 function stripInlineCodeSpans(text: string): string {
-  return text.replace(/`{1,2}[^`\n]+`{1,2}/g, "");
+  return text.replace(/(`{1,3})[^`\n]+?\1/g, "");
+}
+
+/** Strip HTML tags so delimiters inside attributes never affect emphasis repair. */
+function stripHtmlTags(text: string): string {
+  return text.replace(/<[^>]*>/g, "");
 }
 
 /** Count occurrences of a literal delimiter (non-regex). */
@@ -167,6 +172,7 @@ export function repairStreamingMarkdown(md: string): string {
   // inside `code` or ``code`` never trigger false repairs.
 
   const stripped = stripInlineCodeSpans(repaired);
+  const countSource = stripHtmlTags(stripped);
 
   // Fences
   const fenceMatches = stripped.match(/```/g);
@@ -175,25 +181,25 @@ export function repairStreamingMarkdown(md: string): string {
   }
 
   // Bold (** and __)
-  if (countDelimiter(stripped, "**") % 2 !== 0) {
+  if (countDelimiter(countSource, "**") % 2 !== 0) {
     repaired += "**";
   }
-  if (countDelimiter(stripped, "__") % 2 !== 0) {
+  if (countDelimiter(countSource, "__") % 2 !== 0) {
     repaired += "__";
   }
 
   // Strikethrough
-  if (countDelimiter(stripped, "~~") % 2 !== 0) {
+  if (countDelimiter(countSource, "~~") % 2 !== 0) {
     repaired += "~~";
   }
 
   // Italic (_)
-  if (countSingleUnderscore(stripped) % 2 !== 0) {
+  if (countSingleUnderscore(countSource) % 2 !== 0) {
     repaired += "_";
   }
 
   // Italic (*)
-  if (countSingleAsterisk(stripped) % 2 !== 0) {
+  if (countSingleAsterisk(countSource) % 2 !== 0) {
     repaired += "*";
   }
 

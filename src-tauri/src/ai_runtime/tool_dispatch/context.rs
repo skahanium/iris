@@ -3,7 +3,31 @@ use crate::ai_runtime::{retrieval_scope::RetrievalScope, ContextPacket, RuntimeD
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+/// Public, content-free projection of a Run's frozen current-fact time window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrozenDomainWindow {
+    pub operation: Option<crate::ai_runtime::run_contract::DomainOperation>,
+    pub window_start: Option<String>,
+    pub window_end: Option<String>,
+}
+
+impl From<&crate::ai_runtime::run_contract::FreshFactPolicy> for FrozenDomainWindow {
+    fn from(policy: &crate::ai_runtime::run_contract::FreshFactPolicy) -> Self {
+        Self {
+            operation: policy.effective_operation(),
+            window_start: policy.window_start.clone(),
+            window_end: policy.window_end.clone(),
+        }
+    }
+}
+
 pub struct ToolDispatchContext<'a> {
+    /// Database used by domain/evidence dispatch. `None` is reserved for
+    /// isolated unit tests that do not exercise provider execution.
+    pub db: Option<&'a Database>,
+    /// Currently selected Web provider, when known, used to break ties between
+    /// multiple healthy domain mappings.
+    pub selected_web_provider_id: Option<&'a str>,
     pub note_path: Option<&'a str>,
     pub file_id: Option<i64>,
     /// Owning Run. When present, every dispatch and irreversible commit must
@@ -17,6 +41,12 @@ pub struct ToolDispatchContext<'a> {
     pub document_policy:
         Option<&'a crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine>,
     pub web_search_enabled: bool,
+    /// Frozen current-fact policy attached to the owning Run. `None` is
+    /// reserved for isolated unit tests that do not exercise date windows.
+    pub fresh_fact_policy: Option<FrozenDomainWindow>,
+    /// Current Run surface as exposed to the model. `capabilities_read` must
+    /// report only these tools; empty means no model-visible tools.
+    pub available_tool_names: &'a [String],
     pub max_web_fetches: usize,
     pub cold_start_packets: &'a [ContextPacket],
     pub retrieval_scope: &'a RetrievalScope,

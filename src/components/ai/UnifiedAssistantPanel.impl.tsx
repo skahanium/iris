@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
-import { AssistantRunWebVerificationFailed } from "@/components/ai/AssistantRunCapabilityDegraded";
+import {
+  AssistantRunCapabilityDegraded,
+  AssistantRunWebVerificationFailed,
+} from "@/components/ai/AssistantRunCapabilityDegraded";
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
 import { cn } from "@/lib/utils";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
@@ -103,6 +107,8 @@ export function UnifiedAssistantPanel({
   >([]);
   const [confirming, setConfirming] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [submittingInput, setSubmittingInput] = useState(false);
+  const [pendingCity, setPendingCity] = useState("");
   const [retryingWebVerification, setRetryingWebVerification] = useState(false);
   const [classifiedContextRef, setClassifiedContextRef] = useState<
     string | null
@@ -262,8 +268,7 @@ export function UnifiedAssistantPanel({
   useAssistantConversationProjection({
     run: assistantRun.eventState,
     presentation: assistantRun.presentationState,
-    presentationAnswer: assistantAnswerReveal.answer,
-    presentationRevealing: assistantAnswerReveal.revealing,
+    presentationReveal: assistantAnswerReveal,
     session: runSession,
     messages,
     setMessages,
@@ -286,6 +291,7 @@ export function UnifiedAssistantPanel({
       streaming ||
       assistantRun.isBusy ||
       assistantRun.pendingConfirmation !== null ||
+      assistantRun.pendingInput !== null ||
       assistantRun.recovery !== null,
     session: runSession,
     contextReferences: bubbleSelection.contextReferences,
@@ -350,6 +356,7 @@ export function UnifiedAssistantPanel({
     assistantRun.isBusy ||
     isStarting ||
     assistantRun.pendingConfirmation !== null ||
+    assistantRun.pendingInput !== null ||
     assistantRun.recovery !== null;
   const stopStreaming = useCallback(() => {
     void assistantRun
@@ -428,6 +435,17 @@ export function UnifiedAssistantPanel({
       })
       .finally(() => setResuming(false));
   }, [assistantRun]);
+  const handleSubmitPendingInput = useCallback(() => {
+    const city = pendingCity.trim();
+    if (!city || !assistantRun.pendingInput) return;
+    setSubmittingInput(true);
+    setLastError(null);
+    void assistantRun
+      .submitInput({ city })
+      .then(() => setPendingCity(""))
+      .catch(() => setLastError("补充信息提交失败，请重试。"))
+      .finally(() => setSubmittingInput(false));
+  }, [assistantRun, pendingCity]);
 
   return (
     <div
@@ -459,6 +477,11 @@ export function UnifiedAssistantPanel({
           {lastError}
         </p>
       ) : null}
+      {assistantRun.eventState?.capabilityDegradation ? (
+        <AssistantRunCapabilityDegraded
+          degradation={assistantRun.eventState.capabilityDegradation}
+        />
+      ) : null}
       {assistantRun.eventState?.webVerificationFailure ? (
         <AssistantRunWebVerificationFailed
           failure={assistantRun.eventState.webVerificationFailure}
@@ -476,6 +499,41 @@ export function UnifiedAssistantPanel({
             onReject={() => handleConfirmation("reject")}
           />
         </div>
+      ) : null}
+      {assistantRun.pendingInput ? (
+        <section
+          className={cn(
+            "border-b border-border-subtle bg-muted/30 px-3 py-3",
+            assistantFocus && "ai-focus-column",
+          )}
+          data-testid="assistant-run-input-required"
+          aria-live="polite"
+        >
+          <p className="text-xs font-medium">
+            {assistantRun.pendingInput.prompt}
+          </p>
+          <div className="mt-2 flex gap-2">
+            <Input
+              value={pendingCity}
+              onChange={(event) => setPendingCity(event.target.value)}
+              placeholder="例如：上海"
+              aria-label="查询城市"
+              disabled={submittingInput}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") handleSubmitPendingInput();
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="brand"
+              disabled={!pendingCity.trim() || submittingInput}
+              onClick={handleSubmitPendingInput}
+            >
+              {submittingInput ? "提交中…" : "继续"}
+            </Button>
+          </div>
+        </section>
       ) : null}
       {assistantRun.recovery ? (
         <section

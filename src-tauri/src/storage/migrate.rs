@@ -184,6 +184,13 @@ const MIGRATION_069_UP: &str = include_str!("../../migrations/069_cache_governan
 const MIGRATION_069_DOWN: &str = include_str!("../../migrations/069_cache_governance.down.sql");
 const MIGRATION_070_UP: &str = include_str!("../../migrations/070_cache_governance_v2.sql");
 const MIGRATION_070_DOWN: &str = include_str!("../../migrations/070_cache_governance_v2.down.sql");
+const MIGRATION_071_UP: &str = include_str!("../../migrations/071_ai_memories_scope_key.sql");
+const MIGRATION_071_DOWN: &str =
+    include_str!("../../migrations/071_ai_memories_scope_key.down.sql");
+const MIGRATION_072_UP: &str =
+    include_str!("../../migrations/072_agent_domain_capability_mappings.sql");
+const MIGRATION_072_DOWN: &str =
+    include_str!("../../migrations/072_agent_domain_capability_mappings.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -700,6 +707,13 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     )?;
     apply_migration(conn, "069_cache_governance", MIGRATION_069_UP, false)?;
     apply_migration(conn, "070_cache_governance_v2", MIGRATION_070_UP, false)?;
+    apply_migration(conn, "071_ai_memories_scope_key", MIGRATION_071_UP, false)?;
+    apply_migration(
+        conn,
+        "072_agent_domain_capability_mappings",
+        MIGRATION_072_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -711,6 +725,12 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(
+        conn,
+        "072_agent_domain_capability_mappings",
+        MIGRATION_072_DOWN,
+    );
+    rollback_migration(conn, "071_ai_memories_scope_key", MIGRATION_071_DOWN);
     rollback_migration(conn, "070_cache_governance_v2", MIGRATION_070_DOWN);
     rollback_migration(conn, "069_cache_governance", MIGRATION_069_DOWN);
     rollback_migration(conn, "068_feed_image_authorization", MIGRATION_068_DOWN);
@@ -2444,6 +2464,11 @@ mod tests {
             [],
         )
         .unwrap();
+        rollback_migration(
+            &conn,
+            "072_agent_domain_capability_mappings",
+            MIGRATION_072_DOWN,
+        );
         conn.execute_batch(MIGRATION_059_DOWN).unwrap();
         assert_eq!(
             conn.query_row(
@@ -2456,8 +2481,6 @@ mod tests {
             0,
             "rollback must remove external MCP evidence introduced by 059"
         );
-
-        migrate_down(&conn).unwrap();
         for table in ["mcp_capability_bindings", "agent_run_mcp_tool_snapshots"] {
             let exists: i64 = conn
                 .query_row(
@@ -3072,6 +3095,234 @@ mod tests {
             )
             .unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn ai_memories_scope_key_migration_allows_same_key_in_different_scopes_and_rolls_back() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO ai_memories (key, content, scope) VALUES ('shared-key', 'global', 'global')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ai_memories (key, content, scope) VALUES ('shared-key', 'vault', 'run:note')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            count, 2,
+            "(scope, key) must allow the same key in different scopes"
+        );
+
+        assert!(
+            conn.execute(
+                "INSERT INTO ai_memories (key, content, scope) VALUES ('shared-key', 'duplicate', 'global')",
+                [],
+            )
+            .is_err(),
+            "same (scope, key) must remain unique"
+        );
+
+        rollback_migration(&conn, "071_ai_memories_scope_key", MIGRATION_071_DOWN);
+        let after_down: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            after_down, 1,
+            "down migration restores UNIQUE(key) and deduplicates"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO ai_memories (key, content, scope) VALUES ('shared-key', 'other-scope', 'run:other')",
+                [],
+            )
+            .is_err(),
+            "pre-071 schema must reject the same key across scopes"
+        );
+    }
+
+    #[test]
+    fn migration_072_domain_capability_mappings_up_down() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["mcp_capability_bindings", "agent_run_mcp_tool_snapshots"] {
+            let columns = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .flatten()
+                .collect::<Vec<_>>();
+            for column in ["domain_operation", "output_mapping_json"] {
+                assert!(
+                    columns.contains(&column.to_string()),
+                    "{table} must contain {column} after 072"
+                );
+            }
+        }
+
+        let index_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                ["idx_mcp_domain_binding_provider_operation"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_exists, 1, "partial domain operation index must exist");
+
+        conn.execute(
+            "INSERT INTO web_evidence_providers
+             (id, name, kind, enabled, transport_kind, provider_config_hash)
+             VALUES ('provider-072', 'Provider 072', 'mcp', 1, 'stdio', 'provider-hash')",
+            [],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO mcp_capability_bindings
+             (id, provider_id, exposed_name, mcp_tool_name, input_schema_json,
+              argument_mapping_json, output_policy_json, capability,
+              domain_operation, output_mapping_json, risk_class, read_only,
+              user_trusted, provider_config_hash, binding_config_hash,
+              created_at, updated_at)
+             VALUES ('external-072', 'provider-072', 'external_read_a', 'read_record',
+                     '{}', '{}', '{}', 'external.read', NULL, '{}',
+                     'read_only', 1, 1, 'provider-hash', 'binding-hash',
+                     datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_capability_bindings
+             (id, provider_id, exposed_name, mcp_tool_name, input_schema_json,
+              argument_mapping_json, output_policy_json, capability,
+              domain_operation, output_mapping_json, risk_class, read_only,
+              user_trusted, provider_config_hash, binding_config_hash,
+              created_at, updated_at)
+             VALUES ('domain-072', 'provider-072', 'domain_read_a', 'weather_tool',
+                     '{}', '{}', '{}', 'web.domain.read', 'weather.current',
+                     '{\"recordsPath\":\"$\",\"fields\":{}}', 'read_only',
+                     1, 1, 'provider-hash', 'binding-hash',
+                     datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO mcp_capability_bindings
+                 (id, provider_id, exposed_name, mcp_tool_name, input_schema_json,
+                  argument_mapping_json, output_policy_json, capability,
+                  domain_operation, output_mapping_json, risk_class, read_only,
+                  user_trusted, provider_config_hash, binding_config_hash,
+                  created_at, updated_at)
+                 VALUES ('domain-072-duplicate', 'provider-072', 'domain_read_b', 'weather_tool_dup',
+                         '{}', '{}', '{}', 'web.domain.read', 'weather.current',
+                         '{\"recordsPath\":\"$\",\"fields\":{}}', 'read_only',
+                         1, 1, 'provider-hash', 'binding-hash',
+                         datetime('now'), datetime('now'))",
+                [],
+            )
+            .is_err(),
+            "duplicate provider/domain_operation must be rejected by partial unique index"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO mcp_capability_bindings
+                 (id, provider_id, exposed_name, mcp_tool_name, input_schema_json,
+                  argument_mapping_json, output_policy_json, capability,
+                  domain_operation, output_mapping_json, risk_class, read_only,
+                  user_trusted, provider_config_hash, binding_config_hash,
+                  created_at, updated_at)
+                 VALUES ('invalid-external', 'provider-072', 'invalid_external', 'read_record',
+                         '{}', '{}', '{}', 'external.read', 'weather.current',
+                         '{}', 'read_only', 1, 1, 'provider-hash', 'binding-hash',
+                         datetime('now'), datetime('now'))",
+                [],
+            )
+            .is_err(),
+            "external.read must not allow domain_operation"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO mcp_capability_bindings
+                 (id, provider_id, exposed_name, mcp_tool_name, input_schema_json,
+                  argument_mapping_json, output_policy_json, capability,
+                  domain_operation, output_mapping_json, risk_class, read_only,
+                  user_trusted, provider_config_hash, binding_config_hash,
+                  created_at, updated_at)
+                 VALUES ('invalid-domain', 'provider-072', 'invalid_domain', 'weather_tool_invalid',
+                         '{}', '{}', '{}', 'web.domain.read', NULL,
+                         '{}', 'read_only', 1, 1, 'provider-hash', 'binding-hash',
+                         datetime('now'), datetime('now'))",
+                [],
+            )
+            .is_err(),
+            "web.domain.read must have domain_operation"
+        );
+
+        rollback_migration(
+            &conn,
+            "072_agent_domain_capability_mappings",
+            MIGRATION_072_DOWN,
+        );
+
+        for table in ["mcp_capability_bindings", "agent_run_mcp_tool_snapshots"] {
+            let columns = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .flatten()
+                .collect::<Vec<_>>();
+            assert!(
+                !columns.contains(&"domain_operation".to_string()),
+                "{table} must lose domain_operation after 072 down"
+            );
+            assert!(
+                !columns.contains(&"output_mapping_json".to_string()),
+                "{table} must lose output_mapping_json after 072 down"
+            );
+        }
+
+        let external_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mcp_capability_bindings WHERE capability = 'external.read'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(external_count, 1, "down must keep external.read rows");
+        let domain_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mcp_capability_bindings WHERE capability = 'web.domain.read'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(domain_count, 0, "down must remove domain rows");
+        assert!(
+            conn.execute(
+                "INSERT INTO mcp_capability_bindings
+                 (id, provider_id, exposed_name, mcp_tool_name, input_schema_json,
+                  argument_mapping_json, output_policy_json, capability,
+                  risk_class, read_only, user_trusted, provider_config_hash,
+                  binding_config_hash, created_at, updated_at)
+                 VALUES ('reject-domain', 'provider-072', 'reject_domain', 'read_record',
+                         '{}', '{}', '{}', 'web.domain.read', 'read_only',
+                         1, 1, 'provider-hash', 'binding-hash',
+                         datetime('now'), datetime('now'))",
+                [],
+            )
+            .is_err(),
+            "down must restore the 059 external.read-only CHECK"
         );
     }
 }

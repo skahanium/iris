@@ -66,6 +66,7 @@ function DocumentTitleFieldInner({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const focusedRef = useRef(false);
   const cancelledRef = useRef(false);
+  const composingRef = useRef(false);
   const pendingSelectionRef = useRef<{ start: number; end: number } | null>(
     null,
   );
@@ -192,6 +193,11 @@ function DocumentTitleFieldInner({
           aria-label="文档标题"
           title={value || undefined}
           onInput={(event) => {
+            // IME composition is committed through compositionend. Reading the
+            // DOM and restoring the caret during composition can discard the
+            // selected Chinese candidate, so defer all title updates until the
+            // composition finishes.
+            if (composingRef.current || event.nativeEvent.isComposing) return;
             const el = event.currentTarget;
             const next = normalizeTitle(el.value);
             rememberSelection();
@@ -200,6 +206,16 @@ function DocumentTitleFieldInner({
             if (next !== value) {
               onChange(next);
             }
+          }}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={(event) => {
+            composingRef.current = false;
+            const el = event.currentTarget;
+            commitFromDom(el.value);
+            rememberSelection();
+            resizeTitle();
           }}
           onSelect={() => {
             rememberSelection();

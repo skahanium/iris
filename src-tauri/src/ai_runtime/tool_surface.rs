@@ -7,7 +7,7 @@
 //! This module is the single place that turns request signals into a concrete
 //! tool-surface plan.
 
-use crate::ai_runtime::run_contract::{CapabilityId, Effort};
+use crate::ai_runtime::run_contract::{CapabilityId, Effort, FreshFactDomain};
 
 /// How strongly the current user request depends on fresh external information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,10 @@ pub(crate) struct ToolSurfacePlan {
     pub(crate) expose_web_search: bool,
     pub(crate) web_prefetched: bool,
     pub(crate) web_instruction: WebToolInstruction,
+    /// Exact model-visible tool names frozen for this Run. Filled by the
+    /// production orchestrator after combining the plan with the authorized
+    /// ToolRegistry and Run context constraints.
+    pub(crate) tool_names: Vec<String>,
 }
 
 pub(crate) struct ToolSurfacePlanner;
@@ -65,6 +69,7 @@ impl ToolSurfacePlanner {
                 } else {
                     WebToolInstruction::None
                 },
+                tool_names: Vec::new(),
             };
         }
 
@@ -78,6 +83,7 @@ impl ToolSurfacePlanner {
                 expose_web_search: false,
                 web_prefetched: true,
                 web_instruction: WebToolInstruction::AlreadyRetrievedDoNotDeny,
+                tool_names: Vec::new(),
             };
         }
 
@@ -102,56 +108,19 @@ impl ToolSurfacePlanner {
             expose_web_search,
             web_prefetched: false,
             web_instruction,
+            tool_names: Vec::new(),
         }
     }
 }
 
-/// Classify whether a user request depends on current/fresh information.
-pub(crate) fn classify_time_sensitivity(message: &str) -> TimeSensitivity {
-    let lower = message.to_ascii_lowercase();
-    const ZH_MARKERS: &[&str] = &[
-        "最近",
-        "近期",
-        "最新",
-        "今天",
-        "今年",
-        "当前",
-        "现在",
-        "实时",
-        "上映",
-        "发布",
-        "新片",
-        "电影",
-        "有什么新",
-        "天气",
-        "价格",
-        "比分",
-        "新闻",
-        "赛事",
-        "票房",
-        "排片",
-    ];
-    const EN_MARKERS: &[&str] = &[
-        "recent",
-        "latest",
-        "today",
-        "this year",
-        "current",
-        "now",
-        "release",
-        "movie",
-        "now playing",
-        "weather",
-        "price",
-        "score",
-        "news",
-    ];
-    if ZH_MARKERS.iter().any(|marker| message.contains(marker))
-        || EN_MARKERS.iter().any(|marker| lower.contains(marker))
-    {
-        TimeSensitivity::Current
-    } else {
-        TimeSensitivity::None
+/// Project whether a frozen fresh-fact domain is time-sensitive.
+///
+/// This deliberately replaces message-keyword scanning: the same deterministic
+/// classifier used at intake is the single source of truth for time windows.
+pub(crate) fn classify_time_sensitivity(domain: FreshFactDomain) -> TimeSensitivity {
+    match domain {
+        FreshFactDomain::None | FreshFactDomain::Runtime => TimeSensitivity::None,
+        _ => TimeSensitivity::Current,
     }
 }
 
@@ -238,17 +207,17 @@ mod tests {
     }
 
     #[test]
-    fn classify_time_sensitivity_detects_recent_movie_queries() {
+    fn classify_time_sensitivity_projects_from_fresh_fact_domain() {
         assert_eq!(
-            classify_time_sensitivity("最近有什么好看的电影吗？"),
+            classify_time_sensitivity(FreshFactDomain::Entertainment),
             TimeSensitivity::Current
         );
         assert_eq!(
-            classify_time_sensitivity("What movies are now playing?"),
+            classify_time_sensitivity(FreshFactDomain::Weather),
             TimeSensitivity::Current
         );
         assert_eq!(
-            classify_time_sensitivity("解释一下量子计算"),
+            classify_time_sensitivity(FreshFactDomain::None),
             TimeSensitivity::None
         );
     }

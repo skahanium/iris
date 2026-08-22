@@ -1898,7 +1898,7 @@ fn startup_recovery_leaves_a_pending_confirmation_awaiting_user_input() {
 }
 
 #[test]
-fn startup_recovery_completes_a_rejected_confirmation_as_not_modified() {
+fn rejected_confirmation_recovery_stays_cancelled() {
     let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
     db.with_conn(|conn| {
         conn.execute(
@@ -1922,19 +1922,25 @@ fn startup_recovery_completes_a_rejected_confirmation_as_not_modified() {
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
-    assert_eq!(replay.run.state, RunState::Completed);
-    let message: String = db
+    assert_eq!(replay.run.state, RunState::Cancelled);
+    assert!(replay.run.final_message_id.is_none());
+    assert_eq!(
+        serde_json::to_value(replay.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["payload"]["reason"],
+        "user_rejected_change"
+    );
+    let assistant_messages: i64 = db
         .with_read_conn(|conn| {
             conn.query_row(
-                "SELECT content FROM session_messages
+                "SELECT COUNT(*) FROM session_messages
                  WHERE session_id = 1 AND role = 'assistant'",
                 [],
                 |row| row.get(0),
             )
             .map_err(Into::into)
         })
-        .expect("fixed rejection message");
-    assert_eq!(message, "已取消该变更，未作任何修改。");
+        .expect("no rejection assistant message");
+    assert_eq!(assistant_messages, 0);
     assert_eq!(
         std::fs::read_to_string(vault.join("notes/a.md")).expect("read untouched note"),
         "base"
@@ -3234,7 +3240,7 @@ async fn presentation_delivery_failure_never_invalidates_the_durable_answer() {
 }
 
 #[tokio::test]
-async fn completed_emit_failure_never_appends_a_second_terminal_event() {
+async fn terminal_sink_failure_recovers_without_reexecution() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let provider = MockStreamingProvider {
@@ -3246,7 +3252,7 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
         events: std::sync::Mutex::new(Vec::new()),
     };
 
-    let error = RunEngine::execute_direct_streaming_with_sink(
+    RunEngine::execute_direct_streaming_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -3254,14 +3260,11 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
         &sink,
     )
     .await
-    .expect_err("completed emit failure is surfaced safely");
-    assert_eq!(
-        error.to_string(),
-        SafeRunErrorCode::EventDeliveryFailed.as_str()
-    );
+    .expect("a delivery failure cannot overwrite a durable completed result");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
-        .expect("replay")
+        .expect("first replay")
         .expect("run");
     assert_eq!(replay.run.state, RunState::Completed);
     assert_eq!(
@@ -3277,6 +3280,11 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
             .count(),
         1
     );
+    let replay_again = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("second replay")
+        .expect("run");
+    assert_eq!(replay_again.run.state, RunState::Completed);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -4244,6 +4252,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
             material_needs: Vec::new(),
             required_capabilities: vec![CapabilityId::new("model.vision")],
             explicit_constraints: Vec::new(),
+            fresh_fact: Default::default(),
         },
         "描述图片",
         &[],
@@ -4372,6 +4381,7 @@ async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final
             material_needs: vec![super::run_contract::MaterialNeed::Exemplar],
             required_capabilities: vec![CapabilityId::new("model.text")],
             explicit_constraints: vec![],
+            fresh_fact: Default::default(),
         },
         "起草一份检查通知",
         &[DomainMaterial {
