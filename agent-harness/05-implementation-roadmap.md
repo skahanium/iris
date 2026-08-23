@@ -4,14 +4,14 @@
 
 ## 1. 阶段总览
 
-| 阶段                    | 状态   | 目标                                           | 同阶段必须完成的删减                        |
-| ----------------------- | ------ | ---------------------------------------------- | ------------------------------------------- |
-| AH-0 可信评测基线       | 已验证 | Windows 与 POSIX 使用一致的安全和 fixture 合同 | 删除跨平台误判和 fixture 漂移               |
-| AH-1 文档与事实源统一   | 已验证 | 单一入口、状态账本、目标合同和归档             | 移除根目录旧入口和两套现行路线              |
-| AH-2 自适应研究循环     | 计划中 | 接通搜索、抓取、修复、轮次和 deadline 预算     | 删除 `max_fetches: 0` 与无效预算字段        |
-| AH-3 按任务形态重构路由 | 计划中 | 精确快路径与研究路径协调                       | 删除无 binding 的领域级前置阻断和 News 特例 |
-| AH-4 性能、质量与清理   | 计划中 | 建立 profile 基线并清除不可达代码              | 移除 dead-code 许可、旧测试和残余双轨       |
-| AH-5 真实 Provider 试点 | 延期   | 仅按真实需求接一个已批准 Provider              | 不建设 11/11 readiness 平台                 |
+| 阶段                    | 状态     | 目标                                           | 同阶段必须完成的删减                                        |
+| ----------------------- | -------- | ---------------------------------------------- | ----------------------------------------------------------- |
+| AH-0 可信评测基线       | 已验证   | Windows 与 POSIX 使用一致的安全和 fixture 合同 | 删除跨平台误判和 fixture 漂移                               |
+| AH-1 文档与事实源统一   | 已验证   | 单一入口、状态账本、目标合同和归档             | 移除根目录旧入口和两套现行路线                              |
+| AH-2 自适应研究循环     | 已验证   | 接通搜索、抓取、修复、轮次和 deadline 预算     | 已删除 `max_fetches: 0` 与无效预算字段                      |
+| AH-3 按任务形态重构路由 | 已验证   | 精确快路径与研究路径协调                       | 已删除无 binding 的领域级前置阻断和 News 特例               |
+| AH-4 性能、质量与清理   | 部分验证 | 固化 profile 护栏并清除不可达代码              | 已移除 dead-code 许可、旧测试和残余双轨；真实性能基线待授权 |
+| AH-5 真实 Provider 试点 | 延期     | 仅按真实需求接一个已批准 Provider              | 不建设 11/11 readiness 平台                                 |
 
 ## 2. AH-0：可信评测基线
 
@@ -35,7 +35,7 @@
 
 退出条件：`docs:check` 与文档测试已通过；全量格式检查纳入最终质量门。当前文档不引用归档作为规范。
 
-## 4. AH-2：接通自适应研究循环
+## 4. AH-2：接通自适应研究循环（已验证）
 
 测试先行：
 
@@ -51,9 +51,11 @@
 - 只有明确证据充分时保留 Direct 提前结束；需要继续研究时进入同一 bounded loop。
 - 删除不再产生控制效果的预算字段、重复 planner helper 和对应旧测试。
 
-退出条件：预算不可越界、Deep 不会静默启用、Web 关闭无外发、搜索和抓取共用 current-Run evidence ledger。
+本轮结果：Quick/Standard/Deep 已冻结为 `1/2/2/4/20`、`3/6/4/8/45`、`5/10/6/12/90`（搜索/抓取/模型续接/evidence/deadline）；resume state 已升级为无正文的 schema 3，并恢复搜索、抓取与修复计数。`web_search` 仅接受本轮用户明示或 current-Run ledger 已登记的 HTTPS URL，深抓取最多并发 3，且只按实际成功抓取消费额度。模型循环同时受 profile 轮次与 deadline 约束，两轮无新增证据即停止。
 
-## 5. AH-3：按任务形态重构路由
+退出条件已由附录 A 中的命名 Rust 测试、`cargo test`、评测与门禁复验覆盖。
+
+## 5. AH-3：按任务形态重构路由（已验证）
 
 测试先行：
 
@@ -70,9 +72,11 @@
 - 删除断言十个非 News operation 必须在模型前失败的旧测试，替换为任务形态矩阵。
 - 保留结构化 DTO、validator、renderer、fixtures 和 migration 072。
 
-退出条件：模型、capabilities、executor 与恢复路径看到同一冻结表面；不存在领域级双轨最终化。
+本轮结果：任务形态按“精确当前事实 / 研究型当前事实 / 其他”决定，而非只按领域决定；有 binding 的精确事实继续走冻结结构化快路径，无 binding 时统一降级为通用 Web research。News 已不再拥有独占回退；模型、工具表面、executor、finalization 与恢复路径共享同一冻结合同。
 
-## 6. AH-4：性能、质量与不可达代码清理
+退出条件已由任务形态矩阵、11 个 operation 的表驱动运行/恢复测试与 News 通用 Web 回退测试覆盖。
+
+## 6. AH-4：性能、质量与不可达代码清理（部分验证）
 
 - 为三个 profile 记录固定 provider/model/fixture 的 p50、p95、token、搜索、抓取、模型轮次和 evidence count。
 - first progress event 在本地 Host 路径目标为 500ms 内。
@@ -80,7 +84,9 @@
 - 审计 `fresh_domains` 模块级 `allow(dead_code)`，删除不可达 enum、helper、adapter 和测试。
 - 使用静态搜索确认只有一个研究循环、一个模型可见网络工具、一个 provider registry 和一个 evidence ledger。
 
-退出条件：质量底线不下降，硬安全门禁零失败，活跃研究模块没有用 dead-code 许可隐藏债务。
+本轮已完成：清理 `fresh_domains` 模块级 `allow(dead_code)`、不可达 request 字段、finance 数值 helper/常量和固化旧架构的测试；clippy 不再依赖这些许可。静态扫描确认研究控制仍由一个模型循环、一种模型可见网络工具和既有 evidence ledger 承担。
+
+尚未完成的退出条件：真实 provider/model/profile 的 p50、p95、token 基线。该项会产生外部调用和成本，且 `06` 要求先明确 model/profile/cost checkpoint，因此不能以本地 fixture 的确定性计时冒充真实基线。获得该授权后，才可完成 AH-4 的 live performance profile。
 
 ## 7. AH-5：真实 Provider 试点（延期）
 

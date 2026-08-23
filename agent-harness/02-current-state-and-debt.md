@@ -1,24 +1,24 @@
 # 02. 当前状态与技术债
 
-**审计日期：2026-08-22。代码起点：`f19364d6`。**
+**审计日期：2026-08-23。代码起点：`116b3663`。**
 
 本审计区分代码存在、当前测试证据、实例配置和目标设计。工具名、DTO 或 fixture 存在，不等于真实 Provider 已配置或用户请求能够完成。
 
 ## 1. 状态总览
 
-| 能力                                         | 实现状态     | 处置方式 | 当前事实                                              |
-| -------------------------------------------- | ------------ | -------- | ----------------------------------------------------- |
-| Run 幂等、单航班与 durable finalization      | 已实现待复验 | 保留     | 已有唯一键、请求指纹、终态顺序和恢复测试              |
-| Run-local UI 投影与迟到事件隔离              | 已实现待复验 | 保留     | reveal、presentation 和持久化恢复已有 Run 身份合同    |
-| 冻结工具表面、执行门禁与 `capabilities_read` | 已实现待复验 | 保留     | 三者共享当前 Run 的允许工具事实                       |
-| Web 权限、classified 隔离、查询污染门禁      | 已实现待复验 | 保留     | Web 开关、local-only 与 taint witness 已存在          |
-| `system_time_now`                            | 已实现待复验 | 保留     | 本机事实不依赖 Web                                    |
-| Run-local evidence 与来源组展示              | 已实现待复验 | 保留     | 当前 Run、未 retired、HTTPS 可定位证据才能成为候选    |
-| `FreshResearchPlan`、`EvidenceGap`、查询去重 | 部分实现     | 重构     | 搜索轮次已受控，但抓取和修复预算未完整接线            |
-| 模型驱动多轮搜索与深抓取                     | 部分实现     | 重构     | 首次确定性预取存在；部分路径仍隐藏后续 Web 能力       |
-| 结构化领域 DTO、mapping、validator、renderer | 已实现待复验 | 保留     | 五类工具表面、11 个 operation 和 migration 072 已存在 |
-| 真实结构化 Provider 配置                     | 延期         | 保留     | 2026-08-19 快照为 0/11 configured；执行前需重新审计   |
-| Windows deterministic eval runner            | 已验证       | 保留     | 脚本 8/8 与 smoke 24/24 已于 2026-08-22 通过          |
+| 能力                                         | 实现状态 | 处置方式 | 当前事实                                                |
+| -------------------------------------------- | -------- | -------- | ------------------------------------------------------- |
+| Run 幂等、单航班与 durable finalization      | 已验证   | 保留     | 唯一键、请求指纹、终态顺序和恢复测试通过                |
+| Run-local UI 投影与迟到事件隔离              | 已验证   | 保留     | reveal、presentation 和持久化恢复保持 Run 身份合同      |
+| 冻结工具表面、执行门禁与 `capabilities_read` | 已验证   | 保留     | 三者共享当前 Run 的允许工具事实                         |
+| Web 权限、classified 隔离、查询污染门禁      | 已验证   | 保留     | Web 开关、local-only 与 taint witness 已覆盖            |
+| `system_time_now`                            | 已验证   | 保留     | 本机事实不依赖 Web                                      |
+| Run-local evidence 与来源组展示              | 已验证   | 保留     | 当前 Run、未 retired、HTTPS 可定位证据才能成为候选      |
+| `FreshResearchPlan`、`EvidenceGap`、查询去重 | 已验证   | 保留     | 三档 profile、抓取/修复/续接/证据/deadline 均为生产控制 |
+| 模型驱动多轮搜索与深抓取                     | 已验证   | 重构完成 | 单一 `web_search` 合同按 current-Run provenance 深抓取  |
+| 结构化领域 DTO、mapping、validator、renderer | 已验证   | 保留     | 五类工具表面、11 个 operation 和 migration 072 已存在   |
+| 真实结构化 Provider 配置                     | 延期     | 保留     | 2026-08-19 快照为 0/11 configured；执行前需重新审计     |
+| Windows deterministic eval runner            | 已验证   | 保留     | 脚本 8/8、smoke 24/24、full 48/48 于 2026-08-23 通过    |
 
 ## 2. 已形成的有用基线
 
@@ -43,14 +43,13 @@
 - migration 072 增加 operation 与 output mapping 兼容字段，不能回滚删除或要求用户重建数据库。
 - 这些资产仍有价值，应作为精确事实快路径保留，而不是继续驱动 11/11 近期路线。
 
-## 3. 当前研究路径的真实缺口
+## 3. 本轮关闭的研究路径缺口与剩余边界
 
-1. 严格 Web 路径先执行一次确定性预取；当 effort 为 Direct 时可以在一次预取后直接综合，未由统一证据充分性判断控制。
-2. `constrain_domain_tool_surface` 对 News/结构化分支隐藏通用 `web_search`，使模型无法针对新缺口继续研究。
-3. `run_tool_loop` 为后续模型调用构造 Web 配额时仍设置 `max_fetches: 0`；`ResearchBudget.max_fetches` 和 `max_repairs` 没有形成完整生产控制。
-4. `domain_operation_is_executable` 使非 News operation 在缺少 binding 时于模型调用前失败，阻断了可由通用 Web 证据完成的研究型问题。
-5. 当前分类主要按领域冻结 operation，尚未完整表达“精确槽位事实”和“研究型叙述”的不同完成合同。
-6. `fresh_domains` 存在模块级 dead-code 许可，需要在替代路径落地时执行可达性清理。
+1. `ResearchBudget` 已同时控制搜索、实际成功抓取、一次修复、模型续接、evidence 与 deadline；schema 3 的恢复状态校验其冻结上限，不记录正文或 URL。
+2. 模型仅见 `web_search`；URL 必须来自当前用户消息或 current-Run evidence ledger，不能借用历史、foreign 或 retired evidence。broker 最多并发 3 个允许的深抓取，并回报实际成功数。
+3. 研究型天气、市场、新闻、体育和影视请求均可走统一 Web research；有 binding 的精确事实仍保留结构化快路径。缺 binding 不再是模型前的一刀切失败，News 也不再拥有架构特例。
+4. 两次研究回合未新增有效 evidence 时终止；profile deadline 覆盖 provider 调用和工具执行，Web 关闭仍不会外发。
+5. `fresh_domains` 的模块级 dead-code 许可和已不可达分支已删除。尚未完成的是基于真实 provider/model 的性能 p50/p95 与 token 基线；该外部试点需单独授权，不能由 fixture 代替。
 
 ## 4. 评测基线修复事实
 
