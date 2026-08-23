@@ -32,14 +32,6 @@ pub(crate) fn constrain_domain_tool_surface(
     tools
         .into_iter()
         .filter_map(|mut tool| {
-            // News fallback is deliberately represented by `news_lookup` only:
-            // exposing generic web_search would let the model bypass the
-            // operation-specific DTO validation and evidence contract.
-            if operation == Some(crate::ai_runtime::run_contract::DomainOperation::NewsSearch)
-                && tool.name == "web_search"
-            {
-                return None;
-            }
             if !FRESH_DOMAIN_TOOL_NAMES.contains(&tool.name.as_str()) {
                 return Some(tool);
             }
@@ -274,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn news_surface_hides_generic_web_search() {
+    fn news_surface_keeps_generic_web_search_for_research() {
         let registry = ToolRegistry::new();
         let tools = registry.tools_for_authorized_capabilities(
             &[
@@ -291,7 +283,7 @@ mod tests {
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
         assert!(names.contains(&"news_lookup"));
-        assert!(!names.contains(&"web_search"));
+        assert!(names.contains(&"web_search"));
     }
 
     #[test]

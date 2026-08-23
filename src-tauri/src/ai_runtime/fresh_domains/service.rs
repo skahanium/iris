@@ -48,7 +48,6 @@ const MAX_MAPPED_ARRAY_CHARS: usize = 8_192;
 /// Normalized current-fact domain request already validated by tool dispatch.
 #[derive(Debug, Clone)]
 pub(crate) struct FreshDomainRequest {
-    pub(crate) tool_name: String,
     pub(crate) operation: DomainOperation,
     pub(crate) args: Value,
     pub(crate) requested_at: DateTime<Utc>,
@@ -125,10 +124,7 @@ impl FreshDomainService {
             );
         }
 
-        if request.operation == DomainOperation::NewsSearch {
-            return self.execute_web_fallback(db, request, context).await;
-        }
-        Err(AppError::msg(ERROR_STRUCTURED_PROVIDER_UNAVAILABLE))
+        self.execute_web_fallback(db, request, context).await
     }
 
     fn frozen_routes(
@@ -936,7 +932,6 @@ mod tests {
             skill_activation_plan: None,
         };
         let request = FreshDomainRequest {
-            tool_name: "weather_lookup".into(),
             operation: DomainOperation::WeatherCurrent,
             args: serde_json::json!({ "location": "北京" }),
             requested_at: DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
@@ -954,7 +949,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn structured_weather_without_provider_fails_closed_instead_of_using_web_fallback() {
+    async fn structured_weather_without_provider_enters_web_fallback_contract() {
         use crate::ai_runtime::retrieval_scope::RetrievalScope;
         use crate::ai_runtime::tool_dispatch::ToolDispatchContext;
 
@@ -971,7 +966,7 @@ mod tests {
             run_id: None,
             write_target_path: None,
             document_policy: None,
-            web_search_enabled: true,
+            web_search_enabled: false,
             fresh_fact_policy: None,
             available_tool_names: &available_tool_names,
             max_web_fetches: 2,
@@ -983,7 +978,6 @@ mod tests {
             skill_activation_plan: None,
         };
         let request = FreshDomainRequest {
-            tool_name: "weather_lookup".into(),
             operation: DomainOperation::WeatherCurrent,
             args: serde_json::json!({ "location": "北京" }),
             requested_at: DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
@@ -994,113 +988,7 @@ mod tests {
 
         let error = FreshDomainService.execute(request, &ctx).await.unwrap_err();
 
-        assert_eq!(error.to_string(), ERROR_STRUCTURED_PROVIDER_UNAVAILABLE);
-    }
-
-    #[tokio::test]
-    async fn every_non_news_domain_operation_fails_closed_without_a_structured_provider() {
-        use crate::ai_runtime::retrieval_scope::RetrievalScope;
-        use crate::ai_runtime::tool_dispatch::ToolDispatchContext;
-
-        let cases: Vec<(DomainOperation, &str, serde_json::Value)> = vec![
-            (
-                DomainOperation::WeatherCurrent,
-                "weather_lookup",
-                serde_json::json!({ "operation": "weather.current", "location": "北京" }),
-            ),
-            (
-                DomainOperation::WeatherForecast,
-                "weather_lookup",
-                serde_json::json!({ "operation": "weather.forecast", "location": "北京", "days": 3 }),
-            ),
-            (
-                DomainOperation::FinanceQuote,
-                "finance_lookup",
-                serde_json::json!({ "operation": "finance.quote", "instrument": "AAPL" }),
-            ),
-            (
-                DomainOperation::FinanceMetrics,
-                "finance_lookup",
-                serde_json::json!({ "operation": "finance.metrics", "instrument": "AAPL" }),
-            ),
-            (
-                DomainOperation::FinanceNews,
-                "finance_lookup",
-                serde_json::json!({ "operation": "finance.news", "instrument": "AAPL" }),
-            ),
-            (
-                DomainOperation::EntertainmentNowPlaying,
-                "entertainment_lookup",
-                serde_json::json!({ "operation": "entertainment.now_playing", "location": "上海" }),
-            ),
-            (
-                DomainOperation::EntertainmentUpcoming,
-                "entertainment_lookup",
-                serde_json::json!({ "operation": "entertainment.upcoming" }),
-            ),
-            (
-                DomainOperation::EntertainmentStreaming,
-                "entertainment_lookup",
-                serde_json::json!({ "operation": "entertainment.streaming" }),
-            ),
-            (
-                DomainOperation::SportsSchedule,
-                "sports_lookup",
-                serde_json::json!({ "operation": "sports.schedule", "competition": "NBA" }),
-            ),
-            (
-                DomainOperation::SportsScore,
-                "sports_lookup",
-                serde_json::json!({ "operation": "sports.score", "competition": "NBA" }),
-            ),
-        ];
-
-        let db = Database::open_in_memory().unwrap();
-        let retrieval_scope = RetrievalScope::default();
-        let available_tool_names: Vec<String> = Vec::new();
-        let cold_start_packets: Vec<crate::ai_runtime::ContextPacket> = Vec::new();
-        let runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot> = Vec::new();
-        let ctx = ToolDispatchContext {
-            db: Some(&db),
-            selected_web_provider_id: None,
-            note_path: None,
-            file_id: None,
-            run_id: None,
-            write_target_path: None,
-            document_policy: None,
-            web_search_enabled: true,
-            fresh_fact_policy: None,
-            available_tool_names: &available_tool_names,
-            max_web_fetches: 2,
-            cold_start_packets: &cold_start_packets,
-            retrieval_scope: &retrieval_scope,
-            runtime_documents: &runtime_documents,
-            app_handle: None,
-            attachment_count: 0,
-            skill_activation_plan: None,
-        };
-
-        for (operation, tool_name, args) in cases {
-            let request = FreshDomainRequest {
-                tool_name: tool_name.to_string(),
-                operation,
-                args,
-                requested_at: DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
-                    .unwrap()
-                    .with_timezone(&Utc),
-                location_gap: None,
-            };
-            let error = FreshDomainService
-                .execute(request, &ctx)
-                .await
-                .expect_err(&format!("{tool_name} must fail closed without a provider"));
-            assert_eq!(
-                error.to_string(),
-                ERROR_STRUCTURED_PROVIDER_UNAVAILABLE,
-                "operation {} must not fall back to generic web success",
-                operation.as_str(),
-            );
-        }
+        assert_eq!(error.to_string(), ERROR_EVIDENCE_INSUFFICIENT);
     }
 
     #[test]

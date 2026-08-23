@@ -321,6 +321,28 @@ impl AgentEvidenceRepository {
         })
     }
 
+    /// Return canonical HTTPS URLs already registered by this exact Run.
+    /// This is a provenance guard for follow-up page fetches, not a second
+    /// evidence source: values are read from the existing Run-local ledger.
+    pub(crate) fn current_run_web_urls(db: &Database, run_id: &str) -> AppResult<BTreeSet<String>> {
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT evidence.normalized_url
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'web_search'
+                   AND evidence.retired_at IS NULL
+                   AND evidence.normalized_url LIKE 'https://%'",
+            )?;
+            let urls = statement
+                .query_map([run_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<BTreeSet<_>, _>>()
+                .map_err(AppError::from)?;
+            Ok(urls)
+        })
+    }
+
     /// Load only the bounded, already-sanitized DTO excerpts produced by a
     /// structured external tool for one Run. Raw provider responses are never
     /// returned through this helper.

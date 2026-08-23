@@ -4,8 +4,6 @@
 //! writes a database. Failures use stable, safe error-code strings so callers
 //! can classify them without parsing provider prose.
 
-use std::collections::HashSet;
-
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 
 use super::contracts::{
@@ -27,8 +25,6 @@ const ERROR_STALE: &str = "agent_run_fresh_evidence_stale";
 const ERROR_UNKNOWN_UNIT: &str = "agent_run_fresh_unknown_unit";
 const ERROR_FIELD_TOO_LONG: &str = "agent_run_fresh_field_too_long";
 const ERROR_LOCATION_REQUIRED: &str = "agent_run_location_required";
-const ERROR_FINANCE_UNSUPPORTED_NUMBER: &str = "finance_analysis_unsupported_number";
-const ERROR_FINANCE_UNSUPPORTED_RECORD: &str = "finance_analysis_unsupported_record";
 
 /// Validate one domain record against its operation, Appendix D freshness
 /// thresholds, required fields, and source HTTPS policy.
@@ -66,37 +62,6 @@ pub(crate) fn validate_domain_record(
         }
         _ => unreachable!("operation/record variant match was checked above"),
     }
-}
-
-/// Finance analysis input restriction: the analysis layer may only consume
-/// verified `FinanceRecord` IDs, and every numeric value it outputs must be a
-/// value that appeared on one of those input records.
-pub(crate) fn validate_finance_analysis_numbers(
-    allowed_ids: &[i64],
-    records: &[FinanceRecord],
-    output_numbers: &[&str],
-) -> crate::error::AppResult<()> {
-    let allowed_ids: HashSet<i64> = allowed_ids.iter().copied().collect();
-    if records
-        .iter()
-        .any(|record| !allowed_ids.contains(&record.origin.evidence_id))
-    {
-        return Err(crate::error::AppError::msg(
-            ERROR_FINANCE_UNSUPPORTED_RECORD,
-        ));
-    }
-
-    let allowed_numbers: HashSet<&str> =
-        records.iter().map(|record| record.value.as_str()).collect();
-    if output_numbers
-        .iter()
-        .any(|number| !allowed_numbers.contains(number))
-    {
-        return Err(crate::error::AppError::msg(
-            ERROR_FINANCE_UNSUPPORTED_NUMBER,
-        ));
-    }
-    Ok(())
 }
 
 fn validate_operation_variant(

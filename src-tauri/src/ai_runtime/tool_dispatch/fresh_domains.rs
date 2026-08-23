@@ -42,7 +42,6 @@ pub(super) async fn fresh_domain_tool(
     let records = FreshDomainService
         .execute(
             FreshDomainRequest {
-                tool_name: tool_name.to_string(),
                 operation,
                 args: normalized_args,
                 requested_at: Utc::now(),

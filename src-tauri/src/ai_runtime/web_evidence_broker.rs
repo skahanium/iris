@@ -1,6 +1,7 @@
 //! Unified network evidence broker for research workflows.
 
 use chrono::Utc;
+use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
@@ -19,6 +20,7 @@ const WEB_PACKET_EXCERPT_MAX_CHARS: usize = 4_000;
 const MERGED_FETCH_MAX_CHARS: usize = 12_000;
 const WEB_CONTEXT_TRUNCATION_MARKER: &str = "\n...（网页正文已按上下文预算截断）";
 const WEB_FETCH_TURN_BUDGET: Duration = Duration::from_secs(8);
+const MAX_CONCURRENT_PAGE_FETCHES: usize = 3;
 
 fn truncate_web_context_text(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
@@ -86,6 +88,8 @@ pub struct WebEvidenceProviderUsage {
 #[serde(rename_all = "camelCase")]
 pub struct WebEvidenceUsage {
     pub successful_search_requests: WebEvidenceSearchRequestUsage,
+    #[serde(default)]
+    pub successful_page_fetches: u32,
     pub providers: Vec<WebEvidenceProviderUsage>,
 }
 
@@ -165,15 +169,26 @@ async fn collect_web_evidence_with_queries(
 
     suppress_search_provider_failures_if_success(&mut collected);
     collected.extend(input.urls.iter().map(|url| explicit_url_item(url)));
+    let allowed_fetch_urls = input
+        .urls
+        .iter()
+        .map(|url| canonicalize_url(url))
+        .collect::<std::collections::BTreeSet<_>>();
     let mut items = normalize_evidence_items(collected);
+    // Explicit URLs have already passed the current-Run provenance gate. Keep
+    // them ahead of opportunistic search snippets so a requested deep read is
+    // not silently discarded by the evidence packet cap.
+    items.sort_by_key(|item| !allowed_fetch_urls.contains(&item.canonical_url));
     items.truncate(input.max_search_results);
-    let items = enrich_with_page_fetches(
+    let (items, successful_page_fetches) = enrich_with_page_fetches(
         db,
         items,
         input.max_fetches,
+        &allowed_fetch_urls,
         input.provider_snapshots.first(),
     )
     .await?;
+    usage.successful_page_fetches = successful_page_fetches;
     Ok(WebEvidenceBrokerOutput { items, usage })
 }
 
@@ -1620,41 +1635,59 @@ async fn enrich_with_page_fetches(
     db: &Database,
     items: Vec<WebEvidenceItem>,
     max_fetches: usize,
+    allowed_fetch_urls: &std::collections::BTreeSet<String>,
     provider_snapshot: Option<
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
-) -> AppResult<Vec<WebEvidenceItem>> {
+) -> AppResult<(Vec<WebEvidenceItem>, u32)> {
     if max_fetches == 0 {
-        return Ok(items);
+        return Ok((items, 0));
     }
 
-    let mut enriched = Vec::with_capacity(items.len());
-    let mut fetched = 0usize;
+    let mut enriched = items;
     let fetch_deadline = Instant::now() + WEB_FETCH_TURN_BUDGET;
-    for mut item in items {
-        if fetched < max_fetches && item.failure_reason.is_none() {
-            if Instant::now() >= fetch_deadline {
-                enriched.push(item);
-                continue;
-            }
-            fetched += 1;
-            let remaining = fetch_deadline.saturating_duration_since(Instant::now());
-            match tokio::time::timeout(
+    let candidates = enriched
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            item.failure_reason.is_none() && is_allowed_page_fetch(item, allowed_fetch_urls)
+        })
+        .take(max_fetches)
+        .map(|(index, item)| (index, item.url.clone()))
+        .collect::<Vec<_>>();
+    let fetches = stream::iter(candidates.into_iter().map(|(index, url)| async move {
+        let remaining = fetch_deadline.saturating_duration_since(Instant::now());
+        let result = if remaining.is_zero() {
+            None
+        } else {
+            tokio::time::timeout(
                 remaining,
-                fetch_url_with_providers(db, &item.url, provider_snapshot),
+                fetch_url_with_providers(db, &url, provider_snapshot),
             )
             .await
-            {
-                Ok(Ok(page)) => apply_page_provider_fetch(&mut item, page),
-                Ok(Err(_)) | Err(_) => {
-                    // The search snippet remains usable low-grade evidence even when
-                    // optional deep reading fails or exhausts the shared fetch budget.
-                }
-            }
+            .ok()
+            .and_then(Result::ok)
+        };
+        (index, result)
+    }))
+    .buffer_unordered(MAX_CONCURRENT_PAGE_FETCHES)
+    .collect::<Vec<_>>()
+    .await;
+    let mut successful_page_fetches = 0_u32;
+    for (index, page) in fetches {
+        if let Some(page) = page {
+            apply_page_provider_fetch(&mut enriched[index], page);
+            successful_page_fetches = successful_page_fetches.saturating_add(1);
         }
-        enriched.push(item);
     }
-    Ok(enriched)
+    Ok((enriched, successful_page_fetches))
+}
+
+fn is_allowed_page_fetch(
+    item: &WebEvidenceItem,
+    allowed_fetch_urls: &std::collections::BTreeSet<String>,
+) -> bool {
+    allowed_fetch_urls.contains(&item.canonical_url)
 }
 
 async fn fetch_url_with_providers(
@@ -2184,19 +2217,35 @@ mod tests {
     #[tokio::test]
     async fn broker_keeps_search_snippet_usable_when_page_fetch_fails() {
         let db = Database::open_in_memory().unwrap();
-        let items = enrich_with_page_fetches(
+        let (items, successful_page_fetches) = enrich_with_page_fetches(
             &db,
             vec![item("https://localhost/a"), item("https://localhost/b")],
             1,
+            &std::collections::BTreeSet::from(["https://localhost/a".to_string()]),
             None,
         )
         .await
         .unwrap();
 
         assert_eq!(items.len(), 2);
+        assert_eq!(successful_page_fetches, 0);
         assert!(items[0].failure_reason.is_none());
         assert!(!items[0].snippet.is_empty());
         assert!(items[1].failure_reason.is_none());
+    }
+
+    #[test]
+    fn deep_fetches_are_limited_to_explicitly_allowed_urls() {
+        let allowed = std::collections::BTreeSet::from(["https://example.com/current".into()]);
+
+        assert!(is_allowed_page_fetch(
+            &item("https://example.com/current#section"),
+            &allowed,
+        ));
+        assert!(!is_allowed_page_fetch(
+            &item("https://example.com/search-result"),
+            &allowed,
+        ));
     }
 
     #[test]

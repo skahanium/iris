@@ -37,6 +37,41 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CurrentTaskShape {
+    RuntimeFact,
+    ExactCurrentFact,
+    CurrentResearch,
+    Other,
+}
+
+/// Route current-domain requests by their required answer shape, not merely by
+/// the classifier domain. This preserves structured fast paths for exact
+/// fields while keeping summaries, explanations and recommendations in the
+/// bounded Web research loop when no structured binding exists.
+pub(crate) fn classify_current_task_shape(
+    domain: FreshFactDomain,
+    user_message: &str,
+) -> CurrentTaskShape {
+    if domain == FreshFactDomain::Runtime {
+        return CurrentTaskShape::RuntimeFact;
+    }
+    if !is_current_fact_domain(domain) {
+        return CurrentTaskShape::Other;
+    }
+    if domain == FreshFactDomain::News
+        || contains_research_shape_marker(user_message)
+        || (domain == FreshFactDomain::Entertainment
+            && contains_any_marker(
+                user_message,
+                &["推荐", "有什么好看", "recommend", "suggest", "best"],
+            ))
+    {
+        return CurrentTaskShape::CurrentResearch;
+    }
+    CurrentTaskShape::ExactCurrentFact
+}
+
 fn is_current_fact_domain(domain: FreshFactDomain) -> bool {
     matches!(
         domain,
@@ -46,6 +81,39 @@ fn is_current_fact_domain(domain: FreshFactDomain) -> bool {
             | FreshFactDomain::Entertainment
             | FreshFactDomain::Sports
     )
+}
+
+fn contains_research_shape_marker(message: &str) -> bool {
+    contains_any_marker(
+        message,
+        &[
+            "比较",
+            "对比",
+            "原因",
+            "为什么",
+            "为何",
+            "综述",
+            "盘点",
+            "前瞻",
+            "预测",
+            "分析",
+            "影响",
+            "走势",
+            "怎么回事",
+            "compare",
+            "comparison",
+            "why",
+            "overview",
+            "outlook",
+            "preview",
+            "recommend",
+        ],
+    )
+}
+
+fn contains_any_marker(message: &str, markers: &[&str]) -> bool {
+    let normalized = message.to_lowercase();
+    markers.iter().any(|marker| normalized.contains(marker))
 }
 
 fn plan_tool_surface(
@@ -236,36 +304,6 @@ async fn execute_normal_run_internal(
         }
         return;
     }
-    if let Some(operation) = context.envelope.fresh_fact.effective_operation() {
-        let executable = match domain_operation_is_executable(
-            &db,
-            &accepted.run_id,
-            &authorized_capabilities,
-            Some(operation),
-        ) {
-            Ok(executable) => executable,
-            Err(_) => {
-                let _ = RunEngine::fail_before_dispatch_with_sink(
-                    &db,
-                    &accepted.session,
-                    &accepted.run_id,
-                    SafeRunErrorCode::PersistenceFailed,
-                    sink,
-                );
-                return;
-            }
-        };
-        if !executable {
-            let _ = RunEngine::fail_before_dispatch_with_sink(
-                &db,
-                &accepted.session,
-                &accepted.run_id,
-                SafeRunErrorCode::ProviderUnavailable,
-                sink,
-            );
-            return;
-        }
-    }
     let domain_plan = context.domain_plan();
     // Never route an external-fact Run to a direct model answer when Web is
     // unavailable. This is a safety denial, not a degraded offline answer.
@@ -362,17 +400,11 @@ fn requires_user_input(context: &crate::ai_runtime::run_context::RunContext) -> 
 fn domain_operation_is_executable(
     db: &Database,
     run_id: &str,
-    authorized_capabilities: &[CapabilityId],
     operation: Option<DomainOperation>,
 ) -> AppResult<bool> {
     let Some(operation) = operation else {
         return Ok(false);
     };
-    if operation == DomainOperation::NewsSearch {
-        return Ok(authorized_capabilities
-            .iter()
-            .any(|capability| capability.as_str() == "web.search"));
-    }
     Ok(
         crate::ai_runtime::mcp_external_tools::load_run_snapshots(db, run_id)?
             .iter()
@@ -589,7 +621,6 @@ async fn dispatch_normal_run_after_context(
         let domain_executable = domain_operation_is_executable(
             db,
             &accepted.run_id,
-            authorized_capabilities,
             context.envelope.fresh_fact.effective_operation(),
         )?;
         tools = constrain_domain_tool_surface(
@@ -643,7 +674,9 @@ async fn dispatch_normal_run_after_context(
         .with_allowed_tool_names(&tool_surface_plan.tool_names)
         .with_skill_activation_plan(active_skills.plan.clone())
         .with_child_run_provider(&provider);
-        if is_current_fact_domain(context.envelope.fresh_fact.domain) {
+        if classify_current_task_shape(context.envelope.fresh_fact.domain, &context.user_message)
+            == CurrentTaskShape::CurrentResearch
+        {
             let plan = build_fresh_research_plan(
                 &context.user_message,
                 &context.envelope.fresh_fact,
@@ -936,10 +969,17 @@ async fn dispatch_required_web_verified_run(
     // `web_search` stays hidden. Current-fact research keeps `web_search`
     // visible so the model can issue bounded follow-up searches for unresolved
     // evidence gaps.
-    let research_mode = is_current_fact_domain(context.envelope.fresh_fact.domain);
+    let research_mode =
+        classify_current_task_shape(context.envelope.fresh_fact.domain, &context.user_message)
+            == CurrentTaskShape::CurrentResearch;
     let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, !research_mode);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-    let mut tools = if research_mode {
+    let domain_executable = domain_operation_is_executable(
+        db,
+        &accepted.run_id,
+        context.envelope.fresh_fact.effective_operation(),
+    )?;
+    let mut tools = if research_mode || domain_executable {
         ToolRegistry::constrain_for_run_context(
             registry.tools_for_authorized_capabilities(authorized_capabilities, true),
             context.envelope.context,
@@ -953,12 +993,6 @@ async fn dispatch_required_web_verified_run(
             &context.retrieval_scope,
         )
     };
-    let domain_executable = domain_operation_is_executable(
-        db,
-        &accepted.run_id,
-        authorized_capabilities,
-        context.envelope.fresh_fact.effective_operation(),
-    )?;
     tools = constrain_domain_tool_surface(
         tools,
         context.envelope.fresh_fact.effective_operation(),
@@ -1019,7 +1053,7 @@ async fn dispatch_required_web_verified_run(
     // Current-fact research no longer depends on the empty calibrated
     // whitelist: the Run must expose `submit_final_answer` and fail closed if
     // the model route cannot support tool continuation.
-    if research_mode && !structured_finalization {
+    if (research_mode || domain_executable) && !structured_finalization {
         if !has_local_follow_up_tools {
             let _ = RunEngine::fail_before_dispatch_with_sink(
                 db,

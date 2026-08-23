@@ -18,10 +18,6 @@ pub(crate) struct ConfirmedLocation {
 }
 
 /// One unresolved evidence gap that may justify a follow-up search.
-#[allow(
-    dead_code,
-    reason = "variants are consumed by Task 4 evidence-gap-driven ToolLoop research"
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum EvidenceGap {
     MissingEntity,
@@ -41,12 +37,55 @@ pub(crate) struct ResearchBudget {
     pub(crate) max_searches: u8,
     pub(crate) max_fetches: u8,
     pub(crate) max_repairs: u8,
+    pub(crate) max_model_continuations: u8,
+    pub(crate) max_evidence: u8,
+    pub(crate) deadline_seconds: u8,
+}
+
+/// User-selected research depth frozen before a current-fact Run begins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResearchProfile {
+    Quick,
+    Standard,
+    Deep,
+}
+
+impl ResearchProfile {
+    fn budget(self) -> ResearchBudget {
+        match self {
+            Self::Quick => ResearchBudget {
+                max_searches: 1,
+                max_fetches: 2,
+                max_repairs: 1,
+                max_model_continuations: 2,
+                max_evidence: 4,
+                deadline_seconds: 20,
+            },
+            Self::Standard => ResearchBudget {
+                max_searches: 3,
+                max_fetches: 6,
+                max_repairs: 1,
+                max_model_continuations: 4,
+                max_evidence: 8,
+                deadline_seconds: 45,
+            },
+            Self::Deep => ResearchBudget {
+                max_searches: 5,
+                max_fetches: 10,
+                max_repairs: 1,
+                max_model_continuations: 6,
+                max_evidence: 12,
+                deadline_seconds: 90,
+            },
+        }
+    }
 }
 
 /// The initial query and budget frozen before a current-fact Run begins.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FreshResearchPlan {
     pub(crate) initial_query: String,
+    pub(crate) profile: ResearchProfile,
     pub(crate) budget: ResearchBudget,
     pub(crate) domain: FreshFactDomain,
 }
@@ -66,9 +105,11 @@ pub(crate) fn build_fresh_research_plan(
     }
 
     let initial_query = build_initial_query(message, policy, location);
-    let budget = research_budget(message, policy.domain);
+    let profile = research_profile(message, policy.domain);
+    let budget = profile.budget();
     Ok(FreshResearchPlan {
         initial_query,
+        profile,
         budget,
         domain: policy.domain,
     })
@@ -99,14 +140,34 @@ pub(crate) struct FreshResearchResumeState {
     pub(crate) schema_version: u8,
     pub(crate) max_searches: u8,
     pub(crate) search_count: u8,
+    #[serde(default)]
+    pub(crate) max_fetches: u8,
+    #[serde(default)]
+    pub(crate) fetch_count: u8,
+    #[serde(default)]
+    pub(crate) max_repairs: u8,
+    #[serde(default)]
+    pub(crate) repair_count: u8,
+    #[serde(default)]
+    pub(crate) max_model_continuations: u8,
+    #[serde(default)]
+    pub(crate) max_evidence: u8,
+    #[serde(default)]
+    pub(crate) deadline_seconds: u8,
     pub(crate) seen_query_hashes: Vec<String>,
     pub(crate) winner_provider_id: Option<String>,
 }
 
 impl FreshResearchResumeState {
     pub(crate) fn validate(&self) -> AppResult<()> {
-        if self.schema_version != 1
+        if !(self.schema_version == 1 || self.schema_version == 2 || self.schema_version == 3)
             || self.search_count > self.max_searches
+            || self.fetch_count > self.max_fetches
+            || self.repair_count > self.max_repairs
+            || (self.schema_version == 3
+                && (self.max_model_continuations == 0
+                    || self.max_evidence == 0
+                    || self.deadline_seconds == 0))
             || self.seen_query_hashes.len() > usize::from(self.max_searches)
             || self
                 .seen_query_hashes
@@ -207,25 +268,34 @@ fn build_initial_query(
     query.chars().take(360).collect()
 }
 
-fn research_budget(message: &str, domain: FreshFactDomain) -> ResearchBudget {
-    let recommendation = domain == FreshFactDomain::Entertainment
+fn research_profile(message: &str, domain: FreshFactDomain) -> ResearchProfile {
+    if contains_any(message, &["深入研究", "深度研究", "deep research"]) {
+        return ResearchProfile::Deep;
+    }
+    if domain == FreshFactDomain::Entertainment
         && contains_any(
             message,
             &["推荐", "有什么好看", "recommend", "suggest", "best"],
-        );
-    if recommendation {
-        ResearchBudget {
-            max_searches: 3,
-            max_fetches: 5,
-            max_repairs: 1,
-        }
-    } else {
-        ResearchBudget {
-            max_searches: 2,
-            max_fetches: 3,
-            max_repairs: 1,
-        }
+        )
+        || contains_any(
+            message,
+            &[
+                "比较",
+                "原因",
+                "为什么",
+                "综述",
+                "前瞻",
+                "compare",
+                "comparison",
+                "why",
+                "overview",
+                "outlook",
+            ],
+        )
+    {
+        return ResearchProfile::Standard;
     }
+    ResearchProfile::Quick
 }
 
 fn normalize_query(query: &str) -> String {
@@ -301,9 +371,12 @@ mod tests {
         assert_eq!(
             single.budget,
             ResearchBudget {
-                max_searches: 2,
-                max_fetches: 3,
+                max_searches: 1,
+                max_fetches: 2,
                 max_repairs: 1,
+                max_model_continuations: 2,
+                max_evidence: 4,
+                deadline_seconds: 20,
             }
         );
 
@@ -318,10 +391,53 @@ mod tests {
             recommendation.budget,
             ResearchBudget {
                 max_searches: 3,
-                max_fetches: 5,
+                max_fetches: 6,
                 max_repairs: 1,
+                max_model_continuations: 4,
+                max_evidence: 8,
+                deadline_seconds: 45,
             }
         );
+    }
+
+    #[test]
+    fn explicit_deep_request_is_the_only_message_path_to_deep_profile() {
+        let deep = build_fresh_research_plan(
+            "请深入研究上海本周电影",
+            &policy(FreshFactDomain::Entertainment, None),
+            "zh-CN",
+            Some(&shanghai()),
+        )
+        .expect("deep plan");
+        let standard = build_fresh_research_plan(
+            "推荐上海本周电影",
+            &policy(FreshFactDomain::Entertainment, None),
+            "zh-CN",
+            Some(&shanghai()),
+        )
+        .expect("standard plan");
+        let quick = build_fresh_research_plan(
+            "苹果现在股价多少",
+            &policy(FreshFactDomain::Finance, None),
+            "zh-CN",
+            None,
+        )
+        .expect("quick plan");
+
+        assert_eq!(deep.profile, ResearchProfile::Deep);
+        assert_eq!(
+            deep.budget,
+            ResearchBudget {
+                max_searches: 5,
+                max_fetches: 10,
+                max_repairs: 1,
+                max_model_continuations: 6,
+                max_evidence: 12,
+                deadline_seconds: 90,
+            }
+        );
+        assert_eq!(standard.profile, ResearchProfile::Standard);
+        assert_eq!(quick.profile, ResearchProfile::Quick);
     }
 
     #[test]
@@ -358,6 +474,48 @@ mod tests {
             .register(" 上海   电影 ", EvidenceGap::MissingTimestamp)
             .expect_err("same query cannot be retried under another gap");
         assert_eq!(error.to_string(), "fresh_research_duplicate_query");
+    }
+
+    #[test]
+    fn resume_state_rejects_fetch_usage_above_the_frozen_limit() {
+        let state = FreshResearchResumeState {
+            schema_version: 2,
+            max_searches: 1,
+            search_count: 1,
+            max_fetches: 2,
+            fetch_count: 3,
+            max_repairs: 1,
+            repair_count: 0,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
+            seen_query_hashes: Vec::new(),
+            winner_provider_id: None,
+        };
+
+        assert_eq!(
+            state
+                .validate()
+                .expect_err("over-limit fetches fail")
+                .to_string(),
+            "fresh_research_resume_state_invalid"
+        );
+    }
+
+    #[test]
+    fn legacy_resume_state_defaults_new_budget_counters() {
+        let state: FreshResearchResumeState = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 1,
+            "maxSearches": 2,
+            "searchCount": 1,
+            "seenQueryHashes": [],
+            "winnerProviderId": null
+        }))
+        .expect("legacy state deserializes");
+
+        state.validate().expect("legacy state remains resumable");
+        assert_eq!(state.fetch_count, 0);
+        assert_eq!(state.repair_count, 0);
     }
 
     #[test]

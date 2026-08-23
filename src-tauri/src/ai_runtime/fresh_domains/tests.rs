@@ -11,7 +11,6 @@ use super::location::{
 };
 use super::service::{allows_location_widening, with_location_scope};
 use super::validation::validate_domain_record;
-use super::validation::validate_finance_analysis_numbers;
 
 const REQUESTED_AT: &str = "2026-08-18T08:00:00Z";
 const ERROR_DOMAIN_INVALID: &str = "agent_run_fresh_domain_invalid";
@@ -20,7 +19,6 @@ const ERROR_HTTPS_REQUIRED: &str = "agent_run_fresh_https_required";
 const ERROR_STALE: &str = "agent_run_fresh_evidence_stale";
 const ERROR_LOCATION_REQUIRED: &str = "agent_run_location_required";
 const ERROR_UNKNOWN_UNIT: &str = "agent_run_fresh_unknown_unit";
-const ERROR_FINANCE_UNSUPPORTED_NUMBER: &str = "finance_analysis_unsupported_number";
 
 fn requested_at() -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(REQUESTED_AT)
@@ -373,24 +371,6 @@ fn entertainment_checked_at_older_than_twenty_four_hours_is_rejected() {
         &FreshDomainRecord::Entertainment(record),
         ERROR_STALE,
     );
-}
-
-#[test]
-fn finance_analysis_accepts_only_numbers_from_input_records() {
-    let first = finance_fixture();
-    let mut second = finance_fixture();
-    second.origin.evidence_id = 42;
-    second.value = "88.88".to_string();
-
-    let records = vec![first.clone(), second.clone()];
-    let allowed_ids = [4, 42];
-
-    validate_finance_analysis_numbers(&allowed_ids, &records, &["234.56", "88.88"])
-        .expect("input-record numbers are supported");
-
-    let error = validate_finance_analysis_numbers(&allowed_ids, &records, &["999.99"])
-        .expect_err("unseen number must be rejected");
-    assert_eq!(error.to_string(), ERROR_FINANCE_UNSUPPORTED_NUMBER);
 }
 
 #[test]

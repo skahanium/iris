@@ -8,6 +8,7 @@ use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
     AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
 };
+use super::fresh_research_plan::ResearchBudget;
 use super::model_gateway::{StreamEventObserver, StreamSurface};
 use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
 use crate::ai_runtime::{
@@ -31,6 +32,112 @@ fn standard_turn_reserves_output_before_selecting_history() {
 #[test]
 fn direct_provider_has_an_explicit_nonzero_turn_budget() {
     assert_ne!(AgentModelTurnBudget::default().max_prompt_tokens, None);
+}
+
+#[tokio::test]
+async fn fresh_profile_caps_model_continuations_before_global_limit() {
+    let tool_response = || super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: vec![tool_call()],
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([tool_response(), tool_response()])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    let error = standard_tool_loop()
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 1,
+            max_fetches: 2,
+            max_repairs: 1,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
+        })
+        .execute(
+            &provider,
+            &executor,
+            "run-fresh-profile-turn-cap",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect_err("the profile must stop after two model continuations");
+
+    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn two_research_rounds_without_new_evidence_stop_before_a_third_turn() {
+    let tool_response = || super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: vec![tool_call()],
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            tool_response(),
+            tool_response(),
+            tool_response(),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let error = standard_tool_loop()
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 1,
+            max_fetches: 2,
+            max_repairs: 1,
+            max_model_continuations: 6,
+            max_evidence: 4,
+            deadline_seconds: 20,
+        })
+        .execute(
+            &provider,
+            &NoEvidenceResearchExecutor,
+            "run-no-new-evidence",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect_err("two no-evidence rounds must stop the research loop");
+
+    assert_eq!(error.to_string(), "fresh_research_no_new_evidence");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -281,6 +388,7 @@ struct LargeWebResultExecutor;
 struct OversizedWebResultExecutor;
 struct RequiredWebExecutor;
 struct RequiredExternalExecutor;
+struct NoEvidenceResearchExecutor;
 
 impl ToolLoopExecutor for RequiredWebExecutor {
     fn execute<'a>(
@@ -309,6 +417,42 @@ impl ToolLoopExecutor for RequiredExternalExecutor {
 
     fn requires_external_evidence(&self) -> bool {
         true
+    }
+}
+
+impl ToolLoopExecutor for NoEvidenceResearchExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "result": "no new evidence" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+
+    fn fresh_research_budget(&self) -> Option<ResearchBudget> {
+        Some(ResearchBudget {
+            max_searches: 1,
+            max_fetches: 2,
+            max_repairs: 1,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
+        })
+    }
+
+    fn fresh_research_evidence_count(&self) -> Option<usize> {
+        Some(0)
     }
 }
 

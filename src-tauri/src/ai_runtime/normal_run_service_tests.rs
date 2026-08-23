@@ -9,16 +9,16 @@ use super::agent_tool_loop::ToolLoopExecutor;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
-    build_cached_skill_activation, execute_normal_run, execute_normal_run_with_eval_telemetry,
-    required_web_query_from_authorized_material, required_web_query_from_user_history,
-    strict_follow_up_capabilities,
+    build_cached_skill_activation, classify_current_task_shape, execute_normal_run,
+    execute_normal_run_with_eval_telemetry, required_web_query_from_authorized_material,
+    required_web_query_from_user_history, strict_follow_up_capabilities, CurrentTaskShape,
 };
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
     AssistantRunAccepted, AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef,
-    AssistantTurnDraft, CapabilityId, ContextMode, Effort, RunEventPayload, RunEventType,
-    RunPresentationPayload, RunState, SecurityDomain,
+    AssistantTurnDraft, CapabilityId, ContextMode, Effort, FreshFactDomain, RunEventPayload,
+    RunEventType, RunPresentationPayload, RunState, SecurityDomain,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
@@ -34,6 +34,46 @@ use crate::storage::db::Database;
 #[derive(Default)]
 struct RecordingSink {
     events: Mutex<Vec<serde_json::Value>>,
+}
+
+#[test]
+fn current_task_shape_routes_by_answer_contract_not_domain_only() {
+    let cases = [
+        (
+            FreshFactDomain::Finance,
+            "苹果现在股价多少？",
+            CurrentTaskShape::ExactCurrentFact,
+        ),
+        (
+            FreshFactDomain::Finance,
+            "为什么今天科技股下跌？",
+            CurrentTaskShape::CurrentResearch,
+        ),
+        (
+            FreshFactDomain::News,
+            "今天的新闻综述",
+            CurrentTaskShape::CurrentResearch,
+        ),
+        (
+            FreshFactDomain::Sports,
+            "明天比赛前瞻和分析",
+            CurrentTaskShape::CurrentResearch,
+        ),
+        (
+            FreshFactDomain::Entertainment,
+            "推荐本周上海有什么好看的电影",
+            CurrentTaskShape::CurrentResearch,
+        ),
+        (
+            FreshFactDomain::Weather,
+            "上海明天天气预报",
+            CurrentTaskShape::ExactCurrentFact,
+        ),
+    ];
+
+    for (domain, message, expected) in cases {
+        assert_eq!(classify_current_task_shape(domain, message), expected);
+    }
 }
 
 impl RunEventSink for RecordingSink {
@@ -1049,7 +1089,6 @@ async fn news_web_fallback_produces_validated_record_from_headless_mcp() {
         skill_activation_plan: None,
     };
     let request = FreshDomainRequest {
-        tool_name: "news_lookup".into(),
         operation: DomainOperation::NewsSearch,
         args: serde_json::json!({ "operation": "news.search", "topic": "synthetic", "limit": 5 }),
         requested_at: chrono::DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
@@ -1353,48 +1392,6 @@ async fn production_domain_operations_freeze_authorize_dispatch_and_recover_tabl
 }
 
 #[tokio::test]
-async fn non_news_domain_operations_without_a_binding_fail_before_model_dispatch() {
-    let messages = [
-        "上海今天天气怎么样？",
-        "上海未来一周天气",
-        "AAPL 股票当前股价",
-        "AAPL 股票市盈率指标",
-        "AAPL 股票新闻",
-        "上海正在上映什么电影",
-        "有什么电影即将上映",
-        "现在能看什么流媒体电影",
-        "湖人下一场赛程",
-        "湖人比分",
-    ];
-
-    for (index, message) in messages.into_iter().enumerate() {
-        let directory = tempfile::tempdir().expect("temporary app directory");
-        let state = AppState::new(directory.path().join("data")).expect("application state");
-        let sink = RecordingSink::default();
-        let mut request = direct_request();
-        request.client_request_id = format!("missing-domain-binding-{index}");
-        request.turn.message = message.into();
-        request.web_enabled = true;
-        let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
-            .expect("accept unconfigured domain Run");
-
-        execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
-
-        let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
-            .expect("failed snapshot")
-            .expect("failed Run");
-        assert_eq!(response.run.state, RunState::Failed, "{message}");
-        assert!(matches!(
-            response.events.last().map(AssistantRunEvent::payload),
-            Some(RunEventPayload::Failed {
-                code: super::run_contract::SafeRunErrorCode::ProviderUnavailable,
-                ..
-            })
-        ));
-    }
-}
-
-#[tokio::test]
 async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
@@ -1414,7 +1411,7 @@ async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
     assert!(matches!(
         response.events.last().map(AssistantRunEvent::payload),
         Some(RunEventPayload::Failed {
-            code: super::run_contract::SafeRunErrorCode::ProviderUnavailable,
+            code: super::run_contract::SafeRunErrorCode::WebVerificationRequired,
             ..
         })
     ));
@@ -1528,15 +1525,15 @@ async fn production_news_web_fallback_uses_intake_surface_dispatch_and_recovery(
     install_headless_contract_mcp(&state);
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(&tool_call_sse(
-            "news_lookup",
-            serde_json::json!({"operation":"news.search","topic":"synthetic"}),
+            "web_search",
+            serde_json::json!({"query":"最新 synthetic 新闻","gap":"missing_timestamp"}),
         )),
         HttpResponseScript::sse(&tool_call_sse(
             "submit_final_answer",
             serde_json::json!({
                 "blocks": [{
                     "markdown": "最新 synthetic 新闻已核实。",
-                    "sources": ["W1", "E3"]
+                    "sources": ["W1"]
                 }]
             }),
         )),
@@ -1583,8 +1580,8 @@ async fn production_news_web_fallback_uses_intake_surface_dispatch_and_recovery(
         .iter()
         .map(|tool| tool["function"]["name"].as_str().expect("tool name"))
         .collect::<Vec<_>>();
-    assert!(names.contains(&"news_lookup"));
-    assert!(!names.contains(&"web_search"));
+    assert!(!names.contains(&"news_lookup"));
+    assert!(names.contains(&"web_search"));
     assert_eq!(calls.len(), 2);
 
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;

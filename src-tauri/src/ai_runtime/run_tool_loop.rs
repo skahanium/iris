@@ -173,12 +173,25 @@ impl RunWebBudget {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RunWebEvidenceState {
     evidence_ids: Vec<i64>,
     domains: BTreeSet<String>,
     has_official_source: bool,
     slots_in_use: usize,
+    max_evidence: usize,
+}
+
+impl Default for RunWebEvidenceState {
+    fn default() -> Self {
+        Self {
+            evidence_ids: Vec::new(),
+            domains: BTreeSet::new(),
+            has_official_source: false,
+            slots_in_use: 0,
+            max_evidence: MAX_WEB_EVIDENCE_PER_RUN,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,7 +217,7 @@ impl WebEvidenceReservation {
             let mut state = shared
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
-            let remaining = MAX_WEB_EVIDENCE_PER_RUN.saturating_sub(state.slots_in_use);
+            let remaining = state.max_evidence.saturating_sub(state.slots_in_use);
             let capacity = remaining.min(INITIAL_WEB_SEARCH_RESULTS);
             if capacity == 0 {
                 return Ok(None);
@@ -290,6 +303,8 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     /// are rejected.
     fresh_research_budget: Option<ResearchBudget>,
     fresh_search_count: Mutex<u8>,
+    fresh_fetch_count: Mutex<u8>,
+    fresh_repair_count: Mutex<u8>,
     fresh_research_ledger: Mutex<ResearchQueryLedger>,
     fresh_research_restore_error: Mutex<Option<String>>,
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
@@ -351,6 +366,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             web_preferred_provider_id: Arc::new(Mutex::new(None)),
             fresh_research_budget: None,
             fresh_search_count: Mutex::new(0),
+            fresh_fetch_count: Mutex::new(0),
+            fresh_repair_count: Mutex::new(0),
             fresh_research_ledger: Mutex::new(ResearchQueryLedger::new()),
             fresh_research_restore_error: Mutex::new(None),
             child_run_provider: None,
@@ -397,11 +414,30 @@ impl<'a> NormalRunToolExecutor<'a> {
     /// normalized query/gap pairs are rejected.
     pub(crate) fn with_fresh_research_budget(mut self, budget: ResearchBudget) -> Self {
         self.fresh_research_budget = Some(budget);
+        if let Ok(mut evidence) = self.run_web_evidence.lock() {
+            evidence.max_evidence = evidence.max_evidence.min(usize::from(budget.max_evidence));
+        }
         match AgentRunRepository::latest_fresh_research_state(&self.state.db, &self.accepted.run_id)
         {
-            Ok(Some(state)) if state.max_searches == budget.max_searches => {
+            Ok(Some(state))
+                if state.max_searches == budget.max_searches
+                    && (state.schema_version == 1
+                        || (state.max_fetches == budget.max_fetches
+                            && state.max_repairs == budget.max_repairs
+                            && (state.schema_version < 3
+                                || (state.max_model_continuations
+                                    == budget.max_model_continuations
+                                    && state.max_evidence == budget.max_evidence
+                                    && state.deadline_seconds == budget.deadline_seconds)))) =>
+            {
                 if let Ok(mut count) = self.fresh_search_count.lock() {
                     *count = state.search_count;
+                }
+                if let Ok(mut count) = self.fresh_fetch_count.lock() {
+                    *count = state.fetch_count;
+                }
+                if let Ok(mut count) = self.fresh_repair_count.lock() {
+                    *count = state.repair_count;
                 }
                 if let Ok(ledger) = ResearchQueryLedger::from_hashes(state.seen_query_hashes) {
                     if let Ok(mut stored) = self.fresh_research_ledger.lock() {
@@ -437,6 +473,14 @@ impl<'a> NormalRunToolExecutor<'a> {
             .fresh_search_count
             .lock()
             .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        let fetch_count = *self
+            .fresh_fetch_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        let repair_count = *self
+            .fresh_repair_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
         let seen_query_hashes = self
             .fresh_research_ledger
             .lock()
@@ -448,9 +492,16 @@ impl<'a> NormalRunToolExecutor<'a> {
             .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))?
             .clone();
         let state = FreshResearchResumeState {
-            schema_version: 1,
+            schema_version: 3,
             max_searches: budget.max_searches,
             search_count,
+            max_fetches: budget.max_fetches,
+            fetch_count,
+            max_repairs: budget.max_repairs,
+            repair_count,
+            max_model_continuations: budget.max_model_continuations,
+            max_evidence: budget.max_evidence,
+            deadline_seconds: budget.deadline_seconds,
             seen_query_hashes,
             winner_provider_id,
         };
@@ -499,6 +550,58 @@ impl<'a> NormalRunToolExecutor<'a> {
         }
         *search_count += 1;
         drop(search_count);
+        self.persist_fresh_research_state()?;
+        Ok(true)
+    }
+
+    fn available_fresh_fetches(&self, requested: usize) -> AppResult<usize> {
+        let Some(budget) = self.fresh_research_budget else {
+            return Ok(requested);
+        };
+        let fetch_count = self
+            .fresh_fetch_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        let remaining = budget.max_fetches.saturating_sub(*fetch_count);
+        drop(fetch_count);
+        Ok(requested.min(usize::from(remaining)))
+    }
+
+    fn record_successful_fresh_fetches(&self, successful_fetches: u32) -> AppResult<()> {
+        let Some(budget) = self.fresh_research_budget else {
+            return Ok(());
+        };
+        if successful_fetches == 0 {
+            return Ok(());
+        }
+        let successful_fetches = u8::try_from(successful_fetches)
+            .map_err(|_| AppError::msg("fresh_research_fetch_usage_invalid"))?;
+        let mut fetch_count = self
+            .fresh_fetch_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        let remaining = budget.max_fetches.saturating_sub(*fetch_count);
+        if successful_fetches > remaining {
+            return Err(AppError::msg("fresh_research_fetch_budget_exhausted"));
+        }
+        *fetch_count = fetch_count.saturating_add(successful_fetches);
+        drop(fetch_count);
+        self.persist_fresh_research_state()
+    }
+
+    fn try_reserve_fresh_repair(&self) -> AppResult<bool> {
+        let Some(budget) = self.fresh_research_budget else {
+            return Ok(true);
+        };
+        let mut repair_count = self
+            .fresh_repair_count
+            .lock()
+            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
+        if *repair_count >= budget.max_repairs {
+            return Ok(false);
+        }
+        *repair_count = repair_count.saturating_add(1);
+        drop(repair_count);
         self.persist_fresh_research_state()?;
         Ok(true)
     }
@@ -613,7 +716,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "web_query_local_material_blocked",
             ));
         }
-        let urls = args
+        let requested_urls = args
             .get("urls")
             .and_then(serde_json::Value::as_array)
             .map(|urls| {
@@ -623,6 +726,17 @@ impl<'a> NormalRunToolExecutor<'a> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let mut current_run_urls =
+            AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?;
+        current_run_urls.extend(explicit_user_urls(&self.context.user_message));
+        let urls = validate_current_run_fetch_urls(&requested_urls, &current_run_urls)?;
+        let max_fetches = self.available_fresh_fetches(urls.len())?;
+        if !urls.is_empty() && max_fetches == 0 {
+            return Ok(failed_tool_call(
+                WEB_TOOL_NAME,
+                "fresh_research_fetch_budget_exhausted",
+            ));
+        }
         let Some(evidence_reservation) =
             WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
         else {
@@ -643,10 +757,10 @@ impl<'a> NormalRunToolExecutor<'a> {
         let provider_snapshots = self.ordered_web_provider_snapshots();
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.to_owned(),
-            urls,
+            urls: urls.clone(),
             enabled: self.has_capability("web.search"),
             max_search_results: web_search_result_limit(remaining, 1),
-            max_fetches: 0,
+            max_fetches,
             provider_snapshots: provider_snapshots.clone(),
             provider_selection_frozen: true,
         };
@@ -681,6 +795,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 let mut attempt_input = broker_input.clone();
                 attempt_input.max_search_results =
                     web_search_result_limit(remaining, attempts_for_search);
+                attempt_input.max_fetches = self.available_fresh_fetches(urls.len())?;
                 let failure = match tokio::time::timeout(
                 remaining_time,
                 crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
@@ -690,21 +805,26 @@ impl<'a> NormalRunToolExecutor<'a> {
             )
             .await
             {
-                Ok(Ok(output)) if output.items.iter().any(|item| item.conflict_group.is_some()) => {
-                    WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+                Ok(Ok(output)) => {
+                    self.record_successful_fresh_fetches(output.usage.successful_page_fetches)?;
+                    if output.items.iter().any(|item| item.conflict_group.is_some()) {
+                        WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+                    } else if web_output_has_usable_evidence(&output) {
+                        break output;
+                    } else {
+                        classify_web_evidence_output_failure(&output)
+                    }
                 }
-                Ok(Ok(output)) if web_output_has_usable_evidence(&output) => break output,
-                Ok(Ok(output)) => classify_web_evidence_output_failure(&output),
                 Ok(Err(error)) => classify_web_failure(&error),
                 Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
             };
                 let adaptive_oversize_retry =
                     failure.reason == WebEvidenceFailureReason::ProviderOutputTooLarge;
-                if attempts_for_search < 2
+                let retry_is_eligible = attempts_for_search < 2
                     && (failure.retryable || adaptive_oversize_retry)
                     && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
-                        < MODEL_WEB_EVIDENCE_DEADLINE
-                {
+                        < MODEL_WEB_EVIDENCE_DEADLINE;
+                if retry_is_eligible && self.try_reserve_fresh_repair()? {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     continue;
                 }
@@ -1220,6 +1340,40 @@ fn parse_evidence_gap(value: &str) -> Option<EvidenceGap> {
     }
 }
 
+fn validate_current_run_fetch_urls(
+    urls: &[String],
+    current_run_urls: &BTreeSet<String>,
+) -> AppResult<Vec<String>> {
+    urls.iter()
+        .map(|url| {
+            let normalized = normalize_fetch_url(url);
+            if !normalized.starts_with("https://") || !current_run_urls.contains(&normalized) {
+                return Err(AppError::msg("web_url_not_in_current_run"));
+            }
+            Ok(normalized)
+        })
+        .collect()
+}
+
+fn normalize_fetch_url(url: &str) -> String {
+    let mut normalized = url.trim().to_lowercase();
+    if let Some((without_fragment, _)) = normalized.split_once('#') {
+        normalized = without_fragment.to_string();
+    }
+    while normalized.ends_with('/') {
+        normalized.pop();
+    }
+    normalized
+}
+
+fn explicit_user_urls(message: &str) -> BTreeSet<String> {
+    message
+        .split_whitespace()
+        .filter(|part| part.trim().starts_with("https://"))
+        .map(normalize_fetch_url)
+        .collect()
+}
+
 fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
     let first_attempt = remaining.clamp(1, INITIAL_WEB_SEARCH_RESULTS);
     if attempt_count >= 2 {
@@ -1685,6 +1839,19 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         evidence_ids.sort_unstable();
         evidence_ids.dedup();
         evidence_ids
+    }
+
+    fn fresh_research_budget(&self) -> Option<ResearchBudget> {
+        self.fresh_research_budget
+    }
+
+    fn fresh_research_evidence_count(&self) -> Option<usize> {
+        self.fresh_research_budget.map(|_| {
+            self.run_web_evidence
+                .lock()
+                .map(|state| state.evidence_ids.len())
+                .unwrap_or_default()
+        })
     }
 
     fn has_web_evidence(&self) -> bool {
@@ -3131,7 +3298,7 @@ fn corroborated_source_threshold_met(has_official: bool, independent_domains: us
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeSet, VecDeque};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3141,9 +3308,9 @@ mod tests {
     use super::{
         append_model_tool_completed_with_report, append_model_tool_started,
         corroborated_source_threshold_met, emit_deferred_web_degradation,
-        expected_post_content_hashes, mcp_failover_events, web_search_result_limit,
-        DeferredWebDegradationInput, McpFailoverEvent, NormalRunToolExecutor, RunWebBudget,
-        CONFIRMATION_PENDING_ERROR,
+        expected_post_content_hashes, mcp_failover_events, validate_current_run_fetch_urls,
+        web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
+        NormalRunToolExecutor, RunWebBudget, CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -5092,6 +5259,9 @@ mod tests {
             max_searches: 2,
             max_fetches: 3,
             max_repairs: 1,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
         });
 
         assert!(executor
@@ -5142,6 +5312,9 @@ mod tests {
             max_searches: 1,
             max_fetches: 1,
             max_repairs: 0,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
         });
 
         assert!(executor
@@ -5153,6 +5326,65 @@ mod tests {
         assert!(!executor
             .try_reserve_fresh_research_slot("额外搜索", Some(EvidenceGap::MissingTimestamp),)
             .expect("budget check"));
+    }
+
+    #[test]
+    fn fetch_urls_must_belong_to_the_current_run() {
+        let allowed = BTreeSet::from(["https://example.com/current".to_string()]);
+        let urls = vec!["https://foreign.example/article".to_string()];
+
+        assert_eq!(
+            validate_current_run_fetch_urls(&urls, &allowed)
+                .expect_err("foreign URL must be rejected")
+                .to_string(),
+            "web_url_not_in_current_run"
+        );
+    }
+
+    #[test]
+    fn fresh_research_repair_budget_is_persisted_and_bounded() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 1,
+            max_fetches: 2,
+            max_repairs: 1,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
+        });
+
+        assert!(executor.try_reserve_fresh_repair().expect("first repair"));
+        assert!(!executor
+            .try_reserve_fresh_repair()
+            .expect("second repair is outside the frozen budget"));
+        let persisted =
+            AgentRunRepository::latest_fresh_research_state(&state.db, &accepted.run_id)
+                .expect("load state")
+                .expect("persisted state");
+        assert_eq!(persisted.repair_count, 1);
     }
 
     #[test]
@@ -5186,6 +5418,9 @@ mod tests {
             max_searches: 2,
             max_fetches: 2,
             max_repairs: 0,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
         });
 
         assert!(executor
@@ -5216,6 +5451,9 @@ mod tests {
             max_searches: 2,
             max_fetches: 3,
             max_repairs: 1,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
         };
         let executor = NormalRunToolExecutor::new(
             &state,
@@ -5262,6 +5500,27 @@ mod tests {
         assert!(!resumed
             .try_reserve_fresh_research_slot("第三次查询", Some(EvidenceGap::MissingEntity))
             .expect("budget is restored"));
+        assert_eq!(
+            resumed
+                .available_fresh_fetches(2)
+                .expect("two fetches are available"),
+            2
+        );
+        assert_eq!(
+            resumed
+                .available_fresh_fetches(2)
+                .expect("planning fetches does not spend budget"),
+            2
+        );
+        resumed
+            .record_successful_fresh_fetches(2)
+            .expect("only successful fetches spend budget");
+        assert_eq!(
+            resumed
+                .available_fresh_fetches(2)
+                .expect("one fetch remains"),
+            1
+        );
     }
 
     #[tokio::test]

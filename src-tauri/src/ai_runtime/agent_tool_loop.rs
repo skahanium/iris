@@ -7,8 +7,10 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::time::{Duration, Instant};
 
 use crate::ai_runtime::final_answer_submission::{FinalAnswerSubmission, FINAL_ANSWER_TOOL_NAME};
+use crate::ai_runtime::fresh_research_plan::ResearchBudget;
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
 use crate::ai_runtime::run_contract::RunBudgetPolicy;
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
@@ -135,6 +137,16 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         false
     }
 
+    /// Frozen current-fact budget for this Run, if it is a research loop.
+    fn fresh_research_budget(&self) -> Option<ResearchBudget> {
+        None
+    }
+
+    /// Current count of valid Web evidence registered by this research loop.
+    fn fresh_research_evidence_count(&self) -> Option<usize> {
+        None
+    }
+
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
     /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
@@ -153,6 +165,7 @@ pub(crate) struct AgentToolLoop {
     max_model_turns: u32,
     max_tool_calls: u32,
     turn_budget: AgentModelTurnBudget,
+    deadline: Option<Duration>,
 }
 
 impl AgentToolLoop {
@@ -166,6 +179,7 @@ impl AgentToolLoop {
                 max_completion_tokens: Some(policy.max_completion_tokens),
                 max_turn_output_tokens: Some(policy.max_turn_output_tokens),
             },
+            deadline: None,
         }
     }
 
@@ -183,7 +197,17 @@ impl AgentToolLoop {
                 ),
                 max_turn_output_tokens: Some(policy.child_output_tokens_per_turn),
             },
+            deadline: None,
         }
+    }
+
+    /// Narrow the global limits with the frozen current-fact research profile.
+    pub(crate) fn with_fresh_research_budget(mut self, budget: ResearchBudget) -> Self {
+        self.max_model_turns = self
+            .max_model_turns
+            .min(u32::from(budget.max_model_continuations));
+        self.deadline = Some(Duration::from_secs(u64::from(budget.deadline_seconds)));
+        self
     }
 
     /// Run model turns until a non-empty final answer is received or a bound is reached.
@@ -283,11 +307,20 @@ impl AgentToolLoop {
         let mut final_submission_repair_used = false;
         let mut incomplete_final_answer_repair_used = false;
         let mut incomplete_final_draft = None::<String>;
+        let research_started = Instant::now();
+        let mut last_research_evidence_count = executor.fresh_research_evidence_count();
+        let mut no_new_evidence_rounds = 0_u8;
         let requires_factual_completion =
             executor.requires_web_evidence() || executor.requires_external_evidence();
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
+            let remaining_deadline = self
+                .deadline
+                .map(|deadline| deadline.saturating_sub(research_started.elapsed()));
+            if remaining_deadline.is_some_and(|remaining| remaining.is_zero()) {
+                return Err(AppError::msg("fresh_research_deadline_exhausted"));
+            }
             let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some() {
                 &[]
             } else {
@@ -306,16 +339,14 @@ impl AgentToolLoop {
                 usage.model_turns = model_turns;
             }
             let model_started_at = std::time::Instant::now();
-            let response = match provider
-                .answer_turn(
-                    provider_run_id,
-                    &messages,
-                    active_tools,
-                    self.turn_budget,
-                    observer,
-                )
-                .await
-            {
+            let provider_turn = provider.answer_turn(
+                provider_run_id,
+                &messages,
+                active_tools,
+                self.turn_budget,
+                observer,
+            );
+            let response = match run_with_deadline(provider_turn, remaining_deadline).await {
                 Ok(response) => response,
                 Err(error) => {
                     let visible_draft = observer.visible_content_snapshot();
@@ -517,7 +548,14 @@ impl AgentToolLoop {
                         if *count > MAX_REPEAT_CALLS {
                             rejected_result(call, "tool_call_repeated")
                         } else {
-                            let result = executor.execute(run_id, call, tool_calls).await?;
+                            let tool_execution = executor.execute(run_id, call, tool_calls);
+                            let result = run_with_deadline(
+                                tool_execution,
+                                self.deadline.map(|deadline| {
+                                    deadline.saturating_sub(research_started.elapsed())
+                                }),
+                            )
+                            .await?;
                             if result.success {
                                 successful_fingerprints.insert(fingerprint);
                             }
@@ -534,6 +572,19 @@ impl AgentToolLoop {
                     }
                 }
                 messages.push(message);
+                if let Some(evidence_count) = executor.fresh_research_evidence_count() {
+                    if last_research_evidence_count
+                        .is_some_and(|previous| evidence_count > previous)
+                    {
+                        no_new_evidence_rounds = 0;
+                    } else {
+                        no_new_evidence_rounds = no_new_evidence_rounds.saturating_add(1);
+                    }
+                    last_research_evidence_count = Some(evidence_count);
+                    if no_new_evidence_rounds >= 2 {
+                        return Err(AppError::msg("fresh_research_no_new_evidence"));
+                    }
+                }
             }
             observer.on_tools_finished()?;
         }
@@ -548,6 +599,18 @@ impl AgentToolLoop {
         } else {
             "agent_run_tool_loop_limit"
         }))
+    }
+}
+
+async fn run_with_deadline<T>(
+    future: impl Future<Output = AppResult<T>>,
+    remaining_deadline: Option<Duration>,
+) -> AppResult<T> {
+    match remaining_deadline {
+        Some(remaining) => tokio::time::timeout(remaining, future)
+            .await
+            .map_err(|_| AppError::msg("fresh_research_deadline_exhausted"))?,
+        None => future.await,
     }
 }
 

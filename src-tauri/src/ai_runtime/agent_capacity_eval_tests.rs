@@ -4781,16 +4781,13 @@ use crate::ai_runtime::fresh_domains::service::{
     allows_location_widening, enforce_location_requirement, extract_mapped_records,
     with_location_scope,
 };
-use crate::ai_runtime::fresh_domains::validation::{
-    validate_domain_record, validate_finance_analysis_numbers,
-};
+use crate::ai_runtime::fresh_domains::validation::validate_domain_record;
 
 const CAP_REQUESTED_AT: &str = "2026-08-18T08:00:00Z";
 const CAP_ERROR_EVIDENCE_INSUFFICIENT: &str = "agent_run_fresh_evidence_insufficient";
 const CAP_ERROR_HTTPS_REQUIRED: &str = "agent_run_fresh_https_required";
 const CAP_ERROR_STALE: &str = "agent_run_fresh_evidence_stale";
 const CAP_ERROR_LOCATION_REQUIRED: &str = "agent_run_location_required";
-const CAP_ERROR_FINANCE_UNSUPPORTED_NUMBER: &str = "finance_analysis_unsupported_number";
 
 fn cap_requested_at() -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(CAP_REQUESTED_AT)
@@ -5014,24 +5011,6 @@ fn movie_availability_requires_region_channel_and_date() {
         &FreshDomainRecord::Entertainment(record),
         CAP_ERROR_EVIDENCE_INSUFFICIENT,
     );
-}
-
-#[test]
-fn finance_analysis_cannot_introduce_unsupported_numbers() {
-    let first = cap_finance();
-    let mut second = cap_finance();
-    second.origin.evidence_id = 42;
-    second.value = "88.88".to_string();
-
-    let records = vec![first.clone(), second.clone()];
-    let allowed_ids = [4, 42];
-
-    validate_finance_analysis_numbers(&allowed_ids, &records, &["234.56", "88.88"])
-        .expect("input-record numbers are supported");
-
-    let error = validate_finance_analysis_numbers(&allowed_ids, &records, &["999.99"])
-        .expect_err("unseen number must be rejected");
-    assert_eq!(error.to_string(), CAP_ERROR_FINANCE_UNSUPPORTED_NUMBER);
 }
 
 #[test]

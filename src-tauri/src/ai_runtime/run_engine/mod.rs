@@ -737,8 +737,14 @@ impl RunEngine {
         let finalization_required = tools.iter().any(|tool| {
             tool.name == crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME
         });
+        let tool_loop = executor
+            .fresh_research_budget()
+            .map(|budget| {
+                AgentToolLoop::from_policy(&budget_policy).with_fresh_research_budget(budget)
+            })
+            .unwrap_or_else(|| AgentToolLoop::from_policy(&budget_policy));
         let outcome = if let Some(telemetry) = telemetry {
-            AgentToolLoop::from_policy(&budget_policy)
+            tool_loop
                 .execute_with_eval_telemetry(
                     provider,
                     executor,
@@ -750,7 +756,7 @@ impl RunEngine {
                 )
                 .await
         } else {
-            AgentToolLoop::from_policy(&budget_policy)
+            tool_loop
                 .execute(provider, executor, run_id, messages, tools, &mut observer)
                 .await
         };

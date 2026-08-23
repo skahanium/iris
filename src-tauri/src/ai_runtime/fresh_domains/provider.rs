@@ -2,8 +2,8 @@
 //!
 //! The resolver never inspects provider output. It only selects a frozen MCP
 //! binding that was reviewed, user-trusted, enabled, hash-current, and carries a
-//! whitelist output mapping. Only a missing News binding may fall back to the
-//! generic Web evidence broker; ambiguity is always rejected.
+//! whitelist output mapping. A missing binding may fall back to the generic
+//! Web evidence broker; ambiguity is always rejected.
 
 use crate::ai_runtime::mcp_external_tools::{
     list_bindings, DomainOperation, FrozenMcpToolSnapshot, McpCapabilityBindingSummary,
@@ -68,11 +68,7 @@ pub(crate) fn resolve_domain_provider(
         {
             return Err(AppError::msg("external_tool_provider_config_changed"));
         }
-        return if operation == DomainOperation::NewsSearch {
-            Ok(DomainProviderRoute::WebEvidence)
-        } else {
-            Err(AppError::msg("agent_run_structured_provider_unavailable"))
-        };
+        return Ok(DomainProviderRoute::WebEvidence);
     }
 
     if eligible.len() == 1 {
@@ -303,7 +299,7 @@ mod domain_provider_tests {
     }
 
     #[test]
-    fn non_news_operation_without_a_domain_binding_fails_closed() {
+    fn missing_domain_binding_routes_to_generic_web_research() {
         let db = Database::open_in_memory().unwrap();
         provider(&db, "readonly", "Read Only", true);
         let reviewed = review_discovered_tool(
@@ -347,12 +343,10 @@ mod domain_provider_tests {
         )
         .unwrap();
 
-        let error = resolve_domain_provider(&db, DomainOperation::WeatherCurrent, None)
-            .expect_err("a generic external binding must not become Weather fallback");
-
         assert_eq!(
-            error.to_string(),
-            "agent_run_structured_provider_unavailable"
+            resolve_domain_provider(&db, DomainOperation::WeatherCurrent, None)
+                .expect("a missing domain binding may use the generic Web contract"),
+            DomainProviderRoute::WebEvidence
         );
     }
 

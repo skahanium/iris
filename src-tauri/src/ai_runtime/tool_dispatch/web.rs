@@ -131,6 +131,7 @@ mod tests {
             }],
             usage: WebEvidenceUsage {
                 successful_search_requests: WebEvidenceSearchRequestUsage::default(),
+                successful_page_fetches: 0,
                 providers: Vec::new(),
             },
         }
@@ -194,6 +195,7 @@ mod tests {
                 .collect(),
             usage: WebEvidenceUsage {
                 successful_search_requests: WebEvidenceSearchRequestUsage { mcp: 1 },
+                successful_page_fetches: 0,
                 providers: Vec::new(),
             },
         };

@@ -301,6 +301,55 @@ fn current_run_citation_links_exclude_foreign_and_retired_evidence() {
 }
 
 #[test]
+fn current_run_fetch_urls_exclude_foreign_and_retired_web_evidence() {
+    let (db, session_id, session_key) = setup_run();
+    let owned = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "Owned source",
+        "https://example.test/owned",
+    );
+    cancel_test_run(&db, "evidence-run");
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-second-client-request",
+        "evidence-second-run",
+        "evidence-second-turn",
+        "第二个运行",
+    );
+    register_web_evidence(
+        &db,
+        session_id,
+        "evidence-second-run",
+        "Foreign source",
+        "https://example.test/foreign",
+    );
+
+    assert_eq!(
+        AgentEvidenceRepository::current_run_web_urls(&db, "evidence-run")
+            .expect("owned fetch URLs"),
+        std::collections::BTreeSet::from(["https://example.test/owned".to_string()])
+    );
+
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE session_evidence SET retired_at = ?1 WHERE id = ?2",
+            rusqlite::params!["2026-07-14T00:00:00Z", owned.evidence_id],
+        )?;
+        Ok(())
+    })
+    .expect("retire current Run evidence");
+    assert!(
+        AgentEvidenceRepository::current_run_web_urls(&db, "evidence-run")
+            .expect("retired URLs excluded")
+            .is_empty()
+    );
+}
+
+#[test]
 fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
     let (db, session_id, session_key) = setup_run();
     let evidence = AgentEvidenceRepository::register_external_tool(
