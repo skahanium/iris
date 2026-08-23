@@ -17,6 +17,7 @@ import {
   assertStrictSmokeSummary,
   buildAgentEvalChildEnvironment,
   buildLivePilotChildEnvironment,
+  hasUnsafeCredentialMetadata,
   resolveLiveEvaluationPaths,
 } from "./agent-eval.mjs";
 
@@ -53,6 +54,17 @@ test("smoke release gate requires all 24 deterministic interaction cases to pass
       passed: 24,
       failed: 0,
     }),
+  );
+});
+
+test("credential metadata uses POSIX ownership and mode checks only on POSIX", () => {
+  const metadata = { mode: 0o100666, uid: 1001 };
+
+  assert.equal(hasUnsafeCredentialMetadata(metadata, "win32", 1000), false);
+  assert.equal(hasUnsafeCredentialMetadata(metadata, "linux", 1000), true);
+  assert.equal(
+    hasUnsafeCredentialMetadata({ mode: 0o100600, uid: 1000 }, "darwin", 1000),
+    false,
   );
 });
 

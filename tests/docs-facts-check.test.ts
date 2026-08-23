@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -48,8 +48,30 @@ describe("docs:check — document facts verification", () => {
     const source = readFileSync(scriptPath, "utf8");
 
     expect(source).toContain("checkRetiredArchitectureReferences");
-    expect(source).toContain("agent-harness-refactor");
+    expect(source).toContain("checkAgentHarnessDocumentation");
+    expect(source).toContain("../agent-harness/README.md");
+    expect(source).toContain("2026-08-pre-unification");
     expect(source).toContain("version_cleanup_cmd");
+  });
+
+  it("keeps one active Agent Harness entry and a complete historical archive", () => {
+    expect(existsSync(path.join(repoRoot, "agent-harness", "README.md"))).toBe(
+      true,
+    );
+    expect(
+      existsSync(
+        path.join(
+          repoRoot,
+          "agent-harness",
+          "archive",
+          "2026-08-pre-unification",
+          "MANIFEST.md",
+        ),
+      ),
+    ).toBe(true);
+    expect(existsSync(path.join(repoRoot, "refactor"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "structured-tools"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "REFACTOR.md"))).toBe(false);
   });
 
   it("guards current RAG, release-platform, and security claims against factual drift", () => {

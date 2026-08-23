@@ -104,6 +104,20 @@ export function assertStrictSmokeSummary(summary) {
   }
 }
 
+export function hasUnsafeCredentialMetadata(
+  metadata,
+  runtimePlatform = process.platform,
+  currentUid = typeof process.getuid === "function"
+    ? process.getuid()
+    : undefined,
+) {
+  if (runtimePlatform === "win32") {
+    return false;
+  }
+  const wrongOwner = currentUid !== undefined && metadata.uid !== currentUid;
+  return wrongOwner || (metadata.mode & 0o022) !== 0;
+}
+
 function canonicalCredentialRoot(raw) {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new Error("agent_eval_live_credential_roots_required");
@@ -120,13 +134,10 @@ function canonicalCredentialRoot(raw) {
     throw new Error("agent_eval_live_credential_root_invalid");
   }
   const filesystemRoot = path.parse(canonical).root;
-  const wrongOwner =
-    typeof process.getuid === "function" && metadata.uid !== process.getuid();
   if (
     !metadata.isDirectory() ||
     canonical === filesystemRoot ||
-    wrongOwner ||
-    (metadata.mode & 0o022) !== 0
+    hasUnsafeCredentialMetadata(metadata)
   ) {
     throw new Error("agent_eval_live_credential_root_invalid");
   }
@@ -140,9 +151,7 @@ function canonicalSourceDatabase(raw) {
   try {
     const canonical = realpathSync(raw);
     const metadata = statSync(canonical);
-    const wrongOwner =
-      typeof process.getuid === "function" && metadata.uid !== process.getuid();
-    if (!metadata.isFile() || wrongOwner || (metadata.mode & 0o022) !== 0) {
+    if (!metadata.isFile() || hasUnsafeCredentialMetadata(metadata)) {
       throw new Error("agent_eval_live_source_invalid");
     }
     return canonical;

@@ -1,10 +1,12 @@
 #!/bin/sh
 # Deterministic MCP stdio peer used only by the Rust contract tests. It relies
-# exclusively on POSIX shell built-ins because Iris launches stdio MCP peers
-# with a cleared environment.
+# on POSIX shell built-ins plus an absolute date command because Iris launches
+# stdio MCP peers with a cleared environment.
 
 mode="$1"
 result_count="${2:-1}"
+fixture_timestamp=$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')
+fixture_date=${fixture_timestamp%%T*}
 
 json_id() {
   value=${1#*\"id\":}
@@ -45,7 +47,7 @@ while IFS= read -r line; do
           printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"fetch-result"}],"isError":false}}\n' "$id"
           ;;
         *'"name":"domain"'*)
-          printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"domain-result"}],"structuredContent":{"records":[{"location":"上海","condition":"晴","temperature":"26","units":"C","observationTime":"2026-08-21T08:00:00Z","issueTime":"2026-08-21T08:00:00Z","title":"Synthetic title","publisher":"Synthetic Publisher","publishedAt":"2026-08-21T08:00:00Z","topic":"synthetic","instrument":"AAPL","assetKind":"equity","currency":"USD","asOf":"2026-08-21T08:00:00Z","delay":"0","value":"123.45","region":"上海","channel":"Synthetic Channel","date":"2026-08-21","checkedAt":"2026-08-21T08:00:00Z","competition":"Synthetic League","participants":["A","B"],"startTime":"2026-08-21T08:00:00Z","status":"scheduled","score":"1-0","sourceUrl":"https://source.invalid/domain","sourceTitle":"Synthetic Domain","observedAt":"2026-08-21T08:00:00Z","evidenceId":"provider-supplied-id"}]},"isError":false}}\n' "$id"
+          printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"result":{"content":[{"type":"text","text":"domain-result"}],"structuredContent":{"records":[{"location":"上海","condition":"晴","temperature":"26","units":"C","observationTime":"'"$fixture_timestamp"'","issueTime":"'"$fixture_timestamp"'","title":"Synthetic title","publisher":"Synthetic Publisher","publishedAt":"'"$fixture_timestamp"'","topic":"synthetic","instrument":"AAPL","assetKind":"equity","currency":"USD","asOf":"'"$fixture_timestamp"'","delay":"0","value":"123.45","region":"上海","channel":"Synthetic Channel","date":"'"$fixture_date"'","checkedAt":"'"$fixture_timestamp"'","competition":"Synthetic League","participants":["A","B"],"startTime":"'"$fixture_timestamp"'","status":"scheduled","score":"1-0","sourceUrl":"https://source.invalid/domain","sourceTitle":"Synthetic Domain","observedAt":"'"$fixture_timestamp"'","evidenceId":"provider-supplied-id"}]},"isError":false}}'
           ;;
         *)
           if [ "$mode" = "search-empty" ]; then
