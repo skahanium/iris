@@ -68,18 +68,17 @@
 
 ## 5. 当前评测证据
 
-2026-08-22 当前工作树已经取得：
+2026-08-23 当前工作树已经取得：
 
 - `node --test scripts/agent-eval.test.mjs`：8/8；
 - Windows real stdio MCP discovery/search：通过；
 - 单一 headless online Web evidence binding：通过；
 - `npm run agent:eval:smoke`：24/24。
 - `npm run agent:eval`：48-case、压力阶梯、硬边界、安全轨和组合终端通过。
-- `npm run lint`、`npm run typecheck`、`npm run test`：通过，Vitest 353 个文件、2460 个测试通过。
+- `npm run lint`、`npm run format:check`、`npm run typecheck`、`npm run test`：通过，Vitest 353 个文件、2460 个测试通过。
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check` 与 `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：通过。
-- `cargo test --manifest-path src-tauri/Cargo.toml --jobs 2`：库测试 1814 通过、3 忽略，后续集成测试与 doc-tests 全部通过。
-
-仓库级 `npm run format:check` 仍受本次改动范围外的既有文件阻塞；本次所有改动文件必须单独通过 Prettier 检查，不能据此把全仓格式门禁写成已通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml`：库测试 1821 通过、0 失败、3 忽略；后续集成测试与 doc-tests 全部通过。
+- `npm run docs:check`：通过。
 
 ## 6. Live pilot 与隐私
 
