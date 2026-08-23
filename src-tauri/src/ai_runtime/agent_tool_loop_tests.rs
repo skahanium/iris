@@ -3,6 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
@@ -138,6 +139,46 @@ async fn two_research_rounds_without_new_evidence_stop_before_a_third_turn() {
 
     assert_eq!(error.to_string(), "fresh_research_no_new_evidence");
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn research_loop_uses_the_executor_deadline_started_before_prefetch() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: Some("must not be requested".into()),
+            tool_calls: Vec::new(),
+            usage: Default::default(),
+            finish_reason: "stop".into(),
+            reasoning_content: None,
+            continuation: None,
+        }])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let error = standard_tool_loop()
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 1,
+            max_fetches: 2,
+            max_repairs: 1,
+            max_model_continuations: 2,
+            max_evidence: 4,
+            deadline_seconds: 20,
+        })
+        .execute(
+            &provider,
+            &ExpiredResearchExecutor,
+            "run-expired-before-model",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect_err("the profile deadline begins before deterministic prefetch");
+
+    assert_eq!(error.to_string(), "fresh_research_deadline_exhausted");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -389,6 +430,7 @@ struct OversizedWebResultExecutor;
 struct RequiredWebExecutor;
 struct RequiredExternalExecutor;
 struct NoEvidenceResearchExecutor;
+struct ExpiredResearchExecutor;
 
 impl ToolLoopExecutor for RequiredWebExecutor {
     fn execute<'a>(
@@ -453,6 +495,21 @@ impl ToolLoopExecutor for NoEvidenceResearchExecutor {
 
     fn fresh_research_evidence_count(&self) -> Option<usize> {
         Some(0)
+    }
+}
+
+impl ToolLoopExecutor for ExpiredResearchExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("an expired Run must not execute a tool") })
+    }
+
+    fn fresh_research_deadline(&self) -> Option<Instant> {
+        Some(Instant::now() - Duration::from_millis(1))
     }
 }
 

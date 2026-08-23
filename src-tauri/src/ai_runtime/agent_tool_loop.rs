@@ -147,6 +147,12 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         None
     }
 
+    /// Absolute deadline frozen when current-fact research begins, including
+    /// deterministic work that happens before the model loop starts.
+    fn fresh_research_deadline(&self) -> Option<Instant> {
+        None
+    }
+
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
     /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
@@ -315,9 +321,8 @@ impl AgentToolLoop {
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
-            let remaining_deadline = self
-                .deadline
-                .map(|deadline| deadline.saturating_sub(research_started.elapsed()));
+            let remaining_deadline =
+                remaining_fresh_research_deadline(executor, self.deadline, research_started);
             if remaining_deadline.is_some_and(|remaining| remaining.is_zero()) {
                 return Err(AppError::msg("fresh_research_deadline_exhausted"));
             }
@@ -551,9 +556,11 @@ impl AgentToolLoop {
                             let tool_execution = executor.execute(run_id, call, tool_calls);
                             let result = run_with_deadline(
                                 tool_execution,
-                                self.deadline.map(|deadline| {
-                                    deadline.saturating_sub(research_started.elapsed())
-                                }),
+                                remaining_fresh_research_deadline(
+                                    executor,
+                                    self.deadline,
+                                    research_started,
+                                ),
                             )
                             .await?;
                             if result.success {
@@ -600,6 +607,17 @@ impl AgentToolLoop {
             "agent_run_tool_loop_limit"
         }))
     }
+}
+
+fn remaining_fresh_research_deadline(
+    executor: &impl ToolLoopExecutor,
+    loop_deadline: Option<Duration>,
+    loop_started: Instant,
+) -> Option<Duration> {
+    executor
+        .fresh_research_deadline()
+        .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+        .or_else(|| loop_deadline.map(|deadline| deadline.saturating_sub(loop_started.elapsed())))
 }
 
 async fn run_with_deadline<T>(

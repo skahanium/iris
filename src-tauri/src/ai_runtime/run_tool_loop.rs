@@ -302,6 +302,7 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     /// calls are additionally limited by this plan and duplicate query/gap pairs
     /// are rejected.
     fresh_research_budget: Option<ResearchBudget>,
+    fresh_research_deadline: Option<Instant>,
     fresh_search_count: Mutex<u8>,
     fresh_fetch_count: Mutex<u8>,
     fresh_repair_count: Mutex<u8>,
@@ -365,6 +366,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             required_web_provider_snapshots,
             web_preferred_provider_id: Arc::new(Mutex::new(None)),
             fresh_research_budget: None,
+            fresh_research_deadline: None,
             fresh_search_count: Mutex::new(0),
             fresh_fetch_count: Mutex::new(0),
             fresh_repair_count: Mutex::new(0),
@@ -414,6 +416,8 @@ impl<'a> NormalRunToolExecutor<'a> {
     /// normalized query/gap pairs are rejected.
     pub(crate) fn with_fresh_research_budget(mut self, budget: ResearchBudget) -> Self {
         self.fresh_research_budget = Some(budget);
+        self.fresh_research_deadline =
+            Some(Instant::now() + Duration::from_secs(u64::from(budget.deadline_seconds)));
         if let Ok(mut evidence) = self.run_web_evidence.lock() {
             evidence.max_evidence = evidence.max_evidence.min(usize::from(budget.max_evidence));
         }
@@ -1852,6 +1856,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 .map(|state| state.evidence_ids.len())
                 .unwrap_or_default()
         })
+    }
+
+    fn fresh_research_deadline(&self) -> Option<Instant> {
+        self.fresh_research_deadline
     }
 
     fn has_web_evidence(&self) -> bool {

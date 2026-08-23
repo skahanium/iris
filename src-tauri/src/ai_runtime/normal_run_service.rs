@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
@@ -817,7 +817,20 @@ async fn dispatch_required_web_verified_run(
                 ));
             }
         };
-    let executor = NormalRunToolExecutor::new(
+    let research_mode =
+        classify_current_task_shape(context.envelope.fresh_fact.domain, &context.user_message)
+            == CurrentTaskShape::CurrentResearch;
+    let research_plan = research_mode
+        .then(|| {
+            build_fresh_research_plan(
+                &context.user_message,
+                &context.envelope.fresh_fact,
+                "zh-CN",
+                confirmed_location_for_context(context).as_ref(),
+            )
+        })
+        .transpose()?;
+    let mut executor = NormalRunToolExecutor::new(
         state,
         app_handle,
         accepted,
@@ -829,18 +842,11 @@ async fn dispatch_required_web_verified_run(
     )
     .with_allowed_tool_names(&["web_search".to_string()])
     .with_skill_activation_plan(skill_plan);
+    if let Some(plan) = research_plan {
+        executor = executor.with_fresh_research_budget(plan.budget);
+    }
     let query = required_web_query(context)?;
-    let first_prefetch = crate::ai_runtime::agent_tool_loop::ToolLoopExecutor::execute(
-        &executor,
-        &accepted.run_id,
-        &ToolCall::new(
-            "required-web-evidence",
-            "web_search",
-            serde_json::json!({ "query": query }).to_string(),
-        ),
-        1,
-    )
-    .await;
+    let first_prefetch = execute_required_web_prefetch(&executor, &accepted.run_id, query).await;
     let first_prefetch = match first_prefetch {
         Ok(result) => result,
         Err(_) => {
@@ -969,9 +975,6 @@ async fn dispatch_required_web_verified_run(
     // `web_search` stays hidden. Current-fact research keeps `web_search`
     // visible so the model can issue bounded follow-up searches for unresolved
     // evidence gaps.
-    let research_mode =
-        classify_current_task_shape(context.envelope.fresh_fact.domain, &context.user_message)
-            == CurrentTaskShape::CurrentResearch;
     let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, !research_mode);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
     let domain_executable = domain_operation_is_executable(
@@ -1074,16 +1077,7 @@ async fn dispatch_required_web_verified_run(
         tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
     }
     tool_surface_plan.tool_names = tools.iter().map(|tool| tool.name.clone()).collect();
-    let mut executor = executor.with_allowed_tool_names(&tool_surface_plan.tool_names);
-    if research_mode {
-        let plan = build_fresh_research_plan(
-            &context.user_message,
-            &context.envelope.fresh_fact,
-            "zh-CN",
-            confirmed_location_for_context(context).as_ref(),
-        )?;
-        executor = executor.with_fresh_research_budget(plan.budget);
-    }
+    let executor = executor.with_allowed_tool_names(&tool_surface_plan.tool_names);
     let provider = FailoverStreamingProvider::new(route, requirements, db, &accepted.session, sink);
     #[cfg(test)]
     let provider = if let Some(client) = state.test_streaming_client() {
@@ -1121,6 +1115,29 @@ async fn dispatch_required_web_verified_run(
         )
         .await
     }
+}
+
+async fn execute_required_web_prefetch(
+    executor: &NormalRunToolExecutor<'_>,
+    run_id: &str,
+    query: String,
+) -> AppResult<crate::ai_runtime::ToolCallResult> {
+    let call = ToolCall::new(
+        "required-web-evidence",
+        "web_search",
+        serde_json::json!({ "query": query }).to_string(),
+    );
+    let dispatch = ToolLoopExecutor::execute(executor, run_id, &call, 1);
+    let Some(deadline) = executor.fresh_research_deadline() else {
+        return dispatch.await;
+    };
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(AppError::msg("fresh_research_deadline_exhausted"));
+    }
+    tokio::time::timeout(remaining, dispatch)
+        .await
+        .map_err(|_| AppError::msg("fresh_research_deadline_exhausted"))?
 }
 
 /// Strict structured finalization is a route capability, not a prompt-only

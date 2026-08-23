@@ -65,7 +65,7 @@ SourceConflict
 - 已达到质量合同需要的独立来源数；
 - 连续两轮没有新增有效 evidence ID；
 - query/URL 去重后没有新动作；
-- 任一预算或 deadline 耗尽；
+- 确定性首轮预取、模型调用与模型工具调用共享的 profile deadline 耗尽；
 - 用户取消、权限撤销或 provider snapshot 漂移。
 
 ## 4. 结构化快路径与 Web 路径
