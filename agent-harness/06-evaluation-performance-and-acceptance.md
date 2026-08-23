@@ -77,7 +77,7 @@
 - `npm run agent:eval`：48-case、压力阶梯、硬边界、安全轨和组合终端通过。
 - `npm run lint`、`npm run format:check`、`npm run typecheck`、`npm run test`：通过，Vitest 353 个文件、2460 个测试通过。
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check` 与 `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：通过。
-- `cargo test --manifest-path src-tauri/Cargo.toml`：库测试 1821 通过、0 失败、3 忽略；后续集成测试与 doc-tests 全部通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml`：库测试 1822 通过、0 失败、3 忽略；后续集成测试与 doc-tests 全部通过。
 - `npm run docs:check`：通过。
 
 ## 6. Live pilot 与隐私
