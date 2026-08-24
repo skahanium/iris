@@ -21,12 +21,12 @@
 
 ## 当前基线摘要
 
-审计基线为 2026-08-23 的当前工作树；具体能力状态和运行证据以本目录的状态账本为准。
+审计基线已于 2026-08-24 复验；具体能力状态和运行证据以本目录的状态账本为准。
 
 - Run 幂等、durable finalization、工具表面冻结、Run-local evidence、隐私门禁和 `system_time_now` 已有实现与回归测试。
 - AH-2 已验证：`FreshResearchPlan`、`ResearchBudget`、`EvidenceGap`、抓取预算、模型后续深抓取、恢复、deadline 和两轮无新增证据停机共同构成唯一研究循环。
 - AH-3 已验证：精确当前事实保留已配置 binding 的结构化快路径；研究型任务按答案合同走通用 `web_search`，不再有 News 或无 binding 的领域级架构特例。
-- AH-4 的不可达代码清理已验证；真实 provider/model 的 p50/p95/token 性能基线仍须经用户确认模型、profile 和单次费用 checkpoint 后才可执行。
+- AH-4 的不可达代码清理已验证；真实 provider/model 的 p50/p95/token 性能基线明确排除在本轮范围外，保持延期，不能由确定性 fixture 冒充。
 - 五类领域工具表面与 11 个 operation 的 DTO、mapping、validator、Host renderer、production fixtures 和 migration 072 已存在；这不代表真实 Provider 已配置。
 - 2026-08-19 的开发实例历史审计为 0/11 configured。该数字只作为带日期快照保留，实施真实 Provider 前必须重新只读审计。
 - 当前工作树已修复 Windows 评测路径权限语义与 PowerShell MCP fixture 漂移，并通过 `agent:eval:smoke` 24/24、`agent:eval` 48/48、完整 Rust 1822/0/3（通过/失败/忽略）和前端 2460/0。

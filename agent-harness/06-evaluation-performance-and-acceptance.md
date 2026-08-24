@@ -68,7 +68,7 @@
 
 ## 5. 当前评测证据
 
-2026-08-23 当前工作树已经取得：
+2026-08-24 当前工作树已经取得：
 
 - `node --test scripts/agent-eval.test.mjs`：8/8；
 - Windows real stdio MCP discovery/search：通过；
@@ -82,7 +82,7 @@
 
 ## 6. Live pilot 与隐私
 
-Live pilot 只在用户明确授权、确认模型/profile 和单次费用 checkpoint 后执行。结果记录日期、模型、匿名 profile、配置 hash、场景 ID、p50/p95、token 和闭集 verdict；不得保存 prompt、answer、路径、URL、凭证或原始工具正文。
+本轮工作明确排除真实 Provider 与外部性能试点。Live pilot 只在后续用户明确授权、确认模型/profile 和单次费用 checkpoint 后执行。结果记录日期、模型、匿名 profile、配置 hash、场景 ID、p50/p95、token 和闭集 verdict；不得保存 prompt、answer、路径、URL、凭证或原始工具正文。
 
 真实网页或真实笔记不得用于默认 CI。确定性 fixture 与真实 pilot 分开报告，任一方不能替代另一方。
 

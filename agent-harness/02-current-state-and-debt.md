@@ -1,6 +1,6 @@
 # 02. 当前状态与技术债
 
-**审计日期：2026-08-23。代码起点：`116b3663`。**
+**初始审计：2026-08-23，代码起点：`116b3663`；当前复验：2026-08-24。**
 
 本审计区分代码存在、当前测试证据、实例配置和目标设计。工具名、DTO 或 fixture 存在，不等于真实 Provider 已配置或用户请求能够完成。
 
@@ -18,7 +18,7 @@
 | 模型驱动多轮搜索与深抓取                     | 已验证   | 重构完成 | 单一 `web_search` 合同按 current-Run provenance 深抓取  |
 | 结构化领域 DTO、mapping、validator、renderer | 已验证   | 保留     | 五类工具表面、11 个 operation 和 migration 072 已存在   |
 | 真实结构化 Provider 配置                     | 延期     | 保留     | 2026-08-19 快照为 0/11 configured；执行前需重新审计     |
-| Windows deterministic eval runner            | 已验证   | 保留     | 脚本 8/8、smoke 24/24、full 48/48 于 2026-08-23 通过    |
+| Windows deterministic eval runner            | 已验证   | 保留     | 脚本 8/8、smoke 24/24、full 48/48 于 2026-08-24 通过    |
 
 ## 2. 已形成的有用基线
 
@@ -49,7 +49,7 @@
 2. 模型仅见 `web_search`；URL 必须来自当前用户消息或 current-Run evidence ledger，不能借用历史、foreign 或 retired evidence。broker 最多并发 3 个允许的深抓取，并回报实际成功数。
 3. 研究型天气、市场、新闻、体育和影视请求均可走统一 Web research；有 binding 的精确事实仍保留结构化快路径。缺 binding 不再是模型前的一刀切失败，News 也不再拥有架构特例。
 4. 两次研究回合未新增有效 evidence 时终止；profile deadline 覆盖 provider 调用和工具执行，Web 关闭仍不会外发。
-5. `fresh_domains` 的模块级 dead-code 许可和已不可达分支已删除。尚未完成的是基于真实 provider/model 的性能 p50/p95 与 token 基线；该外部试点需单独授权，不能由 fixture 代替。
+5. `fresh_domains` 的模块级 dead-code 许可和已不可达分支已删除。基于真实 provider/model 的性能 p50/p95 与 token 基线明确排除在本轮范围外；它必须保持延期，且不能由 fixture 代替。
 
 ## 4. 评测基线修复事实
 
