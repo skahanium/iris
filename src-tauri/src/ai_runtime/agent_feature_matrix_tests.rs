@@ -15,7 +15,7 @@ use super::provenance::{
     validate_final_answer_submission, ProvenancePolicy, ProvenanceValidationError,
 };
 
-fn policy(strict_web: bool) -> ProvenancePolicy {
+fn policy(strict_current_evidence: bool) -> ProvenancePolicy {
     ProvenancePolicy {
         current_user_available: true,
         conversation_history_available: true,
@@ -24,7 +24,7 @@ fn policy(strict_web: bool) -> ProvenancePolicy {
         current_run_local_evidence_ids: BTreeSet::from([11]),
         current_run_web_evidence_ids: BTreeSet::from([21]),
         current_run_external_evidence_ids: BTreeSet::from([31]),
-        strict_web,
+        strict_current_evidence,
     }
 }
 

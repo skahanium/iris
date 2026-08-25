@@ -62,7 +62,9 @@ pub(crate) struct ProvenancePolicy {
     pub(crate) current_run_local_evidence_ids: BTreeSet<i64>,
     pub(crate) current_run_web_evidence_ids: BTreeSet<i64>,
     pub(crate) current_run_external_evidence_ids: BTreeSet<i64>,
-    pub(crate) strict_web: bool,
+    /// Every substantive block must bind current-Run Web or external-tool
+    /// evidence.
+    pub(crate) strict_current_evidence: bool,
 }
 
 /// Minimal display projection persisted next to the existing citation map.
@@ -154,7 +156,7 @@ pub(crate) enum ProvenanceValidationError {
     AuthorizedMaterialRequiresMaterialReference,
     InferenceRequiresInferenceReference { block: usize },
     InferenceMustBeQualified { block: usize },
-    StrictWebBlockMissingCurrentRunEvidence { block: usize },
+    StrictCurrentEvidenceMissing { block: usize },
 }
 
 impl std::fmt::Display for ProvenanceValidationError {
@@ -175,8 +177,8 @@ impl std::fmt::Display for ProvenanceValidationError {
             Self::InferenceMustBeQualified { .. } => {
                 formatter.write_str("agent_run_provenance_inference_unqualified")
             }
-            Self::StrictWebBlockMissingCurrentRunEvidence { .. } => {
-                formatter.write_str("agent_run_provenance_web_coverage_invalid")
+            Self::StrictCurrentEvidenceMissing { .. } => {
+                formatter.write_str("agent_run_provenance_current_evidence_coverage_invalid")
             }
         }
     }
@@ -307,12 +309,13 @@ fn validate_block_attribution(
             },
         );
     }
-    if policy.strict_web && !has_origin(InformationOrigin::WebToolEvidence) {
-        return Err(
-            ProvenanceValidationError::StrictWebBlockMissingCurrentRunEvidence {
-                block: block_number,
-            },
-        );
+    if policy.strict_current_evidence
+        && !has_origin(InformationOrigin::WebToolEvidence)
+        && !has_origin(InformationOrigin::ExternalToolEvidence)
+    {
+        return Err(ProvenanceValidationError::StrictCurrentEvidenceMissing {
+            block: block_number,
+        });
     }
     if !origins.iter().any(|origin| origin.supports_fact()) && !is_qualified_inference(block) {
         return Err(ProvenanceValidationError::InferenceMustBeQualified {

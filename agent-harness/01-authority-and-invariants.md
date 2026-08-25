@@ -42,8 +42,11 @@
 
 - 继续复用现有 evidence ledger，不新增平行证据表。
 - 精确引用只能绑定当前 Run 实际使用、未失效、可定位的证据。
+- 最终答案来源协议只有一种解释：`Wn` 是当前 Run 的 Web 顺序号，`E{id}` 是当前 Run 的外部工具 evidence ledger ID，`L{id}` 是当前 Run 的本地 evidence ledger ID，`Mn` 是本轮授权材料顺序号；会话展示标签 `[Cn]` 和裸数据库 ID 永远不是模型可提交的来源引用。
+- `ProvenancePolicy` 是来源语法、当前 Run 所有权与逐块覆盖校验的唯一事实源；当前事实、Host renderer 和 UI 不得各自实现另一套 ID 匹配规则。
 - `SourceGroupFallback` 只表示本次检索来源组，不能冒充逐段引用或严格事实支持。
 - 实体、数值、日期、地域、单位和状态必须能追溯到结构化字段或可定位证据；provider 自带 evidence ID 不可信。
+- 当前生产门禁校验引用归属、时效字段与事实块覆盖，不宣称已经实现自由文本语义蕴含或 NLI VERIFIED judge。
 - Direct、ToolLoop、恢复、降级和结构化快路径遵守相同的证据所有权和最终化语义。
 
 ## 6. 上下文与最小记忆

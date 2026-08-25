@@ -17,7 +17,7 @@ urls: string[]?     用户明确提供或当前 Run 已登记的 URL
 3. `urls` 只能包含用户本轮明确给出的 URL，或已由当前 Run 搜索结果登记的 URL。
 4. 提交 `urls` 表示请求 Host 深入抓取这些页面，不表示模型取得任意网络访问能力。
 5. Host 对 query 规范化去重，对 URL canonicalize、去重并执行 HTTPS/SSRF/redirect/size/content-type 检查。
-6. 工具返回只包含受限标题、摘要、抓取摘录、时间标签和 Iris evidence ID，不返回凭证、原始 transport 配置或不受限正文。
+6. 工具返回只包含受限标题、摘要、抓取摘录、时间标签和当前 Run 的 `Wn` 标签；全局 ledger ID、凭证、原始 transport 配置和不受限正文不进入模型可见 Web packet。
 
 旧 `web.fetch`、`fetch_web_page` 等名称只允许留在内部 adapter 或历史数据兼容层，不重新进入模型 surface。
 
@@ -83,6 +83,8 @@ SourceConflict
 
 ## 5. 模型协议适配
 
+- 结构化终局来源词汇固定为：Web `Wn`、外部工具 `E{id}`、本地检索 `L{id}`、本轮授权材料 `Mn`，以及已定义的 `U/T/H/I`。`Wn` 每个 Run 从 1 开始；`E/L` 的数字部分是 Iris ledger ID。结构化当前事实只是经过 DTO validator 后登记为 `E{id}` 的受控子集。
+- `[Cn]` 仅是会话来源区的展示标签，裸数字仅是数据库内部值；二者都不得进入 `submit_final_answer.sources`。来源引用只由当前 Run 的 `ProvenancePolicy` 解析。
 - 已验证支持工具续接：模型阅读当前 evidence packet，选择下一 query、gap 或 current-Run URLs。
 - chat-only/不支持续接：Host 执行对应档位的有限预取，模型只做一次综合；不得伪造多轮研究状态。
 - 工具协议失败：保留已登记证据，按剩余预算决定安全重试或降级；不得切换到未冻结 Provider。
@@ -93,6 +95,8 @@ SourceConflict
 - Web 关闭或 classified/local-only：不执行外部请求，返回权限或能力不足。
 - URL 不属于用户输入或当前 Run：拒绝并记录稳定安全码，不回显 URL 全文。
 - 证据字段不足：`agent_run_fresh_evidence_insufficient`，说明缺失类型而不补写事实。
+- 来源引用不存在、格式错误或不属于当前 Run：`agent_run_finalization_protocol_invalid`，不得错误提示用户重新附带资料。
+- 通用证据关联失败使用中性提示；只有显式附件本身无效或变化时才提示重新附带。
 - 结构化 Provider 不可用：允许转入符合任务形态的 Web research；只有需要伪精确字段且 Web 也不足时失败。
 - 最终化协议不可用：`agent_run_grounded_finalization_unavailable`，不得退化成无约束猜测。
 - deadline 或预算耗尽：使用已支持的部分事实并披露限制，或在无法安全回答时失败关闭。

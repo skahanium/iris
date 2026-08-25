@@ -32,7 +32,7 @@ pub(crate) fn render_current_run_submission(
         }
         blocks.push(FinalAnswerBlock {
             markdown,
-            sources: vec![evidence_id.to_string()],
+            sources: vec![format!("E{evidence_id}")],
         });
     }
     Ok(Some(FinalAnswerSubmission { blocks }))
@@ -87,10 +87,110 @@ fn render_record(record: &FreshDomainRecord) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::render_record;
+    use super::{render_current_run_submission, render_record};
+    use crate::ai_runtime::agent_evidence_repository::{
+        AgentEvidenceRepository, ExternalToolEvidenceInput,
+    };
+    use crate::ai_runtime::agent_run_repository::{AcceptRunInput, AgentRunRepository};
     use crate::ai_runtime::fresh_domains::contracts::{
         EntertainmentRecord, EvidenceOrigin, FreshDomainRecord,
     };
+    use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
+    use crate::ai_runtime::provenance::validate_final_answer_submission;
+    use crate::ai_runtime::run_contract::{
+        ContextMode, Effect, Effort, ExecutionEnvelope, FreshFactDomain, FreshFactPolicy,
+        Freshness, RiskClass, SecurityDomain, WebDecisionReason,
+    };
+    use crate::storage::db::Database;
+
+    fn accepted_run_with_high_external_evidence_id() -> (Database, FreshFactPolicy, String) {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("normal session");
+        let run_id = "host-renderer-high-evidence".to_string();
+        let policy = FreshFactPolicy {
+            schema_version: 1,
+            domain: FreshFactDomain::Entertainment,
+            operation: None,
+            window_start: None,
+            window_end: None,
+            location_requirement: Default::default(),
+        };
+        AgentRunRepository::accept(
+            &db,
+            AcceptRunInput {
+                session_id: session.session_id,
+                session_key: session.session_key,
+                client_request_id: "host-renderer-client".into(),
+                run_id: run_id.clone(),
+                turn_id: "host-renderer-turn".into(),
+                message: "查询结构化当前事实".into(),
+                content_parts: None,
+                explicit_references: vec![],
+                context_scope: Default::default(),
+                display_mentions: vec![],
+                explicit_action: None,
+                envelope: ExecutionEnvelope {
+                    effect: Effect::Answer,
+                    context: ContextMode::ExplicitReferences,
+                    freshness: Freshness::WebRequired,
+                    web_reason: WebDecisionReason::LegacyUnknown,
+                    verification_requirement: Default::default(),
+                    effort: Effort::ToolLoop,
+                    security_domain: SecurityDomain::Normal,
+                    risk: RiskClass::ReadOnly,
+                    modalities: vec![],
+                    material_needs: vec![],
+                    required_capabilities: vec![],
+                    explicit_constraints: vec![],
+                    fresh_fact: policy.clone(),
+                },
+            },
+        )
+        .expect("accepted run");
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 1000)",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("advance evidence ledger sequence");
+        let record = FreshDomainRecord::Entertainment(EntertainmentRecord {
+            title: "测试影片".into(),
+            region: "中国大陆".into(),
+            channel: "院线".into(),
+            date: "2026-08-25".into(),
+            checked_at: "2026-08-25T00:00:00Z".into(),
+            origin: EvidenceOrigin {
+                evidence_id: 7,
+                provider_id: "provider".into(),
+                source_url: "https://example.invalid/movie".into(),
+                source_title: "影片资料".into(),
+                observed_at: "2026-08-25T00:00:00Z".into(),
+            },
+        });
+        let registered = AgentEvidenceRepository::register_external_tool(
+            &db,
+            ExternalToolEvidenceInput {
+                session_id: session.session_id,
+                run_id: run_id.clone(),
+                message_seq_first: 1,
+                title: "entertainment_record".into(),
+                provider_id: "provider".into(),
+                provider_config_hash: "provider-hash".into(),
+                binding_id: "binding".into(),
+                raw_result_hash: "result-hash".into(),
+                retrieved_at: "2026-08-25T00:00:00Z".into(),
+                bounded_excerpt: serde_json::to_string(&record).expect("record JSON"),
+                url: Some("https://example.invalid/movie".into()),
+                normalized_url: Some("https://example.invalid/movie".into()),
+                domain: Some("example.invalid".into()),
+            },
+        )
+        .expect("external evidence");
+        assert_eq!(registered.evidence_id, 1001);
+        (db, policy, run_id)
+    }
 
     #[test]
     fn host_renderer_uses_dto_fields_and_never_provider_json() {
@@ -172,5 +272,20 @@ mod tests {
             assert!(!rendered.contains("source_url"));
             assert!(!rendered.contains("example.invalid"));
         }
+    }
+
+    #[test]
+    fn host_renderer_emits_external_protocol_references_for_high_ledger_ids() {
+        let (db, policy, run_id) = accepted_run_with_high_external_evidence_id();
+
+        let submission = render_current_run_submission(&db, &run_id, &policy)
+            .expect("render submission")
+            .expect("structured evidence submission");
+
+        assert_eq!(submission.blocks[0].sources, ["E1001"]);
+        let provenance = AgentEvidenceRepository::provenance_policy(&db, &run_id, false)
+            .expect("provenance policy");
+        validate_final_answer_submission(&submission, &provenance)
+            .expect("host output must use the same protocol as model submissions");
     }
 }

@@ -301,6 +301,54 @@ fn current_run_citation_links_exclude_foreign_and_retired_evidence() {
 }
 
 #[test]
+fn web_provenance_ordinals_restart_at_w1_for_each_run_with_high_ledger_ids() {
+    let (db, session_id, session_key) = setup_run();
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 1000)",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("advance evidence ledger sequence");
+    let first = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "First Run source",
+        "https://example.test/first",
+    );
+    cancel_test_run(&db, "evidence-run");
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-second-client-request",
+        "evidence-second-run",
+        "evidence-second-turn",
+        "第二个运行",
+    );
+    let second = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-second-run",
+        "Second Run source",
+        "https://example.test/second",
+    );
+
+    assert_eq!((first.evidence_id, second.evidence_id), (1001, 1002));
+    for run_id in ["evidence-run", "evidence-second-run"] {
+        let policy = AgentEvidenceRepository::provenance_policy(&db, run_id, true)
+            .expect("Run-local provenance policy");
+        assert_eq!(
+            policy.current_run_web_evidence_ids,
+            std::collections::BTreeSet::from([1]),
+            "each Run must expose its first Web source as W1"
+        );
+    }
+}
+
+#[test]
 fn current_run_fetch_urls_exclude_foreign_and_retired_web_evidence() {
     let (db, session_id, session_key) = setup_run();
     let owned = register_web_evidence(

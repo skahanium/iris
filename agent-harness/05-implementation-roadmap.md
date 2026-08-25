@@ -53,6 +53,8 @@
 
 本轮结果：Quick/Standard/Deep 已冻结为 `1/2/2/4/20`、`3/6/4/8/45`、`5/10/6/12/90`（搜索/抓取/模型续接/evidence/deadline）；resume state 已升级为无正文的 schema 3，并恢复搜索、抓取与修复计数。`web_search` 仅接受本轮用户明示或 current-Run ledger 已登记的 HTTPS URL，深抓取最多并发 3，且只按实际成功抓取消费额度。模型循环同时受 profile 轮次与 deadline 约束，两轮无新增证据即停止。
 
+2026-08-26 补充复验关闭了一个基线盲区：成熟数据库中的全局 evidence ID 不再与 Run-local `W1` 偶合。最终化由唯一 `ProvenancePolicy` 解析 W/E/L/M，当前事实门只检查冻结策略与当前证据充足性；结构化 Host 输出使用 `E{id}`。这属于 AH-0 测试可信度、AH-1 事实源唯一性和 AH-2 研究终态合同的共同加固，不新增领域旁路。
+
 退出条件已由附录 A 中的命名 Rust 测试、`cargo test`、评测与门禁复验覆盖。
 
 ## 5. AH-3：按任务形态重构路由（已验证）

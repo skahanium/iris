@@ -2071,7 +2071,7 @@ fn web_enabled_current_fact_adds_domain_capability_without_external_read() {
     for message in [
         "上海未来一周天气",
         "今天有什么重要新闻",
-        "最近有什么好看的电影",
+        "上海正在上映什么电影",
         "苹果现在股价多少",
         "今晚湖人比赛几点",
     ] {

@@ -1,6 +1,6 @@
 # 02. 当前状态与技术债
 
-**初始审计：2026-08-23，代码起点：`116b3663`；当前复验：2026-08-24。**
+**初始审计：2026-08-23，代码起点：`116b3663`；当前复验：2026-08-26。**
 
 本审计区分代码存在、当前测试证据、实例配置和目标设计。工具名、DTO 或 fixture 存在，不等于真实 Provider 已配置或用户请求能够完成。
 
@@ -14,7 +14,7 @@
 | 冻结工具表面、执行门禁与 `capabilities_read` | 已验证   | 保留     | 三者共享当前 Run 的允许工具事实                         |
 | Web 权限、classified 隔离、查询污染门禁      | 已验证   | 保留     | Web 开关、local-only 与 taint witness 已覆盖            |
 | `system_time_now`                            | 已验证   | 保留     | 本机事实不依赖 Web                                      |
-| Run-local evidence 与来源组展示              | 已验证   | 保留     | 当前 Run、未 retired、HTTPS 可定位证据才能成为候选      |
+| Run-local evidence、来源协议与来源组展示     | 已验证   | 保留     | `ProvenancePolicy` 统一 W/E/L/M；展示标签不参与终态校验 |
 | `FreshResearchPlan`、`EvidenceGap`、查询去重 | 已验证   | 保留     | 三档 profile、抓取/修复/续接/证据/deadline 均为生产控制 |
 | 模型驱动多轮搜索与深抓取                     | 已验证   | 重构完成 | 单一 `web_search` 合同按 current-Run provenance 深抓取  |
 | 结构化领域 DTO、mapping、validator、renderer | 已验证   | 保留     | 五类工具表面、11 个 operation 和 migration 072 已存在   |
@@ -53,6 +53,7 @@
 3. 研究型天气、市场、新闻、体育和影视请求均可走统一 Web research；有 binding 的精确事实仍保留结构化快路径。缺 binding 不再是模型前的一刀切失败，News 也不再拥有架构特例。
 4. 两次研究回合未新增有效 evidence 时终止；profile deadline 覆盖 provider 调用和工具执行，Web 关闭仍不会外发。
 5. `fresh_domains` 的模块级 dead-code 许可和已不可达分支已删除。基于真实 provider/model 的性能 p50/p95 与 token 基线明确排除在本轮范围外；它必须保持延期，且不能由 fixture 代替。
+6. 2026-08-25 生产复现发现旧当前事实门把 Run-local `W1` 同全局 evidence ID、会话 `[C1]` 混合比较；空数据库测试因 ID 偶合产生假通过。现已删除重复引用解释器，由 `ProvenancePolicy` 单独校验来源语法、Run 所有权与逐块覆盖；高位 ID 的 Web fallback、11-operation 表驱动链路和 Host `E{id}` 渲染均有命名回归。
 
 ## 4. 评测基线修复事实
 

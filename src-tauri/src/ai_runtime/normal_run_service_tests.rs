@@ -4,6 +4,7 @@ use std::time::Duration;
 use super::agent_capacity_eval::{
     spawn_llm_protocol_double, EvaluationTelemetryTap, HttpResponseScript,
 };
+use super::agent_evidence_repository::AgentEvidenceRepository;
 use super::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
 use super::agent_tool_loop::ToolLoopExecutor;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
@@ -1292,13 +1293,23 @@ async fn production_domain_operations_freeze_authorize_dispatch_and_recover_tabl
         let state = AppState::new(directory.path().join("data")).expect("application state");
         install_headless_contract_mcp_with_mode(&state, "domain-dto");
         install_headless_domain_bindings(&state, &[operation]);
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 1000)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .expect("advance evidence ledger sequence");
         let tool_call = tool_call_sse(tool_name, arguments);
         let final_submission = tool_call_sse(
             "submit_final_answer",
             serde_json::json!({
                 "blocks": [{
                     "markdown": "结构化领域结果已核实。",
-                    "sources": ["W1", "E3"]
+                    "sources": ["W1", "E1003"]
                 }]
             }),
         );
@@ -1520,9 +1531,19 @@ async fn news_web_fallback_engine_chain_passes_through_evidence_ledger() {
 }
 
 #[tokio::test]
-async fn production_news_web_fallback_uses_intake_surface_dispatch_and_recovery() {
+async fn production_news_web_fallback_accepts_w1_with_high_ledger_ids_and_recovers() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 1000)",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("advance evidence ledger sequence");
     install_headless_contract_mcp(&state);
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(&tool_call_sse(
@@ -1584,6 +1605,18 @@ async fn production_news_web_fallback_uses_intake_surface_dispatch_and_recovery(
     assert!(!names.contains(&"news_lookup"));
     assert!(names.contains(&"web_search"));
     assert_eq!(calls.len(), 2);
+    let current_evidence =
+        crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_registered(
+            &state.db,
+            &accepted.run_id,
+        )
+        .expect("current Run evidence");
+    assert!(
+        current_evidence
+            .iter()
+            .all(|evidence| evidence.evidence_id > 1000),
+        "Run-local W1 must not depend on a matching global ledger ID"
+    );
 
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
     assert_eq!(
@@ -1594,6 +1627,140 @@ async fn production_news_web_fallback_uses_intake_surface_dispatch_and_recovery(
             .final_message_id,
         response.run.final_message_id
     );
+}
+
+#[tokio::test]
+async fn broad_movie_research_completes_with_run_local_web_sources_and_no_city_input() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 2000)",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("advance evidence ledger sequence");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse(
+            "web_search",
+            serde_json::json!({"query":"近期有什么好看的电影上映","gap":"missing_timestamp"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse(
+            "submit_final_answer",
+            serde_json::json!({
+                "blocks": [{
+                    "markdown": "近期上映影片已经按当前公开资料核实。",
+                    "sources": ["W1"]
+                }]
+            }),
+        )),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-movie-fallback",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-movie-web-fallback".into();
+    request.turn.message = "近期有什么好看的电影上映？".into();
+    request.web_enabled = true;
+    let envelope = RunIntake::resolve_envelope(&request).expect("classify movie research Run");
+    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Entertainment);
+    assert_eq!(envelope.fresh_fact.location_requirement, Default::default());
+    assert_eq!(envelope.fresh_fact.structured_provider_operation(), None);
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accept broad movie research Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("movie research snapshot")
+        .expect("movie research Run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "events={:?}; evidence={:?}",
+        response
+            .events
+            .iter()
+            .map(AssistantRunEvent::payload)
+            .collect::<Vec<_>>(),
+        AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
+            .expect("diagnostic movie evidence")
+    );
+    assert!(response.run.pending_input.is_none());
+    let evidence =
+        AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
+            .expect("movie research evidence");
+    assert!(evidence.iter().all(|item| item.evidence_id > 2000));
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 2);
+}
+
+#[tokio::test]
+async fn web_fallback_rejects_an_out_of_run_w8_without_persisting_an_answer() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse(
+            "web_search",
+            serde_json::json!({"query":"最新 synthetic 新闻","gap":"missing_timestamp"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse(
+            "submit_final_answer",
+            serde_json::json!({
+                "blocks": [{
+                    "markdown": "这段内容引用了不属于当前 Run 的来源。",
+                    "sources": ["W8"]
+                }]
+            }),
+        )),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-invalid-web-source",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-invalid-web-source".into();
+    request.turn.message = "最新 synthetic 新闻".into();
+    request.web_enabled = true;
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accept invalid-source Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("invalid-source snapshot")
+        .expect("invalid-source Run");
+    assert_eq!(response.run.state, RunState::Failed);
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: super::run_contract::SafeRunErrorCode::FinalizationProtocolInvalid,
+            ..
+        })
+    ));
+    let assistant_count =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("session messages")
+            .into_iter()
+            .filter(|message| message.role == "assistant")
+            .count();
+    assert_eq!(assistant_count, 0);
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 2);
 }
 
 #[tokio::test]

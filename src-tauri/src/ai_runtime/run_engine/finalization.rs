@@ -266,8 +266,18 @@ pub(super) fn validated_current_run_final_submission(
     db: &Database,
     run_id: &str,
     submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
-    strict_web: bool,
+    strict_current_evidence: bool,
 ) -> Result<crate::ai_runtime::provenance::ValidatedFinalAnswerSubmission, RunFinalizationFailure> {
+    let provenance_policy =
+        AgentEvidenceRepository::provenance_policy(db, run_id, strict_current_evidence).map_err(
+            |error| {
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::EvidenceValidation,
+                    SafeRunErrorCode::EvidenceInvalid,
+                    error.to_string(),
+                )
+            },
+        )?;
     let frozen_fresh_fact =
         AgentRunRepository::fresh_fact_policy_for_run(db, run_id).map_err(|error| {
             RunFinalizationFailure::new(
@@ -284,25 +294,16 @@ pub(super) fn validated_current_run_final_submission(
                 | crate::ai_runtime::run_contract::FreshFactDomain::Finance
                 | crate::ai_runtime::run_contract::FreshFactDomain::Entertainment
                 | crate::ai_runtime::run_contract::FreshFactDomain::Sports
+                | crate::ai_runtime::run_contract::FreshFactDomain::GenericWeb
         ) {
-            let evidence = AgentEvidenceRepository::list_current_run_registered(db, run_id)
-                .map_err(|error| {
-                    RunFinalizationFailure::new(
-                        RunFinalizationStage::EvidenceValidation,
-                        SafeRunErrorCode::EvidenceInvalid,
-                        error.to_string(),
-                    )
-                })?;
-            crate::ai_runtime::current_fact_finalization::validate_current_fact_submission(
+            crate::ai_runtime::current_fact_finalization::validate_current_fact_policy(
                 &policy,
-                submission,
-                &evidence,
+                &provenance_policy,
             )
             .map_err(|error| {
                 let code = match error {
                     crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::UnsupportedProtocol => SafeRunErrorCode::FinalizationProtocolInvalid,
-                    crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::InsufficientEvidence
-                    | crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::UnsupportedClaim => SafeRunErrorCode::EvidenceInvalid,
+                    crate::ai_runtime::current_fact_finalization::CurrentFactFinalizationError::InsufficientEvidence => SafeRunErrorCode::FreshEvidenceInsufficient,
                 };
                 RunFinalizationFailure::new(
                     RunFinalizationStage::EvidenceValidation,
@@ -312,23 +313,14 @@ pub(super) fn validated_current_run_final_submission(
             })?;
         }
     }
-    let policy =
-        AgentEvidenceRepository::provenance_policy(db, run_id, strict_web).map_err(|error| {
-            RunFinalizationFailure::new(
-                RunFinalizationStage::EvidenceValidation,
-                SafeRunErrorCode::EvidenceInvalid,
-                error.to_string(),
-            )
-        })?;
-    crate::ai_runtime::provenance::validate_final_answer_submission(submission, &policy).map_err(
-        |error| {
+    crate::ai_runtime::provenance::validate_final_answer_submission(submission, &provenance_policy)
+        .map_err(|error| {
             RunFinalizationFailure::new(
                 RunFinalizationStage::EvidenceValidation,
                 SafeRunErrorCode::FinalizationProtocolInvalid,
                 error.to_string(),
             )
-        },
-    )
+        })
 }
 
 pub(super) fn flush_validated_stream_or_fail(
@@ -550,7 +542,10 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
         SafeRunErrorCode::OutputTooLong => "模型回答超过本次运行上限，请缩小问题范围后重试",
         SafeRunErrorCode::IncompleteOutput => "回答未完整生成，请重试",
-        SafeRunErrorCode::EvidenceInvalid => "回答与所附证据无法安全关联，请重新附带资料后重试",
+        SafeRunErrorCode::EvidenceInvalid => "回答无法与本次可用证据安全关联，请重试",
+        SafeRunErrorCode::FreshEvidenceInsufficient => {
+            "当前联网证据不足以支持可靠回答，请调整问题或稍后重试"
+        }
         SafeRunErrorCode::FinalizationProtocolInvalid => "模型未完成本次答案的来源归因协议，请重试",
         SafeRunErrorCode::EventDeliveryFailed => "回答状态未能送达界面，请重新打开会话查看结果",
         SafeRunErrorCode::InvalidExplicitReference => "引用材料无效，请重新附带后重试",
@@ -599,7 +594,6 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::UnverifiedWebCitation
         | SafeRunErrorCode::WebEvidenceRequired
         | SafeRunErrorCode::GroundedFinalizationUnavailable
-        | SafeRunErrorCode::FreshEvidenceInsufficient
         | SafeRunErrorCode::LocationRequired
         | SafeRunErrorCode::InputInvalid => "运行暂时无法完成，请稍后重试",
     }
@@ -697,7 +691,7 @@ mod apply_notice_tests {
     use std::collections::HashSet;
 
     use super::{
-        apply_required_web_degradation_notice, classify_tool_loop_failure,
+        apply_required_web_degradation_notice, classify_tool_loop_failure, safe_failure_message,
         validate_web_urls_against_allowed, validated_final_model_answer,
         validated_final_model_answer_with_telemetry,
     };
@@ -775,6 +769,26 @@ mod apply_notice_tests {
             classify_tool_loop_failure(&AppError::msg("agent_run_provenance_reference_invalid"));
 
         assert_eq!(code, SafeRunErrorCode::FinalizationProtocolInvalid);
+    }
+
+    #[test]
+    fn evidence_failure_messages_distinguish_web_protocol_and_attachments() {
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::FreshEvidenceInsufficient),
+            "当前联网证据不足以支持可靠回答，请调整问题或稍后重试"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::EvidenceInvalid),
+            "回答无法与本次可用证据安全关联，请重试"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::FinalizationProtocolInvalid),
+            "模型未完成本次答案的来源归因协议，请重试"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::InvalidExplicitReference),
+            "引用材料无效，请重新附带后重试"
+        );
     }
 
     #[test]

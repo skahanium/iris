@@ -210,7 +210,7 @@ impl AgentEvidenceRepository {
     pub(crate) fn provenance_policy(
         db: &Database,
         run_id: &str,
-        strict_web: bool,
+        strict_current_evidence: bool,
     ) -> AppResult<crate::ai_runtime::provenance::ProvenancePolicy> {
         db.with_read_conn(|conn| {
             // Count the materials actually registered for this Run rather than
@@ -292,7 +292,7 @@ impl AgentEvidenceRepository {
                 current_run_local_evidence_ids: local,
                 current_run_web_evidence_ids: web,
                 current_run_external_evidence_ids: external,
-                strict_web,
+                strict_current_evidence,
             })
         })
     }
@@ -300,6 +300,7 @@ impl AgentEvidenceRepository {
     /// Load every non-retired evidence registration owned by one Run. The
     /// returned references are Run-local and safe for deterministic final
     /// protocol validation; no excerpt or raw provider payload is exposed.
+    #[cfg(test)]
     pub(crate) fn list_current_run_registered(
         db: &Database,
         run_id: &str,
