@@ -216,6 +216,20 @@ impl FreshFactPolicy {
             FreshFactDomain::None | FreshFactDomain::Runtime | FreshFactDomain::GenericWeb => None,
         })
     }
+
+    /// Return the structured provider operation that is semantically complete
+    /// for this Run. A broad cinema-discovery request has no city because it is
+    /// Web research, not a local showtime lookup, so the local provider surface
+    /// must remain hidden even though both share the legacy `now_playing` label.
+    pub(crate) fn structured_provider_operation(&self) -> Option<DomainOperation> {
+        let operation = self.effective_operation()?;
+        if operation == DomainOperation::EntertainmentNowPlaying
+            && self.location_requirement != LocationRequirement::City
+        {
+            return None;
+        }
+        Some(operation)
+    }
 }
 
 /// Stable explanation for the deterministic Web decision attached to a Run.
@@ -1772,7 +1786,7 @@ pub(crate) fn transition_to(
             RunState::AwaitingConfirmation,
             RunState::Running | RunState::Cancelled
         ) | (RunState::Paused, RunState::Running)
-            | (RunState::AwaitingInput, RunState::Running)
+            | (RunState::AwaitingInput, RunState::Preparing)
             | (
                 RunState::Verifying,
                 RunState::Paused | RunState::Completed | RunState::Failed | RunState::Cancelled

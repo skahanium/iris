@@ -1,12 +1,17 @@
 import { memo, type RefObject } from "react";
 
 import { cn } from "@/lib/utils";
-import { AiMessageList, type ChatLine } from "./AiMessageList";
+import {
+  AiMessageList,
+  type AssistantPendingInputCard,
+  type ChatLine,
+} from "./AiMessageList";
 import { AiMessageSelectionUi } from "./AiMessageSelectionUi";
 
 interface ConversationSurfaceProps {
   messages: ChatLine[];
   streaming: boolean;
+  pendingInput?: AssistantPendingInputCard | null;
   selectedIndices?: Set<number>;
   messageListRef: RefObject<HTMLDivElement | null>;
   onCitationClick: (ref: string) => void;
@@ -29,6 +34,7 @@ interface ConversationSurfaceProps {
 export const ConversationSurface = memo(function ConversationSurface({
   messages,
   streaming,
+  pendingInput,
   selectedIndices,
   messageListRef,
   onCitationClick,
@@ -50,6 +56,7 @@ export const ConversationSurface = memo(function ConversationSurface({
       <AiMessageList
         messages={messages}
         streaming={streaming}
+        pendingInput={pendingInput}
         selectedIndices={selectedIndices}
         onCitationClick={onCitationClick}
         onRetract={onRetract}

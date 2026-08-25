@@ -260,7 +260,7 @@ async fn execute_normal_run_internal(
             return;
         }
     };
-    if requires_user_input(&context) {
+    if let Some(required_input) = required_input_for_context(&context, &accepted.run_id) {
         let snapshot = match RunIntake::get(&db, &accepted.session, &accepted.run_id) {
             Ok(Some(snapshot)) => snapshot,
             _ => return,
@@ -288,12 +288,7 @@ async fn execute_normal_run_internal(
                     run_id: accepted.run_id.clone(),
                     state_version: running.state_version(),
                     event_type: RunEventType::InputRequired,
-                    payload: RunEventPayload::InputRequired {
-                        input_id: format!("location-{}", accepted.run_id),
-                        input_kind: "location".into(),
-                        fields: vec!["city".into()],
-                        prompt: "请告诉我需要查询的城市".into(),
-                    },
+                    payload: required_input,
                 },
             ) {
                 Ok(event) => event,
@@ -366,18 +361,7 @@ async fn execute_normal_run_internal(
             .ok()
             .flatten()
             .is_some_and(|response| !response.run.state.is_terminal());
-        let is_explicit_persistence_failure = matches!(
-            &error,
-            crate::error::AppError::Message(message)
-                if message == SafeRunErrorCode::PersistenceFailed.as_str()
-        ) || matches!(
-            &error,
-            crate::error::AppError::Run(SafeRunErrorCode::PersistenceFailed)
-        );
-        if still_active
-            && safe_code == SafeRunErrorCode::PersistenceFailed
-            && !is_explicit_persistence_failure
-        {
+        if still_active {
             let _ =
                 RunEngine::fail_active_with_sink(&db, &accepted.session, &accepted.run_id, sink);
         }
@@ -390,11 +374,20 @@ async fn execute_normal_run_internal(
     }
 }
 
-fn requires_user_input(context: &crate::ai_runtime::run_context::RunContext) -> bool {
-    matches!(
+fn required_input_for_context(
+    context: &crate::ai_runtime::run_context::RunContext,
+    run_id: &str,
+) -> Option<RunEventPayload> {
+    let city_is_hard_precondition = matches!(
         context.envelope.fresh_fact.location_requirement,
         crate::ai_runtime::run_contract::LocationRequirement::City
-    ) && explicit_city_from_message(&context.user_message).is_none()
+    ) && confirmed_location_for_context(context).is_none();
+    city_is_hard_precondition.then(|| RunEventPayload::InputRequired {
+        input_id: format!("location-{run_id}"),
+        input_kind: "location".into(),
+        fields: vec!["city".into()],
+        prompt: "继续本轮任务前，需要补充查询城市。".into(),
+    })
 }
 
 fn domain_operation_is_executable(
@@ -419,11 +412,19 @@ fn domain_operation_is_executable(
 fn confirmed_location_for_context(
     context: &crate::ai_runtime::run_context::RunContext,
 ) -> Option<ConfirmedLocation> {
-    explicit_city_from_message(&context.user_message).map(|city| ConfirmedLocation {
-        city: Some(city),
-        province: None,
-        country: None,
-    })
+    context
+        .provided_input_values
+        .get("city")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|city| !city.is_empty())
+        .map(str::to_string)
+        .or_else(|| explicit_city_from_message(&context.user_message))
+        .map(|city| ConfirmedLocation {
+            city: Some(city),
+            province: None,
+            country: None,
+        })
 }
 
 /// Rebuild and evaluate the persisted normal Run policy before Provider routing.
@@ -621,11 +622,11 @@ async fn dispatch_normal_run_after_context(
         let domain_executable = domain_operation_is_executable(
             db,
             &accepted.run_id,
-            context.envelope.fresh_fact.effective_operation(),
+            context.envelope.fresh_fact.structured_provider_operation(),
         )?;
         tools = constrain_domain_tool_surface(
             tools,
-            context.envelope.fresh_fact.effective_operation(),
+            context.envelope.fresh_fact.structured_provider_operation(),
             domain_executable,
         );
         if !tool_surface_plan.expose_web_search {
@@ -980,7 +981,7 @@ async fn dispatch_required_web_verified_run(
     let domain_executable = domain_operation_is_executable(
         db,
         &accepted.run_id,
-        context.envelope.fresh_fact.effective_operation(),
+        context.envelope.fresh_fact.structured_provider_operation(),
     )?;
     let mut tools = if research_mode || domain_executable {
         ToolRegistry::constrain_for_run_context(
@@ -998,7 +999,7 @@ async fn dispatch_required_web_verified_run(
     };
     tools = constrain_domain_tool_surface(
         tools,
-        context.envelope.fresh_fact.effective_operation(),
+        context.envelope.fresh_fact.structured_provider_operation(),
         domain_executable,
     );
     if !tool_surface_plan.expose_web_search {

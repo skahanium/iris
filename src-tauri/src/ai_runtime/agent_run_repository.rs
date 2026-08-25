@@ -2692,7 +2692,7 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
         RunEventPayload::StageChanged { state, .. } => Some(*state),
         RunEventPayload::ConfirmationRequired { .. } => Some(RunState::AwaitingConfirmation),
         RunEventPayload::InputRequired { .. } => Some(RunState::AwaitingInput),
-        RunEventPayload::InputProvided { .. } => Some(RunState::Running),
+        RunEventPayload::InputProvided { .. } => Some(RunState::Preparing),
         RunEventPayload::Paused { .. } => Some(RunState::Paused),
         RunEventPayload::Resumed { .. } => Some(RunState::Running),
         RunEventPayload::Completed { .. } => Some(RunState::Completed),

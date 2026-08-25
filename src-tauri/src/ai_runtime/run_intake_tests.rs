@@ -1479,8 +1479,13 @@ fn input_submission_resumes_the_same_run_and_replay_is_noop() {
     let snapshot = RunIntake::get(&db, &session, &accepted.run_id)
         .expect("snapshot")
         .expect("run exists");
-    assert_eq!(snapshot.run.state, RunState::Running);
+    assert_eq!(snapshot.run.state, RunState::Preparing);
     assert!(snapshot.run.pending_input.is_none());
+    assert_eq!(
+        AgentRunRepository::latest_input_values(&db, &session.session_key, &accepted.run_id)
+            .expect("submitted input values"),
+        std::collections::BTreeMap::from([("city".to_string(), "上海".to_string())])
+    );
 }
 
 #[test]
@@ -2350,7 +2355,7 @@ fn today_date_question_uses_trusted_runtime_without_web() {
 }
 
 #[test]
-fn recent_movie_question_freezes_date_and_location() {
+fn broad_recent_movie_question_freezes_dates_without_requiring_city() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "最近有什么好看的电影".to_string();
@@ -2360,7 +2365,7 @@ fn recent_movie_question_freezes_date_and_location() {
     assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Entertainment);
     assert_eq!(
         envelope.fresh_fact.location_requirement,
-        crate::ai_runtime::run_contract::LocationRequirement::City
+        crate::ai_runtime::run_contract::LocationRequirement::None
     );
     assert!(
         envelope.fresh_fact.window_start.is_some(),

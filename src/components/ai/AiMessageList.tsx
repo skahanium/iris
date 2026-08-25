@@ -5,6 +5,8 @@ import { ArrowDown, Check, Copy, RotateCcw } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
 import { useConversationReadingAnchor } from "@/components/ai/hooks/useConversationReadingAnchor";
@@ -65,9 +67,21 @@ export interface ChatLine {
   presentationStreaming?: boolean;
 }
 
+export interface AssistantPendingInputCard {
+  runId: string;
+  prompt: string;
+  fields: string[];
+  values: Record<string, string>;
+  submitting: boolean;
+  onValueChange: (field: string, value: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}
+
 interface AiMessageListProps {
   messages: ChatLine[];
   streaming: boolean;
+  pendingInput?: AssistantPendingInputCard | null;
   selectedIndices?: Set<number>;
   onCitationClick?: (ref: string) => void;
   onRetract?: (index: number) => void;
@@ -81,7 +95,8 @@ type MessageRow =
   | { type: "empty" }
   | { type: "thinking" }
   | { type: "message"; messageIndex: number }
-  | { type: "citations"; messageIndex: number };
+  | { type: "citations"; messageIndex: number }
+  | { type: "input_required"; messageIndex: number };
 
 // Keep copy feedback ASCII-only in source: a legacy WebView code-page decode must not turn the
 // user-facing UTF-8 literals into mojibake before React receives them.
@@ -207,9 +222,84 @@ function AssistantMessageActions({
   );
 }
 
+function AssistantRunInputCard({
+  input,
+}: {
+  input: AssistantPendingInputCard;
+}) {
+  const cardRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    cardRef.current
+      ?.querySelector<HTMLInputElement>("input")
+      ?.focus({ preventScroll: true });
+  }, [input.runId]);
+
+  const complete = input.fields.every((field) =>
+    Boolean(input.values[field]?.trim()),
+  );
+
+  return (
+    <section
+      ref={cardRef}
+      className="rounded-xl border border-border-subtle bg-muted/30 px-3 py-3"
+      data-testid="assistant-run-input-required"
+      aria-live="polite"
+    >
+      <p className="text-xs font-medium">{input.prompt}</p>
+      <div className="mt-2 flex items-end gap-2">
+        <div className="min-w-0 flex-1 space-y-2">
+          {input.fields.map((field) => (
+            <Input
+              key={field}
+              value={input.values[field] ?? ""}
+              onChange={(event) =>
+                input.onValueChange(field, event.target.value)
+              }
+              placeholder={fieldPlaceholder(field)}
+              aria-label={fieldLabel(field)}
+              disabled={input.submitting}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && complete) input.onSubmit();
+              }}
+            />
+          ))}
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="brand"
+          disabled={!complete || input.submitting}
+          onClick={input.onSubmit}
+        >
+          {input.submitting ? "提交中…" : "继续"}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={input.submitting}
+          onClick={input.onCancel}
+        >
+          取消本轮
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function fieldLabel(field: string): string {
+  return field === "city" ? "查询城市" : `补充信息：${field}`;
+}
+
+function fieldPlaceholder(field: string): string {
+  return field === "city" ? "例如：上海" : "请输入补充信息";
+}
+
 export const AiMessageList = memo(function AiMessageList({
   messages,
   streaming,
+  pendingInput,
   selectedIndices,
   onCitationClick,
   onRetract,
@@ -226,13 +316,27 @@ export const AiMessageList = memo(function AiMessageList({
   const toast = useToast();
   const rows = useMemo<MessageRow[]>(() => {
     if (messages.length === 0) return [{ type: "empty" }];
+    const pendingAssistantExists = pendingInput
+      ? messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            message.runId === pendingInput.runId,
+        )
+      : false;
     return [
       ...(showStandaloneThinking ? [{ type: "thinking" } as const] : []),
       ...messages.flatMap((message, messageIndex) => {
+        const ownsPendingInput =
+          pendingInput?.runId === message.runId &&
+          (message.role === "assistant" ||
+            (!pendingAssistantExists && message.role === "user"));
+        const inputRow: MessageRow[] = ownsPendingInput
+          ? [{ type: "input_required", messageIndex }]
+          : [];
         if (
           !isRenderableMessageRow(message, messageIndex, messages, streaming)
         ) {
-          return [];
+          return inputRow;
         }
         const messageRow: MessageRow = { type: "message", messageIndex };
         const citationRow: MessageRow | null =
@@ -241,10 +345,12 @@ export const AiMessageList = memo(function AiMessageList({
           hasCitationFooter(message)
             ? { type: "citations", messageIndex }
             : null;
-        return citationRow ? [messageRow, citationRow] : [messageRow];
+        return citationRow
+          ? [messageRow, citationRow, ...inputRow]
+          : [messageRow, ...inputRow];
       }),
     ];
-  }, [messages, showStandaloneThinking, streaming]);
+  }, [messages, pendingInput, showStandaloneThinking, streaming]);
 
   const messagesForIdentityRef = useRef(messages);
   messagesForIdentityRef.current = messages;
@@ -258,9 +364,11 @@ export const AiMessageList = memo(function AiMessageList({
       const messageIdentity = message
         ? assistantMessageIdentity(message, row.messageIndex)
         : `row:${index}`;
-      return row.type === "citations"
-        ? `${messageIdentity}:citations`
-        : messageIdentity;
+      if (row.type === "citations") return `${messageIdentity}:citations`;
+      if (row.type === "input_required") {
+        return `${messageIdentity}:input-required`;
+      }
+      return messageIdentity;
     },
     [rows],
   );
@@ -273,6 +381,7 @@ export const AiMessageList = memo(function AiMessageList({
       const row = rows[index];
       if (!row || row.type === "empty" || row.type === "thinking") return 80;
       if (row.type === "citations") return 72;
+      if (row.type === "input_required") return 144;
       const message = messages[row.messageIndex];
       if (!message) return 112;
       return isAssistantStreaming(
@@ -356,9 +465,9 @@ export const AiMessageList = memo(function AiMessageList({
     (activeStreamingMessage?.content.length ?? 0);
   const { following, returnToLatest } = useConversationReadingAnchor({
     viewportRef,
-    active: streaming || activeStreamingMessage != null,
+    active: streaming || activeStreamingMessage != null || pendingInput != null,
     revision: contentRevision,
-    streamKey: activeStreamKey,
+    streamKey: activeStreamKey ?? pendingInput?.runId ?? null,
   });
 
   useEffect(() => {
@@ -451,6 +560,15 @@ export const AiMessageList = memo(function AiMessageList({
       );
     }
 
+    if (row.type === "input_required") {
+      if (!pendingInput) return null;
+      return (
+        <div className="pl-7" data-row-kind="input_required">
+          <AssistantRunInputCard input={pendingInput} />
+        </div>
+      );
+    }
+
     const i = row.messageIndex;
     const m = messages[i];
     if (!m) return null;
@@ -535,6 +653,10 @@ export const AiMessageList = memo(function AiMessageList({
               <p className="text-[10px] text-muted-foreground">
                 本次请求未完成，未纳入后续对话上下文。
                 {m.retryable ? " 可重试。" : ""}
+              </p>
+            ) : m.turnState === "cancelled" ? (
+              <p className="text-[10px] text-muted-foreground">
+                本次回答已取消，未纳入后续对话上下文。
               </p>
             ) : null}
           </div>

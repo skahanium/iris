@@ -641,6 +641,131 @@ describe("useAssistantConversationProjection", () => {
     ]);
   });
 
+  it("rebuilds the missing assistant slot for a recovered user-only Run", () => {
+    messages = [
+      {
+        role: "user",
+        content: "最近有什么新上映的电影吗？",
+        runId: "run-recovered",
+        turnId: "turn-recovered",
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+
+    act(() =>
+      root?.render(
+        <Probe
+          run={replayAssistantRunEvents("run-recovered", [
+            {
+              runId: "run-recovered",
+              seq: 1,
+              stateVersion: 0,
+              timestamp: "2026-08-25T13:22:00.000Z",
+              type: "accepted",
+              payload: {
+                kind: "accepted",
+                turnId: "turn-recovered",
+                sessionKey: "session-1",
+              },
+            },
+            {
+              runId: "run-recovered",
+              seq: 2,
+              stateVersion: 1,
+              timestamp: "2026-08-25T13:22:01.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "preparing",
+                stage: "正在准备",
+              },
+            },
+            {
+              runId: "run-recovered",
+              seq: 3,
+              stateVersion: 2,
+              timestamp: "2026-08-25T13:22:02.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "running",
+                stage: "正在等待补充信息",
+              },
+            },
+            {
+              runId: "run-recovered",
+              seq: 4,
+              stateVersion: 3,
+              timestamp: "2026-08-25T13:22:03.000Z",
+              type: "input_required",
+              payload: {
+                kind: "input_required",
+                inputId: "location-run-recovered",
+                inputKind: "location",
+                fields: ["city"],
+                prompt: "请告诉我需要查询的城市",
+              },
+            },
+            {
+              runId: "run-recovered",
+              seq: 5,
+              stateVersion: 4,
+              timestamp: "2026-08-25T13:22:04.000Z",
+              type: "input_provided",
+              payload: {
+                kind: "input_provided",
+                inputId: "location-run-recovered",
+                values: { city: "上海" },
+              },
+            },
+            {
+              runId: "run-recovered",
+              seq: 6,
+              stateVersion: 5,
+              timestamp: "2026-08-25T13:22:05.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "running",
+                stage: "正在生成答复",
+              },
+            },
+            {
+              runId: "run-recovered",
+              seq: 7,
+              stateVersion: 5,
+              timestamp: "2026-08-25T13:22:06.000Z",
+              type: "content_delta",
+              payload: { kind: "content_delta", delta: "以下是近期新片建议。" },
+            },
+            {
+              runId: "run-recovered",
+              seq: 8,
+              stateVersion: 6,
+              timestamp: "2026-08-25T13:22:07.000Z",
+              type: "completed",
+              payload: { kind: "completed", messageId: "message-recovered" },
+            },
+          ] satisfies AssistantRunEvent[])}
+        />,
+      ),
+    );
+
+    expect(
+      messages.filter(
+        (message) =>
+          message.role === "assistant" && message.runId === "run-recovered",
+      ),
+    ).toMatchObject([
+      {
+        content: "以下是近期新片建议。",
+        turnId: "turn-recovered",
+      },
+    ]);
+  });
+
   it("projects safe Run process items onto the bound assistant message", () => {
     messages = [
       { role: "user", content: "核验资料", runId: "run-1", turnId: "turn-1" },

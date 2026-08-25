@@ -452,6 +452,26 @@ fn historical_fresh_fact_policy_uses_the_legacy_domain_default_operation() {
 }
 
 #[test]
+fn structured_provider_operation_respects_hard_input_contract() {
+    let broad = FreshFactPolicy {
+        domain: FreshFactDomain::Entertainment,
+        operation: Some(DomainOperation::EntertainmentNowPlaying),
+        location_requirement: LocationRequirement::None,
+        ..FreshFactPolicy::default()
+    };
+    let local = FreshFactPolicy {
+        location_requirement: LocationRequirement::City,
+        ..broad.clone()
+    };
+
+    assert_eq!(broad.structured_provider_operation(), None);
+    assert_eq!(
+        local.structured_provider_operation(),
+        Some(DomainOperation::EntertainmentNowPlaying)
+    );
+}
+
+#[test]
 fn web_preferred_and_reason_use_stable_wire_values() {
     let mut envelope = direct_answer_envelope();
     envelope.freshness = Freshness::WebPreferred;

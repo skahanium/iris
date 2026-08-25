@@ -60,7 +60,7 @@ export function useAssistantConversationProjection({
   takeClassifiedResult,
 }: AssistantConversationProjectionOptions) {
   const appliedProjectionRef = useRef<string | null>(null);
-  const hydratedCitationRunsRef = useRef(new Set<string>());
+  const hydratedCompletedRunsRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (
@@ -68,29 +68,45 @@ export function useAssistantConversationProjection({
       run.state !== "completed" ||
       !session ||
       session.domain !== "normal" ||
-      hydratedCitationRunsRef.current.has(run.runId)
+      hydratedCompletedRunsRef.current.has(run.runId)
     ) {
       return;
     }
-    hydratedCitationRunsRef.current.add(run.runId);
+    hydratedCompletedRunsRef.current.add(run.runId);
     void assistantSessionLoad({ session, limit: 48 })
       .then((loaded) => {
         const persisted = loaded.find(
           (message) =>
-            message.role === "assistant" &&
-            message.runId === run.runId &&
-            Boolean(message.webCitations?.length),
+            message.role === "assistant" && message.runId === run.runId,
         );
-        if (!persisted?.webCitations?.length) return;
-        setMessages((previous) =>
-          patchRunMessage(previous, run.runId, {
+        if (!persisted) return;
+        setMessages((previous) => {
+          const current = previous.find(
+            (message) =>
+              message.role === "assistant" && message.runId === run.runId,
+          );
+          const processItems = persisted.processEvents?.length
+            ? ensureTerminalAnswerComplete(
+                projectAssistantProcessEvents(persisted.processEvents),
+                "completed",
+              )
+            : current?.processItems;
+          return upsertRunMessage(previous, run.runId, {
+            ...(current?.presentationStreaming
+              ? {}
+              : { content: persisted.content }),
+            turnId: persisted.turnId,
+            turnState: persisted.turnState,
+            seq: persisted.seq,
+            created_at: persisted.createdAt,
+            processItems,
             webCitations: persisted.webCitations,
             citationBinding: persisted.citationBinding,
             sourceSummary: persisted.sourceSummary,
-          }),
-        );
+          });
+        });
       })
-      .catch(() => hydratedCitationRunsRef.current.delete(run.runId));
+      .catch(() => hydratedCompletedRunsRef.current.delete(run.runId));
   }, [run, session, setMessages]);
 
   useEffect(() => {
@@ -193,8 +209,8 @@ export function useAssistantConversationProjection({
         (message) =>
           message.role === "assistant" && message.runId === run.runId,
       );
-      if (!current) return previous;
       if (
+        current &&
         current.content === content &&
         current.contentRef === nextContentRef &&
         current.presentationStreaming === presentationStreaming &&
@@ -202,7 +218,7 @@ export function useAssistantConversationProjection({
       ) {
         return previous;
       }
-      return patchRunMessage(previous, run.runId, {
+      return upsertRunMessage(previous, run.runId, {
         content,
         contentRef: nextContentRef,
         processItems,
@@ -229,7 +245,7 @@ export function useAssistantConversationProjection({
         })
           .then((content) =>
             setMessages((previous) =>
-              patchRunMessage(previous, run.runId, { content }),
+              upsertRunMessage(previous, run.runId, { content }),
             ),
           )
           .catch(() => setError("涉密回答已失效；请重新附带当前文档后重试。"));
@@ -272,7 +288,7 @@ export function useAssistantConversationProjection({
   ]);
 }
 
-function patchRunMessage(
+function upsertRunMessage(
   messages: ChatLine[],
   runId: string,
   patch: Partial<ChatLine>,
@@ -280,9 +296,26 @@ function patchRunMessage(
   const index = messages.findIndex(
     (message) => message.role === "assistant" && message.runId === runId,
   );
-  if (index < 0) return messages;
+  if (index >= 0) {
+    const next = messages.slice();
+    next[index] = { ...messages[index]!, ...patch };
+    return next;
+  }
+  const userIndex = messages.findIndex(
+    (message) => message.role === "user" && message.runId === runId,
+  );
+  if (userIndex < 0) return messages;
+  const user = messages[userIndex]!;
+  const assistant: ChatLine = {
+    role: "assistant",
+    content: "",
+    runId,
+    turnId: user.turnId,
+    clientRequestId: user.clientRequestId,
+    ...patch,
+  };
   const next = messages.slice();
-  next[index] = { ...messages[index]!, ...patch };
+  next.splice(userIndex + 1, 0, assistant);
   return next;
 }
 
@@ -295,10 +328,17 @@ function appendCancellationNotice(
   );
   const target = messages[index];
   if (!target) {
-    return [
-      ...messages,
-      { role: "system", content: "本次回答已停止。发送继续可接着生成。" },
-    ];
+    const userIndex = messages.findIndex(
+      (message) => message.role === "user" && message.runId === runId,
+    );
+    if (userIndex < 0) return messages;
+    const next = messages.slice();
+    next.splice(userIndex + 1, 0, {
+      role: "system",
+      content: "本次回答已取消。",
+      runId,
+    });
+    return next;
   }
   if (!target.content.trim()) {
     const next = messages.slice();

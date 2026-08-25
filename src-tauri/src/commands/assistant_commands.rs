@@ -492,24 +492,26 @@ async fn assistant_run_control_inner<R: AssistantRunRuntime>(
                 (
                     NormalRunControlOutcome::InputProvided,
                     crate::ai_runtime::run_contract::RunControlAction::SubmitInput { .. },
-                ) => spawn_normal_direct_run(
-                    Arc::clone(&state),
-                    app_handle,
-                    crate::ai_runtime::run_contract::AssistantRunAccepted {
-                        client_request_id: String::new(),
-                        run_id: run_id.clone(),
-                        turn_id: crate::ai_runtime::run_intake::RunIntake::get(
-                            &state.db, &session, &run_id,
-                        )?
-                        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
-                        .run
-                        .turn_id,
-                        session: session.clone(),
-                        state: crate::ai_runtime::run_contract::RunState::AwaitingInput,
-                        state_version: 0,
-                    },
-                    state.vault_path().ok(),
-                ),
+                ) => {
+                    let resumed = crate::ai_runtime::run_intake::RunIntake::get(
+                        &state.db, &session, &run_id,
+                    )?
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
+                    .run;
+                    spawn_normal_direct_run(
+                        Arc::clone(&state),
+                        app_handle,
+                        crate::ai_runtime::run_contract::AssistantRunAccepted {
+                            client_request_id: String::new(),
+                            run_id: run_id.clone(),
+                            turn_id: resumed.turn_id,
+                            session: session.clone(),
+                            state: resumed.state,
+                            state_version: resumed.state_version,
+                        },
+                        state.vault_path().ok(),
+                    );
+                }
                 _ => {}
             }
             Ok(())
@@ -1157,11 +1159,11 @@ mod normal_run_desktop_adapter_tests {
                 transport_kind: "stdio".into(),
                 transport_config_json: serde_json::json!({
                     "command": "/bin/sh",
-                    "args": [fixture, "search-only"]
+                    "args": [fixture, "search-only", "2"]
                 })
                 .to_string(),
                 credential_refs_json: "{}".into(),
-                web_search_mapping_json: None,
+                web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.into()),
                 web_fetch_mapping_json: None,
             },
         )
@@ -1277,6 +1279,111 @@ mod normal_run_desktop_adapter_tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         panic!("assistant run did not reach a terminal state");
+    }
+
+    #[cfg(not(windows))]
+    async fn wait_for_state(
+        state: &AppState,
+        accepted: &AssistantRunAccepted,
+        expected: RunState,
+    ) -> crate::ai_runtime::run_contract::AssistantRunSnapshot {
+        for _ in 0..200 {
+            let current = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+                .expect("poll run")
+                .expect("accepted run");
+            if current.run.state == expected {
+                return current.run;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("assistant run did not reach expected state");
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn assistant_run_control_resumes_location_input_with_the_same_run() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"上海天气信息已核实。\"}}]}\n\ndata: [DONE]\n\n",
+        )])
+        .await
+        .expect("local LLM boundary");
+        configure_test_llm(&state, llm.base_url.clone(), "location-input-resume-model");
+        let _binding = install_production_external_binding(&state).await;
+        let app = tauri::test::mock_builder()
+            .manage(Arc::clone(&state))
+            .invoke_handler(tauri::generate_handler![
+                assistant_run_start,
+                assistant_run_control
+            ])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock application");
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("mock webview");
+        let accepted = invoke_start(
+            &webview,
+            AssistantRunStartRequest {
+                client_request_id: "desktop-location-input-resume".into(),
+                session: None,
+                turn: AssistantTurnDraft {
+                    message: "今天天气怎么样？".into(),
+                    content_parts: None,
+                    explicit_references: Vec::new(),
+                    retrieval_scope: Default::default(),
+                    display_mentions: Vec::new(),
+                },
+                explicit_action: None,
+                web_enabled: true,
+                model_override: None,
+                external_tool_grants: Vec::new(),
+                security_domain: SecurityDomain::Normal,
+                classified_context_ref: None,
+            },
+        );
+        let waiting = wait_for_state(&state, &accepted, RunState::AwaitingInput).await;
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("city".into(), "上海".into());
+        invoke_control(
+            &webview,
+            AssistantRunControlRequest {
+                session: accepted.session.clone(),
+                run_id: accepted.run_id.clone(),
+                expected_state_version: waiting.state_version,
+                action: RunControlAction::SubmitInput {
+                    input_id: format!("location-{}", accepted.run_id),
+                    values,
+                },
+            },
+        )
+        .expect("location input control response");
+
+        assert_eq!(
+            wait_for_terminal(&state, &accepted).await,
+            RunState::Completed
+        );
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay run")
+            .expect("same run");
+        assert_eq!(replay.run.run_id, accepted.run_id);
+        let input_provided_seq = replay
+            .events
+            .iter()
+            .find(|event| matches!(event.payload(), RunEventPayload::InputProvided { .. }))
+            .map(crate::ai_runtime::run_contract::AssistantRunEvent::seq)
+            .expect("input provided event");
+        assert!(replay.events.iter().any(|event| {
+            event.seq() > input_provided_seq
+                && matches!(
+                    event.payload(),
+                    RunEventPayload::StageChanged {
+                        state: RunState::Running,
+                        ..
+                    }
+                )
+        }));
+        assert_eq!(llm.finish().await.expect("LLM completion").len(), 1);
     }
 
     #[cfg(not(windows))]

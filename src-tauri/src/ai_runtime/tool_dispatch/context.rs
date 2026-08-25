@@ -14,7 +14,7 @@ pub struct FrozenDomainWindow {
 impl From<&crate::ai_runtime::run_contract::FreshFactPolicy> for FrozenDomainWindow {
     fn from(policy: &crate::ai_runtime::run_contract::FreshFactPolicy) -> Self {
         Self {
-            operation: policy.effective_operation(),
+            operation: policy.structured_provider_operation(),
             window_start: policy.window_start.clone(),
             window_end: policy.window_end.clone(),
         }

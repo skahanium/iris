@@ -1113,6 +1113,7 @@ async fn production_missing_city_waits_for_input_and_resumes_the_same_run() {
     .await
     .expect("local LLM boundary");
     install_test_routing(&state, &llm.base_url, "headless-contract-model");
+    install_headless_contract_mcp(&state);
 
     let sink = RecordingSink::default();
     let mut request = direct_request();
@@ -1130,7 +1131,7 @@ async fn production_missing_city_waits_for_input_and_resumes_the_same_run() {
     assert!(waiting.run.pending_input.is_some(), "must request city");
 
     let mut values = std::collections::BTreeMap::new();
-    values.insert("city".into(), "上海".into());
+    values.insert("city".into(), "佛山".into());
     let outcome = RunIntake::control_with_sink(
         &state.db,
         super::run_contract::AssistantRunControlRequest {
@@ -1154,10 +1155,10 @@ async fn production_missing_city_waits_for_input_and_resumes_the_same_run() {
     let resumed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
         .expect("resumed run");
-    assert_ne!(
+    assert_eq!(
         resumed.run.state,
-        RunState::AwaitingInput,
-        "resumed run must leave the input wait state"
+        RunState::Completed,
+        "resumed run must complete instead of remaining in an active state"
     );
     assert!(resumed.run.pending_input.is_none());
 }

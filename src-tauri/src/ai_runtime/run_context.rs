@@ -6,7 +6,7 @@
 //! scans a vault unless Request Intake has resolved the Run to the
 //! `ImplicitVault` boundary.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use rusqlite::OptionalExtension;
@@ -63,6 +63,10 @@ pub(crate) struct RunContext {
     pub(crate) session_id: i64,
     pub(crate) message_seq_first: i64,
     pub(crate) user_message: String,
+    /// Validated structured values explicitly supplied for this Run. Execution
+    /// consumes these facts directly instead of attempting to rediscover them
+    /// from the provider-facing natural-language prompt.
+    pub(crate) provided_input_values: BTreeMap<String, String>,
     /// Persisted user-owned multimodal parts for this exact Run only.
     pub(crate) content_parts: Option<Vec<crate::ai_types::ContentPart>>,
     pub(crate) envelope: ExecutionEnvelope,
@@ -431,6 +435,7 @@ mod history_selection_tests {
             session_id: 1,
             message_seq_first: 3,
             user_message: "继续这个对话".to_string(),
+            provided_input_values: BTreeMap::new(),
             content_parts: None,
             envelope: ExecutionEnvelope {
                 effect: crate::ai_runtime::run_contract::Effect::Answer,
@@ -750,6 +755,7 @@ impl RunContextAssembler {
             session_id: input.session_id,
             message_seq_first: input.message_seq_first,
             user_message,
+            provided_input_values: input_values,
             content_parts: input.content_parts,
             envelope,
             write_target_path,

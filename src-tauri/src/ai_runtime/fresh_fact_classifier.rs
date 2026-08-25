@@ -27,7 +27,9 @@ pub(crate) fn classify_fresh_fact(message: &str, accepted_at: DateTime<Utc>) -> 
         FreshFactDomain::Entertainment => (
             Some(accepted_at - Duration::days(30)),
             Some(accepted_at + Duration::days(60)),
-            if operation == Some(DomainOperation::EntertainmentNowPlaying) {
+            if operation == Some(DomainOperation::EntertainmentNowPlaying)
+                && requires_local_entertainment_availability(&lower)
+            {
                 LocationRequirement::City
             } else {
                 LocationRequirement::None
@@ -260,6 +262,10 @@ fn is_current_entertainment_request(message: &str) -> bool {
             "film",
             "上映",
             "院线",
+            "影院",
+            "电影院",
+            "排片",
+            "场次",
             "流媒体",
             "现在能看",
             "theater",
@@ -295,6 +301,34 @@ fn is_current_entertainment_request(message: &str) -> bool {
     // A pure history/review request is not a current-fact domain.
     let asks_history = contains_any(message, &["历史", "影评", "老电影", "review", "classic"]);
     has_current_window && !asks_history
+}
+
+/// A city is a hard precondition only when the user asks about local cinema
+/// availability. Broad release discovery and recommendations can be answered
+/// from bounded regional Web evidence without interrupting the Run.
+fn requires_local_entertainment_availability(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "附近",
+            "影院",
+            "电影院",
+            "院线",
+            "排片",
+            "场次",
+            "几点",
+            "票价",
+            "购票",
+            "正在上映",
+            "cinema",
+            "movie theater",
+            "movie theatre",
+            "showtime",
+            "showtimes",
+            "ticket price",
+            "now showing",
+        ],
+    )
 }
 
 fn contains_any(message: &str, markers: &[&str]) -> bool {
@@ -370,7 +404,27 @@ mod tests {
                 LocationRequirement::None,
             ),
             (
+                "这部电影几点上线流媒体",
+                Some(DomainOperation::EntertainmentStreaming),
+                LocationRequirement::None,
+            ),
+            (
+                "最近有什么新上映的电影吗",
+                Some(DomainOperation::EntertainmentNowPlaying),
+                LocationRequirement::None,
+            ),
+            (
+                "最近有什么好看的电影",
+                Some(DomainOperation::EntertainmentNowPlaying),
+                LocationRequirement::None,
+            ),
+            (
                 "上海正在上映什么电影",
+                Some(DomainOperation::EntertainmentNowPlaying),
+                LocationRequirement::City,
+            ),
+            (
+                "今晚附近影院有什么场次",
                 Some(DomainOperation::EntertainmentNowPlaying),
                 LocationRequirement::City,
             ),

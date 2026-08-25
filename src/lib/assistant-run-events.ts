@@ -235,7 +235,9 @@ function applyEvent(
     stage:
       payload.kind === "stage_changed"
         ? stageTextForPayload(payload)
-        : state.stage,
+        : payload.kind === "input_provided"
+          ? "正在恢复运行状态"
+          : state.stage,
     summary: summaryForPayload(payload) ?? state.summary,
     freshness:
       payload.kind === "accepted" && payload.freshness
@@ -382,7 +384,7 @@ function requestedState(
     case "input_required":
       return "awaiting_input";
     case "input_provided":
-      return "running";
+      return "preparing";
     case "paused":
       return "paused";
     case "resumed":
@@ -438,7 +440,7 @@ function canTransition(current: RunState | null, next: RunState): boolean {
         next === "failed" ||
         next === "cancelled")) ||
     (current === "awaiting_confirmation" && next === "running") ||
-    (current === "awaiting_input" && next === "running") ||
+    (current === "awaiting_input" && next === "preparing") ||
     (current === "paused" && next === "running") ||
     (current === "verifying" &&
       (next === "paused" ||

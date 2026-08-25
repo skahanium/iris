@@ -8,7 +8,6 @@ import {
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
 import { cn } from "@/lib/utils";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
@@ -108,7 +107,9 @@ export function UnifiedAssistantPanel({
   const [confirming, setConfirming] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [submittingInput, setSubmittingInput] = useState(false);
-  const [pendingCity, setPendingCity] = useState("");
+  const [pendingInputValues, setPendingInputValues] = useState<
+    Record<string, string>
+  >({});
   const [retryingWebVerification, setRetryingWebVerification] = useState(false);
   const [classifiedContextRef, setClassifiedContextRef] = useState<
     string | null
@@ -436,16 +437,31 @@ export function UnifiedAssistantPanel({
       .finally(() => setResuming(false));
   }, [assistantRun]);
   const handleSubmitPendingInput = useCallback(() => {
-    const city = pendingCity.trim();
-    if (!city || !assistantRun.pendingInput) return;
+    if (
+      !assistantRun.pendingInput ||
+      assistantRun.pendingInput.fields.some(
+        (field) => !pendingInputValues[field]?.trim(),
+      )
+    )
+      return;
     setSubmittingInput(true);
     setLastError(null);
     void assistantRun
-      .submitInput({ city })
-      .then(() => setPendingCity(""))
+      .submitInput(
+        Object.fromEntries(
+          assistantRun.pendingInput.fields.map((field) => [
+            field,
+            pendingInputValues[field]!.trim(),
+          ]),
+        ),
+      )
+      .then(() => setPendingInputValues({}))
       .catch(() => setLastError("补充信息提交失败，请重试。"))
       .finally(() => setSubmittingInput(false));
-  }, [assistantRun, pendingCity]);
+  }, [assistantRun, pendingInputValues]);
+  useEffect(() => {
+    setPendingInputValues({});
+  }, [assistantRun.pendingInput?.inputId]);
 
   return (
     <div
@@ -500,41 +516,6 @@ export function UnifiedAssistantPanel({
           />
         </div>
       ) : null}
-      {assistantRun.pendingInput ? (
-        <section
-          className={cn(
-            "border-b border-border-subtle bg-muted/30 px-3 py-3",
-            assistantFocus && "ai-focus-column",
-          )}
-          data-testid="assistant-run-input-required"
-          aria-live="polite"
-        >
-          <p className="text-xs font-medium">
-            {assistantRun.pendingInput.prompt}
-          </p>
-          <div className="mt-2 flex gap-2">
-            <Input
-              value={pendingCity}
-              onChange={(event) => setPendingCity(event.target.value)}
-              placeholder="例如：上海"
-              aria-label="查询城市"
-              disabled={submittingInput}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") handleSubmitPendingInput();
-              }}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="brand"
-              disabled={!pendingCity.trim() || submittingInput}
-              onClick={handleSubmitPendingInput}
-            >
-              {submittingInput ? "提交中…" : "继续"}
-            </Button>
-          </div>
-        </section>
-      ) : null}
       {assistantRun.recovery ? (
         <section
           className={cn(
@@ -584,6 +565,24 @@ export function UnifiedAssistantPanel({
           key={assistantSessionIdentity(runSession)}
           messages={messages}
           streaming={streaming}
+          pendingInput={
+            assistantRun.pendingInput && assistantRun.eventState
+              ? {
+                  runId: assistantRun.eventState.runId,
+                  prompt: assistantRun.pendingInput.prompt,
+                  fields: assistantRun.pendingInput.fields,
+                  values: pendingInputValues,
+                  submitting: submittingInput,
+                  onValueChange: (field, value) =>
+                    setPendingInputValues((previous) => ({
+                      ...previous,
+                      [field]: value,
+                    })),
+                  onSubmit: handleSubmitPendingInput,
+                  onCancel: stopStreaming,
+                }
+              : null
+          }
           assistantFocus={assistantFocus}
           messageListRef={messageListRef}
           onCitationClick={handleCitationClick}

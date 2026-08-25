@@ -83,7 +83,7 @@ impl RunIntake {
         let accepted_at = chrono::Utc::now();
         let fresh_fact = classify_fresh_fact(&directive_text, accepted_at);
         let domain_operations = fresh_fact
-            .effective_operation()
+            .structured_provider_operation()
             .into_iter()
             .collect::<Vec<_>>();
         let web_decision = ExclusionClassifier::resolve(
@@ -307,7 +307,7 @@ impl RunIntake {
         let external_tool_grants = request.external_tool_grants.clone();
         let domain_operations = envelope
             .fresh_fact
-            .effective_operation()
+            .structured_provider_operation()
             .into_iter()
             .collect::<Vec<_>>();
         AgentRunRepository::accept_with_external_grants_outcome(
@@ -593,7 +593,7 @@ impl RunIntake {
                 }
             }
             RunControlAction::SubmitInput { input_id, values } => {
-                if snapshot.run.state == crate::ai_runtime::run_contract::RunState::Running
+                if snapshot.run.state == crate::ai_runtime::run_contract::RunState::Preparing
                     && snapshot.events.iter().any(|event| {
                         matches!(
                             event.payload(),
