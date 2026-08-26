@@ -1,79 +1,92 @@
-# 02. 当前状态与技术债
+# 02. 当前状态、生产缺陷与技术债
 
-**初始审计：2026-08-23，代码起点：`116b3663`；当前复验：2026-08-26。**
+> **文档状态**：现行
+> **文档类型**：当前事实审计
+> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
 
-本审计区分代码存在、当前测试证据、实例配置和目标设计。工具名、DTO 或 fixture 存在，不等于真实 Provider 已配置或用户请求能够完成。
+本文件只描述基线提交上的代码和证据，不描述目标已经落地。生产交互与测试结论冲突时，以“存在未覆盖缺陷”记录，而不是用测试数量覆盖问题。
 
-## 1. 状态总览
+## 1. 可保留的可靠基础
 
-| 能力                                         | 实现状态 | 处置方式 | 当前事实                                                |
-| -------------------------------------------- | -------- | -------- | ------------------------------------------------------- |
-| Run 幂等、单航班与 durable finalization      | 已验证   | 保留     | 唯一键、请求指纹、终态顺序和恢复测试通过                |
-| Run-local UI 投影与迟到事件隔离              | 已验证   | 保留     | 用户单行历史可补建 assistant；无归属迟到事件保持隔离    |
-| 补充输入与同 Run 恢复                        | 已验证   | 保留     | 对话内卡片；结构化字段直读；恢复重调度具有明确终态      |
-| 冻结工具表面、执行门禁与 `capabilities_read` | 已验证   | 保留     | 三者共享当前 Run 的允许工具事实                         |
-| Web 权限、classified 隔离、查询污染门禁      | 已验证   | 保留     | Web 开关、local-only 与 taint witness 已覆盖            |
-| `system_time_now`                            | 已验证   | 保留     | 本机事实不依赖 Web                                      |
-| Run-local evidence、来源协议与来源组展示     | 已验证   | 保留     | `ProvenancePolicy` 统一 W/E/L/M；展示标签不参与终态校验 |
-| `FreshResearchPlan`、`EvidenceGap`、查询去重 | 已验证   | 保留     | 三档 profile、抓取/修复/续接/证据/deadline 均为生产控制 |
-| 模型驱动多轮搜索与深抓取                     | 已验证   | 重构完成 | 单一 `web_search` 合同按 current-Run provenance 深抓取  |
-| 结构化领域 DTO、mapping、validator、renderer | 已验证   | 保留     | 五类工具表面、11 个 operation 和 migration 072 已存在   |
-| 真实结构化 Provider 配置                     | 延期     | 保留     | 2026-08-19 快照为 0/11 configured；执行前需重新审计     |
-| Windows deterministic eval runner            | 已验证   | 保留     | 脚本 8/8、smoke 24/24、full 48/48 于 2026-08-24 通过    |
+| 能力                                     | 当前状态 | 处置       | 事实依据                                         |
+| ---------------------------------------- | -------- | ---------- | ------------------------------------------------ |
+| Run 幂等、单航班、durable finalization   | 已验证   | 保留       | 持久化 Run、指纹、终态事务和恢复测试存在         |
+| Run-local UI 投影与迟到事件隔离          | 部分实现 | 重构       | 已有补建与隔离回归，但生产曾出现恢复正文不可见   |
+| 冻结工具表面、权限门禁与工具审计         | 已验证   | 保留       | 每次调用重入 catalog、authorization 和 audit     |
+| Provider-neutral `AgentToolLoop`         | 部分实现 | 重构为核心 | 已支持多轮、多工具、重复抑制和全局 8/24 上限     |
+| Run-local evidence 与 `ProvenancePolicy` | 部分实现 | 保留并简化 | W/E/L/M 已统一，但普通回答仍可能被严格终局误拒绝 |
+| `system_time_now` 等可信 runtime 工具    | 已验证   | 保留       | 本机事实可不联网完成                             |
+| 冻结变更计划、确认和 hash 复核           | 部分实现 | 扩展       | 当前只冻结一个 operation，确认后不再调用模型     |
+| migration 072 与领域旧 Run 读取          | 已实现   | 兼容读取   | 不能删除迁移或要求用户重建数据库                 |
 
-## 2. 已形成的有用基线
+## 2. 已复现的生产问题
 
-### Run、恢复和 UI
+2026-08-24 至 26 日的对话验收至少暴露了四类问题：
 
-- `client_request_id` 与 intake 指纹共同约束幂等重放；`session_key` 只限定活动顶层 Run。
-- 最终消息、证据绑定、Run 终态和 `AnswerComplete` 已有明确提交顺序。
-- sink 失败后从持久化状态恢复，不应重新执行工具或副作用。
-- 新 Run 的 reveal、动画 frame 和 presentation 不应消费上一 Run 内容。
-- 会话历史只有同 Run 用户消息时，正文、过程和终态事件幂等补建唯一 assistant 投影；无同 Run 用户消息时仍忽略迟到事件。
-- 补充信息只承担硬执行前置条件，并绑定原 Run 在对话内展示；提交后由 `preparing` 重调度，已校验字段直接进入 RunContext，不经自然语言二次识别。
+1. 用户提交地点后 Run 状态发生变化，但回答没有进入当前会话投影；状态机修复没有覆盖 UI 恢复路径。
+2. 宽泛推荐被强制索取地点，补充输入通过侧栏顶部或专用卡片接管自然对话，领域规则替代了模型澄清。
+3. 工具已经返回证据、正文也已生成，最终却显示“来源归因协议”错误；曾确认存在 Run-local `W1`、会话 `[C1]` 和全局 evidence ID 的偶合盲区。
+4. 回答能够显示并带引用，但把年度片单、未定档作品、流媒体预告和院线上映混在一起；现有 fixture 证明工具链连通，却没有证明真正回答了用户的问题。
 
-### 工具、权限和证据
+这些现象不是电影领域的独立缺陷，而是 Intake、工具循环、最终化、投影和评测职责分裂的共同结果。
 
-- 工具目录、模型表面和执行器均有冻结表面合同。
-- `web_search` 是当前唯一模型可见网络工具；遗留 `web.fetch` 名称只作为内部兼容归一化存在。
-- Web evidence 复用现有 ledger，并具有当前 Run 归属、退休状态和 HTTPS 定位约束。
-- Provider 原始参数、输出和自带 evidence ID 不直接成为用户可见事实。
+## 3. 系统性根因
 
-### 结构化当前事实框架
+### 3.1 Intake 把普通事实变成严格联网任务
 
-- `system_time_now` 以及 weather、news、finance、entertainment、sports 五类工具表面已注册。
-- `DomainOperation` 定义 11 个 operation；`FreshDomainRecord`、output mapping、validator 和 Host renderer 已存在。
-- migration 072 增加 operation 与 output mapping 兼容字段，不能回滚删除或要求用户重建数据库。
-- 这些资产仍有价值，应作为精确事实快路径保留，而不是继续驱动 11/11 近期路线。
+[`run_intake.rs`](../src-tauri/src/ai_runtime/run_intake.rs) 当前在排除问候、创作、本地转换等情况后，将其余事实请求统一返回 `WebRequired + CurrentRunWeb`。`WebPreferred` 类型存在，但没有形成普通事实的默认路径。这会导致：
 
-## 3. 本轮关闭的研究路径缺口与剩余边界
+- 常识问题和宽泛推荐承担高风险事实相同的终态门禁；
+- Web 关闭时普通问题也无法利用模型知识诚实回答；
+- 来源协议、证据量或 Provider 小故障被升级为整轮失败。
 
-1. `ResearchBudget` 已同时控制搜索、实际成功抓取、一次修复、模型续接、evidence 与 deadline；schema 3 的恢复状态校验其冻结上限，不记录正文或 URL。
-2. 模型仅见 `web_search`；URL 必须来自当前用户消息或 current-Run evidence ledger，不能借用历史、foreign 或 retired evidence。broker 最多并发 3 个允许的深抓取，并回报实际成功数。
-3. 研究型天气、市场、新闻、体育和影视请求均可走统一 Web research；有 binding 的精确事实仍保留结构化快路径。缺 binding 不再是模型前的一刀切失败，News 也不再拥有架构特例。
-4. 两次研究回合未新增有效 evidence 时终止；profile deadline 覆盖 provider 调用和工具执行，Web 关闭仍不会外发。
-5. `fresh_domains` 的模块级 dead-code 许可和已不可达分支已删除。基于真实 provider/model 的性能 p50/p95 与 token 基线明确排除在本轮范围外；它必须保持延期，且不能由 fixture 代替。
-6. 2026-08-25 生产复现发现旧当前事实门把 Run-local `W1` 同全局 evidence ID、会话 `[C1]` 混合比较；空数据库测试因 ID 偶合产生假通过。现已删除重复引用解释器，由 `ProvenancePolicy` 单独校验来源语法、Run 所有权与逐块覆盖；高位 ID 的 Web fallback、11-operation 表驱动链路和 Host `E{id}` 渲染均有命名回归。
+### 3.2 通用 ToolLoop 被 Web 专用控制层污染
 
-## 4. 评测基线修复事实
+[`agent_tool_loop.rs`](../src-tauri/src/ai_runtime/agent_tool_loop.rs) 已经是 Provider-neutral 多轮循环，支持 8 次模型调用、24 次工具调用、重复成功拒绝和失败重试。但它同时直接依赖 `ResearchBudget`、Web evidence 计数、Web deadline 和 Web 专用无进展错误。
 
-本次先复现了两个 Windows 专属阻塞：
+[`run_tool_loop.rs`](../src-tauri/src/ai_runtime/run_tool_loop.rs) 进一步维护通用 Web budget、Fresh research budget、search/fetch/repair 计数和 `ResearchQueryLedger`。结果是本地检索与 Web 研究没有共享同一套进展和预算语义。
 
-- Node 预检把 Windows `stat.mode` 当作 POSIX 权限位，导致 7 个脚本测试中 4 个失败。
-- PowerShell 5 无法解析 UTF-8 无 BOM fixture 中的非 ASCII 字符，且 Windows fixture 与 POSIX fixture 的 dated snippet 合同发生漂移，导致 12 个 Web/Hybrid smoke 案例失败。
+### 3.3 领域分类进入核心执行合同
 
-修复后：
+`FreshFactDomain`、`DomainOperation`、`FreshFactPolicy`、五类工具表面和 11 个 operation 分布在 Intake、tool surface、dispatcher、finalization、恢复和评测中。当前代码把“工具协议存在”误当成“领域能力应当成为核心路由”。
 
-- POSIX 继续检查 owner 与 `0o022`；Windows 保留 absolute path、realpath、非文件系统根、类型和 source DB/data root 绑定。
-- PowerShell fixture 改为 ASCII-safe 合同数据，并与 POSIX fixture 一致提供固定 freshness label。
-- `node --test scripts/agent-eval.test.mjs` 为 8/8；`npm run agent:eval:smoke` 为 24/24。
+这带来三类维护成本：
 
-这只恢复了评测可信度，不证明未来的自适应研究目标已经实现。
+- 领域关键词和字段规则持续侵入普通对话；
+- 没有真实 Provider 时仍维护 DTO、mapping、renderer 和专用测试；
+- 新领域会诱导新增 classifier、operation 和完成门禁，而不是复用通用工具循环。
 
-## 5. 技术债处置原则
+### 3.4 普通回答承担过强终局协议
 
-- 替代 `domain_operation_is_executable` 等旧分支时，同一阶段删除对应断言和文档，不保留长期兼容层。
-- 接通已有预算字段；若某字段仍不参与控制，则删除字段而非继续标注“未来使用”。
-- 复用 `web_search` 的 `query`、`gap`、`urls`，不增加第二网络工具。
-- Provider 接入只在真实需求和已确认 PDR 下进行；不为未选择的 Provider 建 readiness、REST 或 failover 平台。
-- 每个阶段同时报告新增、删除、延迟、token、证据量和质量变化；只增加代码而没有净简化的阶段不得结案。
+模型可见 Run 来源号、会话展示号和 ledger ID 已经统一过一次，但普通联网回答仍经结构化 `submit_final_answer` 修复和逐块覆盖门禁。模型可能已经给出可用自然回答，却因格式、引用粒度或 Provider 工具续接差异被改为失败终态。
+
+确定性校验可以证明来源归属、时效字段和引用存在，不能证明自然语言每个结论都得到语义支持。当前文档和测试曾夸大这一能力。
+
+### 3.5 澄清状态代替自然对话
+
+`AwaitingInput` 已被用于城市等普通字段收集，并要求同 Run 恢复。即使状态恢复可靠，这仍让普通澄清承担事务恢复、历史投影、卡片位置和幂等提交等额外复杂度。只有真正不可重复的事务输入才需要暂停同一 Run。
+
+### 3.6 写入只支持单操作
+
+现有 `FrozenChangePlan` 冻结单个 operation。模型第一次调用确认型工具后，Run 立即进入 `AwaitingConfirmation`；确认后 Host 只执行该操作，所有 budget profile 的 `post_confirmation_max_model_turns` 都是 0。
+
+这能安全完成一次插入或替换，但不能在一次确认中完成有界的多文档变更，也不能在写入后读取目标验证结果。
+
+### 3.7 评测证明了错误的事情
+
+现有 deterministic matrix 和命名测试覆盖 Run、工具、恢复、来源和安全边界，价值应当保留。但部分场景预编排模型调用，只断言使用了 `W1` 并完成，没有评估：
+
+- 首轮结果差时是否调整查询；
+- 回答是否区分时间、地域、渠道和状态；
+- 引用内容是否真的支持推荐；
+- 无进展时是否仍能生成诚实、有用的回答；
+- 不同工具能力 Provider 是否得到一致的降级结果。
+
+成熟数据库中 `W1` 与全局 evidence ID 不同后暴露的假通过，证明 fixture 必须主动破坏 ID 偶合和理想调用顺序。
+
+## 4. 当前结论
+
+- 不需要新建第二 Agent 系统；现有 Run、权限、catalog、Gateway、ledger 和通用 ToolLoop 是正确基础。
+- 需要删除的是 Web/领域专用平行控制层和普通回答上的过强门禁，而不是删除多轮工具能力。
+- 11 个领域 operation 当前确实存在，但目标处置是退出核心；是否保留某个真实 Provider 适配器必须由实际需求和 PDR 单独决定。
+- 真实 Provider 尚未纳入本轮，任何 fixture 结果都不能写成真实模型质量结论。

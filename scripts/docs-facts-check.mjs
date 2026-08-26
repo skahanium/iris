@@ -8,18 +8,30 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
 const activeHarnessRoot = path.join(root, "agent-harness");
 const harnessArchiveRoot = path.join(activeHarnessRoot, "archive");
-const activeHarnessFiles = [
+const activeHarnessRelativeFiles = [
   "README.md",
   "01-authority-and-invariants.md",
   "02-current-state-and-debt.md",
   "03-target-architecture.md",
-  "04-research-and-tool-contracts.md",
+  "04-adaptive-agent-loop-and-tool-contracts.md",
   "05-implementation-roadmap.md",
   "06-evaluation-performance-and-acceptance.md",
   "appendices/A-status-and-test-traceability.md",
-  "appendices/B-current-fact-contract-matrix.md",
+  "appendices/B-task-capability-and-risk-matrix.md",
   "appendices/C-decisions-and-deferred.md",
+];
+const activeHarnessFiles = activeHarnessRelativeFiles.map((relativePath) =>
+  path.join(activeHarnessRoot, relativePath),
+);
+const retiredHarnessFiles = [
+  "04-research-and-tool-contracts.md",
+  "appendices/B-current-fact-contract-matrix.md",
 ].map((relativePath) => path.join(activeHarnessRoot, relativePath));
+const harnessStatusHeader = [
+  "**文档状态**：现行",
+  "**文档类型**：",
+  "**事实基线**：2026-08-27，审计提交 `6c5dbd40`",
+];
 
 // ── CLI ────────────────────────────────────────────────────
 
@@ -311,9 +323,33 @@ function checkAgentHarnessDocumentation() {
     }
   }
 
+  for (const retired of retiredHarnessFiles) {
+    if (existsSync(retired)) {
+      fail(
+        `retired active Agent Harness document still exists: ${path.relative(root, retired)}`,
+      );
+    }
+  }
+
+  for (const filePath of activeHarnessFiles.filter(existsSync)) {
+    const content = readFileSync(filePath, "utf8");
+    for (const required of harnessStatusHeader) {
+      if (!content.includes(required)) {
+        fail(
+          `${path.relative(root, filePath)} is missing Harness status header: ${required}`,
+        );
+      }
+    }
+  }
+
   for (const retired of ["refactor", "structured-tools", "REFACTOR.md"]) {
     if (existsSync(path.join(root, retired))) {
       fail(`retired root Agent Harness path still exists: ${retired}`);
+    }
+  }
+  for (const entry of readdirSync(root)) {
+    if (/^(?:agent[-_]?harness|harness)[-_]/i.test(entry)) {
+      fail(`parallel root Agent Harness path is forbidden: ${entry}`);
     }
   }
 
@@ -354,6 +390,36 @@ function checkAgentHarnessDocumentation() {
     fail(
       "agent-harness/README.md must retain the single archive history entry",
     );
+  }
+  if (!harnessReadme.includes("../ROADMAP.md")) {
+    fail("agent-harness/README.md must link the ROADMAP authority");
+  }
+  const roadmap = readFileSync(path.join(root, "ROADMAP.md"), "utf8");
+  if (!roadmap.includes("./agent-harness/README.md")) {
+    fail("ROADMAP.md must link the active Agent Harness direction");
+  }
+
+  const withdrawnClaimPatterns = [
+    /AH-2[^\n]{0,48}(?:已验证|已完成)/,
+    /AH-3[^\n]{0,48}(?:已验证|已完成)/,
+    /以模型驱动、`EvidenceGap` 驱动/,
+    /11 个 operation[^\n]{0,48}(?:核心|主路径|近期目标)/,
+  ];
+  const withdrawalContext = /(?:旧|历史|此前|撤回|取代|不再|退出|错误|曾经)/;
+  for (const filePath of activeHarnessFiles.filter(existsSync)) {
+    const lines = readFileSync(filePath, "utf8").split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      for (const pattern of withdrawnClaimPatterns) {
+        if (
+          pattern.test(lines[index]) &&
+          !withdrawalContext.test(lines[index])
+        ) {
+          fail(
+            `${path.relative(root, filePath)}:${index + 1} states a withdrawn Harness direction as current`,
+          );
+        }
+      }
+    }
   }
 }
 

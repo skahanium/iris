@@ -1,66 +1,87 @@
-# 附录 C：决策、延期与否决项
+# 附录 C：现行决策、撤回决策与延期项
 
-本附录记录已经做出的方向选择，避免归档路线或未来设想重新成为默认施工目标。
+> **文档状态**：现行
+> **文档类型**：架构决策记录
+> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
 
-## 1. 已采纳决策
+决策 ID 一经使用不重新赋义。被生产证据推翻的决定进入撤回表，避免在 Git 历史和现行文档之间产生两个“当前结论”。
 
-| ID      | 决策                                      | 理由                                                          |
-| ------- | ----------------------------------------- | ------------------------------------------------------------- |
-| DEC-001 | `agent-harness/` 是唯一 Harness 建设入口  | 消除两套状态、路线和验收语言冲突                              |
-| DEC-002 | 多轮 Web research 是通用时效事实主路径    | 模型可以根据已取得证据调整搜索重点，覆盖叙述型任务            |
-| DEC-003 | 只保留一个模型可见网络工具 `web_search`   | 复用已有权限、预算、broker 和 evidence ledger，抑制工具面膨胀 |
-| DEC-004 | 结构化 operation 降为已配置时的精确快路径 | 保留有价值的 DTO/validator/fixture，不以 11/11 扩大近期技术债 |
-| DEC-005 | 路由按任务形态优先                        | 同一领域同时包含精确事实和研究问题，领域级阻断过于粗糙        |
-| DEC-006 | Quick/Standard/Deep 分层预算              | 在质量、延迟和成本之间形成明确上限                            |
-| DEC-007 | 模型能力来自现有协议事实                  | 避免建立自报能力和持久化评分数据库                            |
-| DEC-008 | 新抽象必须同阶段删除旧分支                | 防止长期双轨和兼容 facade                                     |
-| DEC-009 | `ProvenancePolicy` 是来源引用唯一解释器   | 防止 W 顺序号、C 展示标签与全局 ledger ID 再次形成平行合同    |
+## 1. 现行决策
 
-## 2. 延期能力
+| ID      | 决策                                  | 理由                                                               |
+| ------- | ------------------------------------- | ------------------------------------------------------------------ |
+| DEC-010 | `agent-harness/` 继续作为唯一现行入口 | 防止文档双轨；历史通过 Git 和唯一归档入口追溯                      |
+| DEC-011 | 采用受约束的模型自主性                | 模型更适合语义规划；Host 继续掌握确定性边界                        |
+| DEC-012 | 现有 `AgentToolLoop` 成为唯一多轮循环 | 已支持 Provider-neutral 多轮工具，无需第二研究引擎                 |
+| DEC-013 | Intake 使用正交任务轴                 | AgentIntent/Effect/Context/Freshness/Effort/Risk/Capability 已存在 |
+| DEC-014 | 普通外部事实默认 WebPreferred         | 避免把普通问答升级为严格当前事实事务                               |
+| DEC-015 | 使用总预算 + `cost_class` 分类预算    | 复用 RunBudgetPolicy 和 catalog，不引入领域 planner                |
+| DEC-016 | 连续无进展后强制综合                  | 有限材料仍可形成诚实回答，不应默认红色失败                         |
+| DEC-017 | 普通回答不强制结构化终局              | 来源协议不能成为自然问答的普遍可用性门槛                           |
+| DEC-018 | 普通缺参使用自然对话                  | 减少 AwaitingInput、恢复、投影和卡片耦合                           |
+| DEC-019 | 写入采用一次确认的有界变更集          | 同时支持多步修改和确定性授权边界                                   |
+| DEC-020 | 领域 operation 退出核心               | 结构化协议保留，真实 Provider 作为可选工具接入                     |
+| DEC-021 | Provider 差异只在 Gateway 适配        | 禁止 MiniMax 或其他模型专用核心分支                                |
+| DEC-022 | `ProvenancePolicy` 是唯一来源解释器   | 防止 W/C/ledger ID 再次分裂                                        |
 
-以下能力只有重新立项、具备重复真实需求、评测、隐私边界和删除方案后才能进入主干：
+## 2. 已撤回决策
 
-- 11/11 结构化 Provider 覆盖；
-- operation readiness 管理中心与真实预览工作流；
-- 通用 REST adapter；
-- 多 Provider 覆盖矩阵、健康排序和自动 failover；
-- 自由文本 LLM/NLI VERIFIED judge；
-- 跨会话语义记忆中心；
+| 原 ID/方向          | 撤回内容                                    | 生产或代码依据                                       | 替代        |
+| ------------------- | ------------------------------------------- | ---------------------------------------------------- | ----------- |
+| 旧 DEC-002          | 撤回 Web 专用多轮 research 作为通用事实骨架 | 通用循环被 ResearchBudget/EvidenceGap 反向污染       | DEC-012/015 |
+| 旧 DEC-004          | 撤回 11 个 operation 作为核心精确事实快路径 | 无真实 Provider 仍侵入 Intake、surface、finalization | DEC-020     |
+| 旧 DEC-005          | 撤回“任务形态 + 领域字段合同”双重核心路由   | 领域规则继续决定缺参和完成                           | DEC-013     |
+| 旧 DEC-006          | 撤回 Quick/Standard/Deep Web 专用 profile   | 与现有 RunBudgetPolicy 并存且只约束 Web              | DEC-015     |
+| 旧 strict-fact 路线 | 撤回所有非排除事实必须当前 Run Web 证据     | 普通推荐和问答被误拒绝                               | DEC-014/017 |
+| 旧 EvidenceGap 闭集 | 撤回模型后续研究必须映射九种 gap            | 语义缺口不应由 Host 枚举，且本地工具无法复用         | DEC-011/016 |
+| 旧普通补充输入      | 撤回城市等普通缺参暂停同一 Run              | 状态机和 UI 复杂，且对自然对话不必要                 | DEC-018     |
+
+撤回不表示立即删除持久化字段。删除顺序由 HR 路线控制，兼容读取与新写入停止必须分开实施。
+
+## 3. 明确保留
+
+- Run engine、durable finalization、幂等和恢复；
+- 冻结 capability、工具表面、权限门禁和审计；
+- Provider Gateway 和现有 MCP snapshot；
+- 单一 evidence ledger 与 `ProvenancePolicy`；
+- 结构化工具名称、JSON Schema、typed result 和确认协议；
+- migration 072 及旧 Run/旧 mapping 读取兼容；
+- Markdown 写入的用户确认和内容 hash 复核；
+- classified、local-only、Web 开关和本地内容防外泄边界。
+
+## 4. 延期项
+
+以下能力不进入 HR-0 至 HR-6，只有真实重复需求、评测、隐私边界和删除方案齐备后才能立项：
+
+- 11/11 结构化 Provider 覆盖或 readiness 管理中心；
+- 通用 REST adapter、多 Provider 健康排序和自动 failover 平台；
+- 自由文本 NLI/LLM judge 作为生产 VERIFIED 门禁；
 - 通用浏览器自动化、登录态操作和表单提交；
-- 六类之外的购物、旅行、医疗、法律和交易垂直能力；
-- 第三方工具市场、任意代码执行和通用多 Agent 平台。
+- 跨会话语义记忆中心；
+- 第三方工具市场、任意代码执行和通用多 Agent 平台；
+- 个性化金融买卖、自动交易和其他高风险外部写入；
+- 真实 Provider 质量/性能试点，直到用户另行授权模型、成本和场景。
 
-## 3. 明确否决的默认方案
+## 5. Provider Decision Record
 
-- 恢复多个模型可见 search/fetch 工具；
-- 新建第二 Run engine、provider registry、evidence store 或会话真相表；
-- 将普通 Web 结果伪装成结构化 Provider 输出；
-- 因无结构化 binding 而统一阻止同领域研究型问题进入模型；
-- 为达到 operation 数量放宽时效、地域、单位、来源和最终化合同；
-- 根据模型名称硬编码“强/弱”路由，或让模型自报权限；
-- 用历史 24/48 报告代替当前工作树验证；
-- 先建设 readiness/REST/failover 平台，再寻找真实 Provider。
+只有准备接入一个真实结构化 Provider 时才创建 PDR，必须在编码前确认：
 
-## 4. Provider Decision Record
+- 真实用户任务和为什么通用 Web/local/external 工具不足；
+- 工具名、capability、Schema、typed result 和现有 catalog 接入方式；
+- Provider、协议、许可、ToS、成本、限流、时效、地域和失败模式；
+- 配置 hash、撤销、隐私、日志和安全预览边界；
+- 没有 Provider、部分覆盖、协议漂移和删除时的行为；
+- 是否需要依赖、schema 或 IPC，以及为什么不能复用现有边界。
 
-只有实际准备接入某个 Provider 时才创建一份 PDR。PDR 必须在编码前由设计者确认，至少包含：
+PDR 不得创建领域 Run 状态、第二 registry、第二 evidence store 或模型专用路由。
 
-- operation 与目标覆盖范围；
-- Provider 名称、协议类型和现有 registry 接入方式；
-- 脱敏字段样例到 Iris DTO 的 mapping；
-- 地域、时效、许可、ToS、成本、限流和失败模式；
-- 安全公开参数的真实预览方案；
-- 无 Provider、部分覆盖和删除时的行为；
-- 是否需要新依赖、schema 或 adapter，以及为什么现有能力无法复用。
+## 6. 决策变更规则
 
-出现 REST-only、许可不明、收费预览、部分覆盖、需要新表/状态或需要放宽验收时，必须停止施工并请求设计决策。
+变更现行决策必须：
 
-## 5. 决策变更规则
-
-变更已采纳决策时必须：
-
-1. 提供当前代码或评测证明原决策不再合适；
-2. 比较维护面、性能、安全和迁移成本；
-3. 说明替代方案会删除什么，而不只是新增什么；
-4. 若影响版本范围，先修改根 `ROADMAP.md`；
-5. 更新本附录、目标架构、roadmap、验收和对应测试。
+1. 提供当前代码、命名评测或生产复现；
+2. 比较安全、质量、复杂度、兼容和迁移成本；
+3. 明确替代方案会删除什么；
+4. 影响版本范围时先更新 `ROADMAP.md`；
+5. 同步目标架构、路线、验收、状态账本和文档事实检查；
+6. 原决策移入撤回表，不直接改写为相反含义。

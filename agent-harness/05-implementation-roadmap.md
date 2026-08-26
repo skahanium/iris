@@ -1,104 +1,147 @@
-# 05. 实施路线图
+# 05. Harness Recovery 实施路线图
 
-本路线图只规定 Harness 内部依赖和退出条件，不对应产品版本。任何版本安排必须先进入根 `ROADMAP.md`。
+> **文档状态**：现行
+> **文档类型**：实施路线
+> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
 
-## 1. 阶段总览
+本路线只规定 Harness 内部依赖、删除项和退出条件，不新增产品版本承诺。每个代码阶段开始前必须单独生成测试先行实施计划；未满足退出条件不得提前开始依赖它的阶段。
 
-| 阶段                    | 状态     | 目标                                           | 同阶段必须完成的删减                                          |
-| ----------------------- | -------- | ---------------------------------------------- | ------------------------------------------------------------- |
-| AH-0 可信评测基线       | 已验证   | Windows 与 POSIX 使用一致的安全和 fixture 合同 | 删除跨平台误判和 fixture 漂移                                 |
-| AH-1 文档与事实源统一   | 已验证   | 单一入口、状态账本、目标合同和归档             | 移除根目录旧入口和两套现行路线                                |
-| AH-2 自适应研究循环     | 已验证   | 接通搜索、抓取、修复、轮次和 deadline 预算     | 已删除 `max_fetches: 0` 与无效预算字段                        |
-| AH-3 按任务形态重构路由 | 已验证   | 精确快路径与研究路径协调                       | 已删除无 binding 的领域级前置阻断和 News 特例                 |
-| AH-4 性能、质量与清理   | 部分验证 | 固化 profile 护栏并清除不可达代码              | 已移除 dead-code 许可、旧测试和残余双轨；真实性能基线排除本轮 |
-| AH-5 真实 Provider 试点 | 延期     | 仅按真实需求接一个已批准 Provider              | 不建设 11/11 readiness 平台                                   |
+## 1. 历史状态重置
 
-## 2. AH-0：可信评测基线
+此前 AH-0 的跨平台 deterministic 基线和 AH-1 的单一文档入口仍有可复用价值，但此前 AH-2/AH-3 曾经写成已验证终局的判断已被生产缺陷推翻。新阶段不复用旧编号：
 
-已完成：
+| 历史内容                   | 当前处置 | 说明                                     |
+| -------------------------- | -------- | ---------------------------------------- |
+| Run、跨平台 fixture 基础   | 保留     | 继续作为管线与安全测试基础               |
+| 单一 `agent-harness/` 入口 | 保留     | 原位重写，不建立第二套文档               |
+| Web 专用自适应研究骨架     | 重构     | 并入通用 AgentToolLoop                   |
+| 领域 operation 核心路由    | 退出核心 | 只保留兼容读取和真实需求驱动的可选适配器 |
+| 普通事实严格结构化终局     | 重构     | 仅严格任务使用                           |
 
-- 为 credential metadata 增加明确平台语义；POSIX 保留 owner/mode 检查，Windows 不解释 POSIX mode bits。
-- 保留 absolute path、realpath、非 filesystem root、目录/文件类型和 source DB/data root 绑定。
-- 修复 PowerShell 5 对无 BOM 非 ASCII fixture 的解析失败，并使 Windows/POSIX dated snippet 一致。
-- 通过脚本测试 8/8、单一 Web evidence case 和 smoke 24/24。
+## 2. 阶段总览
 
-退出条件已于 2026-08-24 复验：full 48-case、完整 Rust、前端门禁与文档检查均通过。结果写入附录 A，不修改历史版本化报告，除非显式使用受控更新开关。
+| 阶段 | 状态   | 目标                                 | 同阶段必须删除或降级                         |
+| ---- | ------ | ------------------------------------ | -------------------------------------------- |
+| HR-0 | 已验收 | 重置文档事实和路线                   | 旧现行文件名、旧完成结论、ROADMAP 冲突       |
+| HR-1 | 未开始 | 建立能复现生产问题的通用行为基线     | ID 偶合、理想调用顺序和只验管线的假阳性      |
+| HR-2 | 未开始 | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、领域前置阻断         |
+| HR-3 | 未开始 | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
+| HR-4 | 未开始 | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
+| HR-5 | 未开始 | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
+| HR-6 | 未开始 | 领域 operation 退出核心并净删除      | classifier、默认表面、专用门禁和失效测试     |
+| HR-7 | 未开始 | 通用质量评测与 Provider 能力校准     | 按单一模型/领域编排的成功假设                |
 
-## 3. AH-1：文档与事实源统一
+## 3. HR-0：文档事实重置（已验收）
 
-实施内容：
+实施：
 
-- 通过 Git rename 将旧目录和根入口迁入带日期归档。
-- 创建本文档体系，并更新 `docs/README.md` 的唯一入口。
-- 文档事实校验必须验证相对链接、必需文件、归档边界和旧根路径不存在。
-- 状态采用“实现状态 + 处置方式”，旧通过数不自动继承。
+- 原位重写唯一现行文档，统一状态头、基线日期和审计提交。
+- 将研究合同改为通用 Agent 循环合同，将领域矩阵改为任务/能力/风险矩阵。
+- 同步 `ROADMAP.md`、`docs/README.md` 和文档事实检查。
+- 明确 `ARCHITECTURE.md` 仍只描述当前代码，不写入未实现目标。
 
-退出条件已于 2026-08-24 复验：`docs:check` 与全量格式检查通过；当前文档不引用归档作为规范。
+退出条件：
 
-## 4. AH-2：接通自适应研究循环（已验证）
+- 新旧文件不并存，所有现行链接有效；
+- 文档明确区分当前事实、目标合同和实施路线；
+- `npm run docs:check`、`npm run format:check`、`git diff --check` 通过；
+- 完整 diff 人工复核后才能把 HR-0 改为已验收。
 
-测试先行：
+2026-08-27 验收结果：现行文件已完成原位重写和两项受控重命名，ROADMAP 与 docs 索引已同步；文档事实检查会拒绝旧文件、平行根目录、缺少状态头、断链和被撤回方向重新成为现行结论。验证命令与最终提交见本轮 Git 记录。
 
-1. 为 Quick/Standard/Deep 的搜索、抓取、模型轮次、证据和 deadline 编写表驱动失败测试。
-2. 为 subsequent call 的 `gap`、current-Run URL provenance、重复 URL/query 和两轮无新增证据编写测试。
-3. 为单轮最多 3 个并发抓取、取消和恢复预算编写测试。
+## 4. HR-1：生产问题与通用行为基线
 
-实现与同步删除：
+先补失败回归，不改变生产路由：
 
-- 复用 `web_search` 的 `query`、`gap`、`urls`，让 Host 在一个工具合同内执行搜索与深抓取。
-- 将 `ResearchBudget.max_fetches`、`max_repairs` 和剩余 deadline 接入执行器及恢复状态。
-- 把模型工具循环的 `max_fetches: 0` 替换为当前 profile 剩余预算。
-- 只有明确证据充分时保留 Direct 提前结束；需要继续研究时进入同一 bounded loop。
-- 删除不再产生控制效果的预算字段、重复 planner helper 和对应旧测试。
+- 普通事实与推荐不应自动变成严格 WebRequired；
+- 首轮搜索结果差时模型应调整查询并取得新资源；
+- 两轮无进展时应强制综合，而不是直接红色失败；
+- 本地搜索后可多次读取相关笔记完成多跳回答；
+- 普通正文存在时不得因非严格来源协议被改为失败；
+- 普通缺参可自然追问；
+- 高位 evidence ID、跨 Run `W1` 和不同 Provider tool-call 形态不发生偶合；
+- 已确认写入仍保持单次、不可越权，作为 HR-5 前的安全基线。
 
-本轮结果：Quick/Standard/Deep 已冻结为 `1/2/2/4/20`、`3/6/4/8/45`、`5/10/6/12/90`（搜索/抓取/模型续接/evidence/deadline）；resume state 已升级为无正文的 schema 3，并恢复搜索、抓取与修复计数。`web_search` 仅接受本轮用户明示或 current-Run ledger 已登记的 HTTPS URL，深抓取最多并发 3，且只按实际成功抓取消费额度。模型循环同时受 profile 轮次与 deadline 约束，两轮无新增证据即停止。
+退出条件：每个生产问题都有先红后绿所需的独立测试夹具，且 fixture 不预编排唯一正确查询或答案正文。
 
-2026-08-26 补充复验关闭了一个基线盲区：成熟数据库中的全局 evidence ID 不再与 Run-local `W1` 偶合。最终化由唯一 `ProvenancePolicy` 解析 W/E/L/M，当前事实门只检查冻结策略与当前证据充足性；结构化 Host 输出使用 `E{id}`。这属于 AH-0 测试可信度、AH-1 事实源唯一性和 AH-2 研究终态合同的共同加固，不新增领域旁路。
+## 5. HR-2：Intake 去领域化
 
-退出条件已由附录 A 中的命名 Rust 测试、`cargo test`、评测与门禁复验覆盖。
+实现方向：
 
-## 5. AH-3：按任务形态重构路由（已验证）
+- 使用现有 `AgentIntent`、Effect、ContextMode、Freshness、Effort、RiskClass 和 CapabilityId 决定 envelope。
+- 普通外部事实默认 WebPreferred；明确联网/URL/强时效/高风险才 WebRequired。
+- FreshFactDomain 和 DomainOperation 不再决定权限、工具面、澄清或完成门禁。
+- 领域旧字段保留反序列化和恢复读取；新 envelope 不再写入领域规划事实。
 
-测试先行：
+同步删除：所有“未命中排除项即 StrictExternalFact”的终局分支、领域 operation 可执行性前置阻断和相应关键词矩阵。
 
-- 精确报价有 binding 时走结构化快路径；无 binding 但 Web 字段充分时仍可回答。
-- 市场原因、新闻综述、体育前瞻和影视推荐即使属于现有领域，也走 Web research。
-- 无 binding 且 Web 不足时返回稳定不足结果，不在模型前统一失败，也不编造精确值。
-- News 不再拥有独占的 Web fallback 架构特例。
+退出条件：Chat、AskNotes、Research、CitationCheck、Draft、Apply 的表驱动 intake 测试覆盖 Offline/WebPreferred/WebRequired，并证明 Web 开关不能被模型或分类器增权。
 
-实现与同步删除：
+## 6. HR-3：统一自适应工具循环
 
-- Intake 增加内部 task-shape 决策，保留领域字段合同。
-- 移除 `domain_operation_is_executable` 的“无 binding 即模型前失败”职责。
-- 移除 `constrain_domain_tool_surface` 中隐藏通用 `web_search` 的领域特例。
-- 删除断言十个非 News operation 必须在模型前失败的旧测试，替换为任务形态矩阵。
-- 保留结构化 DTO、validator、renderer、fixtures 和 migration 072。
+实现方向：
 
-本轮结果：任务形态按“精确当前事实 / 研究型当前事实 / 其他”决定，而非只按领域决定；有 binding 的精确事实继续走冻结结构化快路径，无 binding 时统一降级为通用 Web research。News 已不再拥有独占回退；模型、工具表面、executor、finalization 与恢复路径共享同一冻结合同。
+- `RunBudgetPolicy` 升级为唯一总量与分类预算事实源，兼容读取旧 schema。
+- catalog 现有 `cost_class` 扩展为 local、network、external_read、runtime 和 confirmed_change。
+- 通用循环根据 resource ID、canonical URL、内容 hash 和 revision 计算进展。
+- 连续两轮无进展或探索预算耗尽时关闭工具并保留最后一次综合。
+- Web、本地和外部只读工具共享循环，但继续保持各自安全与内容边界。
 
-退出条件已由任务形态矩阵、11 个 operation 的表驱动运行/恢复测试与 News 通用 Web 回退测试覆盖。
+同步删除：`FreshResearchPlan` 生产路由、闭集 `EvidenceGap`、Web evidence 专用停机、重复 deadline 和 search/fetch/repair 平行计数。
 
-## 6. AH-4：性能、质量与不可达代码清理（部分验证）
+退出条件：差结果改写查询、本地多跳、混合工具、重复抑制、分类上限、取消、总预算和强制综合全部通过同一循环测试。
 
-- 为三个 profile 记录固定 provider/model/fixture 的 p50、p95、token、搜索、抓取、模型轮次和 evidence count。
-- first progress event 在本地 Host 路径目标为 500ms 内。
-- 同 profile p95 或 token 回退超过 20% 时阻止合并，除非质量有可量化收益并记录决定。
-- 审计 `fresh_domains` 模块级 `allow(dead_code)`，删除不可达 enum、helper、adapter 和测试。
-- 使用静态搜索确认只有一个研究循环、一个模型可见网络工具、一个 provider registry 和一个 evidence ledger。
+## 7. HR-4：回答、澄清、错误与投影
 
-本轮已完成：清理 `fresh_domains` 模块级 `allow(dead_code)`、不可达 request 字段、finance 数值 helper/常量和固化旧架构的测试；clippy 不再依赖这些许可。静态扫描确认研究控制仍由一个模型循环、一种模型可见网络工具和既有 evidence ledger 承担。
+实现方向：
 
-尚未完成的退出条件：真实 provider/model/profile 的 p50、p95、token 基线。本轮工作明确排除真实 Provider 与外部性能试点；该项保持延期，不能以本地 fixture 的确定性计时冒充真实基线。只有未来单独确认模型/profile/成本 checkpoint 后，才可执行 live performance profile。
+- 普通回答直接持久化自然正文和受控来源组，不暴露 `submit_final_answer`。
+- CitationCheck、高风险当前事实和其他严格合同才启用结构化终局。
+- 普通缺参自然追问并完成；`AwaitingInput` 只兼容读取旧 Run。
+- 前端只由同 Run assistant 投影拥有正文、过程、来源和终态。
+- 用户错误提示使用“证据不足、能力不可用、回答未完成”等产品语义；协议码只进诊断。
 
-## 7. AH-5：真实 Provider 试点（延期）
+同步删除：新普通 Run 的 input transaction、领域补充卡特殊路由、普通回答的强制终局修复和重复来源解释器。
 
-仅当重复使用场景证明结构化快路径能显著改善精确性或延迟时启动。每个试点先完成 PDR，包含许可、成本、覆盖、字段、真实预览、失败模式和删除方案。
+退出条件：自然追问、下一轮承接、正文不被终态覆盖、恢复不重放、迟到事件隔离和四类错误语义均有 Rust/Vitest 回归。
 
-本阶段不授权：通用 REST adapter、readiness 管理中心、多 Provider 自动 failover、新状态表或 11/11 覆盖目标。任何一项若确有必要，必须单独决策并证明不能复用现有事实源。
+## 8. HR-5：冻结变更集
 
-## 8. 阶段纪律
+实现方向：
 
-- 每阶段提交必须列出保留、重构、移除的代码和测试。
-- 新抽象未删除旧分支时，阶段不得结案。
-- migration、公共 IPC 和外部工具 schema 保持向后兼容；需要变更时同步 Rust、TypeScript wrapper、IPC 文档和 migration up/down。
-- 新依赖需先完成 AGPL-3.0 兼容性与复用审计；当前路线默认不新增依赖。
+- 扩展现有 `FrozenChangePlan` 为最多 6 个操作、6 个文件的有序计划。
+- 一次确认冻结完整参数、目标、base/expected hash、过期时间和 plan hash。
+- Host 顺序执行；任何授权或 hash 漂移停止剩余操作。
+- 成功后最多 2 次模型和 4 次目标限定的本地只读验证；不开放 Web、外部或新增写入。
+
+同步删除：单 operation 假设、确认后固定零模型轮次和无法表达部分执行状态的测试。
+
+退出条件：多文件成功、第二项前 hash 漂移、重启恢复、重复确认、部分执行报告、验证越权和再次写入拒绝均通过；不新增数据库表。
+
+## 9. HR-6：领域核心退役
+
+实施：
+
+- 从 Intake、默认 tool surface、dispatcher 选择和 finalization 移除五类领域分支。
+- 保留 migration 072、旧 envelope 和旧 provider mapping 的只读兼容。
+- 有真实 Provider 的结构化能力通过统一 catalog/MCP snapshot/capability 接入，不创建领域状态机。
+- 删除不再可达的 DTO renderer、fixture、helper、测试和文档；若某适配器仍有真实调用证据，单独记录保留理由。
+
+退出条件：静态搜索证明核心不再依赖 FreshFactDomain/DomainOperation 做新 Run 决策；旧 Run 可安全读取或终态化；代码净减少且无第二路由。
+
+## 10. HR-7：质量与 Provider 校准
+
+- 建立普通对话、Web 自适应、本地多跳、混合材料、严格事实、无工具 Provider 和文档修改任务矩阵。
+- 固定夹具验证行为和安全，不能冒充真实答案质量。
+- 至少使用两个协议形态不同的 mock Gateway，禁止针对 MiniMax 调整核心。
+- 真实 Provider 试点保持另行授权，记录模型、配置 hash、成本 checkpoint、p50/p95、token 和匿名 verdict，不保存正文、查询或 URL。
+
+退出条件：质量、安全、性能和净简化门槛全部满足；真实试点缺失时只能声明 deterministic 能力，不得声明生产模型质量。
+
+## 11. 阶段纪律
+
+- 每阶段开始前创建独立、决策完整的测试先行实施计划。
+- 每阶段提交必须列出保留、重构、删除和兼容读取项。
+- 新抽象未替代并删除旧分支时只能标为部分实现。
+- migration、公共 IPC 或持久化 JSON 变化必须提供兼容读取和回滚边界。
+- 默认不新增依赖、数据库表、Provider 或模型专用分支。

@@ -1,104 +1,114 @@
 # 03. 目标架构
 
-## 1. 单一 Harness 形态
+> **文档状态**：现行
+> **文档类型**：目标合同
+> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
+
+## 1. 单一 Harness 数据流
 
 ```text
 User Turn
-  -> Run Intake / Permission Snapshot / Task Shape
-  -> ExecutionEnvelope + ToolSurfacePlan
+  -> Request Intake
+       AgentIntent + Effect + ContextMode + Freshness
+       + Effort + RiskClass + CapabilityId
+  -> frozen ToolSurface + RunBudgetPolicy
   -> one Run Engine
-       -> trusted runtime fast path
-       -> structured exact-fact fast path (when configured)
-       -> bounded web research loop
-  -> one Evidence Ledger
-  -> deterministic evidence/finalization gates
-  -> Durable Message + Run State + Recoverable UI Projection
+       -> Direct, or
+       -> one bounded AgentToolLoop
+            model <-> authorized runtime/local/Web/external-read tools
+       -> optional frozen change-set confirmation
+       -> bounded read-only verification
+  -> one Evidence Ledger + one ProvenancePolicy
+  -> durable assistant message + terminal Run state
+  -> recoverable Run-local UI projection
 ```
 
-以下组件始终保持单一：
+Run engine、prompt compiler、tool catalog、Gateway、provider registry、evidence ledger、AgentToolLoop 和前端投影都只能有一套。
 
-- Run engine 与 durable state machine；
-- prompt compiler 与 provider protocol adapter；
-- tool catalog 与当前 Run tool surface；
-- MCP/provider registry；
-- Web evidence broker 与 evidence ledger；
-- 前端 Run presentation 与恢复来源。
+## 2. 模型与 Host 的职责
 
-## 2. Intake：从领域优先转为任务形态优先
+| 模型负责                     | Host 负责                                    |
+| ---------------------------- | -------------------------------------------- |
+| 理解问题和用户真实意图       | 冻结权限、工具表面和预算                     |
+| 选择已授权工具               | 校验参数、权限、重复、取消和调用上限         |
+| 判断结果是否相关、过时或冲突 | 登记资源身份、时间、Run 所有权和安全元数据   |
+| 调整关键词、范围和搜索方向   | 阻止无界循环、SSRF、隐私外发和未确认副作用   |
+| 综合材料并说明不确定性       | 持久化消息、来源绑定、Run 终态和恢复         |
+| 提出文档变更                 | 冻结变更集、展示确认、确定性执行和 hash 复核 |
 
-Intake 仍可识别 `FreshFactDomain` 和 `DomainOperation`，但路由决策首先区分：
+Host 不实现电影、天气、体育等语义规划器；模型也不能用自然语言声明绕过确定性门禁。
 
-- `RuntimeFact`：本机时间、日期、时区等可信 runtime 事实；
-- `ExactCurrentFact`：报价、观测、比分、明确排期等需要固定字段的事实；
-- `CurrentResearch`：新闻综述、原因解释、比较、推荐、前瞻和跨来源综合；
-- `NonCurrent`：无需联网的普通对话、转换和本地任务。
+## 3. Intake 的正交决策
 
-领域只决定字段、时效和地域规则，不再决定“能否让模型研究”。无结构化 binding 时，ExactCurrentFact 可以尝试受控 Web 证据合同；CurrentResearch 默认进入 Web loop。
+- `AgentIntent`：Chat、AskNotes、Research、CitationCheck、Write 等用户任务形态。
+- `Effect`：Answer、Draft、Apply。
+- `ContextMode`：None、Conversation、ImplicitVault、ExplicitReferences、ExplicitScope。
+- `Freshness`：Offline、WebPreferred、WebRequired。
+- `Effort`：Direct、ToolLoop、Durable。
+- `RiskClass`：ReadOnly、BoundedWrite、Destructive、ExternalSideEffect。
+- `CapabilityId`：模型、runtime、本地、Web、外部只读和写入权限。
 
-## 3. 统一网络研究循环
+领域、关键词和 Provider mapping 可以帮助模型选择工具，但不能产生第二套权限或完成语义。
 
-`web_search` 是唯一模型可见网络工具，Host 内部可以执行搜索和受控页面抓取：
+## 4. 渐进联网语义
+
+- `Offline`：对话、创作、转换、本地材料、classified/local-only 和可信 runtime。
+- `WebPreferred`：普通外部事实、推荐、比较和一般研究。Web 可用时模型决定是否调用；无 Web 证据仍可诚实回答或说明知识限制。
+- `WebRequired`：用户明确要求联网或核实、指定 URL、强时效数据以及医疗、法律、金融等高风险当前事实。缺少当前 Run 证据时不得伪造确定性结论。
+
+联网开关只决定授权；`Freshness` 决定答案义务，两者不能互相增权。
+
+## 5. 通用自适应工具循环
+
+Web、本地检索、runtime 和外部只读工具全部进入同一个循环：
 
 ```text
-initial query
-  -> search results registered in current Run
-  -> assess deterministic fields + model EvidenceGap
-  -> next query OR current-Run URL selection
-  -> bounded concurrent fetch (max 3)
-  -> evidence ledger update and dedupe
-  -> early stop / finalization / explicit insufficiency
+model turn
+  -> zero or more authorized tool calls
+  -> sanitized bounded results
+  -> model assesses relevance / coverage / conflict
+  -> refine query, read another resource, or answer
+  -> Host stops on success, no progress, cancellation or budget
 ```
 
-模型负责在已有证据基础上调整查询、缺口和选定 URL；Host 负责授权、provenance、SSRF、预算、重复检测、证据登记和最终化。模型不能请求任意未登记 URL，也不能自行提高预算。
+Host 只用稳定资源 ID、URL、内容 hash、revision 和调用 fingerprint 判断是否有新进展，不实现语义 `EvidenceGap` 闭集。连续无进展或探索额度用尽后关闭工具，并保留最后一次综合机会。
 
-支持原生工具续接的协议使用模型驱动循环；chat-only 或未经验证的自定义 endpoint 使用 Host 驱动的有限预取加一次综合。该差异来自现有协议能力，不建立新的持久化模型评分库。
+## 6. 结构化工具的定位
 
-## 4. 结构化精确事实快路径
+结构化 tool name、JSON Schema、typed result、权限和审计仍是必要执行合同。应退出核心的是领域专用路由，而不是结构化调用本身。
 
-```text
-ExactCurrentFact
-  -> matching trusted Run-frozen binding exists?
-       yes -> provider call -> mapping -> DTO validator -> Iris evidence ID
-       no  -> bounded Web research -> same field/freshness contract
-  -> deterministic finalization
-```
+- 核心提供正交工具：runtime、本地搜索/读取、Web 搜索/抓取、外部只读和确认型写入。
+- 天气、报价、法规数据库等真实结构化来源可通过统一 catalog/MCP/provider adapter 接入。
+- 可选适配器不增加领域 Run 状态、Intake classifier 或独立 finalization。
+- migration 072 和旧 envelope 仅在读取边界兼容；新 Run 不再写入领域规划合同。
 
-结构化快路径的价值是低延迟、固定字段和更强失败语义，不是架构中心。它继续复用现有 operation、snapshot、mapping、DTO、renderer 和 migration，不建设独立 readiness 真相源。
+## 7. 回答、澄清与来源
 
-只有真实 Provider 被选择时才创建 PDR；PDR 决定覆盖、许可、成本、字段和接入路径。没有合规 Provider 时允许保持未配置，而不是降低验证标准或补造 binding。
+- 普通回答直接返回自然正文；来源区由 Harness 根据当前 Run ledger 投影。
+- 用户明确 CitationCheck 或严格事实才要求结构化来源覆盖。
+- 普通缺参由模型自然追问并完成当前 Run，不使用持久化输入事务。
+- 来源 ID 仍由 `ProvenancePolicy` 解释；来源归属错误不能通过语言修复掩盖。
+- 无进展、WebPreferred 降级和部分材料不足优先形成有用回答并披露限制，而不是默认失败。
 
-## 5. 证据与最终化数据流
+## 8. 有界写入
 
-所有成功路径都必须先把证据登记到当前 Run：
+模型可在确认前多轮读取和规划，随后形成一个有序冻结变更集：最多 6 个操作、6 个文件。确认后 Host 按 hash 绑定执行；成功后只允许最多 2 次模型调用和 4 次目标限定的本地只读验证。任何新写入都必须重新确认。
 
-```text
-provider/search/fetch output
-  -> sanitize + normalize
-  -> field/freshness/location validation
-  -> current-Run evidence registration
-  -> answer claim to evidence binding
-  -> durable final message
-```
+该能力扩展现有 `FrozenChangePlan`，不增加数据库表、第二写入引擎或开放式文件权限。
 
-- ExactCurrentFact 必须满足对应字段合同，不能只依赖来源组。
-- CurrentResearch 允许综合多个 Web 证据，但每个时效结论仍需可定位引用。
-- 证据冲突在预算内无法解决时必须显示冲突，不由模型静默选择。
-- 恢复只读取已持久化消息和绑定，不重新调用 Provider。
+## 9. Provider 中立与降级
 
-## 6. 性能控制面
+Gateway 冻结 Provider 是否支持 tools、continuation、parallel calls、streaming 和结构化输出。核心不按模型名称硬编码行为：
 
-性能控制复用 `ResearchBudget`，至少包含 profile、剩余搜索、剩余抓取、剩余修复、剩余模型轮次、证据上限和 deadline。预算状态随 Run 可恢复，技术重试与业务研究轮次分别计数。
+- 工具能力完整：进入相同通用循环。
+- 不支持 continuation：Direct 或明确降级，不能伪造多轮研究。
+- 协议中途漂移：保留已提交事实，返回稳定能力错误，不切换未冻结权限。
 
-- 搜索轮次串行，防止模型同时扩散多个无关方向。
-- 同一轮选定页面最多并发抓取 3 个。
-- 证据充分立即停止；连续两轮没有新增有效证据立即停止。
-- first progress event 目标为接受 Run 后 500ms 内。
-- Deep 仅由用户明确请求或 UI 明确选择，不能由模型静默升级。
+## 10. 禁止的平行架构
 
-## 7. 禁止的平行架构
-
-- 第二套 `web_fetch` 模型工具或浏览器研究引擎；
-- 新 provider registry、evidence table、Run 状态表或会话真相表；
-- 以模型名称为键的长期能力评分数据库；
-- 为兼容旧路由建立长期 facade 或双写；
-- 没有真实 Provider 需求时建设通用 REST adapter、health ranking 或 readiness 控制台。
+- Web 专用研究引擎或领域专用 Run 状态机；
+- 第二工具目录、provider registry、evidence store 或 finalization 解释器；
+- 按模型名称维护长期强弱表；
+- 普通澄清专用事务系统；
+- 未经一次统一确认的连续写入；
+- 新能力长期叠加在旧分支上而不做删除。

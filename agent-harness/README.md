@@ -1,67 +1,54 @@
-# Iris Agent Harness 建设文档
+# Iris Agent Harness 现行建设文档
 
-本目录是 Iris Agent Harness 的唯一现行建设入口，统一描述当前状态、长期不变量、目标架构、研究与工具合同、实施顺序和验收门槛。它不建立第二份产品路线图，也不把目标设计冒充为已部署事实。
+> **文档状态**：现行
+> **文档类型**：入口与索引
+> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
 
-## 文档权威边界
+本目录是 Iris Agent Harness 的唯一现行建设入口，分别记录代码当前事实、长期边界、目标合同、重构阶段和验收证据。它不建立第二份产品路线图，也不把目标设计冒充为已经部署的能力。
+
+## 本次事实重置
+
+2026-08-24 至 26 日的真实交互连续暴露出地点补充后无回答、回答正文与 Run 投影脱节、合法联网回答被来源协议误拒绝，以及回答虽然完成但内容并未真正解决问题等缺陷。代码复核进一步确认：通用工具循环外叠加了 Web 专用研究控制层，Intake 将大多数事实请求强制为严格联网，11 个领域 operation 进入核心路由和完成门禁，而现有 fixture 主要验证管线连通性，不能证明语义质量。
+
+因此，本体系撤回此前把旧 AH-2/AH-3 写成已验证终局的结论。旧实现仍作为“当前存在的代码”记录，但不再作为目标架构。新施工阶段统一使用 `HR-*` 编号，避免与历史判断混淆。
+
+## 权威边界
 
 - 版本、里程碑和产品范围以 [`ROADMAP.md`](../ROADMAP.md) 为唯一来源。
-- 已部署模块、数据流和兼容边界以 [`ARCHITECTURE.md`](../ARCHITECTURE.md) 与代码为准。
-- 本目录负责 Harness 的差距、目标合同、技术债处置、实施顺序和验收证据，不独立承诺版本或日期。
-- 历史方案已归档；除本页提供的历史入口外，归档内容不构成现行规范。
+- 已部署模块、数据流和兼容边界以 [`ARCHITECTURE.md`](../ARCHITECTURE.md) 与当前代码为准。
+- 本目录负责 Harness 的问题审计、目标合同、处置决定、阶段依赖和验收证据。
+- `CHANGELOG.md` 只记录已交付变化；规划和局部测试不得进入交付事实。
+- 历史通过 Git 追溯；统一前材料仅可从[受控归档入口](archive/2026-08-pre-unification/MANIFEST.md)访问，不构成现行规范。
 
 ## 统一方向
 
-1. 以模型驱动、`EvidenceGap` 驱动的多轮 Web 研究作为通用时效事实主路径。
-2. 继续只暴露一个模型可见网络工具 `web_search`，通过现有 `query`、`gap`、`urls` 合同支持搜索与当前 Run 内的深入抓取。
-3. 结构化领域能力保留为已配置时的精确事实快路径；11 个 operation 不再是近期完成门槛。
-4. 路由按任务形态区分精确槽位事实和研究型问题，不再按领域统一阻断无 binding 请求。
-5. Host 始终控制权限、URL 来源、预算、证据所有权、最终化与失败语义；模型只能在这些边界内调整研究重点。
-6. 通过 Quick、Standard、Deep 三档预算、单轮最多 3 个并发抓取、提前停止和回归门禁控制性能。
-7. 新抽象必须在同阶段替换旧分支；不得新增第二研究引擎、第二网络工具、第二 provider registry 或第二证据真相源。
-
-## 当前基线摘要
-
-审计基线已于 2026-08-24 复验；具体能力状态和运行证据以本目录的状态账本为准。
-
-- Run 幂等、durable finalization、工具表面冻结、Run-local evidence、隐私门禁和 `system_time_now` 已有实现与回归测试。
-- AH-2 已验证：`FreshResearchPlan`、`ResearchBudget`、`EvidenceGap`、抓取预算、模型后续深抓取、恢复、deadline 和两轮无新增证据停机共同构成唯一研究循环。
-- AH-3 已验证：精确当前事实保留已配置 binding 的结构化快路径；研究型任务按答案合同走通用 `web_search`，不再有 News 或无 binding 的领域级架构特例。
-- AH-4 的不可达代码清理已验证；真实 provider/model 的 p50/p95/token 性能基线明确排除在本轮范围外，保持延期，不能由确定性 fixture 冒充。
-- 五类领域工具表面与 11 个 operation 的 DTO、mapping、validator、Host renderer、production fixtures 和 migration 072 已存在；这不代表真实 Provider 已配置。
-- 2026-08-19 的开发实例历史审计为 0/11 configured。该数字只作为带日期快照保留，实施真实 Provider 前必须重新只读审计。
-- 当前工作树已修复 Windows 评测路径权限语义与 PowerShell MCP fixture 漂移，并通过 `agent:eval:smoke` 24/24、`agent:eval` 48/48、完整 Rust 1822/0/3（通过/失败/忽略）和前端 2460/0。
-
-完整状态和证据见 [`02-current-state-and-debt.md`](02-current-state-and-debt.md) 与 [`appendices/A-status-and-test-traceability.md`](appendices/A-status-and-test-traceability.md)。
+1. 复用现有 Provider-neutral `AgentToolLoop`，建立一个适用于本地检索、Web、runtime 和外部只读工具的通用有界循环。
+2. 模型负责理解问题、选择工具、调整查询、判断语义缺口和组织回答；Host 负责授权、预算、状态、来源身份、持久化和副作用。
+3. Intake 只冻结 `AgentIntent + Effect + ContextMode + Freshness + Effort + RiskClass + CapabilityId`，不再把领域分类当作执行骨架。
+4. 普通事实使用 `WebPreferred`；只有明确联网、指定 URL、强时效或高风险当前事实使用 `WebRequired`。
+5. 结构化工具调用协议继续保留；11 个领域 operation 退出核心路由，真实需求可通过统一工具目录作为可选 Provider 适配器接入。
+6. 普通回答自然完成，普通缺参自然追问；结构化终局和暂停状态只用于真正需要确定性合同的任务。
+7. 写入由模型提出、Host 冻结、用户确认和确定性执行；模型不能把一次确认扩展成开放写权限。
+8. 每个阶段必须同步删除被替代分支、测试和文档；只增加抽象而没有净简化的阶段不得结案。
 
 ## 阅读顺序
 
-1. [`01-authority-and-invariants.md`](01-authority-and-invariants.md)：先确认不可违反的边界。
-2. [`02-current-state-and-debt.md`](02-current-state-and-debt.md)：理解代码已经做到什么、还欠什么。
-3. [`03-target-architecture.md`](03-target-architecture.md)：理解统一后的 Harness 形态。
-4. [`04-research-and-tool-contracts.md`](04-research-and-tool-contracts.md)：实现网络研究、结构化快路径或路由时使用。
-5. [`05-implementation-roadmap.md`](05-implementation-roadmap.md)：选择下一阶段及其同步删除项。
-6. [`06-evaluation-performance-and-acceptance.md`](06-evaluation-performance-and-acceptance.md)：在声称完成前核对质量、性能和安全门禁。
+1. [`01-authority-and-invariants.md`](01-authority-and-invariants.md)：不可违反的产品与运行边界。
+2. [`02-current-state-and-debt.md`](02-current-state-and-debt.md)：代码当前具备什么、为什么仍然失败。
+3. [`03-target-architecture.md`](03-target-architecture.md)：统一后的职责和数据流。
+4. [`04-adaptive-agent-loop-and-tool-contracts.md`](04-adaptive-agent-loop-and-tool-contracts.md)：通用多轮工具与回答合同。
+5. [`05-implementation-roadmap.md`](05-implementation-roadmap.md)：`HR-0` 至 `HR-7` 的依赖、删除项和退出条件。
+6. [`06-evaluation-performance-and-acceptance.md`](06-evaluation-performance-and-acceptance.md)：如何证明管线正确、回答有用且没有越权。
 
-附录分别提供[状态与测试追踪](appendices/A-status-and-test-traceability.md)、[当前事实合同矩阵](appendices/B-current-fact-contract-matrix.md)和[决策与延期项](appendices/C-decisions-and-deferred.md)。
+附录分别提供[状态与证据追踪](appendices/A-status-and-test-traceability.md)、[任务能力与风险矩阵](appendices/B-task-capability-and-risk-matrix.md)和[现行/撤回决策](appendices/C-decisions-and-deferred.md)。
 
 ## 状态语言
 
-每项工作必须同时记录实现状态和处置方式，禁止把两个维度混在一个“完成”词中。
+| 维度     | 允许值                               | 含义                                                         |
+| -------- | ------------------------------------ | ------------------------------------------------------------ |
+| 当前状态 | 已验证、部分实现、已知缺陷、未配置   | 只描述当前代码和当前证据                                     |
+| 目标处置 | 保留、重构、退出核心、兼容读取、延期 | 只描述目标方向                                               |
+| 阶段状态 | 未开始、进行中、阻塞、已验收         | 只有满足命名退出条件后才能升级                               |
+| 证据类型 | 代码、命名测试、生产复现、真实试点   | fixture 只能证明被覆盖的合同，不能自动覆盖生产反例或语义质量 |
 
-| 维度     | 允许值       | 含义                                       |
-| -------- | ------------ | ------------------------------------------ |
-| 实现状态 | 已验证       | 当前工作树上的命名测试已经通过             |
-| 实现状态 | 已实现待复验 | 代码存在，但本次尚未取得足够的当前测试证据 |
-| 实现状态 | 部分实现     | 只覆盖部分路径、预算或生产数据流           |
-| 实现状态 | 计划中       | 已有决策完整的施工项，尚未实现             |
-| 实现状态 | 延期         | 明确不进入当前主干                         |
-| 处置方式 | 保留         | 继续作为单一事实或稳定合同                 |
-| 处置方式 | 重构         | 用新合同替换并在同阶段删除旧分支           |
-| 处置方式 | 移除         | 无替代价值或会制造冲突                     |
-| 处置方式 | 归档         | 仅供历史追溯，不再指导施工                 |
-
-宽泛全量测试不能替代能力对应的命名测试；历史文档中的通过数量不得直接迁移到本目录。
-
-## 归档
-
-统一前的两套文档和根入口保存在[归档清单](archive/2026-08-pre-unification/MANIFEST.md)中。归档文件保持历史原貌，其中的相对链接、状态和版本判断可能已经失效。
+生产复现与现行测试冲突时，能力状态必须降级并补充回归；测试数量不得代替具体能力证据。

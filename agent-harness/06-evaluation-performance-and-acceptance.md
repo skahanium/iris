@@ -1,115 +1,129 @@
 # 06. 评测、性能与验收
 
+> **文档状态**：现行
+> **文档类型**：验收规范
+> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
+
 ## 1. 验收原则
 
-- “执行了研究流程”“回答看起来更聪明”和“事实得到支持”是三件不同的事。
-- 硬门禁使用确定性合同和固定夹具；真实模型 pilot 用于协议与性能校准，不证明客观事实本身。
-- 质量、性能、安全和技术债同时验收，不能通过放宽其中一项换取另一项表面改善。
-- 只有当前工作树的命名测试通过后，状态才能写为“已验证”。
+- “工具被调用”“来源属于当前 Run”“答案真正解决问题”是三个独立结论。
+- 固定 fixture 证明确定性行为、安全边界和恢复；它不能证明真实网页、真实 Provider 或自由文本语义质量。
+- 生产复现可以推翻测试覆盖的完整性判断；出现冲突时先降级状态，再补测试。
+- 测试不预编排唯一正确查询、唯一工具顺序或与空数据库 ID 偶合的答案。
+- 每个 HR 阶段只运行与变更相关的精确测试；阶段交付再执行仓库规定的质量门禁。
 
-## 2. 质量与安全门槛
+## 2. 四层证据
 
-| 指标                                  | 最低要求 |
-| ------------------------------------- | -------: |
-| 事实召回率                            |      90% |
-| 引用支持率                            |      95% |
-| 约束遵循率                            |      95% |
-| Web 关闭/classified 外发              |        0 |
-| 本地内容进入 Web query                |        0 |
-| foreign/retired evidence 成为精确引用 |        0 |
-| 未确认写操作                          |        0 |
-| 凭证、正文或原始 Provider 输出泄漏    |        0 |
+| 层级               | 证明内容                                   | 不能证明                   |
+| ------------------ | ------------------------------------------ | -------------------------- |
+| 合同单元测试       | 路由、预算、权限、来源、状态转换和序列化   | 模型会作出高质量语义判断   |
+| 行为集成测试       | 模型—工具多轮、恢复、投影和写入闭环        | 真实搜索结果与真实模型质量 |
+| 回答质量评测       | 是否回答问题、处理限定、披露缺口和使用证据 | Provider 稳定性与真实延迟  |
+| 真实 Provider 试点 | 协议兼容、成本、延迟和代表性输出质量       | 永久稳定或所有模型都等价   |
 
-结构化或精确当前事实还必须覆盖陈旧数据、缺地域、缺单位、缺时点、字段漂移和来源冲突负例。
+每条“已验证”必须指向具体层级，不能用较低层证据替代较高层结论。
 
-## 3. 性能门槛
+## 3. 通用任务矩阵
 
-| 档位     | 硬时限 | 搜索 | 抓取 | 模型续接 | evidence | 其他要求             |
-| -------- | -----: | ---: | ---: | -------: | -------: | -------------------- |
-| Quick    |    20s |    1 |    2 |        2 |        4 | 简单事实证据充分即停 |
-| Standard |    45s |    3 |    6 |        4 |        8 | 默认当前研究档位     |
-| Deep     |    90s |    5 |   10 |        6 |       12 | 仅显式触发           |
+| 场景            | 必须证明的行为                                                   |
+| --------------- | ---------------------------------------------------------------- |
+| 普通对话        | 不调用无关工具，不要求来源协议，正常形成自然回答                 |
+| 普通外部事实    | 默认 WebPreferred，可搜索也可诚实降级                            |
+| 差搜索结果      | 模型读取结果后调整关键词、时间、地域或来源方向                   |
+| 无新增结果      | 两轮无进展后停止工具并基于已有材料综合，不默认红色失败           |
+| 本地多跳        | 搜索命中后多次读取相关笔记、提纲或链接，保持权限和范围           |
+| 本地 + Web      | 两类工具共享总预算，本地正文不泄漏到 Web query                   |
+| 严格当前事实    | 明确 WebRequired，证据不足时不伪造精确数字、日期或状态           |
+| 来源协议        | 高位 ledger ID、每 Run 独立 `W1`、foreign/retired 来源均正确处理 |
+| 普通澄清        | assistant 自然追问并完成，下一 Run 通过会话承接                  |
+| 无工具 Provider | Direct 或明确能力降级，不伪造工具续接                            |
+| 文档修改        | 多轮读取、一次冻结确认、确定性执行和限定只读验证                 |
+| 取消与恢复      | 不重复 Provider/副作用，终态和 UI 只消费同 Run 持久化事实        |
 
-- 全局继续受 8 模型轮次、24 工具调用和 32K Web packet 限制。
-- 单轮抓取并发最多 3；连续两轮无新增证据必须停止。
-- first progress event 的 Host 目标为 500ms 内。
-- 建立固定基线后，同 profile p95 延迟或 token 增长超过 20% 为回归；只有质量获得可量化提升并记录例外时可接受。
+领域词只能作为测试数据多样性，不能决定测试架构。娱乐、天气、新闻、金融和体育可作为同一通用合同的表驱动样例。
 
-## 4. 自动化测试分层
+## 4. 回答质量维度
 
-### 单元测试
+质量评测至少独立记录：
 
-- task shape、FreshFactDomain、时间窗、地域和 profile 选择；
-- `EvidenceGap`、query/URL 去重、URL provenance 和各类预算；
-- DTO 字段、时效、单位、地域、来源和 operation 一致性；
-- evidence binding、失效、fallback 和 finalization；
-- 平台路径安全语义与 deterministic fixture parity。
+- **任务完成**：是否直接回答用户问题，而非只描述检索过程。
+- **限定遵循**：时间、地域、对象、渠道、格式和风险要求是否被处理。
+- **状态区分**：已发生、正在、计划、传闻、推断和未知是否明确区分。
+- **证据使用**：当前事实是否能定位到当前 Run 来源，引用内容是否与结论相关。
+- **诚实性**：证据不足、来源冲突和 Provider 降级是否明确披露。
+- **效率**：是否发生无意义重复、过早停止或预算耗尽后无回答。
+- **可读性**：正文自然，不泄露 Run、tool、gap、协议或内部错误术语。
 
-### 组件与仓储测试
+确定性 Harness 不宣称已经实现 NLI。引用支持率需要人工标注、规则可验证字段或独立评测数据，不能由来源数量替代。
 
-- 并发 Run 幂等、终态事务、sink 故障和恢复；
-- 首轮不足后只针对 gap 继续研究，并持久化剩余预算；
-- current-Run 与 foreign/retired evidence 隔离；
-- 结构化 snapshot 冻结、hash drift、provider ID 剥离和恢复不重执行；
-- 同轮并发抓取不越界，取消与 deadline 能终止所有待执行动作。
+## 5. 安全硬门槛
 
-### 前端合同测试
+以下失败数必须为 0：
 
-- 新 Run accepted 至首个 answer delta 期间不显示上一 Run 正文；
-- 迟到 frame/event 不修改新 Run；
-- Quick/Standard/Deep、搜索、抓取、证据不足和降级过程可恢复；
-- 来源组、精确引用、未知 binding 和失败语义显示诚实。
+- Web 关闭、classified 或 local-only 仍发生外发；
+- 自动检索笔记正文进入 Web query、URL、日志或外部工具参数；
+- foreign、retired 或历史 Run evidence 成为本轮来源；
+- 模型调用未暴露、未授权或超分类预算的工具；
+- 未确认、确认范围外或 hash 漂移后的 Markdown 写入；
+- Provider 原始输出、凭证、笔记正文或敏感路径进入日志、事件或评测报告；
+- 恢复或重试重复执行外部副作用。
 
-### Agent capacity eval
+## 6. 预算与性能
 
-- smoke 必须执行完整 24-case online deterministic matrix，`caseCount`、`completedCaseCount`、`passed` 均为 24，`failed` 为 0。
-- full 执行 48-case、压力阶梯、硬边界、安全轨和组合终端；不得用旧版本化结果代替当前运行。
-- 固定多轮场景覆盖 runtime 日期、近期影视、对推荐时效的质疑、Web 能力诚实、跨 Run UI 隔离和证据不足。
+| Profile      | 模型轮次 | 工具总数 | 分类限制                                      |
+| ------------ | -------: | -------: | --------------------------------------------- |
+| Direct       |        1 |        0 | 不暴露工具                                    |
+| Standard     |        8 |       24 | local 12、network 6、external 6、runtime 4    |
+| DurableApply |        8 |       24 | 另含最多 6 个冻结操作；确认后 2 模型/4 本地读 |
 
-## 5. 当前评测证据
+- 所有分类额度仍受总额度约束。
+- 预留最后一次综合；无进展停止不能消耗该额度。
+- first progress、p50、p95 和 token 只有在固定 Provider、模型、配置和场景下才可比较。
+- 建立真实基线后，同配置 p95 或 token 回退超过 20% 必须解释；质量提升必须有独立指标。
 
-2026-08-24 当前工作树已经取得：
+## 7. 回归设计要求
 
-- `node --test scripts/agent-eval.test.mjs`：8/8；
-- Windows real stdio MCP discovery/search：通过；
-- 单一 headless online Web evidence binding：通过；
-- `npm run agent:eval:smoke`：24/24。
-- `npm run agent:eval`：48-case、压力阶梯、硬边界、安全轨和组合终端通过。
-- `npm run lint`、`npm run format:check`、`npm run typecheck`、`npm run test`：通过，Vitest 353 个文件、2460 个测试通过。
-- `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check` 与 `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：通过。
-- `cargo test --manifest-path src-tauri/Cargo.toml`：库测试 1822 通过、0 失败、3 忽略；后续集成测试与 doc-tests 全部通过。
-- `npm run docs:check`：通过。
+- 搜索自适应测试至少提供一轮明显无关结果，并允许多种合理的第二查询。
+- 本地多跳测试按资源 identity 和最终答案要点验收，不固定唯一工具顺序。
+- 来源测试预置大量历史证据，使当前 Run 的 ledger ID 与 `Wn` 不相等。
+- 同一会话连续运行多次，每个 Run 都能使用自己的 `W1`，且不能读取前一 Run 来源。
+- 无进展测试使用不同 query 返回相同 canonical resource/content hash。
+- Provider matrix 至少覆盖原生 tools continuation 和 chat-only 两种协议形态。
+- 写入测试覆盖全部成功、第二项前漂移、部分执行、重复确认、重启恢复和验证越权。
 
-## 6. Live pilot 与隐私
+## 8. 当前证据解释
 
-本轮工作明确排除真实 Provider 与外部性能试点。Live pilot 只在后续用户明确授权、确认模型/profile 和单次费用 checkpoint 后执行。结果记录日期、模型、匿名 profile、配置 hash、场景 ID、p50/p95、token 和闭集 verdict；不得保存 prompt、answer、路径、URL、凭证或原始工具正文。
+基线提交已有大量 Rust、Vitest 和 agent capacity eval，用于证明 Run、权限、工具、来源和恢复的部分合同。此前报告的 24/24、48/48、Rust/前端全量通过是带日期的历史执行事实，不自动证明本路线的目标能力。
 
-真实网页或真实笔记不得用于默认 CI。确定性 fixture 与真实 pilot 分开报告，任一方不能替代另一方。
+在 HR-1 新回归建立前，以下能力必须保持“已知缺陷”或“部分实现”：
 
-## 7. 完成定义
+- 普通事实的渐进联网；
+- 差结果后的通用自适应调整；
+- 无进展后的强制综合；
+- 普通回答不受严格终局误拒绝；
+- 自然澄清；
+- 多操作冻结写入和确认后验证；
+- 真实 Provider 的回答质量、延迟和成本。
 
-一个 Harness 阶段只有同时满足以下条件才能结案：
+## 9. 阶段完成定义
 
-1. 目标命名测试先红后绿，且相关全量测试通过；
-2. 对应旧分支、旧测试和旧文档在同阶段删除；
-3. 没有新增第二事实源、无界循环或未说明的新依赖；
-4. 质量和安全门槛全部满足；
-5. 性能位于档位硬预算内，基线无未解释的 20% 回归；
-6. 状态与测试追踪表、`ARCHITECTURE.md` 已实现事实及根 `ROADMAP.md` 不冲突。
+一个 HR 阶段只有同时满足以下条件才能标记已验收：
 
-## 8. 最终质量命令
+1. 生产问题或目标行为先有失败回归，再有通过证据；
+2. 新合同替代的旧分支、测试和文档在同阶段删除；
+3. 没有第二事实源、无界循环、未说明依赖或模型专用分叉；
+4. 相关安全门槛为 0 失败；
+5. 回答质量结论与证据层级一致；
+6. 附录 A、目标文档、`ARCHITECTURE.md` 已实现事实和 `ROADMAP.md` 同步。
+
+## 10. 验证命令
+
+文档阶段：
 
 ```bash
 npm run docs:check
-npm run agent:eval:smoke
-npm run agent:eval
-npm run lint
 npm run format:check
-npm run typecheck
-npm run test
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
+git diff --check
 ```
 
-任一命令未通过时必须记录为阻塞，不得把局部通过描述成整体完成。
+代码阶段由该阶段实施计划列出精确 Rust/Vitest/eval 子集；提交前再执行受影响语言的 format、lint、typecheck 和必要全量门禁。真实 Provider 测试必须另行授权。
