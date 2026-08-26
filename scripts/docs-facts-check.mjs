@@ -333,12 +333,35 @@ function checkAgentHarnessDocumentation() {
 
   for (const filePath of activeHarnessFiles.filter(existsSync)) {
     const content = readFileSync(filePath, "utf8");
+    const header = content.split("\n").slice(0, 8).join("\n");
     for (const required of harnessStatusHeader) {
-      if (!content.includes(required)) {
+      if (!header.includes(required)) {
         fail(
           `${path.relative(root, filePath)} is missing Harness status header: ${required}`,
         );
       }
+    }
+  }
+
+  const expectedActiveFiles = new Set(activeHarnessFiles);
+  const discoveredActiveFiles = [
+    activeHarnessRoot,
+    path.join(activeHarnessRoot, "appendices"),
+  ]
+    .filter(existsSync)
+    .flatMap((directory) =>
+      readdirSync(directory)
+        .map((entry) => path.join(directory, entry))
+        .filter(
+          (entryPath) =>
+            statSync(entryPath).isFile() && entryPath.endsWith(".md"),
+        ),
+    );
+  for (const filePath of discoveredActiveFiles) {
+    if (!expectedActiveFiles.has(filePath)) {
+      fail(
+        `unregistered active Agent Harness document exists: ${path.relative(root, filePath)}`,
+      );
     }
   }
 
@@ -348,7 +371,7 @@ function checkAgentHarnessDocumentation() {
     }
   }
   for (const entry of readdirSync(root)) {
-    if (/^(?:agent[-_]?harness|harness)[-_]/i.test(entry)) {
+    if (/^(?:agent[-_]?harness|harness)(?!$)/i.test(entry)) {
       fail(`parallel root Agent Harness path is forbidden: ${entry}`);
     }
   }
@@ -386,9 +409,10 @@ function checkAgentHarnessDocumentation() {
     }
   }
   const harnessReadme = readFileSync(activeHarnessFiles[0], "utf8");
-  if (!harnessReadme.includes(historyLink)) {
+  const historyLinkCount = harnessReadme.split(historyLink).length - 1;
+  if (historyLinkCount !== 1) {
     fail(
-      "agent-harness/README.md must retain the single archive history entry",
+      `agent-harness/README.md must contain exactly one archive history entry, found ${historyLinkCount}`,
     );
   }
   if (!harnessReadme.includes("../ROADMAP.md")) {
@@ -402,10 +426,13 @@ function checkAgentHarnessDocumentation() {
   const withdrawnClaimPatterns = [
     /AH-2[^\n]{0,48}(?:已验证|已完成)/,
     /AH-3[^\n]{0,48}(?:已验证|已完成)/,
-    /以模型驱动、`EvidenceGap` 驱动/,
-    /11 个 operation[^\n]{0,48}(?:核心|主路径|近期目标)/,
+    /EvidenceGap[^\n]{0,48}(?:闭集|驱动|核心|必需|必须|统一事实源)/,
+    /(?:11 个 operation|11 个领域 operation|六类领域能力)[^\n]{0,48}(?:作为|成为|保留为|目标为|已验证为|已完成)[^\n]{0,24}(?:核心|主路径|默认工具面)/,
+    /普通(?:事实|回答)[^\n]{0,32}(?:必须|一律|统一强制|默认强制)[^\n]{0,32}(?:终局|最终提交)/,
+    /(?:已验证|已完成|目标)[^\n]{0,48}普通(?:事实|回答)[^\n]{0,48}(?:严格|结构化)[^\n]{0,24}(?:终局|最终提交)/,
   ];
-  const withdrawalContext = /(?:旧|历史|此前|撤回|取代|不再|退出|错误|曾经)/;
+  const withdrawalContext =
+    /(?:旧|历史|此前|撤回|取代|不再|退出|错误|曾经|删除|移除|禁止|不实现|重构)/;
   for (const filePath of activeHarnessFiles.filter(existsSync)) {
     const lines = readFileSync(filePath, "utf8").split("\n");
     for (let index = 0; index < lines.length; index += 1) {
