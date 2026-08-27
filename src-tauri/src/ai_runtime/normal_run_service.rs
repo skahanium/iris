@@ -28,9 +28,7 @@ use crate::ai_runtime::run_engine::{
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::ai_runtime::tool_executor::{constrain_domain_tool_surface, ToolRegistry};
-use crate::ai_runtime::tool_surface::{
-    classify_time_sensitivity, ToolSurfaceInput, ToolSurfacePlan, ToolSurfacePlanner,
-};
+use crate::ai_runtime::tool_surface::{ToolSurfaceInput, ToolSurfacePlan, ToolSurfacePlanner};
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall};
 use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
 use crate::app::AppState;
@@ -125,7 +123,10 @@ fn plan_tool_surface(
         web_enabled: authorized_capabilities
             .iter()
             .any(|capability| capability.as_str() == "web.search"),
-        time_sensitive: classify_time_sensitivity(context.envelope.fresh_fact.domain),
+        requires_current_web_evidence: matches!(
+            context.envelope.verification_requirement,
+            VerificationRequirement::CurrentRunWeb | VerificationRequirement::CurrentRunDomain
+        ),
         effort: context.envelope.effort,
         web_prefetched,
         authorized_capabilities: authorized_capabilities.to_vec(),
@@ -1054,22 +1055,39 @@ async fn dispatch_required_web_verified_run(
                 PromptContractV3::web_evidence_data_prompt(&evidence_json, false).into();
         }
     }
-    // Current-fact research no longer depends on the empty calibrated
-    // whitelist: the Run must expose `submit_final_answer` and fail closed if
-    // the model route cannot support tool continuation.
-    if (research_mode || domain_executable) && !structured_finalization {
-        if !has_local_follow_up_tools {
-            let _ = RunEngine::fail_before_dispatch_with_sink(
-                db,
-                &accepted.session,
-                &accepted.run_id,
-                SafeRunErrorCode::GroundedFinalizationUnavailable,
-                sink,
-            );
-            return Err(AppError::run(
-                SafeRunErrorCode::GroundedFinalizationUnavailable,
-            ));
-        }
+    // Strict current-Run Web verification remains a structured terminal
+    // contract. Ordinary `WebPreferred` work deliberately does not enter this
+    // branch; HR-4 owns its natural-answer finalization path.
+    if context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb
+        && !structured_finalization
+    {
+        let strict_requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+            tools: true,
+            ..requirements
+        };
+        let strict_route = match resolve_normal_route(
+            db,
+            accepted,
+            context,
+            strict_requirements.min_input_budget_tokens,
+            strict_requirements.vision,
+            true,
+            sink,
+        ) {
+            Ok(route) => route,
+            Err(error) => {
+                let _ = RunEngine::fail_before_dispatch_with_sink(
+                    db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    SafeRunErrorCode::GroundedFinalizationUnavailable,
+                    sink,
+                );
+                return Err(error);
+            }
+        };
+        route = strict_route;
+        requirements = strict_requirements;
         structured_finalization = true;
         messages[1].content =
             PromptContractV3::web_evidence_data_prompt(&evidence_json, true).into();

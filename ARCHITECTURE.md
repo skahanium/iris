@@ -71,13 +71,14 @@ Feed 与 AI 网页抓取的 URL 读取使用同一逐跳安全网门：每跳重
 
 ## 当前事实领域只读能力
 
-天气、新闻、金融、影视和体育通过五个稳定只读工具（`weather_lookup`、`news_lookup`、
-`finance_lookup`、`entertainment_lookup`、`sports_lookup`）对外提供规范化 DTO。它们
-使用独立 `web.domain.read` capability，只读、无需变更确认，并受 Web 开关授权；不再与
-通用 `external.read` 的逐 Run 授权混用。provider 输出按白名单 output mapping 缩略为
-附录 D 字段，经过确定性验证后才进入当前 Run 的证据/最终化；原始 provider JSON 不进入
-事件、审计、错误或评测报告。失败关闭覆盖缺来源/时点、缺确认城市、陈旧天气/行情、
-影视缺 region/channel/date 与金融分析引入证据外数值。
+天气、新闻、金融、影视和体育的五个规范化 DTO 工具（`weather_lookup`、`news_lookup`、
+`finance_lookup`、`entertainment_lookup`、`sports_lookup`）以及 `web.domain.read` 仍保留，
+仅用于 migration 072 与历史 Run 的兼容读取/恢复。新的 Normal Run 不再由 Intake 冻结领域、
+operation、城市输入或 `web.domain.read`；它们通过通用 `web.search` 按任务合同进入工具面。
+
+保留的 provider 输出仍按白名单 output mapping 缩略并确定性验证；原始 provider JSON 不进入
+事件、审计、错误或评测报告。未来若有真实结构化 Provider 需求，必须经统一 catalog/MCP/
+capability 接入，不得重新引入领域前置路由或完成门禁。
 
 ## 凭据安全
 

@@ -4,17 +4,15 @@ use crate::ai_runtime::agent_run_repository::{
     AcceptRunInput, AcceptRunOutcome, AgentRunRepository, FrozenConfirmationApproval,
     FrozenConfirmationRejection, RetryRunInput,
 };
-use crate::ai_runtime::fresh_fact_classifier::classify_fresh_fact;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetResponse,
     AssistantRunRetryRequest, AssistantRunStartRequest, AssistantSessionRef, CapabilityId,
-    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, FreshFactDomain, Freshness,
+    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, FreshFactPolicy, Freshness,
     MaterialNeed, Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType,
     SafeRunErrorCode, SecurityDomain, VerificationRequirement, WebDecisionReason,
 };
 use crate::ai_runtime::run_engine::emit_durable_event_best_effort;
-use crate::ai_runtime::tool_surface::{classify_time_sensitivity, TimeSensitivity};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -80,19 +78,12 @@ impl RunIntake {
                 "\u{4e0d}\u{4fee}\u{6539}",
             ],
         );
-        let accepted_at = chrono::Utc::now();
-        let fresh_fact = classify_fresh_fact(&directive_text, accepted_at);
-        let domain_operations = fresh_fact
-            .structured_provider_operation()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let web_decision = ExclusionClassifier::resolve(
-            request,
-            &message,
-            &directive_text,
-            local_only,
-            fresh_fact.domain,
-        );
+        // New Runs deliberately do not write a domain plan. The legacy field
+        // remains in the envelope solely so historical Runs can be resumed
+        // without migration; task/risk signals below are the new authority.
+        let fresh_fact = FreshFactPolicy::default();
+        let web_decision =
+            ExclusionClassifier::resolve(request, &message, &directive_text, local_only);
         let effect = if do_not_modify {
             Effect::Answer
         } else {
@@ -128,19 +119,16 @@ impl RunIntake {
                 .iter()
                 .any(|part| matches!(part, crate::ai_types::ContentPart::ImageUrl { .. }))
         });
-        let time_sensitive =
-            !local_only && classify_time_sensitivity(fresh_fact.domain) == TimeSensitivity::Current;
         let effort = match effect {
             Effect::Apply => Effort::Durable,
-            _ if freshness == Freshness::WebPreferred
+            _ if matches!(freshness, Freshness::WebPreferred | Freshness::WebRequired)
                 || has_images
                 || has_retrieval_scope(request)
                 || !request.external_tool_grants.is_empty()
                 || child_run_requested
                 || is_high_stakes_current_request(&directive_text)
                 || requires_multi_step_research(&directive_text)
-                || needs_offline_vault_tool_loop(request, &directive_text)
-                || (request.web_enabled && time_sensitive) =>
+                || needs_offline_vault_tool_loop(request, &directive_text) =>
             {
                 Effort::ToolLoop
             }
@@ -203,16 +191,9 @@ impl RunIntake {
         if request.web_enabled
             && request.security_domain == SecurityDomain::Normal
             && !local_only
-            && fresh_fact.domain != FreshFactDomain::Runtime
+            && freshness != Freshness::Offline
         {
             required_capabilities.push(CapabilityId::new("web.search"));
-        }
-        if request.web_enabled
-            && request.security_domain == SecurityDomain::Normal
-            && !local_only
-            && !domain_operations.is_empty()
-        {
-            required_capabilities.push(CapabilityId::new("web.domain.read"));
         }
         if child_run_requested {
             required_capabilities.push(CapabilityId::new("harness.child_run"));
@@ -305,11 +286,6 @@ impl RunIntake {
             .as_ref()
             .map_or_else(String::new, |session| session.session_key.clone());
         let external_tool_grants = request.external_tool_grants.clone();
-        let domain_operations = envelope
-            .fresh_fact
-            .structured_provider_operation()
-            .into_iter()
-            .collect::<Vec<_>>();
         AgentRunRepository::accept_with_external_grants_outcome(
             db,
             AcceptRunInput {
@@ -327,7 +303,7 @@ impl RunIntake {
                 envelope,
             },
             &external_tool_grants,
-            &domain_operations,
+            &[],
             None,
             create_session,
         )
@@ -922,7 +898,6 @@ impl ExclusionClassifier {
         message: &str,
         directive_text: &str,
         local_only: bool,
-        fresh_fact_domain: FreshFactDomain,
     ) -> WebIntentDecision {
         // Hard exclusions — never overridden by an explicit web instruction.
         if request.security_domain == SecurityDomain::Classified {
@@ -951,7 +926,7 @@ impl ExclusionClassifier {
             return offline(WebDecisionReason::ConversationMeta);
         }
         if !explicit_web {
-            if is_trusted_runtime_request(fresh_fact_domain) {
+            if is_trusted_runtime_request(directive_text) {
                 return offline(WebDecisionReason::TrustedRuntimeFact);
             }
             if is_local_transformation_request(directive_text)
@@ -979,34 +954,38 @@ impl ExclusionClassifier {
             }
         }
 
-        // Every non-excluded factual request is strict. Do not try to infer
-        // freshness from keywords such as "latest" or "World Cup": those
-        // heuristics are exactly how recently completed events were missed.
-        // An explicit external grant is itself the user's evidence source
-        // selection. It must not silently expand into a Web requirement, but
-        // the final answer still requires evidence from that exact Run.
+        // An explicit external grant is the user's selected evidence source.
+        // It must not silently expand into Web access, while finalization still
+        // requires evidence from this exact Run.
         if !request.external_tool_grants.is_empty()
             && !explicit_web
             && !contains_any(directive_text, &["http://", "https://"])
         {
-            return offline_requires_external(WebDecisionReason::StrictExternalFact);
+            return offline_requires_external(WebDecisionReason::DefaultOnline);
         }
-        if !request.web_enabled {
-            return offline_requires_web(WebDecisionReason::UserDisabled);
+        let strict_reason = if contains_any(directive_text, &["http://", "https://"]) {
+            Some(WebDecisionReason::ExplicitUrl)
+        } else if explicit_web {
+            Some(WebDecisionReason::ExplicitWebRequest)
+        } else if is_high_stakes_current_request(directive_text) {
+            Some(WebDecisionReason::HighStakesCurrentFact)
+        } else if is_volatile_external_request(directive_text) {
+            Some(WebDecisionReason::VolatileExternalFact)
+        } else {
+            None
+        };
+        if let Some(reason) = strict_reason {
+            return if request.web_enabled {
+                required(reason)
+            } else {
+                offline_requires_web(WebDecisionReason::UserDisabled)
+            };
         }
-        if contains_any(directive_text, &["http://", "https://"]) {
-            return required(WebDecisionReason::ExplicitUrl);
+        if request.web_enabled {
+            preferred(WebDecisionReason::DefaultOnline)
+        } else {
+            offline(WebDecisionReason::UserDisabled)
         }
-        if explicit_web {
-            return required(WebDecisionReason::ExplicitWebRequest);
-        }
-        if is_high_stakes_current_request(directive_text) {
-            return required(WebDecisionReason::HighStakesCurrentFact);
-        }
-        if is_volatile_external_request(directive_text) {
-            return required(WebDecisionReason::VolatileExternalFact);
-        }
-        required(WebDecisionReason::StrictExternalFact)
     }
 }
 
@@ -1178,6 +1157,14 @@ fn required(reason: WebDecisionReason) -> WebIntentDecision {
     }
 }
 
+fn preferred(reason: WebDecisionReason) -> WebIntentDecision {
+    WebIntentDecision {
+        freshness: Freshness::WebPreferred,
+        reason,
+        verification_requirement: VerificationRequirement::None,
+    }
+}
+
 fn strip_quoted_segments(message: &str) -> String {
     let mut output = String::with_capacity(message.len());
     let mut closing_quote = None;
@@ -1270,8 +1257,37 @@ fn has_explicit_web_instruction(message: &str) -> bool {
     )
 }
 
-fn is_trusted_runtime_request(domain: FreshFactDomain) -> bool {
-    domain == FreshFactDomain::Runtime
+fn is_trusted_runtime_request(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "今天是几月几日",
+            "今天几月几日",
+            "今天是几号",
+            "今天几号",
+            "当前日期",
+            "本机日期",
+            "现在几点",
+            "当前时间",
+            "本机时间",
+            "应用版本",
+            "iris 版本",
+            "今天星期几",
+            "what day of the week is it today",
+            "which day of the week is it today",
+            "what day is it",
+            "what day of week is it",
+            "what is today's weekday",
+            "what is today's date",
+            "current local time",
+            "what is the local time",
+            "what time is it locally",
+            "show local date",
+            "app version",
+            "application version",
+            "iris version",
+        ],
+    )
 }
 
 fn is_conversation_meta_request(message: &str) -> bool {
@@ -1351,6 +1367,12 @@ fn is_volatile_external_request(message: &str) -> bool {
         message,
         &[
             "最新",
+            "当前",
+            "现在",
+            "今日",
+            "今天",
+            "今晚",
+            "本周",
             "实时",
             "现任",
             "截至",
@@ -1365,6 +1387,11 @@ fn is_volatile_external_request(message: &str) -> bool {
             "天气",
             "新闻",
             "latest",
+            "current",
+            "today",
+            "tonight",
+            "this week",
+            "now",
             "real-time",
             "realtime",
             "current score",

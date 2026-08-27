@@ -111,8 +111,8 @@ fn state_machine_allows_missing_input_pause_and_same_run_resume() {
         Ok(RunState::AwaitingInput)
     );
     assert_eq!(
-        transition_to(RunState::AwaitingInput, RunState::Running),
-        Ok(RunState::Running)
+        transition_to(RunState::AwaitingInput, RunState::Preparing),
+        Ok(RunState::Preparing)
     );
 }
 
@@ -135,6 +135,7 @@ fn state_machine_exhaustively_classifies_every_state_pair() {
         RunState::Preparing,
         RunState::Running,
         RunState::AwaitingConfirmation,
+        RunState::AwaitingInput,
         RunState::Paused,
         RunState::Verifying,
         RunState::Completed,
@@ -160,6 +161,7 @@ fn state_machine_exhaustively_classifies_every_state_pair() {
                     | (
                         RunState::Running,
                         RunState::AwaitingConfirmation
+                            | RunState::AwaitingInput
                             | RunState::Paused
                             | RunState::Verifying
                             | RunState::Completed
@@ -170,6 +172,7 @@ fn state_machine_exhaustively_classifies_every_state_pair() {
                         RunState::AwaitingConfirmation,
                         RunState::Running | RunState::Cancelled
                     )
+                    | (RunState::AwaitingInput, RunState::Preparing)
                     | (RunState::Paused, RunState::Running)
                     | (
                         RunState::Verifying,

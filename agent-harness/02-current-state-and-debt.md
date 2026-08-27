@@ -32,13 +32,13 @@
 
 ## 3. 系统性根因
 
-### 3.1 Intake 把普通事实变成严格联网任务
+### 3.1 HR-2 已收敛 Intake，但普通最终化仍待处理
 
-[`run_intake.rs`](../src-tauri/src/ai_runtime/run_intake.rs) 当前在排除问候、创作、本地转换等情况后，将其余事实请求统一返回 `WebRequired + CurrentRunWeb`。`WebPreferred` 类型存在，但没有形成普通事实的默认路径。这会导致：
+[`run_intake.rs`](../src-tauri/src/ai_runtime/run_intake.rs) 已在新 Normal Run 中移除“未命中排除项即 `StrictExternalFact`”的终局分支：普通外部问题在 Web 开启时冻结为 `WebPreferred + None`，Web 关闭时为 `Offline + None`；明确联网或 URL、强时效和高风险当前事实才冻结为 `WebRequired + CurrentRunWeb`。Web 开关仍是唯一能写入 `web.search` 的授权事实。
 
-- 常识问题和宽泛推荐承担高风险事实相同的终态门禁；
-- Web 关闭时普通问题也无法利用模型知识诚实回答；
-- 来源协议、证据量或 Provider 小故障被升级为整轮失败。
+同时，新 envelope 一律写入空的兼容 `FreshFactPolicy`，不再冻结 `web.domain.read`、领域 operation、时间窗口或城市输入。旧 Run 的非空领域字段只能用于兼容读取和恢复。
+
+这只完成了入口收敛：普通 `WebPreferred` 回答仍可能被旧结构化最终化拒绝，属于 HR-4，不能误写成已解决的自然回答能力。
 
 ### 3.2 通用 ToolLoop 被 Web 专用控制层污染
 

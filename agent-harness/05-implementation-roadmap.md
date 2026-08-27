@@ -24,7 +24,7 @@
 | ---- | ---------- | ------------------------------------ | -------------------------------------------- |
 | HR-0 | 已验收     | 重置文档事实和路线                   | 旧现行文件名、旧完成结论、ROADMAP 冲突       |
 | HR-1 | 基线已验收 | 建立能复现生产问题的通用行为基线     | ID 偶合、理想调用顺序和只验管线的假阳性      |
-| HR-2 | 未开始     | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、领域前置阻断         |
+| HR-2 | 已验收     | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、新 Run 领域前置阻断  |
 | HR-3 | 未开始     | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
 | HR-4 | 未开始     | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
 | HR-5 | 未开始     | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
@@ -80,9 +80,16 @@
 - FreshFactDomain 和 DomainOperation 不再决定权限、工具面、澄清或完成门禁。
 - 领域旧字段保留反序列化和恢复读取；新 envelope 不再写入领域规划事实。
 
-同步删除：所有“未命中排除项即 StrictExternalFact”的终局分支、领域 operation 可执行性前置阻断和相应关键词矩阵。
+同步删除：所有“未命中排除项即 StrictExternalFact”的终局分支，以及新 Run 写入/冻结领域 operation、领域地点输入和 `web.domain.read` 的路径。旧领域执行分支只服务于已持久化的旧 envelope，HR-6 再净删除其实现与测试。
 
-退出条件：Chat、AskNotes、Research、CitationCheck、Draft、Apply 的表驱动 intake 测试覆盖 Offline/WebPreferred/WebRequired，并证明 Web 开关不能被模型或分类器增权。
+2026-08-28 验收结果：
+
+- 新 Normal Run 统一写入 `FreshFactPolicy::default()`，不再写入 `FreshFactDomain`、`DomainOperation`、日期窗口、地点要求或 `web.domain.read`；旧 envelope 保持反序列化和执行恢复兼容。
+- `ExclusionClassifier` 已收敛为任务/风险路由：普通外部请求为 `WebPreferred`，显式 Web/URL、强时效和高风险当前事实为 `WebRequired`；Web 关闭不会由分类器、模型、会话或历史记录重新授权。
+- Chat、AskNotes、Research、CitationCheck、Draft、Apply 已有表驱动 Intake 回归；高位 ledger、通用 Web、无工具模型的严格失败和旧领域 envelope 恢复均有生产编排回归。
+- 严格任务仍使用现有结构化最终化；普通 `WebPreferred` 的自然正文最终化明确留给 HR-4，不能以本阶段的工具连通性冒充回答可用性。
+
+退出条件（已满足）：Chat、AskNotes、Research、CitationCheck、Draft、Apply 的表驱动 intake 测试覆盖 Offline/WebPreferred/WebRequired，并证明 Web 开关不能被模型或分类器增权。
 
 ## 6. HR-3：统一自适应工具循环
 

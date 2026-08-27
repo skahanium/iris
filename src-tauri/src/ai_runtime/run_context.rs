@@ -208,7 +208,9 @@ impl RunContext {
 
     fn system_prompt(&self) -> String {
         let time = crate::ai_runtime::runtime_context::current_time_context();
-        let timeliness_instruction = if is_time_sensitive_request(self.envelope.fresh_fact.domain) {
+        let timeliness_instruction = if requires_current_web_evidence(
+            self.envelope.verification_requirement,
+        ) {
             "This request is time-sensitive. If web_search is present in the current tool surface, use it before answering; otherwise do not fabricate current facts."
         } else {
             ""
@@ -242,9 +244,14 @@ impl RunContext {
     }
 }
 
-fn is_time_sensitive_request(domain: crate::ai_runtime::run_contract::FreshFactDomain) -> bool {
-    crate::ai_runtime::tool_surface::classify_time_sensitivity(domain)
-        == crate::ai_runtime::tool_surface::TimeSensitivity::Current
+fn requires_current_web_evidence(
+    verification_requirement: crate::ai_runtime::run_contract::VerificationRequirement,
+) -> bool {
+    matches!(
+        verification_requirement,
+        crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb
+            | crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunDomain
+    )
 }
 
 /// Assembles normal-domain context from one persisted Run and one vault.
@@ -1414,15 +1421,19 @@ mod fallback_version_tests {
 
 #[cfg(test)]
 mod timeliness_tests {
-    use super::is_time_sensitive_request;
-    use crate::ai_runtime::run_contract::FreshFactDomain;
+    use super::requires_current_web_evidence;
+    use crate::ai_runtime::run_contract::VerificationRequirement;
 
     #[test]
-    fn detects_current_fresh_fact_domains() {
-        assert!(is_time_sensitive_request(FreshFactDomain::Entertainment));
-        assert!(is_time_sensitive_request(FreshFactDomain::Weather));
-        assert!(is_time_sensitive_request(FreshFactDomain::News));
-        assert!(!is_time_sensitive_request(FreshFactDomain::None));
-        assert!(!is_time_sensitive_request(FreshFactDomain::Runtime));
+    fn current_web_evidence_contract_controls_the_timeliness_instruction() {
+        assert!(requires_current_web_evidence(
+            VerificationRequirement::CurrentRunWeb
+        ));
+        assert!(requires_current_web_evidence(
+            VerificationRequirement::CurrentRunDomain
+        ));
+        assert!(!requires_current_web_evidence(
+            VerificationRequirement::None
+        ));
     }
 }

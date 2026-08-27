@@ -1,9 +1,9 @@
 use super::run_contract::{
     AssistantRunControlRequest, AssistantRunRetryRequest, AssistantRunStartRequest,
     AssistantTurnDraft, ContextMode, DisplayMention, DisplayMentionKind, DisplayMentionRange,
-    Effect, Effort, ExplicitAction, ExplicitTarget, FreshFactDomain, Freshness, RiskClass,
-    RunControlAction, RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain,
-    SelectionSnapshot, VerificationRequirement, WebDecisionReason,
+    Effect, Effort, ExplicitAction, ExplicitTarget, Freshness, RiskClass, RunControlAction,
+    RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain, SelectionSnapshot,
+    VerificationRequirement, WebDecisionReason,
 };
 use super::run_engine::RunEventSink;
 use super::run_intake::RunIntake;
@@ -1883,7 +1883,7 @@ fn event_state_version(event: &super::run_contract::AssistantRunEvent) -> u64 {
 }
 
 #[test]
-fn web_enabled_pure_rewrite_remains_direct_while_the_toggle_owns_web_authority() {
+fn web_enabled_pure_rewrite_remains_direct_without_exposing_web() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -1893,7 +1893,7 @@ fn web_enabled_pure_rewrite_remains_direct_while_the_toggle_owns_web_authority()
 
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.effort, Effort::Direct);
-    assert!(envelope
+    assert!(!envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
@@ -2067,7 +2067,7 @@ fn web_enabled_external_question_persists_the_web_capability_contract() {
 }
 
 #[test]
-fn web_enabled_current_fact_adds_domain_capability_without_external_read() {
+fn hr2_new_runs_never_grant_domain_capabilities_or_freeze_domain_plans() {
     for message in [
         "上海未来一周天气",
         "今天有什么重要新闻",
@@ -2081,12 +2081,13 @@ fn web_enabled_current_fact_adds_domain_capability_without_external_read() {
 
         let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
+        assert_eq!(envelope.fresh_fact, Default::default(), "{message}");
         assert!(
-            envelope
+            !envelope
                 .required_capabilities
                 .iter()
                 .any(|capability| capability.as_str() == "web.domain.read"),
-            "{message} must carry web.domain.read"
+            "{message} must not carry a domain-only capability"
         );
         assert!(
             envelope
@@ -2117,6 +2118,7 @@ fn web_disabled_current_fact_does_not_add_domain_capability() {
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.domain.read"));
+    assert_eq!(envelope.fresh_fact, Default::default());
 }
 
 #[test]
@@ -2147,18 +2149,18 @@ fn web_toggle_is_the_only_authority_that_grants_web_search() {
 }
 
 #[test]
-fn web_enabled_external_fact_without_temporal_keywords_requires_current_run_evidence() {
+fn ordinary_external_fact_without_strong_temporal_or_risk_signal_is_web_preferred() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "2026美加墨世界杯的四强分别是谁？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
-    assert_eq!(envelope.web_reason, WebDecisionReason::StrictExternalFact);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
     assert_eq!(
         envelope.verification_requirement,
-        super::run_contract::VerificationRequirement::CurrentRunWeb
+        super::run_contract::VerificationRequirement::None
     );
     assert!(envelope
         .required_capabilities
@@ -2204,20 +2206,17 @@ fn creative_copy_request_remains_offline_when_it_does_not_ask_for_external_facts
 }
 
 #[test]
-fn temporal_verification_matrix_requires_current_run_web_evidence_in_all_24_variants() {
+fn strong_temporal_and_high_risk_requests_require_current_run_web_evidence() {
     let cases = [
-        "2026美加墨世界杯的四强分别是谁？",
-        "世界杯决赛结果是什么？",
-        "Who won the World Cup final?",
-        "现任法国总统是谁？",
+        "今天世界杯决赛结果是什么？",
+        "Who won the World Cup final today?",
+        "现任法国总统是谁？请核实后回答。",
         "What is the current share price?",
         "今天发生了哪些重要新闻？",
-        "这场比赛赛后谁被评为最佳球员？",
-        "请纠正上一轮关于赛果的说法。",
-        "这两条来源对冠军归属冲突，哪条是真的？",
-        "2026年该奖项最终由谁获得？",
+        "这场比赛的当前比分是多少？",
+        "请联网核实这个赛事的最终结果。",
         "本周的监管规则是否已经生效？",
-        "请核实这个刚结束的赛事结果。",
+        "请给出当前用药建议。",
     ];
 
     for message in cases {
@@ -2252,15 +2251,13 @@ fn temporal_verification_matrix_requires_current_run_web_evidence_in_all_24_vari
     }
 }
 
-/// HR-1 characterization fixture. HR-2 removes `should_panic` once ordinary
-/// external questions use the progressive `WebPreferred` route.
+/// HR-2 regression: ordinary external questions use the progressive route.
 #[test]
-#[should_panic(expected = "HR-2-target")]
-fn hr1_ordinary_external_questions_still_record_the_webpreferred_gap() {
+fn ordinary_external_questions_use_webpreferred_without_strict_finalization() {
     for message in [
         "推荐三本理解组织治理的入门书，并说明适合什么读者。",
         "比较两种常见的知识管理方法，各自适合什么场景？",
-        "帮我梳理公开可得的笔记写作建议。",
+        "帮我梳理公开可得的 Markdown 写作建议。",
     ] {
         let mut request = request();
         request.web_enabled = true;
@@ -2277,6 +2274,180 @@ fn hr1_ordinary_external_questions_still_record_the_webpreferred_gap() {
             envelope.verification_requirement,
             VerificationRequirement::None,
             "HR-2-target: ordinary external question should not require current Run Web evidence: {message}"
+        );
+    }
+}
+
+#[test]
+fn hr2_task_matrix_uses_task_contracts_instead_of_fresh_fact_domains() {
+    struct Case {
+        name: &'static str,
+        request: AssistantRunStartRequest,
+        effect: Effect,
+        freshness: Freshness,
+        verification: VerificationRequirement,
+        effort: Effort,
+        web_capability: bool,
+    }
+
+    let mut ask_notes = request();
+    ask_notes.client_request_id = "hr2-ask-notes".into();
+    ask_notes.turn.message = "请根据附带笔记概述要点。".into();
+    ask_notes.turn.explicit_references = vec![valid_reference()];
+    ask_notes.turn.retrieval_scope.path_prefixes = vec!["notes/".into()];
+    ask_notes.web_enabled = true;
+
+    let mut research = request();
+    research.client_request_id = "hr2-research".into();
+    research.turn.message = "比较两种常见的知识管理方法，各自适合什么场景？".into();
+    research.web_enabled = true;
+
+    let mut citation_check = request();
+    citation_check.client_request_id = "hr2-citation-check".into();
+    citation_check.turn.message =
+        "请联网核实 https://example.com/release-notes 的当前版本。".into();
+    citation_check.web_enabled = true;
+
+    let mut draft = request();
+    draft.client_request_id = "hr2-draft".into();
+    draft.turn.message = "将这段话润色成正式通知。".into();
+    draft.explicit_action = Some(ExplicitAction {
+        effect: Effect::Draft,
+        target: None,
+        selection_snapshot: None,
+    });
+
+    let mut apply = request();
+    apply.client_request_id = "hr2-apply".into();
+    apply.turn.message = "将附带笔记的标题改得更清晰。".into();
+    apply.turn.explicit_references = vec![valid_reference()];
+    apply.explicit_action = Some(ExplicitAction {
+        effect: Effect::Apply,
+        target: Some(ExplicitTarget {
+            reference_id: "reference".into(),
+            content_hash: valid_content_hash(),
+        }),
+        selection_snapshot: None,
+    });
+
+    let mut chat = request();
+    chat.client_request_id = "hr2-chat".into();
+    chat.turn.message = "你好！".into();
+    chat.web_enabled = true;
+
+    let cases = [
+        Case {
+            name: "chat",
+            request: chat,
+            effect: Effect::Answer,
+            freshness: Freshness::Offline,
+            verification: VerificationRequirement::None,
+            effort: Effort::Direct,
+            web_capability: false,
+        },
+        Case {
+            name: "ask-notes",
+            request: ask_notes,
+            effect: Effect::Answer,
+            freshness: Freshness::Offline,
+            verification: VerificationRequirement::None,
+            effort: Effort::ToolLoop,
+            web_capability: false,
+        },
+        Case {
+            name: "research",
+            request: research,
+            effect: Effect::Answer,
+            freshness: Freshness::WebPreferred,
+            verification: VerificationRequirement::None,
+            effort: Effort::ToolLoop,
+            web_capability: true,
+        },
+        Case {
+            name: "citation-check",
+            request: citation_check,
+            effect: Effect::Answer,
+            freshness: Freshness::WebRequired,
+            verification: VerificationRequirement::CurrentRunWeb,
+            effort: Effort::ToolLoop,
+            web_capability: true,
+        },
+        Case {
+            name: "draft",
+            request: draft,
+            effect: Effect::Draft,
+            freshness: Freshness::Offline,
+            verification: VerificationRequirement::None,
+            effort: Effort::Direct,
+            web_capability: false,
+        },
+        Case {
+            name: "apply",
+            request: apply,
+            effect: Effect::Apply,
+            freshness: Freshness::Offline,
+            verification: VerificationRequirement::None,
+            effort: Effort::Durable,
+            web_capability: false,
+        },
+    ];
+
+    for case in cases {
+        let envelope = RunIntake::resolve_envelope(&case.request).expect(case.name);
+        assert_eq!(envelope.effect, case.effect, "{} effect", case.name);
+        assert_eq!(
+            envelope.freshness, case.freshness,
+            "{} freshness",
+            case.name
+        );
+        assert_eq!(
+            envelope.verification_requirement, case.verification,
+            "{} verification",
+            case.name
+        );
+        assert_eq!(envelope.effort, case.effort, "{} effort", case.name);
+        assert_eq!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            case.web_capability,
+            "{} web capability",
+            case.name
+        );
+        assert_eq!(
+            envelope.fresh_fact,
+            Default::default(),
+            "{} fresh plan",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn hr2_persists_empty_legacy_fresh_fact_policy_for_every_new_run() {
+    let database = Database::open_in_memory().expect("database");
+    for (index, message) in [
+        "上海未来一周天气",
+        "今天有什么重要新闻",
+        "苹果现在股价多少",
+        "最近有什么好看的电影",
+        "今晚湖人比赛几点",
+        "当前应用版本是什么",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut input = request();
+        input.client_request_id = format!("hr2-empty-fresh-policy-{index}");
+        input.turn.message = message.into();
+        input.web_enabled = true;
+        let accepted = RunIntake::start(&database, input).expect("accept new Run");
+        assert_eq!(
+            AgentRunRepository::fresh_fact_policy_for_run(&database, &accepted.run_id)
+                .expect("read fresh policy"),
+            Some(Default::default()),
+            "{message}"
         );
     }
 }
@@ -2409,14 +2580,14 @@ fn web_enabled_trusted_runtime_questions_remain_offline() {
 }
 
 #[test]
-fn today_date_question_uses_trusted_runtime_without_web() {
+fn today_date_question_uses_trusted_runtime_without_freezing_a_domain_plan() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "你好，今天是几月几日？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Runtime);
+    assert_eq!(envelope.fresh_fact, Default::default());
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.web_reason, WebDecisionReason::TrustedRuntimeFact);
     assert!(!envelope
@@ -2426,36 +2597,29 @@ fn today_date_question_uses_trusted_runtime_without_web() {
 }
 
 #[test]
-fn broad_recent_movie_question_freezes_dates_without_requiring_city() {
+fn broad_recent_movie_question_is_webpreferred_without_a_domain_or_city_contract() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "最近有什么好看的电影".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Entertainment);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(
-        envelope.fresh_fact.location_requirement,
-        crate::ai_runtime::run_contract::LocationRequirement::None
+        envelope.verification_requirement,
+        VerificationRequirement::None
     );
-    assert!(
-        envelope.fresh_fact.window_start.is_some(),
-        "current movie research must freeze a start date"
-    );
-    assert!(
-        envelope.fresh_fact.window_end.is_some(),
-        "current movie research must freeze an end date"
-    );
+    assert_eq!(envelope.fresh_fact, Default::default());
 }
 
 #[test]
-fn web_disabled_current_fact_keeps_domain_without_web_capability_or_satisfied_verification() {
-    for message in [
-        "上海未来一周天气",
-        "今天有什么重要新闻",
-        "最近有什么好看的电影",
-        "苹果现在股价多少",
-        "今晚湖人比赛几点",
+fn web_disabled_new_runs_keep_no_domain_plan_and_only_strict_tasks_keep_evidence_obligations() {
+    for (message, verification_requirement) in [
+        ("上海未来一周天气", VerificationRequirement::CurrentRunWeb),
+        ("今天有什么重要新闻", VerificationRequirement::CurrentRunWeb),
+        ("最近有什么好看的电影", VerificationRequirement::None),
+        ("苹果现在股价多少", VerificationRequirement::CurrentRunWeb),
+        ("今晚湖人比赛几点", VerificationRequirement::CurrentRunWeb),
     ] {
         let mut request = request();
         request.web_enabled = false;
@@ -2463,11 +2627,7 @@ fn web_disabled_current_fact_keeps_domain_without_web_capability_or_satisfied_ve
 
         let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-        assert_ne!(
-            envelope.fresh_fact.domain,
-            FreshFactDomain::None,
-            "{message}"
-        );
+        assert_eq!(envelope.fresh_fact, Default::default(), "{message}");
         assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
         assert!(
             !envelope
@@ -2477,8 +2637,7 @@ fn web_disabled_current_fact_keeps_domain_without_web_capability_or_satisfied_ve
             "{message}"
         );
         assert_eq!(
-            envelope.verification_requirement,
-            VerificationRequirement::CurrentRunWeb,
+            envelope.verification_requirement, verification_requirement,
             "{message}"
         );
     }
@@ -2618,7 +2777,7 @@ fn explicit_local_reference_does_not_downgrade_a_comparison_with_public_evidence
         envelope.verification_requirement,
         super::run_contract::VerificationRequirement::CurrentRunWeb
     );
-    assert_eq!(envelope.web_reason, WebDecisionReason::StrictExternalFact);
+    assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
 }
 
 #[test]
@@ -2635,7 +2794,7 @@ fn continuing_a_normal_session_authorizes_bounded_conversation_context() {
 }
 
 #[test]
-fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
+fn web_enabled_short_greeting_remains_a_direct_offline_answer_without_web_capability() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "你好！".to_string();
@@ -2644,7 +2803,7 @@ fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
 
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.effort, Effort::Direct);
-    assert!(envelope
+    assert!(!envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
@@ -2668,15 +2827,15 @@ fn short_failure_follow_up_in_an_existing_session_is_a_local_conversation_meta_q
 }
 
 #[test]
-fn web_enabled_single_external_fact_uses_a_direct_budget_after_required_evidence() {
+fn web_enabled_ordinary_external_fact_uses_the_progressive_tool_loop() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "When was the first iPhone announced?".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
-    assert_eq!(envelope.effort, Effort::Direct);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
 }
 
 #[test]

@@ -7,14 +7,7 @@
 //! This module is the single place that turns request signals into a concrete
 //! tool-surface plan.
 
-use crate::ai_runtime::run_contract::{CapabilityId, Effort, FreshFactDomain};
-
-/// How strongly the current user request depends on fresh external information.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TimeSensitivity {
-    None,
-    Current,
-}
+use crate::ai_runtime::run_contract::{CapabilityId, Effort};
 
 /// Web-tool instruction that should be injected into the prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +22,9 @@ pub(crate) enum WebToolInstruction {
 #[derive(Debug, Clone)]
 pub(crate) struct ToolSurfaceInput {
     pub(crate) web_enabled: bool,
-    pub(crate) time_sensitive: TimeSensitivity,
+    /// Whether the frozen Run contract requires current-Run Web evidence.
+    /// This is intentionally a contract fact, not a domain classifier result.
+    pub(crate) requires_current_web_evidence: bool,
     pub(crate) effort: Effort,
     pub(crate) web_prefetched: bool,
     pub(crate) authorized_capabilities: Vec<CapabilityId>,
@@ -57,14 +52,14 @@ impl ToolSurfacePlanner {
             .iter()
             .any(|capability| capability.as_str() == "web.search");
         let web_allowed = input.web_enabled && has_web_capability;
-        let time_sensitive = input.time_sensitive == TimeSensitivity::Current;
+        let requires_current_web_evidence = input.requires_current_web_evidence;
 
         if !web_allowed {
             return ToolSurfacePlan {
                 effort: input.effort,
                 expose_web_search: false,
                 web_prefetched: input.web_prefetched,
-                web_instruction: if time_sensitive {
+                web_instruction: if requires_current_web_evidence {
                     WebToolInstruction::NoWebDoNotFabricate
                 } else {
                     WebToolInstruction::None
@@ -87,9 +82,9 @@ impl ToolSurfacePlanner {
             };
         }
 
-        // A time-sensitive request with Web enabled must be able to search.
+        // A Run that requires current Web evidence must be able to search.
         // Direct mode never exposes web_search, so promote it to ToolLoop.
-        let effort = if time_sensitive && input.effort == Effort::Direct {
+        let effort = if requires_current_web_evidence && input.effort == Effort::Direct {
             Effort::ToolLoop
         } else {
             input.effort
@@ -97,7 +92,7 @@ impl ToolSurfacePlanner {
 
         // Direct mode does not expose web_search; ToolLoop/Durable do.
         let expose_web_search = effort != Effort::Direct;
-        let web_instruction = if time_sensitive {
+        let web_instruction = if requires_current_web_evidence {
             WebToolInstruction::MustSearchIfNeeded
         } else {
             WebToolInstruction::None
@@ -110,17 +105,6 @@ impl ToolSurfacePlanner {
             web_instruction,
             tool_names: Vec::new(),
         }
-    }
-}
-
-/// Project whether a frozen fresh-fact domain is time-sensitive.
-///
-/// This deliberately replaces message-keyword scanning: the same deterministic
-/// classifier used at intake is the single source of truth for time windows.
-pub(crate) fn classify_time_sensitivity(domain: FreshFactDomain) -> TimeSensitivity {
-    match domain {
-        FreshFactDomain::None | FreshFactDomain::Runtime => TimeSensitivity::None,
-        _ => TimeSensitivity::Current,
     }
 }
 
@@ -141,10 +125,10 @@ mod tests {
     }
 
     #[test]
-    fn web_enabled_time_sensitive_promotes_direct_to_tool_loop_and_exposes_search() {
+    fn current_web_evidence_contract_promotes_direct_to_tool_loop_and_exposes_search() {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: true,
-            time_sensitive: TimeSensitivity::Current,
+            requires_current_web_evidence: true,
             effort: Effort::Direct,
             web_prefetched: false,
             authorized_capabilities: web_capabilities(),
@@ -156,10 +140,10 @@ mod tests {
     }
 
     #[test]
-    fn web_disabled_time_sensitive_does_not_expose_search_and_forbids_fabrication() {
+    fn current_web_evidence_contract_without_authorization_forbids_fabrication() {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: false,
-            time_sensitive: TimeSensitivity::Current,
+            requires_current_web_evidence: true,
             effort: Effort::Direct,
             web_prefetched: false,
             authorized_capabilities: no_web_capabilities(),
@@ -177,7 +161,7 @@ mod tests {
     fn prefetched_evidence_keeps_tool_hidden_but_denies_nothing() {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: true,
-            time_sensitive: TimeSensitivity::Current,
+            requires_current_web_evidence: true,
             effort: Effort::Direct,
             web_prefetched: true,
             authorized_capabilities: web_capabilities(),
@@ -192,10 +176,10 @@ mod tests {
     }
 
     #[test]
-    fn non_time_sensitive_web_enabled_stays_in_original_effort() {
+    fn webpreferred_contract_stays_in_its_frozen_effort() {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: true,
-            time_sensitive: TimeSensitivity::None,
+            requires_current_web_evidence: false,
             effort: Effort::Direct,
             web_prefetched: false,
             authorized_capabilities: web_capabilities(),
@@ -207,18 +191,15 @@ mod tests {
     }
 
     #[test]
-    fn classify_time_sensitivity_projects_from_fresh_fact_domain() {
-        assert_eq!(
-            classify_time_sensitivity(FreshFactDomain::Entertainment),
-            TimeSensitivity::Current
-        );
-        assert_eq!(
-            classify_time_sensitivity(FreshFactDomain::Weather),
-            TimeSensitivity::Current
-        );
-        assert_eq!(
-            classify_time_sensitivity(FreshFactDomain::None),
-            TimeSensitivity::None
-        );
+    fn evidence_obligation_not_a_domain_controls_the_web_instruction() {
+        let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
+            web_enabled: true,
+            requires_current_web_evidence: true,
+            effort: Effort::ToolLoop,
+            web_prefetched: false,
+            authorized_capabilities: web_capabilities(),
+        });
+
+        assert_eq!(plan.web_instruction, WebToolInstruction::MustSearchIfNeeded);
     }
 }

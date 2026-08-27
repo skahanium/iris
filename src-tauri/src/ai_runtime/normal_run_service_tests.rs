@@ -18,8 +18,8 @@ use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
     AssistantRunAccepted, AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef,
-    AssistantTurnDraft, CapabilityId, ContextMode, Effort, FreshFactDomain, RunEventPayload,
-    RunEventType, RunPresentationPayload, RunState, SecurityDomain,
+    AssistantTurnDraft, CapabilityId, ContextMode, Effort, FreshFactDomain, FreshFactPolicy,
+    RunEventPayload, RunEventType, RunPresentationPayload, RunState, SecurityDomain,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
@@ -145,7 +145,8 @@ fn web_tool_loop_request() -> AssistantRunStartRequest {
 fn direct_required_web_request() -> AssistantRunStartRequest {
     let mut request = direct_request();
     request.client_request_id = "headless-normal-web-direct-required".into();
-    request.turn.message = "When was the first iPhone announced?".into();
+    request.turn.message =
+        "Please search online and verify when the first iPhone was announced.".into();
     request.web_enabled = true;
     request
 }
@@ -1105,7 +1106,7 @@ async fn news_web_fallback_produces_validated_record_from_headless_mcp() {
 }
 
 #[tokio::test]
-async fn production_missing_city_waits_for_input_and_resumes_the_same_run() {
+async fn production_location_like_request_does_not_pause_a_new_run_for_structured_input() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
@@ -1125,52 +1126,18 @@ async fn production_missing_city_waits_for_input_and_resumes_the_same_run() {
         .expect("accepted weather run without city");
 
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
-    let waiting = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
-        .expect("waiting run");
-    assert_eq!(waiting.run.state, RunState::AwaitingInput);
-    assert!(waiting.run.pending_input.is_some(), "must request city");
-
-    let mut values = std::collections::BTreeMap::new();
-    values.insert("city".into(), "佛山".into());
-    let outcome = RunIntake::control_with_sink(
-        &state.db,
-        super::run_contract::AssistantRunControlRequest {
-            session: accepted.session.clone(),
-            run_id: accepted.run_id.clone(),
-            expected_state_version: waiting.run.state_version,
-            action: super::run_contract::RunControlAction::SubmitInput {
-                input_id: format!("location-{}", accepted.run_id),
-                values,
-            },
-        },
-        &RecordingSink::default(),
-    )
-    .expect("input submission");
-    assert_eq!(
-        outcome,
-        super::run_intake::NormalRunControlOutcome::InputProvided
+        .expect("completed run");
+    assert!(
+        response.run.state.is_terminal(),
+        "new Run must terminate rather than reserve a city-specific structured input"
     );
-
-    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
-    let resumed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
-        .expect("run snapshot")
-        .expect("resumed run");
-    assert_eq!(
-        resumed.run.state,
-        RunState::Completed,
-        "resumed run must complete instead of remaining in an active state"
-    );
-    assert!(resumed.run.pending_input.is_none());
+    assert!(response.run.pending_input.is_none());
 }
 
-/// HR-4 will replace this structured pause with a normal assistant
-/// clarification for ordinary missing context. Keep this target fixture on the
-/// production orchestration path so a reducer-only change cannot hide the
-/// policy gap.
 #[tokio::test]
-#[should_panic(expected = "HR-4-target")]
-async fn hr1_ordinary_missing_context_still_pauses_the_run_for_structured_input() {
+async fn ordinary_missing_context_does_not_reserve_a_structured_input_run() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
@@ -1193,14 +1160,13 @@ async fn hr1_ordinary_missing_context_still_pauses_the_run_for_structured_input(
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
         .expect("ordinary missing-context Run");
-    assert_eq!(
-        response.run.state,
-        RunState::Completed,
-        "HR-4-target: ordinary missing context must complete with a natural assistant clarification"
+    assert!(
+        response.run.state.is_terminal(),
+        "ordinary missing context must not strand an active structured-input Run"
     );
     assert!(
         response.run.pending_input.is_none(),
-        "HR-4-target: ordinary clarification must not reserve an active Run input"
+        "ordinary clarification must not reserve an active Run input"
     );
 }
 
@@ -1308,7 +1274,7 @@ async fn production_weather_without_provider_fails_closed_instead_of_fabricating
 }
 
 #[tokio::test]
-async fn production_domain_operations_freeze_authorize_dispatch_and_recover_table_driven() {
+async fn legacy_domain_operations_remain_readable_for_recovery_after_new_intake_retires_them() {
     use crate::ai_runtime::run_contract::DomainOperation;
 
     let cases = vec![
@@ -1418,15 +1384,58 @@ async fn production_domain_operations_freeze_authorize_dispatch_and_recover_tabl
         request.client_request_id = format!("production-domain-operation-{index}");
         request.turn.message = message.into();
         request.web_enabled = true;
-        assert_eq!(
-            RunIntake::resolve_envelope(&request)
-                .expect("classify production domain Run")
-                .fresh_fact
-                .operation,
-            Some(operation)
-        );
+        let mut legacy_envelope =
+            RunIntake::resolve_envelope(&request).expect("classify new production Run");
+        assert_eq!(legacy_envelope.fresh_fact, Default::default());
         let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
-            .expect("accept production domain Run");
+            .expect("accept new production Run");
+        legacy_envelope.fresh_fact = FreshFactPolicy {
+            domain: match operation {
+                DomainOperation::WeatherCurrent | DomainOperation::WeatherForecast => {
+                    FreshFactDomain::Weather
+                }
+                DomainOperation::NewsSearch => FreshFactDomain::News,
+                DomainOperation::FinanceQuote
+                | DomainOperation::FinanceMetrics
+                | DomainOperation::FinanceNews => FreshFactDomain::Finance,
+                DomainOperation::EntertainmentNowPlaying
+                | DomainOperation::EntertainmentUpcoming
+                | DomainOperation::EntertainmentStreaming => FreshFactDomain::Entertainment,
+                DomainOperation::SportsSchedule | DomainOperation::SportsScore => {
+                    FreshFactDomain::Sports
+                }
+            },
+            operation: Some(operation),
+            location_requirement: if operation == DomainOperation::EntertainmentNowPlaying {
+                crate::ai_runtime::run_contract::LocationRequirement::City
+            } else {
+                crate::ai_runtime::run_contract::LocationRequirement::None
+            },
+            ..FreshFactPolicy::default()
+        };
+        legacy_envelope.freshness = crate::ai_runtime::run_contract::Freshness::WebRequired;
+        legacy_envelope.verification_requirement =
+            crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb;
+        legacy_envelope
+            .required_capabilities
+            .push(CapabilityId::new("web.domain.read"));
+        let legacy_envelope_json =
+            serde_json::to_string(&legacy_envelope).expect("serialize legacy envelope");
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "UPDATE agent_runs SET envelope_json = ?1 WHERE run_id = ?2",
+                    rusqlite::params![legacy_envelope_json, accepted.run_id],
+                )?;
+                crate::ai_runtime::mcp_external_tools::freeze_domain_run_grants(
+                    conn,
+                    &accepted.run_id,
+                    &[operation],
+                    None,
+                )
+            })
+            .expect("install legacy domain policy and frozen grant");
         let snapshots =
             crate::ai_runtime::mcp_external_tools::load_run_snapshots(&state.db, &accepted.run_id)
                 .expect("load frozen snapshots");
@@ -1668,9 +1677,8 @@ async fn production_news_web_fallback_accepts_w1_with_high_ledger_ids_and_recove
     assert_eq!(
         RunIntake::resolve_envelope(&request)
             .expect("classify news fallback Run")
-            .fresh_fact
-            .effective_operation(),
-        Some(crate::ai_runtime::run_contract::DomainOperation::NewsSearch)
+            .fresh_fact,
+        Default::default()
     );
     let accepted =
         RunIntake::start_with_sink(&state.db, request, &sink).expect("accept news fallback Run");
@@ -1695,7 +1703,8 @@ async fn production_news_web_fallback_accepts_w1_with_high_ledger_ids_and_recove
         .map(|tool| tool["function"]["name"].as_str().expect("tool name"))
         .collect::<Vec<_>>();
     assert!(!names.contains(&"news_lookup"));
-    assert!(names.contains(&"web_search"));
+    assert!(!names.contains(&"web_search"));
+    assert!(names.contains(&"submit_final_answer"));
     assert_eq!(calls.len(), 2);
     let current_evidence =
         crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_registered(
@@ -1722,7 +1731,7 @@ async fn production_news_web_fallback_accepts_w1_with_high_ledger_ids_and_recove
 }
 
 #[tokio::test]
-async fn broad_movie_research_completes_with_run_local_web_sources_and_no_city_input() {
+async fn webpreferred_movie_research_uses_generic_web_evidence_without_city_or_domain_tools() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     state
@@ -1765,9 +1774,7 @@ async fn broad_movie_research_completes_with_run_local_web_sources_and_no_city_i
     request.turn.message = "近期有什么好看的电影上映？".into();
     request.web_enabled = true;
     let envelope = RunIntake::resolve_envelope(&request).expect("classify movie research Run");
-    assert_eq!(envelope.fresh_fact.domain, FreshFactDomain::Entertainment);
-    assert_eq!(envelope.fresh_fact.location_requirement, Default::default());
-    assert_eq!(envelope.fresh_fact.structured_provider_operation(), None);
+    assert_eq!(envelope.fresh_fact, Default::default());
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
         .expect("accept broad movie research Run");
 
@@ -1778,8 +1785,8 @@ async fn broad_movie_research_completes_with_run_local_web_sources_and_no_city_i
         .expect("movie research Run");
     assert_eq!(
         response.run.state,
-        RunState::Completed,
-        "events={:?}; evidence={:?}",
+        RunState::Failed,
+        "ordinary WebPreferred finalization remains the explicit HR-4 boundary; events={:?}; evidence={:?}",
         response
             .events
             .iter()
@@ -1788,6 +1795,13 @@ async fn broad_movie_research_completes_with_run_local_web_sources_and_no_city_i
         AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
             .expect("diagnostic movie evidence")
     );
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: crate::ai_runtime::run_contract::SafeRunErrorCode::FinalizationProtocolInvalid,
+            ..
+        })
+    ));
     assert!(response.run.pending_input.is_none());
     let evidence =
         AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
@@ -1856,7 +1870,7 @@ async fn web_fallback_rejects_an_out_of_run_w8_without_persisting_an_answer() {
 }
 
 #[tokio::test]
-async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine() {
+async fn strict_web_run_fails_closed_when_no_tool_capable_model_is_available() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
@@ -1894,10 +1908,10 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
 
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
-        .expect("completed run");
+        .expect("terminal run");
     assert_eq!(
         response.run.state,
-        RunState::Completed,
+        RunState::Failed,
         "terminal events: {:?}",
         response
             .events
@@ -1906,79 +1920,33 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
             .collect::<Vec<_>>()
     );
 
-    let calls = tokio::time::timeout(Duration::from_secs(2), llm.finish())
-        .await
-        .expect("strict service path must reach the one model turn")
-        .expect("LLM double completion");
-    assert_eq!(
-        calls.len(),
-        1,
-        "strict Web service path uses one model turn"
-    );
-    let system_prompt = calls[0].body["messages"]
-        .as_array()
-        .expect("provider messages")
-        .iter()
-        .filter_map(|message| message["content"].as_str())
-        .find(|content| content.contains("## WebEvidenceData"))
-        .expect("web evidence system prompt");
-    assert!(
-        system_prompt.contains("Keep source mechanics out of visible prose"),
-        "uncalibrated routes must keep source-group mechanics out of visible prose"
-    );
-    assert!(
-        !system_prompt.contains("CurrentRunVerifiedWebEvidence"),
-        "model-facing evidence data must not expose the old lifecycle heading"
-    );
-    assert!(
-        !system_prompt.contains("source-group disclosure"),
-        "model-facing evidence data must not expose source-group protocol labels"
-    );
-    assert!(
-        !system_prompt.contains("Cite its [Wn] labels"),
-        "uncalibrated routes must not request model-authored precise citations"
-    );
-    let tool_names = calls[0].body["tools"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|tool| tool["function"]["name"].as_str())
-        .collect::<Vec<_>>();
-    assert!(
-        tool_names.is_empty(),
-        "a strict Web-only Run must not expose unrelated tools to the model: {tool_names:?}"
-    );
     assert!(response
         .events
         .iter()
         .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
-
-    let citation_map: String = state
-        .db
-        .with_read_conn(|conn| {
-            conn.query_row(
-                "SELECT citation_map_json FROM session_messages
-                 WHERE session_id = ?1 AND role = 'assistant'",
-                [1_i64],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: crate::ai_runtime::run_contract::SafeRunErrorCode::NoCapableModel,
+            ..
         })
-        .expect("strict Web assistant citation map");
-    assert!(
-        citation_map.contains("\"mode\":\"source_group_fallback\""),
-        "ToolLoop strict Web finalization must bind an uncalibrated answer to its source group"
-    );
+    ));
 }
 
 #[tokio::test]
-async fn direct_required_web_run_persists_source_group_binding_when_markers_are_missing() {
+async fn required_web_run_fails_closed_when_the_selected_model_lacks_tool_support() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
-    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"第一代 iPhone 于 2007 年发布。\"}}]}\n\ndata: [DONE]\n\n",
-    )])
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(&tool_call_sse(
+        "submit_final_answer",
+        serde_json::json!({
+            "blocks": [{
+                "markdown": "第一代 iPhone 于 2007 年发布。",
+                "sources": ["W1"]
+            }]
+        }),
+    ))])
     .await
     .expect("local LLM boundary");
     let mut routing = LlmRoutingConfig::default();
@@ -2002,41 +1970,31 @@ async fn direct_required_web_run_persists_source_group_binding_when_markers_are_
     let request = direct_required_web_request();
     assert_eq!(
         RunIntake::resolve_envelope(&request)
-            .expect("direct strict Web envelope")
+            .expect("strict Web envelope")
             .effort,
-        Effort::Direct
+        Effort::ToolLoop
     );
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
         .expect("accepted direct required Web run");
     assert_eq!(
         accepted.state,
         RunState::Accepted,
-        "the direct strict Web fixture must start from an accepted Run"
+        "the strict Web fixture must start from an accepted Run"
     );
 
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
 
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
-        .expect("completed run");
-    assert_eq!(response.run.state, RunState::Completed);
-    let _ = llm.finish().await.expect("LLM double completion");
-    let citation_map: String = state
-        .db
-        .with_read_conn(|conn| {
-            conn.query_row(
-                "SELECT citation_map_json FROM session_messages
-                 WHERE session_id = ?1 AND role = 'assistant'",
-                [1_i64],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
+        .expect("terminal run");
+    assert_eq!(response.run.state, RunState::Failed);
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: crate::ai_runtime::run_contract::SafeRunErrorCode::NoCapableModel,
+            ..
         })
-        .expect("direct strict Web assistant citation map");
-    assert!(
-        citation_map.contains("\"mode\":\"source_group_fallback\""),
-        "Direct strict Web finalization must bind an uncalibrated answer to its source group"
-    );
+    ));
 }
 
 #[tokio::test]
