@@ -4,7 +4,6 @@
 //! dispatch providers, emit IPC events, or provide a compatibility path for
 //! the legacy Harness. Stage 4 owns those responsibilities.
 
-use crate::ai_runtime::fresh_research_plan::FreshResearchResumeState;
 use crate::ai_runtime::prompt_contract::PROMPT_CONTRACT_VERSION;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::run_contract::{
@@ -771,70 +770,6 @@ impl AgentRunRepository {
                 }
                 Ok(())
             })
-        })
-    }
-
-    /// Persist the latest body-free current-fact research continuation state.
-    pub(crate) fn persist_fresh_research_state(
-        db: &Database,
-        run_id: &str,
-        state: &FreshResearchResumeState,
-    ) -> AppResult<()> {
-        state.validate()?;
-        db.with_conn(|conn| {
-            in_immediate_transaction(conn, |conn| {
-                let status: String = conn
-                    .query_row(
-                        "SELECT status FROM agent_runs WHERE run_id = ?1",
-                        [run_id],
-                        |row| row.get(0),
-                    )
-                    .map_err(not_found_or_db)?;
-                let run_state = parse_wire::<RunState>(&status)?;
-                if run_state.is_terminal() {
-                    return Err(AppError::run(SafeRunErrorCode::TerminalState));
-                }
-                let step_seq: i64 = conn.query_row(
-                    "SELECT COALESCE(MAX(step_seq), 0) + 1 FROM agent_run_steps WHERE run_id = ?1",
-                    [run_id],
-                    |row| row.get(0),
-                )?;
-                let now = chrono::Utc::now().to_rfc3339();
-                conn.execute(
-                    "INSERT INTO agent_run_steps
-                     (run_id, step_seq, kind, status, input_summary, output_summary,
-                      resume_state_json, evidence_refs_json, created_at, updated_at)
-                     VALUES (?1, ?2, 'fresh_research', 'active', '', '', ?3, '[]', ?4, ?4)",
-                    rusqlite::params![run_id, step_seq, serde_json::to_string(state)?, now],
-                )?;
-                Ok(())
-            })
-        })
-    }
-
-    /// Read the latest body-free current-fact research continuation state.
-    pub(crate) fn latest_fresh_research_state(
-        db: &Database,
-        run_id: &str,
-    ) -> AppResult<Option<FreshResearchResumeState>> {
-        db.with_conn(|conn| {
-            let stored = conn
-                .query_row(
-                    "SELECT resume_state_json FROM agent_run_steps
-                     WHERE run_id = ?1 AND kind = 'fresh_research'
-                     ORDER BY step_seq DESC LIMIT 1",
-                    [run_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            stored
-                .map(|json| {
-                    let state: FreshResearchResumeState = serde_json::from_str(&json)
-                        .map_err(|_| AppError::msg("fresh_research_resume_state_invalid"))?;
-                    state.validate()?;
-                    Ok(state)
-                })
-                .transpose()
         })
     }
 
@@ -2152,6 +2087,14 @@ fn materialize_budget_policy(
         }
         return Ok((stored_policy, normalized));
     }
+    if let Ok(schema_one_policy) =
+        serde_json::from_str::<LegacyRunBudgetPolicySchema1>(stored_policy)
+    {
+        if schema_one_policy != LegacyRunBudgetPolicySchema1::from(&canonical_policy) {
+            return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
+        }
+        return Ok((canonical_policy, normalized));
+    }
     let legacy_policy: LegacyRunBudgetPolicyV1 = serde_json::from_str(stored_policy)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
     if legacy_policy != LegacyRunBudgetPolicyV1::from(&canonical_policy) {
@@ -2160,7 +2103,49 @@ fn materialize_budget_policy(
     Ok((canonical_policy, normalized))
 }
 
-/// The complete persisted v1 shape before frozen token fields were added.
+/// The complete schema-1 policy before classified tool-call limits were added.
+///
+/// This is intentionally exact rather than permissive: only a policy that is
+/// otherwise identical to the persisted envelope may be materialized once.
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyRunBudgetPolicySchema1 {
+    schema_version: u8,
+    profile: crate::ai_runtime::run_contract::RunBudgetProfile,
+    max_prompt_tokens: u32,
+    max_completion_tokens: u32,
+    max_turn_output_tokens: u32,
+    max_model_turns: u32,
+    max_tool_calls: u32,
+    max_child_runs: u32,
+    child_max_model_turns: u32,
+    child_max_tool_calls: u32,
+    child_input_tokens_per_turn: u32,
+    child_output_tokens_per_turn: u32,
+    post_confirmation_max_model_turns: u32,
+}
+
+impl From<&RunBudgetPolicy> for LegacyRunBudgetPolicySchema1 {
+    fn from(policy: &RunBudgetPolicy) -> Self {
+        Self {
+            schema_version: 1,
+            profile: policy.profile,
+            max_prompt_tokens: policy.max_prompt_tokens,
+            max_completion_tokens: policy.max_completion_tokens,
+            max_turn_output_tokens: policy.max_turn_output_tokens,
+            max_model_turns: policy.max_model_turns,
+            max_tool_calls: policy.max_tool_calls,
+            max_child_runs: policy.max_child_runs,
+            child_max_model_turns: policy.child_max_model_turns,
+            child_max_tool_calls: policy.child_max_tool_calls,
+            child_input_tokens_per_turn: policy.child_input_tokens_per_turn,
+            child_output_tokens_per_turn: policy.child_output_tokens_per_turn,
+            post_confirmation_max_model_turns: policy.post_confirmation_max_model_turns,
+        }
+    }
+}
+
+/// The complete persisted policy before frozen token fields were added.
 ///
 /// This is intentionally exact rather than permissive: only a policy that is
 /// otherwise identical to the persisted envelope may be materialized once.
@@ -2182,7 +2167,7 @@ struct LegacyRunBudgetPolicyV1 {
 impl From<&RunBudgetPolicy> for LegacyRunBudgetPolicyV1 {
     fn from(policy: &RunBudgetPolicy) -> Self {
         Self {
-            schema_version: policy.schema_version,
+            schema_version: 1,
             profile: policy.profile,
             max_model_turns: policy.max_model_turns,
             max_tool_calls: policy.max_tool_calls,

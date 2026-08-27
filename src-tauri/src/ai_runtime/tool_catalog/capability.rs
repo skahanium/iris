@@ -1,7 +1,7 @@
 use crate::ai_runtime::run_contract::CapabilityId;
 use crate::ai_runtime::{ToolAccessLevel, ToolCapabilityAffinity};
 
-use super::ToolCatalogEntry;
+use super::{ToolBudgetClass, ToolCatalogEntry};
 
 impl ToolCatalogEntry {
     /// Stable capability contract required before this tool can be exposed or
@@ -66,6 +66,42 @@ impl ToolCatalogEntry {
     /// Capability affinity for task-policy driven tool exposure.
     pub fn capability_affinity(&self) -> Vec<ToolCapabilityAffinity> {
         capability_affinity(self)
+    }
+
+    /// Budget classification for a concrete built-in dispatch.
+    ///
+    /// Execution metadata wins where it exists. The fallback is deliberately
+    /// based on authority rather than task/domain wording so every catalog
+    /// tool has one stable classification.
+    pub(crate) fn budget_class(&self) -> ToolBudgetClass {
+        if let Some(metadata) = self.execution_metadata {
+            return match metadata.cost_class {
+                "local" => ToolBudgetClass::Local,
+                "network" => ToolBudgetClass::Network,
+                "runtime" => ToolBudgetClass::Runtime,
+                "external_read" => ToolBudgetClass::ExternalRead,
+                _ => ToolBudgetClass::ConfirmedChange,
+            };
+        }
+        match self.name {
+            "fs_read_authorized_folder"
+            | "doc_convert"
+            | "doc_ocr"
+            | "doc_extract_pdf"
+            | "doc_extract_table" => ToolBudgetClass::ExternalRead,
+            _ if self.requires_confirmation => ToolBudgetClass::ConfirmedChange,
+            _ => match self.access_level {
+                ToolAccessLevel::ReadIndex | ToolAccessLevel::ReadNoteSpan => {
+                    ToolBudgetClass::Local
+                }
+                ToolAccessLevel::ReadProfile => ToolBudgetClass::Runtime,
+                ToolAccessLevel::Network => ToolBudgetClass::Network,
+                ToolAccessLevel::WriteCache
+                | ToolAccessLevel::WriteMarkdown
+                | ToolAccessLevel::WriteSettings
+                | ToolAccessLevel::ManageSkills => ToolBudgetClass::ConfirmedChange,
+            },
+        }
     }
 }
 

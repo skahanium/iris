@@ -7,15 +7,12 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tauri::AppHandle;
 
 use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
-use crate::ai_runtime::fresh_research_plan::build_fresh_research_plan;
-use crate::ai_runtime::fresh_research_plan::explicit_city_from_message;
-use crate::ai_runtime::fresh_research_plan::ConfirmedLocation;
 use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, CapabilityId, DomainOperation, Effort, FreshFactDomain, Freshness,
@@ -34,85 +31,6 @@ use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CurrentTaskShape {
-    RuntimeFact,
-    ExactCurrentFact,
-    CurrentResearch,
-    Other,
-}
-
-/// Route current-domain requests by their required answer shape, not merely by
-/// the classifier domain. This preserves structured fast paths for exact
-/// fields while keeping summaries, explanations and recommendations in the
-/// bounded Web research loop when no structured binding exists.
-pub(crate) fn classify_current_task_shape(
-    domain: FreshFactDomain,
-    user_message: &str,
-) -> CurrentTaskShape {
-    if domain == FreshFactDomain::Runtime {
-        return CurrentTaskShape::RuntimeFact;
-    }
-    if !is_current_fact_domain(domain) {
-        return CurrentTaskShape::Other;
-    }
-    if domain == FreshFactDomain::News
-        || contains_research_shape_marker(user_message)
-        || (domain == FreshFactDomain::Entertainment
-            && contains_any_marker(
-                user_message,
-                &["推荐", "有什么好看", "recommend", "suggest", "best"],
-            ))
-    {
-        return CurrentTaskShape::CurrentResearch;
-    }
-    CurrentTaskShape::ExactCurrentFact
-}
-
-fn is_current_fact_domain(domain: FreshFactDomain) -> bool {
-    matches!(
-        domain,
-        FreshFactDomain::Weather
-            | FreshFactDomain::News
-            | FreshFactDomain::Finance
-            | FreshFactDomain::Entertainment
-            | FreshFactDomain::Sports
-    )
-}
-
-fn contains_research_shape_marker(message: &str) -> bool {
-    contains_any_marker(
-        message,
-        &[
-            "比较",
-            "对比",
-            "原因",
-            "为什么",
-            "为何",
-            "综述",
-            "盘点",
-            "前瞻",
-            "预测",
-            "分析",
-            "影响",
-            "走势",
-            "怎么回事",
-            "compare",
-            "comparison",
-            "why",
-            "overview",
-            "outlook",
-            "preview",
-            "recommend",
-        ],
-    )
-}
-
-fn contains_any_marker(message: &str, markers: &[&str]) -> bool {
-    let normalized = message.to_lowercase();
-    markers.iter().any(|marker| normalized.contains(marker))
-}
 
 fn plan_tool_surface(
     context: &crate::ai_runtime::run_context::RunContext,
@@ -382,7 +300,7 @@ fn required_input_for_context(
     let city_is_hard_precondition = matches!(
         context.envelope.fresh_fact.location_requirement,
         crate::ai_runtime::run_contract::LocationRequirement::City
-    ) && confirmed_location_for_context(context).is_none();
+    ) && !has_submitted_city(context);
     city_is_hard_precondition.then(|| RunEventPayload::InputRequired {
         input_id: format!("location-{run_id}"),
         input_kind: "location".into(),
@@ -410,22 +328,14 @@ fn domain_operation_is_executable(
     )
 }
 
-fn confirmed_location_for_context(
-    context: &crate::ai_runtime::run_context::RunContext,
-) -> Option<ConfirmedLocation> {
+fn has_submitted_city(context: &crate::ai_runtime::run_context::RunContext) -> bool {
     context
         .provided_input_values
         .get("city")
         .map(String::as_str)
         .map(str::trim)
         .filter(|city| !city.is_empty())
-        .map(str::to_string)
-        .or_else(|| explicit_city_from_message(&context.user_message))
-        .map(|city| ConfirmedLocation {
-            city: Some(city),
-            province: None,
-            country: None,
-        })
+        .is_some()
 }
 
 /// Rebuild and evaluate the persisted normal Run policy before Provider routing.
@@ -578,7 +488,9 @@ async fn dispatch_normal_run_after_context(
         "Run Web decision"
     );
 
-    if context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb {
+    if context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb
+        && context.envelope.fresh_fact.domain != FreshFactDomain::None
+    {
         return dispatch_required_web_verified_run(
             state,
             app_handle,
@@ -600,7 +512,8 @@ async fn dispatch_normal_run_after_context(
     // ToolLoop/Durable Runs receive only the snapshot-authorized surface. The model may call
     // web_search when authorized; search failure emits CapabilityDegraded.
     let needs_follow_up_tools =
-        matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable);
+        matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable)
+            || context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb;
     if needs_follow_up_tools {
         let required_web_provider_snapshots = authorized_capabilities
             .iter()
@@ -633,6 +546,12 @@ async fn dispatch_normal_run_after_context(
         if !tool_surface_plan.expose_web_search {
             tools.retain(|tool| tool.name != "web_search");
         }
+        // Strict current-fact runs use the same general loop and tool surface;
+        // only their terminal source-binding contract adds the reserved final
+        // submission tool. This is not a Web planner or a domain fast path.
+        if context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb {
+            tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
+        }
         tool_surface_plan.tool_names = tools.iter().map(|tool| tool.name.clone()).collect();
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
@@ -663,7 +582,7 @@ async fn dispatch_normal_run_after_context(
         } else {
             provider
         };
-        let mut executor = NormalRunToolExecutor::new(
+        let executor = NormalRunToolExecutor::new(
             state,
             app_handle,
             accepted,
@@ -676,17 +595,6 @@ async fn dispatch_normal_run_after_context(
         .with_allowed_tool_names(&tool_surface_plan.tool_names)
         .with_skill_activation_plan(active_skills.plan.clone())
         .with_child_run_provider(&provider);
-        if classify_current_task_shape(context.envelope.fresh_fact.domain, &context.user_message)
-            == CurrentTaskShape::CurrentResearch
-        {
-            let plan = build_fresh_research_plan(
-                &context.user_message,
-                &context.envelope.fresh_fact,
-                "zh-CN",
-                confirmed_location_for_context(context).as_ref(),
-            )?;
-            executor = executor.with_fresh_research_budget(plan.budget);
-        }
         return if let Some(telemetry) = telemetry {
             RunEngine::execute_tool_loop_with_eval_telemetry(
                 db,
@@ -819,20 +727,7 @@ async fn dispatch_required_web_verified_run(
                 ));
             }
         };
-    let research_mode =
-        classify_current_task_shape(context.envelope.fresh_fact.domain, &context.user_message)
-            == CurrentTaskShape::CurrentResearch;
-    let research_plan = research_mode
-        .then(|| {
-            build_fresh_research_plan(
-                &context.user_message,
-                &context.envelope.fresh_fact,
-                "zh-CN",
-                confirmed_location_for_context(context).as_ref(),
-            )
-        })
-        .transpose()?;
-    let mut executor = NormalRunToolExecutor::new(
+    let executor = NormalRunToolExecutor::new(
         state,
         app_handle,
         accepted,
@@ -844,9 +739,6 @@ async fn dispatch_required_web_verified_run(
     )
     .with_allowed_tool_names(&["web_search".to_string()])
     .with_skill_activation_plan(skill_plan);
-    if let Some(plan) = research_plan {
-        executor = executor.with_fresh_research_budget(plan.budget);
-    }
     let query = required_web_query(context)?;
     let first_prefetch = execute_required_web_prefetch(&executor, &accepted.run_id, query).await;
     let first_prefetch = match first_prefetch {
@@ -972,19 +864,16 @@ async fn dispatch_required_web_verified_run(
             .await
         };
     }
-    // Required Web evidence is prefetched deterministically. For ordinary
-    // strict facts the final model only receives local follow-up tools and
-    // `web_search` stays hidden. Current-fact research keeps `web_search`
-    // visible so the model can issue bounded follow-up searches for unresolved
-    // evidence gaps.
-    let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, !research_mode);
+    // Compatibility-only branch for historical non-empty domain envelopes.
+    // New Runs do not reach it and use the generic AgentToolLoop above.
+    let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, true);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
     let domain_executable = domain_operation_is_executable(
         db,
         &accepted.run_id,
         context.envelope.fresh_fact.structured_provider_operation(),
     )?;
-    let mut tools = if research_mode || domain_executable {
+    let mut tools = if domain_executable {
         ToolRegistry::constrain_for_run_context(
             registry.tools_for_authorized_capabilities(authorized_capabilities, true),
             context.envelope.context,
@@ -1146,17 +1035,7 @@ async fn execute_required_web_prefetch(
         "web_search",
         serde_json::json!({ "query": query }).to_string(),
     );
-    let dispatch = ToolLoopExecutor::execute(executor, run_id, &call, 1);
-    let Some(deadline) = executor.fresh_research_deadline() else {
-        return dispatch.await;
-    };
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        return Err(AppError::msg("fresh_research_deadline_exhausted"));
-    }
-    tokio::time::timeout(remaining, dispatch)
-        .await
-        .map_err(|_| AppError::msg("fresh_research_deadline_exhausted"))?
+    ToolLoopExecutor::execute(executor, run_id, &call, 1).await
 }
 
 /// Strict structured finalization is a route capability, not a prompt-only
@@ -1216,22 +1095,6 @@ pub(crate) fn strict_follow_up_capabilities(
 }
 
 fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> AppResult<String> {
-    if matches!(
-        context.envelope.fresh_fact.domain,
-        FreshFactDomain::Weather
-            | FreshFactDomain::News
-            | FreshFactDomain::Finance
-            | FreshFactDomain::Entertainment
-            | FreshFactDomain::Sports
-    ) {
-        let plan = build_fresh_research_plan(
-            &context.user_message,
-            &context.envelope.fresh_fact,
-            "zh-CN",
-            confirmed_location_for_context(context).as_ref(),
-        )?;
-        return Ok(plan.initial_query);
-    }
     let prior_users_newest_first = context
         .recent_messages
         .iter()

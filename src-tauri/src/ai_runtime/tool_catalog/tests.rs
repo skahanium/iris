@@ -23,6 +23,47 @@ fn catalog_owns_execution_metadata() {
 }
 
 #[test]
+fn web_search_uses_the_open_query_and_current_run_url_contract_only() {
+    let properties = catalog_find("web_search")
+        .expect("web_search catalog entry")
+        .input_schema["properties"]
+        .as_object()
+        .expect("web_search properties");
+
+    assert!(properties.contains_key("query"));
+    assert!(properties.contains_key("urls"));
+    assert!(
+        !properties.contains_key("gap"),
+        "the generic loop must not expose the retired closed EvidenceGap protocol"
+    );
+}
+
+#[test]
+fn catalog_owns_one_stable_budget_class_for_every_budgeted_tool_kind() {
+    assert_eq!(
+        catalog_tool_budget_class("search_keyword"),
+        Some(ToolBudgetClass::Local)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("web_search"),
+        Some(ToolBudgetClass::Network)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("fs_read_authorized_folder"),
+        Some(ToolBudgetClass::ExternalRead)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("system_time_now"),
+        Some(ToolBudgetClass::Runtime)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("insert_text_at_cursor"),
+        Some(ToolBudgetClass::ConfirmedChange)
+    );
+    assert_eq!(catalog_tool_budget_class("unknown_frozen_tool"), None);
+}
+
+#[test]
 fn catalog_has_all_dispatchable_tools() {
     let catalog_disp = catalog_dispatchable_names();
     for name in DISPATCHABLE_TOOL_NAMES {

@@ -79,10 +79,16 @@ fn legacy_v1_budget_json(policy: &RunBudgetPolicy) -> String {
     let fields = value
         .as_object_mut()
         .expect("canonical budget must be an object");
+    fields.insert("schemaVersion".into(), serde_json::json!(1));
     for field in [
         "maxPromptTokens",
         "maxCompletionTokens",
         "maxTurnOutputTokens",
+        "maxLocalToolCalls",
+        "maxNetworkToolCalls",
+        "maxExternalReadToolCalls",
+        "maxRuntimeToolCalls",
+        "maxConfirmedChangeCalls",
     ] {
         fields.remove(field);
     }
@@ -238,6 +244,67 @@ fn accepted_and_retried_runs_keep_the_frozen_budget_policy() {
 }
 
 #[test]
+fn hr3_new_budget_policy_freezes_category_caps_and_materializes_schema_one_rows() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key.clone());
+    input.envelope.effort = Effort::ToolLoop;
+    AgentRunRepository::accept(&db, input).expect("accept standard run");
+
+    let policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("read budget")
+        .expect("frozen budget");
+    assert_eq!(policy.schema_version, 2);
+    assert_eq!(policy.max_local_tool_calls, 12);
+    assert_eq!(policy.max_network_tool_calls, 6);
+    assert_eq!(policy.max_external_read_tool_calls, 6);
+    assert_eq!(policy.max_runtime_tool_calls, 4);
+    assert_eq!(policy.max_confirmed_change_calls, 6);
+
+    let mut schema_one = serde_json::to_value(&policy).expect("serialize policy");
+    let fields = schema_one.as_object_mut().expect("policy is a JSON object");
+    fields.insert("schemaVersion".into(), serde_json::json!(1));
+    for field in [
+        "maxLocalToolCalls",
+        "maxNetworkToolCalls",
+        "maxExternalReadToolCalls",
+        "maxRuntimeToolCalls",
+        "maxConfirmedChangeCalls",
+    ] {
+        fields.remove(field);
+    }
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET budget_policy_json = ?1 WHERE run_id = 'run-1'",
+            [serde_json::to_string(&schema_one)?],
+        )?;
+        Ok(())
+    })
+    .expect("simulate schema one Run");
+
+    let materialized = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("materialize schema one policy")
+        .expect("materialized budget");
+    assert_eq!(materialized, policy);
+
+    let mut tampered = serde_json::to_value(&policy).expect("serialize canonical policy");
+    tampered["maxNetworkToolCalls"] = serde_json::json!(7);
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET budget_policy_json = ?1 WHERE run_id = 'run-1'",
+            [serde_json::to_string(&tampered)?],
+        )?;
+        Ok(())
+    })
+    .expect("tamper category cap");
+    assert_eq!(
+        AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+            .expect_err("expanded category cap must fail closed")
+            .to_string(),
+        "agent_run_invalid_budget_policy"
+    );
+}
+
+#[test]
 fn legacy_empty_and_v1_budgets_are_materialized_for_retry_and_active_execution() {
     for legacy_budget in [
         "{}".to_string(),
@@ -311,7 +378,7 @@ fn complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry() {
     let canonical_json = serde_json::to_value(&canonical_direct).expect("canonical direct policy");
 
     let mut unknown_schema = canonical_json.clone();
-    unknown_schema["schemaVersion"] = serde_json::json!(2);
+    unknown_schema["schemaVersion"] = serde_json::json!(3);
 
     let mut expanded_main_budget = canonical_json.clone();
     expanded_main_budget["maxModelTurns"] = serde_json::json!(1_000);

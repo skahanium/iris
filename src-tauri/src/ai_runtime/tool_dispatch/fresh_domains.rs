@@ -45,7 +45,6 @@ pub(super) async fn fresh_domain_tool(
                 operation,
                 args: normalized_args,
                 requested_at: Utc::now(),
-                location_gap: None,
             },
             ctx,
         )

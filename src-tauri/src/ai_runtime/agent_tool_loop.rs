@@ -7,14 +7,13 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::time::{Duration, Instant};
 
 use crate::ai_runtime::final_answer_submission::{FinalAnswerSubmission, FINAL_ANSWER_TOOL_NAME};
-use crate::ai_runtime::fresh_research_plan::ResearchBudget;
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
 use crate::ai_runtime::run_contract::RunBudgetPolicy;
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::run_engine::RunEventSink;
+use crate::ai_runtime::tool_catalog::{catalog_tool_budget_class, ToolBudgetClass};
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -137,22 +136,6 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         false
     }
 
-    /// Frozen current-fact budget for this Run, if it is a research loop.
-    fn fresh_research_budget(&self) -> Option<ResearchBudget> {
-        None
-    }
-
-    /// Current count of valid Web evidence registered by this research loop.
-    fn fresh_research_evidence_count(&self) -> Option<usize> {
-        None
-    }
-
-    /// Absolute deadline frozen when current-fact research begins, including
-    /// deterministic work that happens before the model loop starts.
-    fn fresh_research_deadline(&self) -> Option<Instant> {
-        None
-    }
-
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
     /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
@@ -170,8 +153,12 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
 pub(crate) struct AgentToolLoop {
     max_model_turns: u32,
     max_tool_calls: u32,
+    max_local_tool_calls: u32,
+    max_network_tool_calls: u32,
+    max_external_read_tool_calls: u32,
+    max_runtime_tool_calls: u32,
+    max_confirmed_change_calls: u32,
     turn_budget: AgentModelTurnBudget,
-    deadline: Option<Duration>,
 }
 
 impl AgentToolLoop {
@@ -180,12 +167,16 @@ impl AgentToolLoop {
         Self {
             max_model_turns: policy.max_model_turns,
             max_tool_calls: policy.max_tool_calls,
+            max_local_tool_calls: policy.max_local_tool_calls,
+            max_network_tool_calls: policy.max_network_tool_calls,
+            max_external_read_tool_calls: policy.max_external_read_tool_calls,
+            max_runtime_tool_calls: policy.max_runtime_tool_calls,
+            max_confirmed_change_calls: policy.max_confirmed_change_calls,
             turn_budget: AgentModelTurnBudget {
                 max_prompt_tokens: Some(policy.max_prompt_tokens),
                 max_completion_tokens: Some(policy.max_completion_tokens),
                 max_turn_output_tokens: Some(policy.max_turn_output_tokens),
             },
-            deadline: None,
         }
     }
 
@@ -194,6 +185,11 @@ impl AgentToolLoop {
         Self {
             max_model_turns: policy.child_max_model_turns,
             max_tool_calls: policy.child_max_tool_calls,
+            max_local_tool_calls: policy.child_max_tool_calls,
+            max_network_tool_calls: policy.child_max_tool_calls,
+            max_external_read_tool_calls: policy.child_max_tool_calls,
+            max_runtime_tool_calls: policy.child_max_tool_calls,
+            max_confirmed_change_calls: policy.child_max_tool_calls,
             turn_budget: AgentModelTurnBudget {
                 max_prompt_tokens: Some(policy.child_input_tokens_per_turn),
                 max_completion_tokens: Some(
@@ -203,17 +199,17 @@ impl AgentToolLoop {
                 ),
                 max_turn_output_tokens: Some(policy.child_output_tokens_per_turn),
             },
-            deadline: None,
         }
     }
 
-    /// Narrow the global limits with the frozen current-fact research profile.
-    pub(crate) fn with_fresh_research_budget(mut self, budget: ResearchBudget) -> Self {
-        self.max_model_turns = self
-            .max_model_turns
-            .min(u32::from(budget.max_model_continuations));
-        self.deadline = Some(Duration::from_secs(u64::from(budget.deadline_seconds)));
-        self
+    fn tool_call_limit(&self, class: ToolBudgetClass) -> u32 {
+        match class {
+            ToolBudgetClass::Local => self.max_local_tool_calls,
+            ToolBudgetClass::Network => self.max_network_tool_calls,
+            ToolBudgetClass::ExternalRead => self.max_external_read_tool_calls,
+            ToolBudgetClass::Runtime => self.max_runtime_tool_calls,
+            ToolBudgetClass::ConfirmedChange => self.max_confirmed_change_calls,
+        }
     }
 
     /// Run model turns until a non-empty final answer is received or a bound is reached.
@@ -310,27 +306,29 @@ impl AgentToolLoop {
         let mut total_tokens = 0_u32;
         let mut fingerprints = HashMap::<String, u32>::new();
         let mut successful_fingerprints = HashSet::<String>::new();
+        let mut tool_calls_by_class = HashMap::<ToolBudgetClass, u32>::new();
+        let mut observed_progress = HashSet::<String>::new();
         let mut final_submission_repair_used = false;
         let mut incomplete_final_answer_repair_used = false;
         let mut incomplete_final_draft = None::<String>;
-        let research_started = Instant::now();
-        let mut last_research_evidence_count = executor.fresh_research_evidence_count();
-        let mut no_new_evidence_rounds = 0_u8;
+        let mut no_progress_rounds = 0_u8;
+        let mut synthesis_required = false;
+        let synthesis_tools = tools
+            .iter()
+            .filter(|tool| tool.name == FINAL_ANSWER_TOOL_NAME)
+            .cloned()
+            .collect::<Vec<_>>();
         let requires_factual_completion =
             executor.requires_web_evidence() || executor.requires_external_evidence();
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
-            let remaining_deadline =
-                remaining_fresh_research_deadline(executor, self.deadline, research_started);
-            if remaining_deadline.is_some_and(|remaining| remaining.is_zero()) {
-                return Err(AppError::msg("fresh_research_deadline_exhausted"));
-            }
-            let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some() {
-                &[]
-            } else {
-                &tools
-            };
+            let active_tools: &[ToolSpec] =
+                if incomplete_final_draft.is_some() || synthesis_required {
+                    &synthesis_tools
+                } else {
+                    &tools
+                };
             enforce_prompt_budget(&messages, active_tools, self.turn_budget)?;
             if self
                 .turn_budget
@@ -351,7 +349,7 @@ impl AgentToolLoop {
                 self.turn_budget,
                 observer,
             );
-            let response = match run_with_deadline(provider_turn, remaining_deadline).await {
+            let response = match provider_turn.await {
                 Ok(response) => response,
                 Err(error) => {
                     let visible_draft = observer.visible_content_snapshot();
@@ -506,7 +504,11 @@ impl AgentToolLoop {
                 });
             }
 
-            if let Some(submission) = final_answer_submission(&response, &allowed_tools)? {
+            let active_allowed_tools = active_tools
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<HashSet<_>>();
+            if let Some(submission) = final_answer_submission(&response, &active_allowed_tools)? {
                 return Ok(AgentToolLoopOutcome {
                     content: submission.visible_content(),
                     finish_reason: response.finish_reason,
@@ -519,27 +521,15 @@ impl AgentToolLoop {
                 });
             }
 
-            if tool_calls.saturating_add(response.tool_calls.len() as u32) > self.max_tool_calls {
-                if let Some(telemetry) = telemetry {
-                    telemetry.record_budget(
-                        crate::ai_runtime::agent_capacity_eval::BudgetOutcome::ToolCallsExhausted,
-                    );
-                }
-                return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
-            }
-
             observer.on_tools_starting()?;
             messages.push(assistant_tool_message(&response));
+            let mut round_made_progress = false;
             for call in &response.tool_calls {
                 ensure_run_not_cancelled(run_id)?;
-                tool_calls += 1;
-                if let Some(usage) = usage.as_deref_mut() {
-                    usage.tool_calls = tool_calls;
-                }
                 let valid_arguments = valid_call_arguments(call);
                 let executor_owns_invalid_arguments =
                     call.function.name == "spawn_subagent" && valid_call_identity(call);
-                let result = if !allowed_tools.contains(call.function.name.as_str()) {
+                let result = if !active_allowed_tools.contains(call.function.name.as_str()) {
                     rejected_result(call, "tool_not_in_run_surface")
                 } else if !valid_arguments && !executor_owns_invalid_arguments {
                     rejected_result(call, "tool_arguments_invalid")
@@ -552,21 +542,33 @@ impl AgentToolLoop {
                         *count += 1;
                         if *count > MAX_REPEAT_CALLS {
                             rejected_result(call, "tool_call_repeated")
-                        } else {
-                            let tool_execution = executor.execute(run_id, call, tool_calls);
-                            let result = run_with_deadline(
-                                tool_execution,
-                                remaining_fresh_research_deadline(
-                                    executor,
-                                    self.deadline,
-                                    research_started,
-                                ),
-                            )
-                            .await?;
-                            if result.success {
-                                successful_fingerprints.insert(fingerprint);
+                        } else if tool_calls >= self.max_tool_calls {
+                            if let Some(telemetry) = telemetry {
+                                telemetry.record_budget(
+                                    crate::ai_runtime::agent_capacity_eval::BudgetOutcome::ToolCallsExhausted,
+                                );
                             }
-                            result
+                            rejected_result(call, "tool_call_budget_exhausted")
+                        } else {
+                            let class = catalog_tool_budget_class(&call.function.name)
+                                .unwrap_or(ToolBudgetClass::ExternalRead);
+                            let used = tool_calls_by_class.entry(class).or_insert(0);
+                            if *used >= self.tool_call_limit(class) {
+                                rejected_result(call, "tool_category_budget_exhausted")
+                            } else {
+                                *used += 1;
+                                tool_calls += 1;
+                                if let Some(usage) = usage.as_deref_mut() {
+                                    usage.tool_calls = tool_calls;
+                                }
+                                let result = executor.execute(run_id, call, tool_calls).await?;
+                                if result.success {
+                                    successful_fingerprints.insert(fingerprint);
+                                    round_made_progress |=
+                                        register_safe_progress(&mut observed_progress, &result);
+                                }
+                                result
+                            }
                         }
                     }
                 };
@@ -579,21 +581,25 @@ impl AgentToolLoop {
                     }
                 }
                 messages.push(message);
-                if let Some(evidence_count) = executor.fresh_research_evidence_count() {
-                    if last_research_evidence_count
-                        .is_some_and(|previous| evidence_count > previous)
-                    {
-                        no_new_evidence_rounds = 0;
-                    } else {
-                        no_new_evidence_rounds = no_new_evidence_rounds.saturating_add(1);
-                    }
-                    last_research_evidence_count = Some(evidence_count);
-                    if no_new_evidence_rounds >= 2 {
-                        return Err(AppError::msg("fresh_research_no_new_evidence"));
-                    }
-                }
             }
             observer.on_tools_finished()?;
+            if round_made_progress {
+                no_progress_rounds = 0;
+            } else {
+                no_progress_rounds = no_progress_rounds.saturating_add(1);
+            }
+            // Never spend the final model turn on another exploratory tool
+            // request. Once this round has left only one turn, close the
+            // business surface and reserve that final opportunity for
+            // synthesis (or the terminal structured submission tool).
+            let final_turn_must_be_reserved = model_turns.saturating_add(1) >= self.max_model_turns;
+            if no_progress_rounds >= 2
+                || tool_calls >= self.max_tool_calls
+                || final_turn_must_be_reserved
+            {
+                synthesis_required = true;
+                messages.push(tool_surface_closed_instruction());
+            }
         }
 
         if let Some(telemetry) = telemetry {
@@ -609,26 +615,80 @@ impl AgentToolLoop {
     }
 }
 
-fn remaining_fresh_research_deadline(
-    executor: &impl ToolLoopExecutor,
-    loop_deadline: Option<Duration>,
-    loop_started: Instant,
-) -> Option<Duration> {
-    executor
-        .fresh_research_deadline()
-        .map(|deadline| deadline.saturating_duration_since(Instant::now()))
-        .or_else(|| loop_deadline.map(|deadline| deadline.saturating_sub(loop_started.elapsed())))
+fn register_safe_progress(progress: &mut HashSet<String>, result: &ToolCallResult) -> bool {
+    safe_progress_identities(&result.output)
+        .into_iter()
+        .map(|identity| format!("{}:{identity}", result.tool_name))
+        .any(|identity| progress.insert(identity))
 }
 
-async fn run_with_deadline<T>(
-    future: impl Future<Output = AppResult<T>>,
-    remaining_deadline: Option<Duration>,
-) -> AppResult<T> {
-    match remaining_deadline {
-        Some(remaining) => tokio::time::timeout(remaining, future)
-            .await
-            .map_err(|_| AppError::msg("fresh_research_deadline_exhausted"))?,
-        None => future.await,
+fn safe_progress_identities(output: &serde_json::Value) -> Vec<String> {
+    const SAFE_IDENTITY_KEYS: &[&str] = &[
+        "resourceId",
+        "resource_id",
+        "resourceIds",
+        "resource_ids",
+        "canonicalUrl",
+        "canonical_url",
+        "contentHash",
+        "content_hash",
+        "revision",
+        "fileHash",
+        "file_hash",
+        "targetFileHash",
+        "target_file_hash",
+    ];
+
+    fn collect_identity_values(value: &serde_json::Value, identities: &mut HashSet<String>) {
+        match value {
+            serde_json::Value::String(value) if !value.trim().is_empty() => {
+                identities.insert(value.clone());
+            }
+            serde_json::Value::Number(value) => {
+                identities.insert(value.to_string());
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    collect_identity_values(value, identities);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect(value: &serde_json::Value, identities: &mut HashSet<String>) {
+        match value {
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    collect(value, identities);
+                }
+            }
+            serde_json::Value::Object(values) => {
+                for (key, value) in values {
+                    if SAFE_IDENTITY_KEYS.contains(&key.as_str()) {
+                        collect_identity_values(value, identities);
+                    }
+                    collect(value, identities);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut identities = HashSet::new();
+    collect(output, &mut identities);
+    let mut identities = identities.into_iter().collect::<Vec<_>>();
+    identities.sort();
+    identities
+}
+
+fn tool_surface_closed_instruction() -> LlmMessage {
+    LlmMessage {
+        role: MessageRole::System,
+        content: "Tool work is now closed because it has reached a bounded limit or produced no new safe resources in two complete rounds. Synthesize the best answer from the current transcript, state material uncertainty plainly, and do not request another business tool.".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
     }
 }
 

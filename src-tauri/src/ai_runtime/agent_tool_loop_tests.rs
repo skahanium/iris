@@ -3,13 +3,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
     AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
 };
-use super::fresh_research_plan::ResearchBudget;
 use super::model_gateway::{StreamEventObserver, StreamSurface};
 use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
 use crate::ai_runtime::{
@@ -33,152 +31,6 @@ fn standard_turn_reserves_output_before_selecting_history() {
 #[test]
 fn direct_provider_has_an_explicit_nonzero_turn_budget() {
     assert_ne!(AgentModelTurnBudget::default().max_prompt_tokens, None);
-}
-
-#[tokio::test]
-async fn fresh_profile_caps_model_continuations_before_global_limit() {
-    let tool_response = || super::model_gateway::GatewayResponse {
-        content: None,
-        tool_calls: vec![tool_call()],
-        usage: Default::default(),
-        finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
-    };
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([tool_response(), tool_response()])),
-        calls: AtomicU32::new(0),
-        second_turn_messages: Mutex::new(Vec::new()),
-    };
-    let executor = RecordingExecutor {
-        calls: AtomicU32::new(0),
-        web_evidence: false,
-    };
-    let mut observer = NoopObserver;
-
-    let error = standard_tool_loop()
-        .with_fresh_research_budget(ResearchBudget {
-            max_searches: 1,
-            max_fetches: 2,
-            max_repairs: 1,
-            max_model_continuations: 2,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        })
-        .execute(
-            &provider,
-            &executor,
-            "run-fresh-profile-turn-cap",
-            Vec::new(),
-            vec![ToolSpec {
-                name: "system_time_now".into(),
-                description: "Get time".into(),
-                input_schema: serde_json::json!({ "type": "object" }),
-                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
-                requires_confirmation: false,
-                max_results: None,
-                capability_affinity: Vec::new(),
-            }],
-            &mut observer,
-        )
-        .await
-        .expect_err("the profile must stop after two model continuations");
-
-    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
-}
-
-#[tokio::test]
-async fn two_research_rounds_without_new_evidence_stop_before_a_third_turn() {
-    let tool_response = || super::model_gateway::GatewayResponse {
-        content: None,
-        tool_calls: vec![tool_call()],
-        usage: Default::default(),
-        finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
-    };
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            tool_response(),
-            tool_response(),
-            tool_response(),
-        ])),
-        calls: AtomicU32::new(0),
-        second_turn_messages: Mutex::new(Vec::new()),
-    };
-    let mut observer = NoopObserver;
-
-    let error = standard_tool_loop()
-        .with_fresh_research_budget(ResearchBudget {
-            max_searches: 1,
-            max_fetches: 2,
-            max_repairs: 1,
-            max_model_continuations: 6,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        })
-        .execute(
-            &provider,
-            &NoEvidenceResearchExecutor,
-            "run-no-new-evidence",
-            Vec::new(),
-            vec![ToolSpec {
-                name: "system_time_now".into(),
-                description: "Get time".into(),
-                input_schema: serde_json::json!({ "type": "object" }),
-                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
-                requires_confirmation: false,
-                max_results: None,
-                capability_affinity: Vec::new(),
-            }],
-            &mut observer,
-        )
-        .await
-        .expect_err("two no-evidence rounds must stop the research loop");
-
-    assert_eq!(error.to_string(), "fresh_research_no_new_evidence");
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
-}
-
-#[tokio::test]
-async fn research_loop_uses_the_executor_deadline_started_before_prefetch() {
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
-            content: Some("must not be requested".into()),
-            tool_calls: Vec::new(),
-            usage: Default::default(),
-            finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
-        }])),
-        calls: AtomicU32::new(0),
-        second_turn_messages: Mutex::new(Vec::new()),
-    };
-    let mut observer = NoopObserver;
-
-    let error = standard_tool_loop()
-        .with_fresh_research_budget(ResearchBudget {
-            max_searches: 1,
-            max_fetches: 2,
-            max_repairs: 1,
-            max_model_continuations: 2,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        })
-        .execute(
-            &provider,
-            &ExpiredResearchExecutor,
-            "run-expired-before-model",
-            Vec::new(),
-            Vec::new(),
-            &mut observer,
-        )
-        .await
-        .expect_err("the profile deadline begins before deterministic prefetch");
-
-    assert_eq!(error.to_string(), "fresh_research_deadline_exhausted");
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -312,6 +164,301 @@ async fn unexposed_tool_call_is_rejected_without_reaching_executor() {
 }
 
 #[tokio::test]
+async fn network_category_cap_rejects_the_second_dispatch_without_calling_executor() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "network-1",
+                "web_search",
+                serde_json::json!({ "query": "first" }),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "network-2",
+                "web_search",
+                serde_json::json!({ "query": "second" }),
+            )),
+            scripted_final_response("bounded final answer"),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let policy = RunBudgetPolicy {
+        schema_version: 2,
+        profile: RunBudgetProfile::Standard,
+        max_prompt_tokens: 64_000,
+        max_completion_tokens: 8_000,
+        max_turn_output_tokens: 4_000,
+        max_model_turns: 4,
+        max_tool_calls: 24,
+        max_local_tool_calls: 12,
+        max_network_tool_calls: 1,
+        max_external_read_tool_calls: 6,
+        max_runtime_tool_calls: 4,
+        max_confirmed_change_calls: 6,
+        max_child_runs: 0,
+        child_max_model_turns: 0,
+        child_max_tool_calls: 0,
+        child_input_tokens_per_turn: 0,
+        child_output_tokens_per_turn: 0,
+        post_confirmation_max_model_turns: 0,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-network-cap",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a category rejection leaves room for final synthesis");
+
+    assert_eq!(outcome.content, "bounded final answer");
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn frozen_category_caps_reject_the_first_call_beyond_each_boundary() {
+    for (name, exposed_tool, allowed_dispatches) in [
+        (
+            "search_keyword",
+            readonly_tool_spec("search_keyword"),
+            12_u32,
+        ),
+        ("web_search", web_tool_spec(), 6),
+        (
+            "fs_read_authorized_folder",
+            readonly_tool_spec("fs_read_authorized_folder"),
+            6,
+        ),
+        ("system_time_now", readonly_tool_spec("system_time_now"), 4),
+        (
+            "insert_text_at_cursor",
+            readonly_tool_spec("insert_text_at_cursor"),
+            6,
+        ),
+        (
+            "unknown_frozen_external_read",
+            readonly_tool_spec("unknown_frozen_external_read"),
+            6,
+        ),
+    ] {
+        let calls = (0..=allowed_dispatches)
+            .map(|index| {
+                tool_call_with_arguments(
+                    &format!("{name}-{index}"),
+                    name,
+                    serde_json::json!({ "query": format!("attempt-{index}") }),
+                )
+            })
+            .collect();
+        let provider = ToolSurfaceRecordingProvider {
+            responses: Mutex::new(VecDeque::from([
+                scripted_tool_calls_response(calls),
+                scripted_final_response("bounded synthesis"),
+            ])),
+            surfaces: Mutex::new(Vec::new()),
+        };
+        let executor = RecordingExecutor {
+            calls: AtomicU32::new(0),
+            web_evidence: false,
+        };
+        let mut observer = NoopObserver;
+
+        let outcome = standard_tool_loop()
+            .execute(
+                &provider,
+                &executor,
+                &format!("run-category-{name}"),
+                Vec::new(),
+                vec![exposed_tool],
+                &mut observer,
+            )
+            .await
+            .expect("a rejected boundary call must leave room for synthesis");
+
+        assert_eq!(outcome.content, "bounded synthesis", "{name}");
+        assert_eq!(
+            executor.calls.load(Ordering::SeqCst),
+            allowed_dispatches,
+            "{name} must reject its first call beyond the frozen category cap"
+        );
+    }
+}
+
+#[tokio::test]
+async fn two_complete_rounds_without_progress_close_tools_before_final_synthesis() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "runtime-1",
+                "system_time_now",
+                serde_json::json!({ "step": 1 }),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "runtime-2",
+                "system_time_now",
+                serde_json::json!({ "step": 2 }),
+            )),
+            scripted_final_response("synthesized from bounded results"),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-no-progress-synthesis",
+            Vec::new(),
+            vec![readonly_tool_spec("system_time_now")],
+            &mut observer,
+        )
+        .await
+        .expect("two no-progress rounds must reserve a final synthesis turn");
+
+    assert_eq!(outcome.content, "synthesized from bounded results");
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        provider
+            .surfaces
+            .lock()
+            .expect("tool surfaces lock")
+            .as_slice(),
+        [
+            vec!["system_time_now".to_string()],
+            vec!["system_time_now".to_string()],
+            vec![]
+        ]
+    );
+}
+
+#[tokio::test]
+async fn final_model_turn_is_reserved_after_progressing_tool_rounds() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "web-1",
+                "web_search",
+                serde_json::json!({ "query": "first direction" }),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "web-2",
+                "web_search",
+                serde_json::json!({ "query": "second direction" }),
+            )),
+            scripted_final_response("synthesized after bounded exploration"),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = ResourceTracingExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let policy = RunBudgetPolicy {
+        schema_version: 2,
+        profile: RunBudgetProfile::Standard,
+        max_prompt_tokens: 64_000,
+        max_completion_tokens: 8_000,
+        max_turn_output_tokens: 4_000,
+        max_model_turns: 3,
+        max_tool_calls: 24,
+        max_local_tool_calls: 12,
+        max_network_tool_calls: 6,
+        max_external_read_tool_calls: 6,
+        max_runtime_tool_calls: 4,
+        max_confirmed_change_calls: 6,
+        max_child_runs: 0,
+        child_max_model_turns: 0,
+        child_max_tool_calls: 0,
+        child_input_tokens_per_turn: 0,
+        child_output_tokens_per_turn: 0,
+        post_confirmation_max_model_turns: 0,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-reserved-final-turn",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("the final model turn must remain available for synthesis");
+
+    assert_eq!(outcome.content, "synthesized after bounded exploration");
+    assert_eq!(executor.calls.lock().expect("trace calls lock").len(), 2);
+    assert_eq!(
+        provider
+            .surfaces
+            .lock()
+            .expect("tool surfaces lock")
+            .as_slice(),
+        [
+            vec!["web_search".to_string()],
+            vec!["web_search".to_string()],
+            vec![]
+        ]
+    );
+}
+
+#[tokio::test]
+async fn one_generic_loop_can_mix_network_and_local_reads_before_synthesizing() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "web-1",
+                "web_search",
+                serde_json::json!({ "query": "public context" }),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "local-1",
+                "search_hybrid",
+                serde_json::json!({ "query": "note context" }),
+            )),
+            scripted_final_response("combined answer"),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = ResourceTracingExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-mixed-tool-loop",
+            Vec::new(),
+            vec![web_tool_spec(), readonly_tool_spec("search_hybrid")],
+            &mut observer,
+        )
+        .await
+        .expect("one generic loop must compose authorized network and local reads");
+
+    assert_eq!(outcome.content, "combined answer");
+    let calls = executor.calls.lock().expect("trace calls lock");
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        ["web_search", "search_hybrid"]
+    );
+}
+
+#[tokio::test]
 async fn missing_provider_usage_is_estimated_from_the_local_turn_data() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
@@ -361,6 +508,36 @@ struct ScriptedProvider {
     responses: Mutex<VecDeque<super::model_gateway::GatewayResponse>>,
     calls: AtomicU32,
     second_turn_messages: Mutex<Vec<LlmMessage>>,
+}
+
+struct ToolSurfaceRecordingProvider {
+    responses: Mutex<VecDeque<super::model_gateway::GatewayResponse>>,
+    surfaces: Mutex<Vec<Vec<String>>>,
+}
+
+impl ToolLoopProvider for ToolSurfaceRecordingProvider {
+    fn answer_turn<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _messages: &'a [LlmMessage],
+        tools: &'a [ToolSpec],
+        _budget: AgentModelTurnBudget,
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<Box<dyn Future<Output = AppResult<super::model_gateway::GatewayResponse>> + Send + 'a>>
+    {
+        self.surfaces
+            .lock()
+            .expect("tool surfaces lock")
+            .push(tools.iter().map(|tool| tool.name.clone()).collect());
+        Box::pin(async move {
+            Ok(self
+                .responses
+                .lock()
+                .expect("responses lock")
+                .pop_front()
+                .expect("scripted response"))
+        })
+    }
 }
 
 struct MultiTurnBudgetRecordingProvider {
@@ -437,8 +614,6 @@ struct LargeWebResultExecutor;
 struct OversizedWebResultExecutor;
 struct RequiredWebExecutor;
 struct RequiredExternalExecutor;
-struct NoEvidenceResearchExecutor;
-struct ExpiredResearchExecutor;
 
 impl ToolLoopExecutor for RequiredWebExecutor {
     fn execute<'a>(
@@ -467,57 +642,6 @@ impl ToolLoopExecutor for RequiredExternalExecutor {
 
     fn requires_external_evidence(&self) -> bool {
         true
-    }
-}
-
-impl ToolLoopExecutor for NoEvidenceResearchExecutor {
-    fn execute<'a>(
-        &'a self,
-        _run_id: &'a str,
-        call: &'a ToolCall,
-        _step: u32,
-    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
-        let tool_name = call.function.name.clone();
-        Box::pin(async move {
-            Ok(ToolCallResult {
-                tool_name,
-                success: true,
-                output: serde_json::json!({ "result": "no new evidence" }),
-                duration_ms: 1,
-                tokens_used: None,
-                error: None,
-            })
-        })
-    }
-
-    fn fresh_research_budget(&self) -> Option<ResearchBudget> {
-        Some(ResearchBudget {
-            max_searches: 1,
-            max_fetches: 2,
-            max_repairs: 1,
-            max_model_continuations: 2,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        })
-    }
-
-    fn fresh_research_evidence_count(&self) -> Option<usize> {
-        Some(0)
-    }
-}
-
-impl ToolLoopExecutor for ExpiredResearchExecutor {
-    fn execute<'a>(
-        &'a self,
-        _run_id: &'a str,
-        _call: &'a ToolCall,
-        _step: u32,
-    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
-        Box::pin(async { unreachable!("an expired Run must not execute a tool") })
-    }
-
-    fn fresh_research_deadline(&self) -> Option<Instant> {
-        Some(Instant::now() - Duration::from_millis(1))
     }
 }
 
@@ -944,13 +1068,18 @@ async fn interrupted_visible_drafts_count_against_per_turn_and_cumulative_budget
             content: String::new(),
         };
         let policy = RunBudgetPolicy {
-            schema_version: 1,
+            schema_version: 2,
             profile: RunBudgetProfile::Standard,
             max_prompt_tokens: 1_000,
             max_completion_tokens: LIMIT as u32,
             max_turn_output_tokens: LIMIT as u32,
             max_model_turns: 2,
             max_tool_calls: 0,
+            max_local_tool_calls: 0,
+            max_network_tool_calls: 0,
+            max_external_read_tool_calls: 0,
+            max_runtime_tool_calls: 0,
+            max_confirmed_change_calls: 0,
             max_child_runs: 0,
             child_max_model_turns: 0,
             child_max_tool_calls: 0,
@@ -1024,6 +1153,32 @@ fn tool_call_with_arguments(id: &str, name: &str, arguments: serde_json::Value) 
             name: name.into(),
             arguments: arguments.to_string(),
         },
+    }
+}
+
+fn scripted_tool_response(call: ToolCall) -> super::model_gateway::GatewayResponse {
+    scripted_tool_calls_response(vec![call])
+}
+
+fn scripted_tool_calls_response(calls: Vec<ToolCall>) -> super::model_gateway::GatewayResponse {
+    super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: calls,
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    }
+}
+
+fn scripted_final_response(content: &str) -> super::model_gateway::GatewayResponse {
+    super::model_gateway::GatewayResponse {
+        content: Some(content.into()),
+        tool_calls: Vec::new(),
+        usage: Default::default(),
+        finish_reason: "stop".into(),
+        reasoning_content: None,
+        continuation: None,
     }
 }
 
@@ -1426,60 +1581,6 @@ async fn hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource() {
         "the refinement must discover a new resource"
     );
     assert_eq!(outcome.content, "已基于第二轮的新资料完成回答。");
-}
-
-/// HR-1 characterization fixture. HR-3 removes `should_panic` when two
-/// no-progress rounds close the tool surface and reserve a final synthesis.
-#[tokio::test]
-#[should_panic(expected = "HR-3-target")]
-async fn hr1_no_progress_still_fails_before_the_reserved_final_synthesis() {
-    let tool_response = || super::model_gateway::GatewayResponse {
-        content: None,
-        tool_calls: vec![tool_call()],
-        usage: Default::default(),
-        finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
-    };
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            tool_response(),
-            tool_response(),
-            super::model_gateway::GatewayResponse {
-                content: Some("基于已知资料的保守结论。".into()),
-                tool_calls: Vec::new(),
-                usage: Default::default(),
-                finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
-            },
-        ])),
-        calls: AtomicU32::new(0),
-        second_turn_messages: Mutex::new(Vec::new()),
-    };
-    let mut observer = NoopObserver;
-
-    let outcome = standard_tool_loop()
-        .with_fresh_research_budget(ResearchBudget {
-            max_searches: 6,
-            max_fetches: 6,
-            max_repairs: 1,
-            max_model_continuations: 6,
-            max_evidence: 8,
-            deadline_seconds: 20,
-        })
-        .execute(
-            &provider,
-            &NoEvidenceResearchExecutor,
-            "run-hr1-no-progress",
-            Vec::new(),
-            vec![readonly_tool_spec("system_time_now")],
-            &mut observer,
-        )
-        .await
-        .expect("HR-3-target: two no-progress rounds should still reach final synthesis");
-
-    assert_eq!(outcome.content, "基于已知资料的保守结论。");
 }
 
 #[tokio::test]
@@ -2125,13 +2226,18 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
         web_evidence: false,
     };
     let policy = RunBudgetPolicy {
-        schema_version: 1,
+        schema_version: 2,
         profile: RunBudgetProfile::Direct,
         max_prompt_tokens: 64_000,
         max_completion_tokens: 8_000,
         max_turn_output_tokens: 8_000,
         max_model_turns: 1,
         max_tool_calls: 0,
+        max_local_tool_calls: 0,
+        max_network_tool_calls: 0,
+        max_external_read_tool_calls: 0,
+        max_runtime_tool_calls: 0,
+        max_confirmed_change_calls: 0,
         max_child_runs: 0,
         child_max_model_turns: 0,
         child_max_tool_calls: 0,
@@ -2204,13 +2310,18 @@ async fn child_policy_reaches_every_provider_turn_with_gateway_token_limits() {
         web_evidence: false,
     };
     let policy = RunBudgetPolicy {
-        schema_version: 1,
+        schema_version: 2,
         profile: RunBudgetProfile::Delegated,
         max_prompt_tokens: 96_000,
         max_completion_tokens: 12_000,
         max_turn_output_tokens: 4_000,
         max_model_turns: 8,
         max_tool_calls: 24,
+        max_local_tool_calls: 12,
+        max_network_tool_calls: 6,
+        max_external_read_tool_calls: 6,
+        max_runtime_tool_calls: 4,
+        max_confirmed_change_calls: 6,
         max_child_runs: 3,
         child_max_model_turns: 2,
         child_max_tool_calls: 6,
@@ -2288,13 +2399,18 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
         web_evidence: false,
     };
     let policy = RunBudgetPolicy {
-        schema_version: 1,
+        schema_version: 2,
         profile: RunBudgetProfile::Delegated,
         max_prompt_tokens: 96_000,
         max_completion_tokens: 12_000,
         max_turn_output_tokens: 4_000,
         max_model_turns: 8,
         max_tool_calls: 24,
+        max_local_tool_calls: 12,
+        max_network_tool_calls: 6,
+        max_external_read_tool_calls: 6,
+        max_runtime_tool_calls: 4,
+        max_confirmed_change_calls: 6,
         max_child_runs: 3,
         child_max_model_turns: 2,
         child_max_tool_calls: 6,

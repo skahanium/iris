@@ -25,7 +25,7 @@
 | HR-0 | 已验收     | 重置文档事实和路线                   | 旧现行文件名、旧完成结论、ROADMAP 冲突       |
 | HR-1 | 基线已验收 | 建立能复现生产问题的通用行为基线     | ID 偶合、理想调用顺序和只验管线的假阳性      |
 | HR-2 | 已验收     | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、新 Run 领域前置阻断  |
-| HR-3 | 未开始     | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
+| HR-3 | 已验收     | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
 | HR-4 | 未开始     | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
 | HR-5 | 未开始     | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
 | HR-6 | 未开始     | 领域 operation 退出核心并净删除      | classifier、默认表面、专用门禁和失效测试     |
@@ -64,7 +64,7 @@
 
 2026-08-27 基线验收记录：
 
-- `hr1_ordinary_external_questions_still_record_the_webpreferred_gap`、`hr1_no_progress_still_fails_before_the_reserved_final_synthesis`、`hr1_ordinary_missing_context_still_pauses_the_run_for_structured_input` 与 `hr1_ordinary_research_reply_still_requires_structured_finalization` 是受控 `#[should_panic]` 目标夹具；分别由 HR-2、HR-3、HR-4 反转为普通绿色回归，不能被解读为当前产品能力。
+- `hr1_ordinary_external_questions_still_record_the_webpreferred_gap`、`hr1_ordinary_missing_context_still_pauses_the_run_for_structured_input` 与 `hr1_ordinary_research_reply_still_requires_structured_finalization` 是受控 `#[should_panic]` 目标夹具；分别由 HR-2、HR-4 反转为普通绿色回归，不能被解读为当前产品能力。HR-3 的旧无进展夹具已由通用绿色回归替代并删除，避免继续固化被撤回的失败语义。
 - `hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource`、`hr1_local_multi_hop_reads_distinct_notes_without_web_access`、`hr1_repeated_failed_tool_call_stops_after_two_real_executions`、`hr1_same_session_runs_keep_w1_bound_to_their_own_evidence` 与恢复投影 Vitest 记录现有可保留的通用边界。
 - `hr1_current_recommendation_quality_fixture_requires_status_scope_and_bound_sources` 仅证明确定性评测可以拒绝遗漏状态、范围或来源绑定的观察；它不等于真实 Provider 的回答质量。
 - `frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption` 继续限定 HR-5 前的单操作确认安全线，不提前实现多操作或写后验证。
@@ -91,19 +91,26 @@
 
 退出条件（已满足）：Chat、AskNotes、Research、CitationCheck、Draft、Apply 的表驱动 intake 测试覆盖 Offline/WebPreferred/WebRequired，并证明 Web 开关不能被模型或分类器增权。
 
-## 6. HR-3：统一自适应工具循环
+## 6. HR-3：统一自适应工具循环（已验收）
 
 实现方向：
 
 - `RunBudgetPolicy` 升级为唯一总量与分类预算事实源，兼容读取旧 schema。
 - catalog 现有 `cost_class` 扩展为 local、network、external_read、runtime 和 confirmed_change。
 - 通用循环根据 resource ID、canonical URL、内容 hash 和 revision 计算进展。
-- 连续两轮无进展或探索预算耗尽时关闭工具并保留最后一次综合。
+- 连续两轮无进展、探索预算耗尽或只余最终模型回合时关闭工具并保留最后一次综合。
 - Web、本地和外部只读工具共享循环，但继续保持各自安全与内容边界。
 
 同步删除：`FreshResearchPlan` 生产路由、闭集 `EvidenceGap`、Web evidence 专用停机、重复 deadline 和 search/fetch/repair 平行计数。
 
-退出条件：差结果改写查询、本地多跳、混合工具、重复抑制、分类上限、取消、总预算和强制综合全部通过同一循环测试。
+2026-08-28 验收结果：
+
+- `RunBudgetPolicy` 已升级到 schema 2；新 Run 冻结 local 12、network 6、external_read 6、runtime 4、confirmed_change 6，schema 1 及更早的精确旧形状只可按 canonical 值材料化，篡改或未知 schema 仍失败关闭。
+- `AgentToolLoop` 以 catalog 的单一工具类别计数，成功 fingerprint 不重复、相同失败至多两次；两次完整工具回合没有新增安全 identity、总工具额度耗尽，或只余最后一次模型回合时关闭业务工具面并保留最后一次综合。
+- `FreshResearchPlan`、`EvidenceGap`、研究 checkpoint、search/fetch/repair 平行计数和 Web 专用循环 deadline 已从生产路径删除。Web、local、runtime 与外部读取均通过同一个 ToolLoop；单次 Web 请求仍保留自身超时、结果尺寸、URL 归属、权限和 evidence 安全边界。
+- 新的 `WebRequired` 使用通用模型—工具循环；仅历史非空领域 envelope 保留确定性预取兼容读取路径，不能成为新 Run 的第二规划器。
+
+退出条件（已满足）：差结果改写查询、本地多跳、重复抑制、分类上限、取消、总预算和无进展强制综合均由同一 `AgentToolLoop` 回归覆盖；真实 Provider 表现仍留给 HR-7。
 
 ## 7. HR-4：回答、澄清、错误与投影
 

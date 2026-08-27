@@ -24,9 +24,6 @@ use crate::ai_runtime::agent_run_repository::{
 use crate::ai_runtime::agent_tool_loop::{
     AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
 };
-use crate::ai_runtime::fresh_research_plan::{
-    EvidenceGap, FreshResearchResumeState, ResearchBudget, ResearchQueryLedger,
-};
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
@@ -55,12 +52,8 @@ const MAX_WEB_EVIDENCE_PER_RUN: usize = 12;
 /// from passing while the actual evidence request exceeds a provider's output budget.
 pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 8;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
-/// A strict answer may make an initial search, an independent supplement, and
-/// one retry for a transient or oversize provider response. The shared time
-/// budget remains the hard wall across all of them.
-const MAX_WEB_PROVIDER_ATTEMPTS_PER_RUN: u32 = 3;
-/// Model-requested follow-up searches retain their own bounded interaction budget.
-const MODEL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(20);
+/// One concrete Web dispatch has a bounded provider interaction window.
+const WEB_TOOL_CALL_DEADLINE: Duration = Duration::from_secs(20);
 /// Minimum remaining budget required before retrying a failed web search attempt.
 /// Spawning a fresh MCP stdio process commonly takes 3-5s; retrying with less
 /// than this budget just burns time before the outer timeout fires.
@@ -155,21 +148,6 @@ const fn failure_reason_for_code(code: SafeRunErrorCode) -> WebEvidenceFailureRe
         SafeRunErrorCode::WebProviderFailed => WebEvidenceFailureReason::ProviderTransport,
         SafeRunErrorCode::WebEvidenceInvalid => WebEvidenceFailureReason::Unknown,
         _ => WebEvidenceFailureReason::Unknown,
-    }
-}
-
-#[derive(Debug, Default)]
-struct RunWebBudget {
-    started: Mutex<Option<Instant>>,
-}
-
-impl RunWebBudget {
-    fn started(&self) -> AppResult<Instant> {
-        let mut started = self
-            .started
-            .lock()
-            .map_err(|_| AppError::msg("agent_run_web_budget_lock_failed"))?;
-        Ok(*started.get_or_insert_with(Instant::now))
     }
 }
 
@@ -293,21 +271,10 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     run_web_evidence: Arc<Mutex<RunWebEvidenceState>>,
     web_failure: Arc<Mutex<Option<WebFailure>>>,
     web_attempt_count: Arc<Mutex<u32>>,
-    web_budget: Arc<RunWebBudget>,
     web_degradation_emitted: Arc<Mutex<bool>>,
     required_web_provider_snapshots:
         Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
     web_preferred_provider_id: Arc<Mutex<Option<String>>>,
-    /// Optional frozen current-fact research budget. When present, `web_search`
-    /// calls are additionally limited by this plan and duplicate query/gap pairs
-    /// are rejected.
-    fresh_research_budget: Option<ResearchBudget>,
-    fresh_research_deadline: Option<Instant>,
-    fresh_search_count: Mutex<u8>,
-    fresh_fetch_count: Mutex<u8>,
-    fresh_repair_count: Mutex<u8>,
-    fresh_research_ledger: Mutex<ResearchQueryLedger>,
-    fresh_research_restore_error: Mutex<Option<String>>,
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
     /// The ChildRun retains the parent Run identity and persistence boundary.
     child_run_provider: Option<&'a dyn ToolLoopProvider>,
@@ -361,17 +328,9 @@ impl<'a> NormalRunToolExecutor<'a> {
             run_web_evidence: Arc::new(Mutex::new(RunWebEvidenceState::default())),
             web_failure: Arc::new(Mutex::new(None)),
             web_attempt_count: Arc::new(Mutex::new(0)),
-            web_budget: Arc::new(RunWebBudget::default()),
             web_degradation_emitted: Arc::new(Mutex::new(false)),
             required_web_provider_snapshots,
             web_preferred_provider_id: Arc::new(Mutex::new(None)),
-            fresh_research_budget: None,
-            fresh_research_deadline: None,
-            fresh_search_count: Mutex::new(0),
-            fresh_fetch_count: Mutex::new(0),
-            fresh_repair_count: Mutex::new(0),
-            fresh_research_ledger: Mutex::new(ResearchQueryLedger::new()),
-            fresh_research_restore_error: Mutex::new(None),
             child_run_provider: None,
             budget_policy,
             child_runs_started: Mutex::new(0),
@@ -409,205 +368,6 @@ impl<'a> NormalRunToolExecutor<'a> {
     pub(crate) fn with_allowed_tool_names(mut self, tool_names: &[String]) -> Self {
         self.allowed_tool_names = tool_names.to_vec();
         self
-    }
-
-    /// Freeze a current-fact research budget for this executor. When present,
-    /// `web_search` calls are bounded by `ResearchBudget` and duplicate
-    /// normalized query/gap pairs are rejected.
-    pub(crate) fn with_fresh_research_budget(mut self, budget: ResearchBudget) -> Self {
-        self.fresh_research_budget = Some(budget);
-        self.fresh_research_deadline =
-            Some(Instant::now() + Duration::from_secs(u64::from(budget.deadline_seconds)));
-        if let Ok(mut evidence) = self.run_web_evidence.lock() {
-            evidence.max_evidence = evidence.max_evidence.min(usize::from(budget.max_evidence));
-        }
-        match AgentRunRepository::latest_fresh_research_state(&self.state.db, &self.accepted.run_id)
-        {
-            Ok(Some(state))
-                if state.max_searches == budget.max_searches
-                    && (state.schema_version == 1
-                        || (state.max_fetches == budget.max_fetches
-                            && state.max_repairs == budget.max_repairs
-                            && (state.schema_version < 3
-                                || (state.max_model_continuations
-                                    == budget.max_model_continuations
-                                    && state.max_evidence == budget.max_evidence
-                                    && state.deadline_seconds == budget.deadline_seconds)))) =>
-            {
-                if let Ok(mut count) = self.fresh_search_count.lock() {
-                    *count = state.search_count;
-                }
-                if let Ok(mut count) = self.fresh_fetch_count.lock() {
-                    *count = state.fetch_count;
-                }
-                if let Ok(mut count) = self.fresh_repair_count.lock() {
-                    *count = state.repair_count;
-                }
-                if let Ok(ledger) = ResearchQueryLedger::from_hashes(state.seen_query_hashes) {
-                    if let Ok(mut stored) = self.fresh_research_ledger.lock() {
-                        *stored = ledger;
-                    }
-                } else if let Ok(mut error) = self.fresh_research_restore_error.lock() {
-                    *error = Some("fresh_research_resume_state_invalid".to_string());
-                }
-                if let Ok(mut winner) = self.web_preferred_provider_id.lock() {
-                    *winner = state.winner_provider_id;
-                }
-            }
-            Ok(Some(_)) => {
-                if let Ok(mut error) = self.fresh_research_restore_error.lock() {
-                    *error = Some("fresh_research_resume_budget_mismatch".to_string());
-                }
-            }
-            Ok(None) => {}
-            Err(error) => {
-                if let Ok(mut stored) = self.fresh_research_restore_error.lock() {
-                    *stored = Some(error.to_string());
-                }
-            }
-        }
-        self
-    }
-
-    fn persist_fresh_research_state(&self) -> AppResult<()> {
-        let budget = self
-            .fresh_research_budget
-            .ok_or_else(|| AppError::msg("fresh_research_budget_missing"))?;
-        let search_count = *self
-            .fresh_search_count
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
-        let fetch_count = *self
-            .fresh_fetch_count
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
-        let repair_count = *self
-            .fresh_repair_count
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
-        let seen_query_hashes = self
-            .fresh_research_ledger
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?
-            .query_hashes();
-        let winner_provider_id = self
-            .web_preferred_provider_id
-            .lock()
-            .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))?
-            .clone();
-        let state = FreshResearchResumeState {
-            schema_version: 3,
-            max_searches: budget.max_searches,
-            search_count,
-            max_fetches: budget.max_fetches,
-            fetch_count,
-            max_repairs: budget.max_repairs,
-            repair_count,
-            max_model_continuations: budget.max_model_continuations,
-            max_evidence: budget.max_evidence,
-            deadline_seconds: budget.deadline_seconds,
-            seen_query_hashes,
-            winner_provider_id,
-        };
-        AgentRunRepository::persist_fresh_research_state(
-            &self.state.db,
-            &self.accepted.run_id,
-            &state,
-        )
-    }
-
-    fn try_reserve_fresh_research_slot(
-        &self,
-        query: &str,
-        gap: Option<EvidenceGap>,
-    ) -> AppResult<bool> {
-        let Some(budget) = self.fresh_research_budget else {
-            return Ok(true);
-        };
-        if let Some(error) = self
-            .fresh_research_restore_error
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?
-            .clone()
-        {
-            return Err(AppError::msg(error));
-        }
-        let mut search_count = self
-            .fresh_search_count
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
-        if *search_count >= budget.max_searches {
-            return Ok(false);
-        }
-        // The first deterministic prefetch is the only search allowed to omit
-        // an evidence gap. Every later search must explain what is still
-        // missing; this prevents the model from spinning generic queries.
-        if *search_count > 0 && gap.is_none() {
-            return Ok(false);
-        }
-        if let Some(gap) = gap {
-            let mut ledger = self
-                .fresh_research_ledger
-                .lock()
-                .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
-            ledger.register(query, gap)?;
-        }
-        *search_count += 1;
-        drop(search_count);
-        self.persist_fresh_research_state()?;
-        Ok(true)
-    }
-
-    fn available_fresh_fetches(&self, requested: usize) -> AppResult<usize> {
-        let Some(budget) = self.fresh_research_budget else {
-            return Ok(requested);
-        };
-        let fetch_count = self
-            .fresh_fetch_count
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
-        let remaining = budget.max_fetches.saturating_sub(*fetch_count);
-        drop(fetch_count);
-        Ok(requested.min(usize::from(remaining)))
-    }
-
-    fn record_successful_fresh_fetches(&self, successful_fetches: u32) -> AppResult<()> {
-        let Some(budget) = self.fresh_research_budget else {
-            return Ok(());
-        };
-        if successful_fetches == 0 {
-            return Ok(());
-        }
-        let successful_fetches = u8::try_from(successful_fetches)
-            .map_err(|_| AppError::msg("fresh_research_fetch_usage_invalid"))?;
-        let mut fetch_count = self
-            .fresh_fetch_count
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
-        let remaining = budget.max_fetches.saturating_sub(*fetch_count);
-        if successful_fetches > remaining {
-            return Err(AppError::msg("fresh_research_fetch_budget_exhausted"));
-        }
-        *fetch_count = fetch_count.saturating_add(successful_fetches);
-        drop(fetch_count);
-        self.persist_fresh_research_state()
-    }
-
-    fn try_reserve_fresh_repair(&self) -> AppResult<bool> {
-        let Some(budget) = self.fresh_research_budget else {
-            return Ok(true);
-        };
-        let mut repair_count = self
-            .fresh_repair_count
-            .lock()
-            .map_err(|_| AppError::msg("fresh_research_state_locked"))?;
-        if *repair_count >= budget.max_repairs {
-            return Ok(false);
-        }
-        *repair_count = repair_count.saturating_add(1);
-        drop(repair_count);
-        self.persist_fresh_research_state()?;
-        Ok(true)
     }
 
     fn at_subagent_depth(mut self, depth: u32) -> Self {
@@ -663,7 +423,6 @@ impl<'a> NormalRunToolExecutor<'a> {
         self.run_web_evidence = Arc::clone(&parent.run_web_evidence);
         self.web_failure = Arc::clone(&parent.web_failure);
         self.web_attempt_count = Arc::clone(&parent.web_attempt_count);
-        self.web_budget = Arc::clone(&parent.web_budget);
         self.web_degradation_emitted = Arc::clone(&parent.web_degradation_emitted);
         self.web_preferred_provider_id = Arc::clone(&parent.web_preferred_provider_id);
         self.external_evidence_ids = Arc::clone(&parent.external_evidence_ids);
@@ -680,16 +439,6 @@ impl<'a> NormalRunToolExecutor<'a> {
             .and_then(serde_json::Value::as_str)
             .filter(|query| !query.trim().is_empty())
             .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
-        let gap = args
-            .get("gap")
-            .and_then(serde_json::Value::as_str)
-            .and_then(parse_evidence_gap);
-        if !self.try_reserve_fresh_research_slot(query, gap)? {
-            return Ok(failed_tool_call(
-                WEB_TOOL_NAME,
-                "fresh_research_budget_exhausted",
-            ));
-        }
         let automatic_local_materials = self
             .context
             .materials
@@ -734,13 +483,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?;
         current_run_urls.extend(explicit_user_urls(&self.context.user_message));
         let urls = validate_current_run_fetch_urls(&requested_urls, &current_run_urls)?;
-        let max_fetches = self.available_fresh_fetches(urls.len())?;
-        if !urls.is_empty() && max_fetches == 0 {
-            return Ok(failed_tool_call(
-                WEB_TOOL_NAME,
-                "fresh_research_fetch_budget_exhausted",
-            ));
-        }
+        let max_fetches = urls.len();
         let Some(evidence_reservation) =
             WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
         else {
@@ -754,10 +497,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             ));
         };
         let remaining = evidence_reservation.capacity();
-        // Model web calls share MODEL_WEB_EVIDENCE_DEADLINE (20s). MCP search alone
-        // commonly takes ~4s; scheduling deep page fetches (WEB_FETCH_TURN_BUDGET=8s)
-        // after that exceeds the outer timeout and discards already-usable search
-        // snippets. Prefer registering search snippets first.
+        // A single Web dispatch is bounded, while cross-call exploration is
+        // governed exclusively by the generic network category budget.
         let provider_snapshots = self.ordered_web_provider_snapshots();
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.to_owned(),
@@ -768,24 +509,13 @@ impl<'a> NormalRunToolExecutor<'a> {
             provider_snapshots: provider_snapshots.clone(),
             provider_selection_frozen: true,
         };
-        let budget_started = self.web_budget.started()?;
         let call_started = Instant::now();
         let mut attempts_for_search = 0_u32;
         let output =
             loop {
                 attempts_for_search = attempts_for_search.saturating_add(1);
-                let Some(attempt_count) = self.reserve_web_attempt()? else {
-                    let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
-                    self.set_web_failure(Some(failure))?;
-                    return Ok(failed_web_tool_call(
-                        failure,
-                        self.web_attempt_count(),
-                        call_started.elapsed(),
-                        remaining_model_web_budget_ms(budget_started.elapsed()),
-                    ));
-                };
-                let remaining_time =
-                    MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
+                let attempt_count = self.record_web_attempt()?;
+                let remaining_time = WEB_TOOL_CALL_DEADLINE.saturating_sub(call_started.elapsed());
                 if remaining_time.is_zero() {
                     let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
                     self.set_web_failure(Some(failure))?;
@@ -793,13 +523,13 @@ impl<'a> NormalRunToolExecutor<'a> {
                         failure,
                         attempt_count,
                         call_started.elapsed(),
-                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                        remaining_web_tool_budget_ms(call_started.elapsed()),
                     ));
                 }
                 let mut attempt_input = broker_input.clone();
                 attempt_input.max_search_results =
                     web_search_result_limit(remaining, attempts_for_search);
-                attempt_input.max_fetches = self.available_fresh_fetches(urls.len())?;
+                attempt_input.max_fetches = max_fetches;
                 let failure = match tokio::time::timeout(
                 remaining_time,
                 crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
@@ -810,7 +540,6 @@ impl<'a> NormalRunToolExecutor<'a> {
             .await
             {
                 Ok(Ok(output)) => {
-                    self.record_successful_fresh_fetches(output.usage.successful_page_fetches)?;
                     if output.items.iter().any(|item| item.conflict_group.is_some()) {
                         WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
                     } else if web_output_has_usable_evidence(&output) {
@@ -826,9 +555,9 @@ impl<'a> NormalRunToolExecutor<'a> {
                     failure.reason == WebEvidenceFailureReason::ProviderOutputTooLarge;
                 let retry_is_eligible = attempts_for_search < 2
                     && (failure.retryable || adaptive_oversize_retry)
-                    && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
-                        < MODEL_WEB_EVIDENCE_DEADLINE;
-                if retry_is_eligible && self.try_reserve_fresh_repair()? {
+                    && call_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
+                        < WEB_TOOL_CALL_DEADLINE;
+                if retry_is_eligible {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     continue;
                 }
@@ -837,7 +566,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     failure,
                     attempt_count,
                     call_started.elapsed(),
-                    remaining_model_web_budget_ms(budget_started.elapsed()),
+                    remaining_web_tool_budget_ms(call_started.elapsed()),
                 ));
             };
         self.remember_web_provider_winner(&output.usage)?;
@@ -852,7 +581,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                         failure,
                         self.web_attempt_count(),
                         call_started.elapsed(),
-                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                        remaining_web_tool_budget_ms(call_started.elapsed()),
                     ));
                 }
             };
@@ -872,7 +601,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 failure,
                 self.web_attempt_count(),
                 call_started.elapsed(),
-                remaining_model_web_budget_ms(budget_started.elapsed()),
+                remaining_web_tool_budget_ms(call_started.elapsed()),
             ));
         }
         self.set_web_failure(None)?;
@@ -887,15 +616,20 @@ impl<'a> NormalRunToolExecutor<'a> {
             &packed_items,
             MAX_WEB_EXCERPT_CHARS,
         );
+        let resource_ids = packets
+            .iter()
+            .map(|packet| packet.id.clone())
+            .collect::<Vec<_>>();
         Ok(ToolCallResult {
             tool_name: WEB_TOOL_NAME.to_string(),
             success: true,
             output: serde_json::json!({
                 "results": packets,
+                "resourceIds": resource_ids,
                 "evidenceIds": evidence_ids,
                 "count": evidence_ids.len(),
                 "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
-                "remainingBudgetMs": remaining_model_web_budget_ms(budget_started.elapsed()),
+                "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
                 "webUsage": output.usage,
             }),
             duration_ms: bounded_duration_ms(call_started.elapsed()),
@@ -1329,21 +1063,6 @@ fn local_evidence_input_from_packet(value: &serde_json::Value) -> Option<LocalEv
 /// provider must never be asked for that many raw search bodies in one strict
 /// prefetch. A response that exceeds the host cap gets exactly one smaller
 /// retry; this preserves the cap rather than hiding an unbounded payload.
-fn parse_evidence_gap(value: &str) -> Option<EvidenceGap> {
-    match value {
-        "missing_entity" => Some(EvidenceGap::MissingEntity),
-        "missing_location" => Some(EvidenceGap::MissingLocation),
-        "location_coverage" => Some(EvidenceGap::LocationCoverage),
-        "missing_timestamp" => Some(EvidenceGap::MissingTimestamp),
-        "stale_observation" => Some(EvidenceGap::StaleObservation),
-        "missing_unit" => Some(EvidenceGap::MissingUnit),
-        "missing_channel" => Some(EvidenceGap::MissingChannel),
-        "missing_independent_source" => Some(EvidenceGap::MissingIndependentSource),
-        "source_conflict" => Some(EvidenceGap::SourceConflict),
-        _ => None,
-    }
-}
-
 fn validate_current_run_fetch_urls(
     urls: &[String],
     current_run_urls: &BTreeSet<String>,
@@ -1845,23 +1564,6 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         evidence_ids
     }
 
-    fn fresh_research_budget(&self) -> Option<ResearchBudget> {
-        self.fresh_research_budget
-    }
-
-    fn fresh_research_evidence_count(&self) -> Option<usize> {
-        self.fresh_research_budget.map(|_| {
-            self.run_web_evidence
-                .lock()
-                .map(|state| state.evidence_ids.len())
-                .unwrap_or_default()
-        })
-    }
-
-    fn fresh_research_deadline(&self) -> Option<Instant> {
-        self.fresh_research_deadline
-    }
-
     fn has_web_evidence(&self) -> bool {
         // This vector is populated only after this executor's successful
         // `web_search` call has persisted a Run-level evidence association.
@@ -2334,9 +2036,6 @@ impl NormalRunToolExecutor<'_> {
             .web_preferred_provider_id
             .lock()
             .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))? = Some(winner);
-        if self.fresh_research_budget.is_some() {
-            self.persist_fresh_research_state()?
-        }
         Ok(())
     }
 
@@ -2431,16 +2130,13 @@ impl NormalRunToolExecutor<'_> {
         )
     }
 
-    fn reserve_web_attempt(&self) -> AppResult<Option<u32>> {
+    fn record_web_attempt(&self) -> AppResult<u32> {
         let mut attempts = self
             .web_attempt_count
             .lock()
             .map_err(|_| AppError::msg("agent_run_web_attempt_lock_failed"))?;
-        if *attempts >= MAX_WEB_PROVIDER_ATTEMPTS_PER_RUN {
-            return Ok(None);
-        }
         *attempts = attempts.saturating_add(1);
-        Ok(Some(*attempts))
+        Ok(*attempts)
     }
 
     fn web_attempt_count(&self) -> u32 {
@@ -2928,8 +2624,8 @@ fn bounded_duration_ms(duration: Duration) -> u64 {
     }
 }
 
-fn remaining_model_web_budget_ms(elapsed: Duration) -> u64 {
-    bounded_duration_ms(MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(elapsed))
+fn remaining_web_tool_budget_ms(elapsed: Duration) -> u64 {
+    bounded_duration_ms(WEB_TOOL_CALL_DEADLINE.saturating_sub(elapsed))
 }
 
 fn web_duration_bucket(duration: Duration) -> &'static str {
@@ -2939,7 +2635,7 @@ fn web_duration_bucket(duration: Duration) -> &'static str {
         "under_1s"
     } else if duration < Duration::from_secs(3) {
         "1s_to_3s"
-    } else if duration < MODEL_WEB_EVIDENCE_DEADLINE {
+    } else if duration < WEB_TOOL_CALL_DEADLINE {
         "3s_to_10s"
     } else {
         "budget_exhausted"
@@ -3318,11 +3014,10 @@ mod tests {
         corroborated_source_threshold_met, emit_deferred_web_degradation,
         expected_post_content_hashes, mcp_failover_events, validate_current_run_fetch_urls,
         web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
-        NormalRunToolExecutor, RunWebBudget, CONFIRMATION_PENDING_ERROR,
+        NormalRunToolExecutor, CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
-    use crate::ai_runtime::fresh_research_plan::{EvidenceGap, ResearchBudget};
     use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
     use crate::ai_runtime::run_context::RunContextAssembler;
     use crate::ai_runtime::run_contract::{
@@ -3449,9 +3144,13 @@ mod tests {
                 .and_then(|message| message.content.as_str())
                 .unwrap_or_default()
                 .to_string();
+            // A bounded loop may append a system synthesis instruction after
+            // the tool result. The transcript still represents the same
+            // continuation; do not make this protocol double depend on the
+            // final message being the tool role.
             let is_continuation = messages
-                .last()
-                .is_some_and(|message| matches!(&message.role, MessageRole::Tool));
+                .iter()
+                .any(|message| matches!(&message.role, MessageRole::Tool));
             self.provider_run_ids
                 .lock()
                 .expect("provider run ids")
@@ -4877,16 +4576,6 @@ mod tests {
     }
 
     #[test]
-    fn model_web_calls_share_one_run_budget_start() {
-        let budget = RunWebBudget::default();
-        let first = budget.started().expect("first budget start");
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        let second = budget.started().expect("second budget start");
-
-        assert_eq!(first, second);
-    }
-
-    #[test]
     fn strict_web_search_retries_an_oversize_provider_with_two_results() {
         assert_eq!(web_search_result_limit(12, 1), 8);
         assert_eq!(web_search_result_limit(12, 2), 2);
@@ -5237,106 +4926,6 @@ mod tests {
     }
 
     #[test]
-    fn insufficient_first_search_triggers_bounded_refinement() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let vault = directory.path().join("vault");
-        std::fs::create_dir_all(&vault).expect("vault directory");
-        let state = AppState::new(directory.path().join("data")).expect("application state");
-        state.set_vault(vault.clone()).expect("activate vault");
-        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
-        let context = RunContextAssembler::assemble(
-            &state.db,
-            Some(&vault),
-            &accepted.session.session_key,
-            &accepted.run_id,
-        )
-        .expect("run context");
-        let sink = RecordingSink::default();
-        let executor = NormalRunToolExecutor::new(
-            &state,
-            None,
-            &accepted,
-            &context,
-            vec![CapabilityId::new("web.search")],
-            RunBudgetPolicy::for_envelope(&context.envelope),
-            &sink,
-            Vec::new(),
-        )
-        .with_allowed_tool_names(&["web_search".to_string()])
-        .with_fresh_research_budget(ResearchBudget {
-            max_searches: 2,
-            max_fetches: 3,
-            max_repairs: 1,
-            max_model_continuations: 2,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        });
-
-        assert!(executor
-            .try_reserve_fresh_research_slot(
-                "上海 电影 2026-08-18",
-                Some(EvidenceGap::MissingLocation),
-            )
-            .expect("first search"));
-        assert!(executor
-            .try_reserve_fresh_research_slot(
-                "上海 电影 2026-08-18 万达",
-                Some(EvidenceGap::MissingEntity),
-            )
-            .expect("second search"));
-        assert!(!executor
-            .try_reserve_fresh_research_slot("第三次搜索", Some(EvidenceGap::MissingTimestamp),)
-            .expect("budget check"));
-    }
-
-    #[test]
-    fn sufficient_first_search_stops_without_extra_tool_turn() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let vault = directory.path().join("vault");
-        std::fs::create_dir_all(&vault).expect("vault directory");
-        let state = AppState::new(directory.path().join("data")).expect("application state");
-        state.set_vault(vault.clone()).expect("activate vault");
-        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
-        let context = RunContextAssembler::assemble(
-            &state.db,
-            Some(&vault),
-            &accepted.session.session_key,
-            &accepted.run_id,
-        )
-        .expect("run context");
-        let sink = RecordingSink::default();
-        let executor = NormalRunToolExecutor::new(
-            &state,
-            None,
-            &accepted,
-            &context,
-            vec![CapabilityId::new("web.search")],
-            RunBudgetPolicy::for_envelope(&context.envelope),
-            &sink,
-            Vec::new(),
-        )
-        .with_allowed_tool_names(&["web_search".to_string()])
-        .with_fresh_research_budget(ResearchBudget {
-            max_searches: 1,
-            max_fetches: 1,
-            max_repairs: 0,
-            max_model_continuations: 2,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        });
-
-        assert!(executor
-            .try_reserve_fresh_research_slot(
-                "2026-08-18 上海 电影 万达 上映",
-                Some(EvidenceGap::MissingEntity),
-            )
-            .expect("only search"));
-        assert!(!executor
-            .try_reserve_fresh_research_slot("额外搜索", Some(EvidenceGap::MissingTimestamp),)
-            .expect("budget check"));
-    }
-
-    #[test]
     fn fetch_urls_must_belong_to_the_current_run() {
         let allowed = BTreeSet::from(["https://example.com/current".to_string()]);
         let urls = vec!["https://foreign.example/article".to_string()];
@@ -5346,188 +4935,6 @@ mod tests {
                 .expect_err("foreign URL must be rejected")
                 .to_string(),
             "web_url_not_in_current_run"
-        );
-    }
-
-    #[test]
-    fn fresh_research_repair_budget_is_persisted_and_bounded() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let vault = directory.path().join("vault");
-        std::fs::create_dir_all(&vault).expect("vault directory");
-        let state = AppState::new(directory.path().join("data")).expect("application state");
-        state.set_vault(vault.clone()).expect("activate vault");
-        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
-        let context = RunContextAssembler::assemble(
-            &state.db,
-            Some(&vault),
-            &accepted.session.session_key,
-            &accepted.run_id,
-        )
-        .expect("run context");
-        let sink = RecordingSink::default();
-        let executor = NormalRunToolExecutor::new(
-            &state,
-            None,
-            &accepted,
-            &context,
-            vec![CapabilityId::new("web.search")],
-            RunBudgetPolicy::for_envelope(&context.envelope),
-            &sink,
-            Vec::new(),
-        )
-        .with_fresh_research_budget(ResearchBudget {
-            max_searches: 1,
-            max_fetches: 2,
-            max_repairs: 1,
-            max_model_continuations: 2,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        });
-
-        assert!(executor.try_reserve_fresh_repair().expect("first repair"));
-        assert!(!executor
-            .try_reserve_fresh_repair()
-            .expect("second repair is outside the frozen budget"));
-        let persisted =
-            AgentRunRepository::latest_fresh_research_state(&state.db, &accepted.run_id)
-                .expect("load state")
-                .expect("persisted state");
-        assert_eq!(persisted.repair_count, 1);
-    }
-
-    #[test]
-    fn supplement_without_gap_is_rejected_after_initial_prefetch() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let vault = directory.path().join("vault");
-        std::fs::create_dir_all(&vault).expect("vault directory");
-        let state = AppState::new(directory.path().join("data")).expect("application state");
-        state.set_vault(vault.clone()).expect("activate vault");
-        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
-        let context = RunContextAssembler::assemble(
-            &state.db,
-            Some(&vault),
-            &accepted.session.session_key,
-            &accepted.run_id,
-        )
-        .expect("run context");
-        let sink = RecordingSink::default();
-        let executor = NormalRunToolExecutor::new(
-            &state,
-            None,
-            &accepted,
-            &context,
-            vec![CapabilityId::new("web.search")],
-            RunBudgetPolicy::for_envelope(&context.envelope),
-            &sink,
-            Vec::new(),
-        )
-        .with_allowed_tool_names(&["web_search".to_string()])
-        .with_fresh_research_budget(ResearchBudget {
-            max_searches: 2,
-            max_fetches: 2,
-            max_repairs: 0,
-            max_model_continuations: 2,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        });
-
-        assert!(executor
-            .try_reserve_fresh_research_slot("初始查询", None)
-            .expect("initial search"));
-        assert!(!executor
-            .try_reserve_fresh_research_slot("补充查询", None)
-            .expect("gap is mandatory"));
-    }
-
-    #[test]
-    fn fresh_research_resume_state_restores_budget_and_query_deduplication() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let vault = directory.path().join("vault");
-        std::fs::create_dir_all(&vault).expect("vault directory");
-        let state = AppState::new(directory.path().join("data")).expect("application state");
-        state.set_vault(vault.clone()).expect("activate vault");
-        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
-        let context = RunContextAssembler::assemble(
-            &state.db,
-            Some(&vault),
-            &accepted.session.session_key,
-            &accepted.run_id,
-        )
-        .expect("run context");
-        let sink = RecordingSink::default();
-        let budget = ResearchBudget {
-            max_searches: 2,
-            max_fetches: 3,
-            max_repairs: 1,
-            max_model_continuations: 2,
-            max_evidence: 4,
-            deadline_seconds: 20,
-        };
-        let executor = NormalRunToolExecutor::new(
-            &state,
-            None,
-            &accepted,
-            &context,
-            vec![CapabilityId::new("web.search")],
-            RunBudgetPolicy::for_envelope(&context.envelope),
-            &sink,
-            Vec::new(),
-        )
-        .with_fresh_research_budget(budget);
-        assert!(executor
-            .try_reserve_fresh_research_slot("上海 今日天气", Some(EvidenceGap::MissingTimestamp))
-            .expect("first search"));
-
-        let resumed = NormalRunToolExecutor::new(
-            &state,
-            None,
-            &accepted,
-            &context,
-            vec![CapabilityId::new("web.search")],
-            RunBudgetPolicy::for_envelope(&context.envelope),
-            &sink,
-            Vec::new(),
-        )
-        .with_fresh_research_budget(budget);
-        let duplicate = resumed
-            .try_reserve_fresh_research_slot("上海 今日天气", Some(EvidenceGap::MissingTimestamp));
-        assert_eq!(
-            duplicate
-                .expect_err("duplicate query must be rejected")
-                .to_string(),
-            "fresh_research_duplicate_query"
-        );
-        assert!(
-            resumed
-                .try_reserve_fresh_research_slot(
-                    "上海 今日天气 预警",
-                    Some(EvidenceGap::MissingEntity),
-                )
-                .expect("one remaining search is available")
-        );
-        assert!(!resumed
-            .try_reserve_fresh_research_slot("第三次查询", Some(EvidenceGap::MissingEntity))
-            .expect("budget is restored"));
-        assert_eq!(
-            resumed
-                .available_fresh_fetches(2)
-                .expect("two fetches are available"),
-            2
-        );
-        assert_eq!(
-            resumed
-                .available_fresh_fetches(2)
-                .expect("planning fetches does not spend budget"),
-            2
-        );
-        resumed
-            .record_successful_fresh_fetches(2)
-            .expect("only successful fetches spend budget");
-        assert_eq!(
-            resumed
-                .available_fresh_fetches(2)
-                .expect("one fetch remains"),
-            1
         );
     }
 

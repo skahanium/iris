@@ -10,16 +10,17 @@ use super::agent_tool_loop::ToolLoopExecutor;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
-    build_cached_skill_activation, classify_current_task_shape, execute_normal_run,
-    execute_normal_run_with_eval_telemetry, required_web_query_from_authorized_material,
-    required_web_query_from_user_history, strict_follow_up_capabilities, CurrentTaskShape,
+    build_cached_skill_activation, execute_normal_run, execute_normal_run_with_eval_telemetry,
+    required_web_query_from_authorized_material, required_web_query_from_user_history,
+    strict_follow_up_capabilities,
 };
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
-    AssistantRunAccepted, AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef,
-    AssistantTurnDraft, CapabilityId, ContextMode, Effort, FreshFactDomain, FreshFactPolicy,
-    RunEventPayload, RunEventType, RunPresentationPayload, RunState, SecurityDomain,
+    AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent, AssistantRunStartRequest,
+    AssistantSessionRef, AssistantTurnDraft, CapabilityId, ContextMode, Effort, FreshFactDomain,
+    FreshFactPolicy, RunControlAction, RunEventPayload, RunEventType, RunPresentationPayload,
+    RunState, SecurityDomain,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
@@ -35,46 +36,6 @@ use crate::storage::db::Database;
 #[derive(Default)]
 struct RecordingSink {
     events: Mutex<Vec<serde_json::Value>>,
-}
-
-#[test]
-fn current_task_shape_routes_by_answer_contract_not_domain_only() {
-    let cases = [
-        (
-            FreshFactDomain::Finance,
-            "苹果现在股价多少？",
-            CurrentTaskShape::ExactCurrentFact,
-        ),
-        (
-            FreshFactDomain::Finance,
-            "为什么今天科技股下跌？",
-            CurrentTaskShape::CurrentResearch,
-        ),
-        (
-            FreshFactDomain::News,
-            "今天的新闻综述",
-            CurrentTaskShape::CurrentResearch,
-        ),
-        (
-            FreshFactDomain::Sports,
-            "明天比赛前瞻和分析",
-            CurrentTaskShape::CurrentResearch,
-        ),
-        (
-            FreshFactDomain::Entertainment,
-            "推荐本周上海有什么好看的电影",
-            CurrentTaskShape::CurrentResearch,
-        ),
-        (
-            FreshFactDomain::Weather,
-            "上海明天天气预报",
-            CurrentTaskShape::ExactCurrentFact,
-        ),
-    ];
-
-    for (domain, message, expected) in cases {
-        assert_eq!(classify_current_task_shape(domain, message), expected);
-    }
 }
 
 impl RunEventSink for RecordingSink {
@@ -1096,7 +1057,6 @@ async fn news_web_fallback_produces_validated_record_from_headless_mcp() {
         requested_at: chrono::DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
             .expect("fixed time")
             .with_timezone(&chrono::Utc),
-        location_gap: None,
     };
     let records = FreshDomainService
         .execute(request, &ctx)
@@ -1449,6 +1409,35 @@ async fn legacy_domain_operations_remain_readable_for_recovery_after_new_intake_
         .await
         .unwrap_or_else(|_| panic!("{operation:?} production Run timed out"));
 
+        let initial_response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("completed snapshot")
+            .expect("completed Run");
+        if initial_response.run.state == RunState::AwaitingInput {
+            assert_eq!(operation, DomainOperation::EntertainmentNowPlaying);
+            let mut values = std::collections::BTreeMap::new();
+            values.insert("city".to_string(), "上海".to_string());
+            RunIntake::control_with_sink(
+                &state.db,
+                AssistantRunControlRequest {
+                    session: accepted.session.clone(),
+                    run_id: accepted.run_id.clone(),
+                    expected_state_version: initial_response.run.state_version,
+                    action: RunControlAction::SubmitInput {
+                        input_id: format!("location-{}", accepted.run_id),
+                        values,
+                    },
+                },
+                &sink,
+            )
+            .expect("resume historical city-bound Run with persisted input");
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{operation:?} resumed production Run timed out"));
+        }
+
         let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
             .expect("completed snapshot")
             .expect("completed Run");
@@ -1649,7 +1638,7 @@ async fn production_news_web_fallback_accepts_w1_with_high_ledger_ids_and_recove
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(&tool_call_sse(
             "web_search",
-            serde_json::json!({"query":"最新 synthetic 新闻","gap":"missing_timestamp"}),
+            serde_json::json!({"query":"最新 synthetic 新闻"}),
         )),
         HttpResponseScript::sse(&tool_call_sse(
             "submit_final_answer",
@@ -1703,7 +1692,10 @@ async fn production_news_web_fallback_accepts_w1_with_high_ledger_ids_and_recove
         .map(|tool| tool["function"]["name"].as_str().expect("tool name"))
         .collect::<Vec<_>>();
     assert!(!names.contains(&"news_lookup"));
-    assert!(!names.contains(&"web_search"));
+    assert!(
+        names.contains(&"web_search"),
+        "HR-3 的严格联网任务也必须从通用循环暴露 Web 工具"
+    );
     assert!(names.contains(&"submit_final_answer"));
     assert_eq!(calls.len(), 2);
     let current_evidence =
@@ -1748,7 +1740,7 @@ async fn webpreferred_movie_research_uses_generic_web_evidence_without_city_or_d
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(&tool_call_sse(
             "web_search",
-            serde_json::json!({"query":"近期有什么好看的电影上映","gap":"missing_timestamp"}),
+            serde_json::json!({"query":"近期有什么好看的电影上映"}),
         )),
         HttpResponseScript::sse(&tool_call_sse(
             "submit_final_answer",
@@ -1818,7 +1810,7 @@ async fn web_fallback_rejects_an_out_of_run_w8_without_persisting_an_answer() {
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(&tool_call_sse(
             "web_search",
-            serde_json::json!({"query":"最新 synthetic 新闻","gap":"missing_timestamp"}),
+            serde_json::json!({"query":"最新 synthetic 新闻"}),
         )),
         HttpResponseScript::sse(&tool_call_sse(
             "submit_final_answer",
@@ -1920,10 +1912,13 @@ async fn strict_web_run_fails_closed_when_no_tool_capable_model_is_available() {
             .collect::<Vec<_>>()
     );
 
-    assert!(response
-        .events
-        .iter()
-        .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+    assert!(
+        !response
+            .events
+            .iter()
+            .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })),
+        "通用循环在模型不具备工具能力时不得绕过它预取联网证据"
+    );
     assert!(matches!(
         response.events.last().map(AssistantRunEvent::payload),
         Some(RunEventPayload::Failed {

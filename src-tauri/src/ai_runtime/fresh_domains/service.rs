@@ -21,7 +21,6 @@ use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, ExternalToolEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::AgentRunRepository;
-use crate::ai_runtime::fresh_research_plan::EvidenceGap;
 use crate::ai_runtime::mcp_external_tools::{
     load_run_snapshots, provider_is_current, snapshot_contract_is_valid,
     validate_and_map_arguments, DomainOperation, DomainOutputMapping, FrozenMcpToolSnapshot,
@@ -51,10 +50,6 @@ pub(crate) struct FreshDomainRequest {
     pub(crate) operation: DomainOperation,
     pub(crate) args: Value,
     pub(crate) requested_at: DateTime<Utc>,
-    /// Evidence gap that motivated the current request. `LocationCoverage`
-    /// allows widening city → province → country when the narrower scope
-    /// returns no usable evidence.
-    pub(crate) location_gap: Option<EvidenceGap>,
 }
 
 /// Stateless current-fact domain executor.
@@ -87,7 +82,6 @@ impl FreshDomainService {
                 Ok(records) => return Ok(records),
                 Err(error)
                     if error.to_string() == ERROR_EVIDENCE_INSUFFICIENT
-                        && request.location_gap == Some(EvidenceGap::LocationCoverage)
                         && allows_location_widening(request.operation) =>
                 {
                     let Some(next_scope) = current_scope.and_then(|scope| scope.next(&confirmed))
@@ -937,7 +931,6 @@ mod tests {
             requested_at: DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
-            location_gap: None,
         };
 
         let error = FreshDomainService
@@ -983,7 +976,6 @@ mod tests {
             requested_at: DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
-            location_gap: None,
         };
 
         let error = FreshDomainService.execute(request, &ctx).await.unwrap_err();

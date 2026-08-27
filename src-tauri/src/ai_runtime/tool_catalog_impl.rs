@@ -51,6 +51,21 @@ pub(crate) struct ToolExecutionMetadata {
     pub(crate) evidence_policy: &'static str,
 }
 
+/// Frozen accounting bucket for one concrete tool dispatch.
+///
+/// This classification is intentionally derived from the central catalog, not
+/// from intent or provider-specific tool names. Unknown frozen external tools
+/// are accounted as external reads by the loop, which is the least-privilege
+/// fallback for an integration that is outside the built-in catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolBudgetClass {
+    Local,
+    Network,
+    ExternalRead,
+    Runtime,
+    ConfirmedChange,
+}
+
 /// The complete built-in tool catalog. Add new tools through group modules only.
 pub static TOOL_CATALOG: LazyLock<Vec<ToolCatalogEntry>> =
     LazyLock::new(groups_impl::collect_tool_catalog);
@@ -94,6 +109,11 @@ pub fn catalog_default_readonly_names() -> Vec<&'static str> {
 /// Look up a catalog entry by name.
 pub fn catalog_find(name: &str) -> Option<&'static ToolCatalogEntry> {
     TOOL_CATALOG.iter().find(|e| e.name == name)
+}
+
+/// Return the single catalog-owned budget class for a built-in tool.
+pub fn catalog_tool_budget_class(name: &str) -> Option<ToolBudgetClass> {
+    catalog_find(name).map(ToolCatalogEntry::budget_class)
 }
 
 /// Total number of catalog entries.
