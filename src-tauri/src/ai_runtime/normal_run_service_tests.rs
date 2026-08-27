@@ -1164,6 +1164,98 @@ async fn production_missing_city_waits_for_input_and_resumes_the_same_run() {
     assert!(resumed.run.pending_input.is_none());
 }
 
+/// HR-4 will replace this structured pause with a normal assistant
+/// clarification for ordinary missing context. Keep this target fixture on the
+/// production orchestration path so a reducer-only change cannot hide the
+/// policy gap.
+#[tokio::test]
+#[should_panic(expected = "HR-4-target")]
+async fn hr1_ordinary_missing_context_still_pauses_the_run_for_structured_input() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"不应在补充信息前调用模型。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "hr1-ordinary-missing-context-model");
+    install_headless_contract_mcp(&state);
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "hr1-ordinary-missing-context".into();
+    request.turn.message = "附近电影院今晚有什么场次？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted ordinary missing-context Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("ordinary missing-context Run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "HR-4-target: ordinary missing context must complete with a natural assistant clarification"
+    );
+    assert!(
+        response.run.pending_input.is_none(),
+        "HR-4-target: ordinary clarification must not reserve an active Run input"
+    );
+}
+
+/// HR-4 will allow a normal, sourced answer to complete without turning a
+/// provider-neutral answer into a model-specific `submit_final_answer` call.
+#[tokio::test]
+#[should_panic(expected = "HR-4-target")]
+async fn hr1_ordinary_research_reply_still_requires_structured_finalization() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse(
+            "web_search",
+            serde_json::json!({"query":"近期科技股下跌 原因"}),
+        )),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "hr1-ordinary-research-model");
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "hr1-ordinary-research-finalization".into();
+    request.turn.message = "为什么近期科技股下跌？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted ordinary research Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("ordinary research Run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "HR-4-target: a normal sourced answer must not require a structured finalization tool"
+    );
+    assert_eq!(
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("session messages")
+            .into_iter()
+            .filter(|message| message.role == "assistant")
+            .count(),
+        1,
+        "HR-4-target: the normal answer must be persisted exactly once"
+    );
+    let calls = llm.finish().await.expect("LLM completion");
+    assert_eq!(calls.len(), 2, "the real loop must reach a normal reply");
+}
+
 #[tokio::test]
 async fn production_weather_without_provider_fails_closed_instead_of_fabricating() {
     let directory = tempfile::tempdir().expect("temporary app directory");

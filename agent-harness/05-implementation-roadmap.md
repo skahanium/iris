@@ -20,16 +20,16 @@
 
 ## 2. 阶段总览
 
-| 阶段 | 状态   | 目标                                 | 同阶段必须删除或降级                         |
-| ---- | ------ | ------------------------------------ | -------------------------------------------- |
-| HR-0 | 已验收 | 重置文档事实和路线                   | 旧现行文件名、旧完成结论、ROADMAP 冲突       |
-| HR-1 | 未开始 | 建立能复现生产问题的通用行为基线     | ID 偶合、理想调用顺序和只验管线的假阳性      |
-| HR-2 | 未开始 | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、领域前置阻断         |
-| HR-3 | 未开始 | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
-| HR-4 | 未开始 | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
-| HR-5 | 未开始 | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
-| HR-6 | 未开始 | 领域 operation 退出核心并净删除      | classifier、默认表面、专用门禁和失效测试     |
-| HR-7 | 未开始 | 通用质量评测与 Provider 能力校准     | 按单一模型/领域编排的成功假设                |
+| 阶段 | 状态       | 目标                                 | 同阶段必须删除或降级                         |
+| ---- | ---------- | ------------------------------------ | -------------------------------------------- |
+| HR-0 | 已验收     | 重置文档事实和路线                   | 旧现行文件名、旧完成结论、ROADMAP 冲突       |
+| HR-1 | 基线已验收 | 建立能复现生产问题的通用行为基线     | ID 偶合、理想调用顺序和只验管线的假阳性      |
+| HR-2 | 未开始     | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、领域前置阻断         |
+| HR-3 | 未开始     | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
+| HR-4 | 未开始     | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
+| HR-5 | 未开始     | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
+| HR-6 | 未开始     | 领域 operation 退出核心并净删除      | classifier、默认表面、专用门禁和失效测试     |
+| HR-7 | 未开始     | 通用质量评测与 Provider 能力校准     | 按单一模型/领域编排的成功假设                |
 
 ## 3. HR-0：文档事实重置（已验收）
 
@@ -51,7 +51,7 @@
 
 ## 4. HR-1：生产问题与通用行为基线
 
-先补失败回归，不改变生产路由：
+已先补失败回归，未改变生产路由：
 
 - 普通事实与推荐不应自动变成严格 WebRequired；
 - 首轮搜索结果差时模型应调整查询并取得新资源；
@@ -62,7 +62,14 @@
 - 高位 evidence ID、跨 Run `W1` 和不同 Provider tool-call 形态不发生偶合；
 - 已确认写入仍保持单次、不可越权，作为 HR-5 前的安全基线。
 
-退出条件：每个生产问题都有先红后绿所需的独立测试夹具，且 fixture 不预编排唯一正确查询或答案正文。
+2026-08-27 基线验收记录：
+
+- `hr1_ordinary_external_questions_still_record_the_webpreferred_gap`、`hr1_no_progress_still_fails_before_the_reserved_final_synthesis`、`hr1_ordinary_missing_context_still_pauses_the_run_for_structured_input` 与 `hr1_ordinary_research_reply_still_requires_structured_finalization` 是受控 `#[should_panic]` 目标夹具；分别由 HR-2、HR-3、HR-4 反转为普通绿色回归，不能被解读为当前产品能力。
+- `hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource`、`hr1_local_multi_hop_reads_distinct_notes_without_web_access`、`hr1_repeated_failed_tool_call_stops_after_two_real_executions`、`hr1_same_session_runs_keep_w1_bound_to_their_own_evidence` 与恢复投影 Vitest 记录现有可保留的通用边界。
+- `hr1_current_recommendation_quality_fixture_requires_status_scope_and_bound_sources` 仅证明确定性评测可以拒绝遗漏状态、范围或来源绑定的观察；它不等于真实 Provider 的回答质量。
+- `frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption` 继续限定 HR-5 前的单操作确认安全线，不提前实现多操作或写后验证。
+
+退出条件（已满足）：每个生产问题都有先红后绿所需的独立测试夹具，且 fixture 不预编排唯一正确查询或答案正文。HR-1 的“已验收”只表示基线可复现；生产行为仍由后续 HR-2 至 HR-5 改造。
 
 ## 5. HR-2：Intake 去领域化
 

@@ -423,6 +423,14 @@ struct RecordingExecutor {
     web_evidence: bool,
 }
 
+struct ResourceTracingExecutor {
+    calls: Mutex<Vec<(String, String, String)>>,
+}
+
+struct RepeatedFailureExecutor {
+    calls: AtomicU32,
+}
+
 struct FailingWebExecutor;
 struct LargeResultExecutor;
 struct LargeWebResultExecutor;
@@ -623,6 +631,68 @@ impl ToolLoopExecutor for RecordingExecutor {
 
     fn has_web_evidence(&self) -> bool {
         self.web_evidence && self.calls.load(Ordering::SeqCst) > 0
+    }
+}
+
+impl ToolLoopExecutor for ResourceTracingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let query_or_path = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+            .ok()
+            .and_then(|arguments| {
+                ["query", "path"].into_iter().find_map(|key| {
+                    arguments
+                        .get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+            })
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let resource_id = format!("{}:{query_or_path}", call.function.name);
+        self.calls.lock().expect("trace calls lock").push((
+            call.function.name.clone(),
+            query_or_path,
+            resource_id.clone(),
+        ));
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "resource_id": resource_id }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopExecutor for RepeatedFailureExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: false,
+                output: serde_json::json!({ "error": "transient test failure" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: Some("transient test failure".into()),
+            })
+        })
     }
 }
 
@@ -946,6 +1016,36 @@ fn web_tool_call() -> ToolCall {
     }
 }
 
+fn tool_call_with_arguments(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        call_type: "function".into(),
+        function: FunctionCall {
+            name: name.into(),
+            arguments: arguments.to_string(),
+        },
+    }
+}
+
+fn readonly_tool_spec(name: &str) -> ToolSpec {
+    ToolSpec {
+        name: name.into(),
+        description: format!("Test tool {name}"),
+        input_schema: serde_json::json!({ "type": "object" }),
+        access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+        requires_confirmation: false,
+        max_results: None,
+        capability_affinity: Vec::new(),
+    }
+}
+
+fn web_tool_spec() -> ToolSpec {
+    ToolSpec {
+        access_level: crate::ai_runtime::ToolAccessLevel::Network,
+        ..readonly_tool_spec("web_search")
+    }
+}
+
 fn final_answer_tool_call(arguments: serde_json::Value) -> ToolCall {
     ToolCall {
         id: "call-submit-final-answer".into(),
@@ -1257,6 +1357,283 @@ async fn successful_equivalent_tool_call_is_not_executed_twice() {
 
     assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "search-wide",
+                    "web_search",
+                    serde_json::json!({ "query": "组织治理" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "search-refined",
+                    "web_search",
+                    serde_json::json!({ "query": "组织治理 入门 读者" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("已基于第二轮的新资料完成回答。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = ResourceTracingExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-hr1-adaptive-search",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a refined search with a new resource must remain answerable");
+
+    let calls = executor.calls.lock().expect("trace calls lock");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, "web_search");
+    assert_eq!(calls[1].0, "web_search");
+    assert_ne!(calls[0].1, calls[1].1, "the second query must be refined");
+    assert_ne!(
+        calls[0].2, calls[1].2,
+        "the refinement must discover a new resource"
+    );
+    assert_eq!(outcome.content, "已基于第二轮的新资料完成回答。");
+}
+
+/// HR-1 characterization fixture. HR-3 removes `should_panic` when two
+/// no-progress rounds close the tool surface and reserve a final synthesis.
+#[tokio::test]
+#[should_panic(expected = "HR-3-target")]
+async fn hr1_no_progress_still_fails_before_the_reserved_final_synthesis() {
+    let tool_response = || super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: vec![tool_call()],
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            tool_response(),
+            tool_response(),
+            super::model_gateway::GatewayResponse {
+                content: Some("基于已知资料的保守结论。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .with_fresh_research_budget(ResearchBudget {
+            max_searches: 6,
+            max_fetches: 6,
+            max_repairs: 1,
+            max_model_continuations: 6,
+            max_evidence: 8,
+            deadline_seconds: 20,
+        })
+        .execute(
+            &provider,
+            &NoEvidenceResearchExecutor,
+            "run-hr1-no-progress",
+            Vec::new(),
+            vec![readonly_tool_spec("system_time_now")],
+            &mut observer,
+        )
+        .await
+        .expect("HR-3-target: two no-progress rounds should still reach final synthesis");
+
+    assert_eq!(outcome.content, "基于已知资料的保守结论。");
+}
+
+#[tokio::test]
+async fn hr1_local_multi_hop_reads_distinct_notes_without_web_access() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "search-local",
+                    "search_keyword",
+                    serde_json::json!({ "query": "责任认定" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "read-first",
+                    "read_note",
+                    serde_json::json!({ "path": "notes/first.md" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "read-second",
+                    "read_note",
+                    serde_json::json!({ "path": "notes/second.md" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("已综合两份本地笔记。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = ResourceTracingExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-hr1-local-multi-hop",
+            Vec::new(),
+            vec![
+                readonly_tool_spec("search_keyword"),
+                readonly_tool_spec("read_note"),
+            ],
+            &mut observer,
+        )
+        .await
+        .expect("local multi-hop research must remain answerable");
+
+    let calls = executor.calls.lock().expect("trace calls lock");
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        ["search_keyword", "read_note", "read_note"]
+    );
+    assert_ne!(
+        calls[1].2, calls[2].2,
+        "each note must retain its own identity"
+    );
+    assert!(calls.iter().all(|call| call.0 != "web_search"));
+    assert_eq!(outcome.content, "已综合两份本地笔记。");
+}
+
+#[tokio::test]
+async fn hr1_repeated_failed_tool_call_stops_after_two_real_executions() {
+    let repeated_call = |id| {
+        tool_call_with_arguments(
+            id,
+            "web_search",
+            serde_json::json!({ "query": "same failing query" }),
+        )
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![repeated_call("failed-first")],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![repeated_call("failed-second")],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![repeated_call("failed-third")],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("工具暂不可用，已说明限制。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RepeatedFailureExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-hr1-repeated-failure",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("the model should still be able to summarize the failed lookup");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(outcome.content, "工具暂不可用，已说明限制。");
 }
 
 #[tokio::test]

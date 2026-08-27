@@ -2252,6 +2252,77 @@ fn temporal_verification_matrix_requires_current_run_web_evidence_in_all_24_vari
     }
 }
 
+/// HR-1 characterization fixture. HR-2 removes `should_panic` once ordinary
+/// external questions use the progressive `WebPreferred` route.
+#[test]
+#[should_panic(expected = "HR-2-target")]
+fn hr1_ordinary_external_questions_still_record_the_webpreferred_gap() {
+    for message in [
+        "推荐三本理解组织治理的入门书，并说明适合什么读者。",
+        "比较两种常见的知识管理方法，各自适合什么场景？",
+        "帮我梳理公开可得的笔记写作建议。",
+    ] {
+        let mut request = request();
+        request.web_enabled = true;
+        request.turn.message = message.into();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_eq!(
+            envelope.freshness,
+            Freshness::WebPreferred,
+            "HR-2-target: ordinary external question should be progressive: {message}"
+        );
+        assert_eq!(
+            envelope.verification_requirement,
+            VerificationRequirement::None,
+            "HR-2-target: ordinary external question should not require current Run Web evidence: {message}"
+        );
+    }
+}
+
+#[test]
+fn strict_web_boundaries_remain_required_in_the_hr1_baseline() {
+    for message in [
+        "请联网核实 https://example.com/release-notes 的当前版本。",
+        "今天该证券的最新收盘价格是多少？",
+        "当前这项法规是否已经生效？请核实后回答。",
+    ] {
+        let mut online = request();
+        online.web_enabled = true;
+        online.turn.message = message.into();
+
+        let online_envelope = RunIntake::resolve_envelope(&online).expect("online envelope");
+        assert_eq!(
+            online_envelope.freshness,
+            Freshness::WebRequired,
+            "{message}"
+        );
+        assert_eq!(
+            online_envelope.verification_requirement,
+            VerificationRequirement::CurrentRunWeb,
+            "{message}"
+        );
+
+        let mut offline = online;
+        offline.web_enabled = false;
+        let offline_envelope = RunIntake::resolve_envelope(&offline).expect("offline envelope");
+        assert_eq!(offline_envelope.freshness, Freshness::Offline, "{message}");
+        assert_eq!(
+            offline_envelope.verification_requirement,
+            VerificationRequirement::CurrentRunWeb,
+            "{message}"
+        );
+        assert!(
+            !offline_envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message}"
+        );
+    }
+}
+
 #[test]
 fn explicit_file_reference_answer_stays_direct_when_it_is_local_only() {
     let mut request = request();

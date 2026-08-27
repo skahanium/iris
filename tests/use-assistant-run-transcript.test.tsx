@@ -753,12 +753,12 @@ describe("useAssistantConversationProjection", () => {
       ),
     );
 
-    expect(
-      messages.filter(
-        (message) =>
-          message.role === "assistant" && message.runId === "run-recovered",
-      ),
-    ).toMatchObject([
+    const recoveredAssistantMessages = messages.filter(
+      (message) =>
+        message.role === "assistant" && message.runId === "run-recovered",
+    );
+    expect(recoveredAssistantMessages).toHaveLength(1);
+    expect(recoveredAssistantMessages).toMatchObject([
       {
         content: "以下是近期新片建议。",
         turnId: "turn-recovered",

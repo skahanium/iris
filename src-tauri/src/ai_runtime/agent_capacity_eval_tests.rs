@@ -39,9 +39,9 @@ use super::agent_capacity_eval::{
     LiveCostConfirmation, LivePilotCallProbe, LivePilotEvidenceOracle, LiveProfileCandidate,
     LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
     McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
-    ProtocolValidationLevel, RequiredFact, SafetyViolation, ScenarioLanguage, SourceKind,
-    StableLevelObservation, TruncationOutcome, VerdictReason, WebAnswerContamination,
-    WebQueryBoundary, WebState, CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
+    ProtocolValidationLevel, RequiredFact, RequiredSource, SafetyViolation, ScenarioLanguage,
+    SourceKind, StableLevelObservation, TruncationOutcome, VerdictReason, WebAnswerContamination,
+    WebQueryBoundary, WebSearchPolicy, WebState, CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
     CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE, CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
 };
 
@@ -4652,6 +4652,110 @@ fn aggregate_capacity_scorecard_reports_split_columns_and_threshold_gates() {
     assert!(serialized["quality"].is_object());
     assert!(serialized["performance"].is_object());
     assert!(serialized["faultRecovery"].is_object());
+}
+
+#[test]
+fn hr1_current_recommendation_quality_fixture_requires_status_scope_and_bound_sources() {
+    // This fixture deliberately uses only synthetic protocol identifiers. It
+    // does not prescribe a title, query, provider, or answer wording: quality
+    // means that each current-information dimension is separately supported
+    // and its scope is disclosed.
+    let mut case = manifest_fixture();
+    case.id = "case-2".into();
+    case.evidence_group = EvidenceGroup::WebOnly;
+    case.domain = "current-recommendation".into();
+    case.local_authorization.explicit_reference_ids.clear();
+    case.local_authorization.explicit_scope_id = None;
+    case.local_authorization.explicit_scope_source_ids.clear();
+    case.local_authorization.implicit_vault = ImplicitVaultExpectation::Forbidden;
+    case.available_sources = vec![
+        RequiredSource {
+            id: "web-current-status".into(),
+            kind: SourceKind::Web,
+        },
+        RequiredSource {
+            id: "web-current-scope".into(),
+            kind: SourceKind::Web,
+        },
+    ];
+    case.required_sources = case.available_sources.clone();
+    case.required_facts = vec![
+        RequiredFact {
+            id: "fact-current-status".into(),
+            allowed_sources: vec!["web-current-status".into()],
+            citation_required: true,
+        },
+        RequiredFact {
+            id: "fact-current-scope".into(),
+            allowed_sources: vec!["web-current-scope".into()],
+            citation_required: true,
+        },
+    ];
+    case.tool_policy.allowed = vec!["web_search".into()];
+    case.tool_policy.forbidden.clear();
+    case.tool_policy.web_search = WebSearchPolicy::Required;
+    case.disclosure_constraints = vec!["scope-disclosed".into()];
+
+    let conflated = AnswerObservation {
+        case_id: case.id.clone(),
+        sources: case
+            .required_sources
+            .iter()
+            .map(|source| ObservedSource {
+                id: source.id.clone(),
+                kind: source.kind,
+                authorization_scope_id: None,
+            })
+            .collect(),
+        fact_supports: vec![FactSupportObservation {
+            fact_id: "fact-current-status".into(),
+            source_ids: vec!["web-current-status".into()],
+        }],
+        contradicted_fact_ids: Vec::new(),
+        citations: vec![CitationObservation {
+            fact_id: "fact-current-status".into(),
+            source_id: "web-current-status".into(),
+        }],
+        tool_calls: vec!["web_search".into()],
+        disclosures: Vec::new(),
+        degraded: false,
+        clarification_requested: false,
+        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
+        safety_violations: Vec::new(),
+    };
+    let conflated_verdict = evaluate_case(&case, &conflated).expect("valid observation");
+    assert_eq!(
+        conflated_verdict.fact_correctness().status(),
+        CheckStatus::Fail,
+        "a current recommendation cannot conflate status and scope"
+    );
+    assert_eq!(
+        conflated_verdict.citation_support().status(),
+        CheckStatus::Pass,
+        "citation support only judges claims the observation says were made; the missing scope claim is rejected by fact correctness and the atomic quality counts below"
+    );
+    assert!(!conflated_verdict.overall_pass());
+    let conflated_atoms = measure_case_quality(&case, &conflated).expect("quality atoms");
+    assert_eq!(conflated_atoms.false_negative_facts(), 1);
+    assert_eq!(conflated_atoms.citation_supported(), 1);
+    assert_eq!(conflated_atoms.constraints_satisfied(), 0);
+
+    let mut scoped = conflated;
+    scoped.fact_supports.push(FactSupportObservation {
+        fact_id: "fact-current-scope".into(),
+        source_ids: vec!["web-current-scope".into()],
+    });
+    scoped.citations.push(CitationObservation {
+        fact_id: "fact-current-scope".into(),
+        source_id: "web-current-scope".into(),
+    });
+    scoped.disclosures.push("scope-disclosed".into());
+    let scoped_verdict = evaluate_case(&case, &scoped).expect("valid scoped observation");
+    assert!(scoped_verdict.overall_pass());
+    let scoped_atoms = measure_case_quality(&case, &scoped).expect("quality atoms");
+    assert_eq!(scoped_atoms.true_positive_facts(), 2);
+    assert_eq!(scoped_atoms.citation_supported(), 2);
+    assert_eq!(scoped_atoms.constraints_satisfied(), 1);
 }
 
 #[test]

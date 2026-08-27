@@ -349,6 +349,57 @@ fn web_provenance_ordinals_restart_at_w1_for_each_run_with_high_ledger_ids() {
 }
 
 #[test]
+fn hr1_same_session_runs_keep_w1_bound_to_their_own_evidence() {
+    let (db, session_id, session_key) = setup_run();
+    let first = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "First Run source",
+        "https://example.test/first-run",
+    );
+    cancel_test_run(&db, "evidence-run");
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-second-client-request",
+        "evidence-second-run",
+        "evidence-second-turn",
+        "第二个运行",
+    );
+    let second = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-second-run",
+        "Second Run source",
+        "https://example.test/second-run",
+    );
+
+    let first_links =
+        AgentEvidenceRepository::list_current_run_web_citation_links(&db, "evidence-run")
+            .expect("first Run citation links");
+    let second_links =
+        AgentEvidenceRepository::list_current_run_web_citation_links(&db, "evidence-second-run")
+            .expect("second Run citation links");
+    assert_eq!(
+        (first_links[0].label.as_str(), first_links[0].url.as_str()),
+        ("[W1]", "https://example.test/first-run")
+    );
+    assert_eq!(
+        (second_links[0].label.as_str(), second_links[0].url.as_str()),
+        ("[W1]", "https://example.test/second-run")
+    );
+    assert_ne!(first.evidence_id, second.evidence_id);
+    assert_eq!(
+        AgentEvidenceRepository::current_run_web_urls(&db, "evidence-second-run")
+            .expect("second Run source URLs"),
+        std::collections::BTreeSet::from(["https://example.test/second-run".to_string()]),
+        "the same W1 label must resolve only through the active Run's registrations"
+    );
+}
+
+#[test]
 fn current_run_fetch_urls_exclude_foreign_and_retired_web_evidence() {
     let (db, session_id, session_key) = setup_run();
     let owned = register_web_evidence(
