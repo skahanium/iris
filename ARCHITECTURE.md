@@ -53,6 +53,8 @@ React 19 UI
 
 normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `assistant_run_get` 执行、控制和回放。每个 normal-domain Run 在 accepted 后持久化，再进行策略、上下文、路由与 provider 调度；`assistant:run_event` 是唯一的前端生命周期事件，断流使用 `assistant_run_get` 回放。
 
+新 Normal Run 的普通回答（包括要求本轮 Web 证据的普通事实）以自然正文完成；Run Engine 仍核验当前 Run evidence，并从账本投影受控来源组，但不向模型暴露内部 `submit_final_answer`。只有高风险当前事实以及含非空历史 `FreshFactPolicy` 的兼容 Run 使用既有结构化终局。普通地点、范围、偏好等缺参由模型在未调用工具前以一条无来源的自然问题结束当前 Run；下一条用户消息创建新 Run 并从会话历史承接。`AwaitingInput` 与 `submit_input` 仅保留旧 Run 读取/恢复兼容，不是新普通对话的路径。
+
 `agent_run_events` 是追加式、安全的过程回放日志，而不是可据以重建全部 Run 的执行日志：事件不包含工具参数或原始输出，只保存稳定 capability、调用 ID、受限摘要、状态和安全错误码。`assistant_run_get` 的回放仅恢复安全快照与过程展示；Direct 与 ToolLoop 不支持进程级续跑，进程中断后不会从事件重新执行模型或工具。只有 Durable Run 才具有暂停与检查点语义，且其可恢复写入闭环仍须通过冻结计划、确认和内容 hash 复核。
 
 会话通过不透明 `AssistantSessionRef` 寻址，并按 normal/classified 安全域物理隔离。涉密 Run 仅在当前进程内易失执行：解锁文档、prompt 与模型输出以 `Zeroizing` 保存，不拥有 SQLite 或 CEF Run 句柄；`assistant_run_get` 仅可在同一进程内按显式 run ID 读取无正文的易失快照与安全事件，不支持省略 run ID 的活动 Run 查询、持久化断流回放或进程级恢复。完成正文只能由 `assistant_classified_run_take_result` 一次性取走。已持久化的涉密 Markdown 与会话数据继续构成 CEF 加密持久化边界，普通 SQLite 会话表不承载其正文。当前编辑器、活动 tab、scene、intent、旧 task ID 和笔记正文不进入隐式请求上下文；只有用户明确提交的引用和一次性 action snapshot 可以进入 Run。`Apply` 还必须把确认计划、模型工具参数和真实写入绑定到同一个显式目标与基准 hash；取消信号会进入 provider、工具调度和写盘前提交检查。

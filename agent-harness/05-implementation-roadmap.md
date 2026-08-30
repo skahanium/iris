@@ -26,7 +26,7 @@
 | HR-1 | 基线已验收 | 建立能复现生产问题的通用行为基线     | ID 偶合、理想调用顺序和只验管线的假阳性      |
 | HR-2 | 已验收     | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、新 Run 领域前置阻断  |
 | HR-3 | 已验收     | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
-| HR-4 | 未开始     | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
+| HR-4 | 已验收     | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
 | HR-5 | 未开始     | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
 | HR-6 | 未开始     | 领域 operation 退出核心并净删除      | classifier、默认表面、专用门禁和失效测试     |
 | HR-7 | 未开始     | 通用质量评测与 Provider 能力校准     | 按单一模型/领域编排的成功假设                |
@@ -64,7 +64,7 @@
 
 2026-08-27 基线验收记录：
 
-- `hr1_ordinary_external_questions_still_record_the_webpreferred_gap`、`hr1_ordinary_missing_context_still_pauses_the_run_for_structured_input` 与 `hr1_ordinary_research_reply_still_requires_structured_finalization` 是受控 `#[should_panic]` 目标夹具；分别由 HR-2、HR-4 反转为普通绿色回归，不能被解读为当前产品能力。HR-3 的旧无进展夹具已由通用绿色回归替代并删除，避免继续固化被撤回的失败语义。
+- HR-1 的普通 Web、普通缺参和普通最终化 `#[should_panic]` 目标夹具已分别在 HR-2/HR-4 替换为绿色回归；当前证据是 `ordinary_external_questions_use_webpreferred_without_strict_finalization`、`ordinary_clarification_completes_and_next_run_receives_conversation_context` 与 `hr1_ordinary_research_reply_uses_natural_source_group_finalization`。HR-3 的旧无进展夹具已由通用绿色回归替代并删除，避免继续固化被撤回的失败语义。
 - `hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource`、`hr1_local_multi_hop_reads_distinct_notes_without_web_access`、`hr1_repeated_failed_tool_call_stops_after_two_real_executions`、`hr1_same_session_runs_keep_w1_bound_to_their_own_evidence` 与恢复投影 Vitest 记录现有可保留的通用边界。
 - `hr1_current_recommendation_quality_fixture_requires_status_scope_and_bound_sources` 仅证明确定性评测可以拒绝遗漏状态、范围或来源绑定的观察；它不等于真实 Provider 的回答质量。
 - `frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption` 继续限定 HR-5 前的单操作确认安全线，不提前实现多操作或写后验证。
@@ -114,17 +114,16 @@
 
 ## 7. HR-4：回答、澄清、错误与投影
 
-实现方向：
+2026-08-30 验收结果：
 
-- 普通回答直接持久化自然正文和受控来源组，不暴露 `submit_final_answer`。
-- CitationCheck、高风险当前事实和其他严格合同才启用结构化终局。
-- 普通缺参自然追问并完成；`AwaitingInput` 只兼容读取旧 Run。
-- 前端只由同 Run assistant 投影拥有正文、过程、来源和终态。
-- 用户错误提示使用“证据不足、能力不可用、回答未完成”等产品语义；协议码只进诊断。
+- `requires_structured_finalization` 只为 `HighStakesCurrentFact` 和非空历史 `FreshFactPolicy` 暴露既有 `submit_final_answer`；普通 `WebRequired` 保持当前 Run evidence gate，并以自然正文与受控来源组完成。
+- 新普通缺参在未调用工具时只能以一条短、无来源的自然问题完成；已有工具调用、正文、URL 或来源标记仍不能绕过 Web/external evidence 门禁。下一用户消息创建新 Run，由会话历史承接，不重放旧 Run。
+- `useAssistantConversationProjection` 继续是唯一 Run-to-message writer：终态以同 Run durable 正文收敛，历史 user-only Run 可补建一条 assistant 行，无同 Run user 行的迟到事件仍被忽略。
+- `FinalizationProtocolInvalid` 稳定错误码保留在事件诊断；用户只看到“本次回答未完成必要的来源校验，请重试”。证据不足、能力不可用、回答未完成和材料无效保持不同产品语义。
 
-同步删除：新普通 Run 的 input transaction、领域补充卡特殊路由、普通回答的强制终局修复和重复来源解释器。
+未新增 input transaction、领域补充卡、来源解释器、Provider 分支或新的 UI state store；旧 `AwaitingInput`/`submit_input` 仅兼容读取与恢复。
 
-退出条件：自然追问、下一轮承接、正文不被终态覆盖、恢复不重放、迟到事件隔离和四类错误语义均有 Rust/Vitest 回归。
+退出条件（已满足）：自然追问与下一轮承接由 `ordinary_clarification_completes_and_next_run_receives_conversation_context` 覆盖；普通严格联网自然来源组、高风险结构化边界、高 ledger ID、终态正文收敛和迟到隔离分别由 `hr1_ordinary_research_reply_uses_natural_source_group_finalization`、`high_stakes_current_fact_keeps_structured_finalization_tool`、`production_news_web_fallback_uses_natural_source_group_with_high_ledger_ids_and_recovers`、`tests/use-assistant-run-transcript.test.tsx` 覆盖。真实 Provider 质量仍留给 HR-7。
 
 ## 8. HR-5：冻结变更集
 

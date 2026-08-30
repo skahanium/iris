@@ -17,7 +17,7 @@ use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, CapabilityId, DomainOperation, Effort, FreshFactDomain, Freshness,
     Modality, RunBudgetPolicy, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
-    VerificationRequirement, WebEvidenceFailureReason,
+    VerificationRequirement, WebDecisionReason, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingProvider, RunEngine, RunEventSink, WebVerificationFailure,
@@ -57,6 +57,22 @@ fn plan_tool_surface(
         "tool surface planned"
     );
     plan
+}
+
+/// Decide whether this frozen Run needs the existing structured terminal tool.
+///
+/// Current-Run evidence and structured terminalization are deliberately
+/// orthogonal: ordinary WebRequired work still requires evidence, but it may
+/// complete with natural prose plus the controlled source group.  The only
+/// new-envelope strict case currently represented by the contract is an
+/// elevated-stakes current-fact request.  A non-empty `fresh_fact` remains a
+/// historical compatibility contract and is intentionally preserved until the
+/// legacy domain path is retired.
+fn requires_structured_finalization(context: &crate::ai_runtime::run_context::RunContext) -> bool {
+    matches!(
+        context.envelope.web_reason,
+        WebDecisionReason::HighStakesCurrentFact
+    ) || context.envelope.fresh_fact.domain != FreshFactDomain::None
 }
 
 /// Execute one already-accepted normal-domain Run through the production
@@ -546,10 +562,11 @@ async fn dispatch_normal_run_after_context(
         if !tool_surface_plan.expose_web_search {
             tools.retain(|tool| tool.name != "web_search");
         }
-        // Strict current-fact runs use the same general loop and tool surface;
-        // only their terminal source-binding contract adds the reserved final
-        // submission tool. This is not a Web planner or a domain fast path.
-        if context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb {
+        // Evidence obligation and structured terminalization are independent:
+        // ordinary WebRequired answers remain natural and use the controlled
+        // source group in RunEngine. Only the narrow strict contracts frozen
+        // above receive the reserved final submission tool.
+        if requires_structured_finalization(context) {
             tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
         }
         tool_surface_plan.tool_names = tools.iter().map(|tool| tool.name.clone()).collect();

@@ -134,7 +134,7 @@ fn tool_surface_awareness_contract() -> &'static str {
 
 fn tool_use_decision_contract() -> &'static str {
     "## ToolUseDecision\n\
-     Prefer a search when the answer depends on information newer than your training. When searching, use concrete queries and avoid redundant repeated searches. If the first search is insufficient, refine the query rather than giving up. If a tool result is incomplete, say what is missing instead of inventing details."
+     If an essential user choice such as scope, location, preference, language, or target is missing, ask one short natural clarification question before calling tools or stating external facts. Do not invent the missing choice or reserve a hidden input transaction. Otherwise, prefer a search when the answer depends on information newer than your training. When searching, use concrete queries and avoid redundant repeated searches. If the first search is insufficient, refine the query rather than giving up. If a tool result is incomplete, say what is missing instead of inventing details."
 }
 
 fn attribution_contract() -> &'static str {
@@ -280,6 +280,9 @@ mod tests {
             .system_prompt
             .contains("do not claim you have no search ability"));
         assert!(compiled.system_prompt.contains("## ToolUseDecision"));
+        assert!(compiled
+            .system_prompt
+            .contains("ask one short natural clarification question"));
         assert!(compiled
             .system_prompt
             .contains("refine the query rather than giving up"));

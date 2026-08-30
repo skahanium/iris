@@ -791,6 +791,8 @@ impl RunEngine {
                 return Err(AppError::run(code));
             }
         };
+        let natural_clarification = outcome.final_submission.is_none()
+            && crate::ai_runtime::agent_tool_loop::is_natural_clarification(&outcome.content);
         if settle_cancelled_run_with_partial(
             db,
             session,
@@ -872,14 +874,17 @@ impl RunEngine {
         final_evidence_ids.extend(executor.evidence_ids());
         final_evidence_ids.sort_unstable();
         final_evidence_ids.dedup();
-        validate_final_evidence_or_fail(
-            db,
-            run_id,
-            running_state_version,
-            &final_evidence_ids,
-            sink,
-        )?;
-        if executor.requires_external_evidence()
+        if !natural_clarification {
+            validate_final_evidence_or_fail(
+                db,
+                run_id,
+                running_state_version,
+                &final_evidence_ids,
+                sink,
+            )?;
+        }
+        if !natural_clarification
+            && executor.requires_external_evidence()
             && !AgentEvidenceRepository::has_current_run_external_evidence(
                 db,
                 run_id,
@@ -923,7 +928,7 @@ impl RunEngine {
         let mut citation_binding = None;
         let mut source_summary = None;
         let mut attribution = None;
-        if executor.requires_web_evidence() {
+        if executor.requires_web_evidence() && !natural_clarification {
             if !AgentEvidenceRepository::has_current_run_web_evidence(
                 db,
                 run_id,
@@ -1058,7 +1063,7 @@ impl RunEngine {
         } else {
             content = linkify_final_web_citations(db, &citation_evidence_ids, content);
         }
-        if executor.requires_web_evidence() {
+        if executor.requires_web_evidence() && !natural_clarification {
             if let Err(error) =
                 validate_current_run_citation_links(db, &citation_evidence_ids, &content)
             {

@@ -546,7 +546,7 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::FreshEvidenceInsufficient => {
             "当前联网证据不足以支持可靠回答，请调整问题或稍后重试"
         }
-        SafeRunErrorCode::FinalizationProtocolInvalid => "模型未完成本次答案的来源归因协议，请重试",
+        SafeRunErrorCode::FinalizationProtocolInvalid => "本次回答未完成必要的来源校验，请重试",
         SafeRunErrorCode::EventDeliveryFailed => "回答状态未能送达界面，请重新打开会话查看结果",
         SafeRunErrorCode::InvalidExplicitReference => "引用材料无效，请重新附带后重试",
         SafeRunErrorCode::ExplicitReferenceChanged => "引用材料已发生变化，请重新附带后重试",
@@ -772,7 +772,15 @@ mod apply_notice_tests {
     }
 
     #[test]
-    fn evidence_failure_messages_distinguish_web_protocol_and_attachments() {
+    fn safe_failure_messages_distinguish_capability_completion_evidence_and_attachments() {
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::NoCapableModel),
+            "没有已启用模型满足当前任务所需能力，请在模型设置中启用兼容模型"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::IncompleteOutput),
+            "回答未完整生成，请重试"
+        );
         assert_eq!(
             safe_failure_message(SafeRunErrorCode::FreshEvidenceInsufficient),
             "当前联网证据不足以支持可靠回答，请调整问题或稍后重试"
@@ -783,7 +791,7 @@ mod apply_notice_tests {
         );
         assert_eq!(
             safe_failure_message(SafeRunErrorCode::FinalizationProtocolInvalid),
-            "模型未完成本次答案的来源归因协议，请重试"
+            "本次回答未完成必要的来源校验，请重试"
         );
         assert_eq!(
             safe_failure_message(SafeRunErrorCode::InvalidExplicitReference),

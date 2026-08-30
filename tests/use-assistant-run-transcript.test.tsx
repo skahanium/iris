@@ -239,7 +239,7 @@ describe("useAssistantConversationProjection", () => {
     expect(streaming).toBe(false);
   });
 
-  it("终态遇到展示序号缺口时以可靠事实正文收敛，不遗留局部答案", () => {
+  it("HR-4：终态遇到展示序号缺口时以同 Run 的可靠正文收敛", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
       {
@@ -1062,7 +1062,7 @@ describe("useAssistantConversationProjection", () => {
     );
   });
 
-  it("ignores a late Run event when no transcript slot is bound to it", () => {
+  it("HR-4：无同 Run 用户行的迟到终态不污染当前会话", () => {
     messages = [
       { role: "user", content: "当前问题", runId: "run-2", turnId: "turn-2" },
       {
@@ -1099,12 +1099,22 @@ describe("useAssistantConversationProjection", () => {
               type: "content_delta",
               payload: { kind: "content_delta", delta: "迟到回答" },
             },
+            {
+              runId: "run-late",
+              seq: 3,
+              stateVersion: 1,
+              timestamp: "2026-07-13T12:00:02.000Z",
+              type: "completed",
+              payload: { kind: "completed", messageId: "message-late" },
+            },
           ] satisfies AssistantRunEvent[])}
         />,
       ),
     );
 
     expect(messages[1]?.content).toBe("当前回答");
+    expect(messages).toHaveLength(2);
+    expect(messages.every((message) => message.runId === "run-2")).toBe(true);
   });
 
   it("uses the smoothed presentation answer when reveal is active", () => {

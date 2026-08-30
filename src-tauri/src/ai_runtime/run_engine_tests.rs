@@ -1559,10 +1559,16 @@ fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
             let fields = legacy_v1
                 .as_object_mut()
                 .expect("canonical budget is an object");
+            fields.insert("schemaVersion".to_string(), serde_json::json!(1));
             for field in [
                 "maxPromptTokens",
                 "maxCompletionTokens",
                 "maxTurnOutputTokens",
+                "maxLocalToolCalls",
+                "maxNetworkToolCalls",
+                "maxExternalReadToolCalls",
+                "maxRuntimeToolCalls",
+                "maxConfirmedChangeCalls",
             ] {
                 fields.remove(field);
             }

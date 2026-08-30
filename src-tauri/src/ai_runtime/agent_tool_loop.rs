@@ -36,6 +36,64 @@ pub(crate) fn parent_run_id_for_provider_scope(run_id: &str) -> &str {
         .map_or(run_id, |(parent_run_id, _)| parent_run_id)
 }
 
+/// Return whether a model response is a narrowly shaped, non-factual
+/// clarification rather than an answer that could evade a required-evidence
+/// contract. The host only accepts this before any tool dispatch and only as a
+/// single, source-free question; all other WebRequired output still needs
+/// current-Run evidence.
+pub(crate) fn is_natural_clarification(content: &str) -> bool {
+    let question = content.trim();
+    let question_count = question
+        .chars()
+        .filter(|character| matches!(character, '?' | '？'))
+        .count();
+    let asks_user_for_input = [
+        "请告诉我",
+        "请提供",
+        "请说明",
+        "请确认",
+        "请选择",
+        "请问你",
+        "能否告诉我",
+        "你在哪",
+        "您在哪",
+        "你希望",
+        "您希望",
+        "Could you",
+        "Please ",
+        "Which ",
+        "What ",
+        "Where ",
+        "When ",
+        "Who ",
+        "How ",
+        "Do you ",
+        "Would you ",
+        "Can you ",
+    ]
+    .iter()
+    .any(|prefix| question.starts_with(prefix))
+        || (question.starts_with("为了")
+            && ["请告诉我", "请提供", "请说明", "请确认", "请选择"]
+                .iter()
+                .any(|request| question.contains(request)));
+    asks_user_for_input
+        && !question.is_empty()
+        && question.chars().count() <= 512
+        && question_count == 1
+        && question.ends_with(['?', '？'])
+        && !question.contains('\n')
+        && !question.contains("http://")
+        && !question.contains("https://")
+        && !question.contains("[W")
+        && !question.contains("[E")
+        && !question.contains("[L")
+        && !question.contains("[M")
+        && !question
+            .chars()
+            .any(|character| matches!(character, '.' | '。' | '!' | '！'))
+}
+
 /// Result of a fully bounded model/tool exchange.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AgentToolLoopOutcome {
@@ -433,12 +491,6 @@ impl AgentToolLoop {
             }
 
             if response.tool_calls.is_empty() {
-                if executor.requires_web_evidence() && !executor.has_web_evidence() {
-                    return Err(AppError::run(SafeRunErrorCode::WebEvidenceRequired));
-                }
-                if executor.requires_external_evidence() && !executor.has_external_evidence() {
-                    return Err(AppError::msg("agent_run_external_evidence_required"));
-                }
                 let response_content = response.content.unwrap_or_default();
                 let content = match incomplete_final_draft.take() {
                     Some(draft) => append_final_answer_continuation(draft, response_content)?,
@@ -446,6 +498,19 @@ impl AgentToolLoop {
                 };
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
+                }
+                let natural_clarification = tool_calls == 0 && is_natural_clarification(&content);
+                if executor.requires_web_evidence()
+                    && !executor.has_web_evidence()
+                    && !natural_clarification
+                {
+                    return Err(AppError::run(SafeRunErrorCode::WebEvidenceRequired));
+                }
+                if executor.requires_external_evidence()
+                    && !executor.has_external_evidence()
+                    && !natural_clarification
+                {
+                    return Err(AppError::msg("agent_run_external_evidence_required"));
                 }
                 if allowed_tools.contains(FINAL_ANSWER_TOOL_NAME) {
                     if final_submission_repair_used {

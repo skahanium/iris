@@ -6,7 +6,8 @@ use std::sync::Mutex;
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
-    AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
+    is_natural_clarification, AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor,
+    ToolLoopProvider,
 };
 use super::model_gateway::{StreamEventObserver, StreamSurface};
 use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
@@ -1880,6 +1881,55 @@ async fn web_required_rejects_a_final_answer_without_registered_evidence() {
         .await
         .expect_err("web-required must not silently finalize");
     assert_eq!(error.to_string(), "agent_run_web_evidence_required");
+}
+
+#[test]
+fn natural_clarification_is_a_single_source_free_question_only() {
+    assert!(is_natural_clarification(
+        "为了查询附近场次，请告诉我所在的城市或地区？"
+    ));
+    assert!(is_natural_clarification("Which city should I use?"));
+    assert!(!is_natural_clarification(
+        "上海今晚有多个场次，你在哪个城市？"
+    ));
+    assert!(!is_natural_clarification("请看 [W1] 后告诉我城市？"));
+    assert!(!is_natural_clarification(
+        "请看 https://example.test 后告诉我城市？"
+    ));
+}
+
+#[tokio::test]
+async fn web_required_accepts_a_natural_clarification_before_any_tool_dispatch() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: Some("为了查询附近场次，请告诉我所在的城市或地区？".into()),
+            tool_calls: Vec::new(),
+            usage: Default::default(),
+            finish_reason: "stop".into(),
+            reasoning_content: None,
+            continuation: None,
+        }])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &RequiredWebExecutor,
+            "run-required-web-clarification",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect("a natural clarification must complete without fabricated evidence");
+
+    assert_eq!(
+        outcome.content,
+        "为了查询附近场次，请告诉我所在的城市或地区？"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
