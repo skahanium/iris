@@ -1170,6 +1170,48 @@ fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
 }
 
 impl NormalRunToolExecutor<'_> {
+    /// Best-effort persistent closure for a batch that never reached a frozen
+    /// confirmation. A sink may fail after `ToolStarted` has been committed;
+    /// keep that delivery fault from leaving an orphaned tool lifecycle.
+    fn close_unconfirmed_change_set_lifecycles(&self, lifecycles: &[(String, String)]) {
+        for (capability, tool_call_id) in lifecycles {
+            let result = (|| -> AppResult<()> {
+                let snapshot = AgentRunRepository::get_for_session(
+                    &self.state.db,
+                    &self.accepted.session.session_key,
+                    &self.accepted.run_id,
+                )?
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+                let event = AgentRunRepository::append_event(
+                    &self.state.db,
+                    AppendRunEventInput {
+                        run_id: self.accepted.run_id.clone(),
+                        state_version: snapshot.run.state_version,
+                        event_type: RunEventType::ToolCompleted,
+                        payload: RunEventPayload::ToolCompleted {
+                            capability: capability.clone(),
+                            tool_call_id: tool_call_id.clone(),
+                            summary: "确认请求未建立，未执行变更".to_string(),
+                            duration_ms: None,
+                            success: Some(false),
+                            subagent_batch_report: None,
+                        },
+                    },
+                )?;
+                self.sink.emit(&event)
+            })();
+            if let Err(error) = result {
+                tracing::warn!(
+                    run_id = self.accepted.run_id,
+                    capability,
+                    tool_call_id,
+                    error = %error,
+                    "Unable to close an unconfirmed change-set tool lifecycle"
+                );
+            }
+        }
+    }
+
     fn external_snapshot(
         &self,
         tool_name: &str,
@@ -1651,7 +1693,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 };
                 let outcome = evaluate_tool_execution(&self.state.db, gate)
                     .map_err(|_| AppError::msg("tool_permission_check_failed"))?;
-                if outcome.tool_result.is_some() || !outcome.decision.can_execute_now() {
+                if outcome.tool_result.is_some()
+                    || (!entry.requires_confirmation && !outcome.decision.can_execute_now())
+                {
                     return Err(AppError::msg("mixed_confirmation_batch"));
                 }
                 operations.push(self.freeze_change_operation(
@@ -1680,14 +1724,22 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 },
             )?;
             let mut state_version = None;
+            let mut started_lifecycles = Vec::with_capacity(prepared.len());
             for (call, entry, args, step) in prepared {
-                let started = append_model_tool_started(
+                started_lifecycles.push((entry.name.to_string(), call.id.clone()));
+                let started = match append_model_tool_started(
                     &self.state.db,
                     self.accepted,
                     self.sink,
                     entry.name,
                     &call.id,
-                )?;
+                ) {
+                    Ok(version) => version,
+                    Err(error) => {
+                        self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                        return Err(error);
+                    }
+                };
                 let gate = ToolExecutionGate {
                     run_id,
                     session_id: Some(self.context.session_id),
@@ -1698,9 +1750,23 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     skill_id: None,
                     subagent_depth: self.subagent_depth,
                 };
-                let outcome = evaluate_tool_execution(&self.state.db, gate)
-                    .map_err(|_| AppError::msg("tool_permission_check_failed"))?;
-                audit_tool_confirmation_requested(&self.state.db, &gate, &outcome.decision)?;
+                let outcome = match evaluate_tool_execution(&self.state.db, gate) {
+                    Ok(outcome) => outcome,
+                    Err(_) => {
+                        self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                        return Err(AppError::msg("tool_permission_check_failed"));
+                    }
+                };
+                if outcome.tool_result.is_some() || !entry.requires_confirmation {
+                    self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                    return Err(AppError::msg("mixed_confirmation_batch"));
+                }
+                if let Err(error) =
+                    audit_tool_confirmation_requested(&self.state.db, &gate, &outcome.decision)
+                {
+                    self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                    return Err(error);
+                }
                 state_version = Some(started);
             }
             let state_version =
@@ -1710,13 +1776,26 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 plan.relative_paths().len(),
                 plan.operations().len(),
             );
-            let event = AgentRunRepository::request_frozen_confirmation(
+            let event = match AgentRunRepository::request_frozen_confirmation(
                 &self.state.db,
                 &plan,
                 state_version,
                 &summary,
-            )?;
-            self.sink.emit(&event)
+            ) {
+                Ok(event) => event,
+                Err(error) => {
+                    self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                    return Err(error);
+                }
+            };
+            if let Err(error) = self.sink.emit(&event) {
+                tracing::warn!(
+                    run_id = self.accepted.run_id,
+                    error = %error,
+                    "Frozen confirmation was persisted but could not be delivered to the event sink"
+                );
+            }
+            Ok(())
         })
     }
 
@@ -3234,7 +3313,7 @@ mod tests {
         SkillActivationPlanSummary,
     };
     use crate::app::AppState;
-    use crate::error::AppResult;
+    use crate::error::{AppError, AppResult};
     use crate::storage::db::Database;
     use tokio::sync::Barrier;
 
@@ -3249,6 +3328,17 @@ mod tests {
                 .lock()
                 .expect("recording sink lock")
                 .push(serde_json::to_value(event)?);
+            Ok(())
+        }
+    }
+
+    struct FailToolStartedSink;
+
+    impl RunEventSink for FailToolStartedSink {
+        fn emit(&self, event: &AssistantRunEvent) -> AppResult<()> {
+            if matches!(event.payload(), RunEventPayload::ToolStarted { .. }) {
+                return Err(AppError::msg("tool_started_sink_failed"));
+            }
             Ok(())
         }
     }
@@ -5331,6 +5421,293 @@ mod tests {
             .expect("replay")
             .expect("run");
         assert_eq!(replay.run.state, RunState::AwaitingConfirmation);
+    }
+
+    #[tokio::test]
+    async fn failed_confirmation_batch_closes_started_tool_lifecycle_without_pending_plan() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let setup_sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &setup_sink,
+        )
+        .expect("preparing state");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试确认批次失败闭环".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running state");
+        let sink = FailToolStartedSink;
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+        let call = ToolCall::new(
+            "failed-confirmation-call",
+            "memory_write",
+            r#"{"operation":"clear_scope","scope":"global"}"#,
+        );
+
+        let error = ToolLoopExecutor::request_change_set(
+            &executor,
+            &accepted.run_id,
+            std::slice::from_ref(&call),
+            1,
+        )
+        .await
+        .expect_err("started lifecycle sink failure must stop the batch");
+        assert_eq!(error.to_string(), "tool_started_sink_failed");
+
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::Running);
+        assert!(replay.run.pending_confirmation.is_none());
+        let lifecycle = replay
+            .events
+            .iter()
+            .filter_map(|event| match event.payload() {
+                RunEventPayload::ToolStarted { tool_call_id, .. }
+                | RunEventPayload::ToolCompleted { tool_call_id, .. }
+                    if tool_call_id == "failed-confirmation-call" =>
+                {
+                    Some(event.payload())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            lifecycle.as_slice(),
+            [
+                RunEventPayload::ToolStarted { .. },
+                RunEventPayload::ToolCompleted {
+                    success: Some(false),
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[tokio::test]
+    async fn normal_executor_freezes_one_ordered_confirmation_batch_and_rejects_a_seventh_call() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing state");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试确认批次冻结".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running state");
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+        let calls = vec![
+            ToolCall::new(
+                "confirmation-a",
+                "memory_write",
+                r#"{"operation":"clear_scope","scope":"global"}"#,
+            ),
+            ToolCall::new(
+                "confirmation-b",
+                "memory_write",
+                r#"{"operation":"clear_scope","scope":"vault"}"#,
+            ),
+        ];
+
+        ToolLoopExecutor::request_change_set(&executor, &accepted.run_id, &calls, 1)
+            .await
+            .expect("two confirmation calls freeze as one batch");
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::AwaitingConfirmation);
+        let confirmation = replay
+            .run
+            .pending_confirmation
+            .as_ref()
+            .expect("one pending confirmation");
+        let plan_json = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT plan_json FROM agent_run_confirmations
+                     WHERE run_id = ?1 AND confirmation_id = ?2 AND status = 'pending'",
+                    rusqlite::params![accepted.run_id, confirmation.confirmation_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("pending frozen plan");
+        let plan =
+            crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
+                &plan_json,
+            )
+            .expect("frozen batch plan");
+        assert_eq!(plan.operations().len(), 2);
+        assert_eq!(
+            plan.operations()
+                .iter()
+                .map(|operation| operation.tool_call_id())
+                .collect::<Vec<_>>(),
+            ["confirmation-a", "confirmation-b"]
+        );
+        let started_ids = replay
+            .events
+            .iter()
+            .filter_map(|event| match event.payload() {
+                RunEventPayload::ToolStarted { tool_call_id, .. } => Some(tool_call_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(started_ids, ["confirmation-a", "confirmation-b"]);
+        let memory_count: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))?)
+            })
+            .expect("memory count");
+        assert_eq!(
+            memory_count, 0,
+            "confirmation must not mutate before approval"
+        );
+
+        let independent_state = AppState::new(directory.path().join("limit-data"))
+            .expect("independent application state");
+        let independent_accepted =
+            RunIntake::start(&independent_state.db, request()).expect("independent run");
+        let independent_context = RunContextAssembler::assemble(
+            &independent_state.db,
+            None,
+            &independent_accepted.session.session_key,
+            &independent_accepted.run_id,
+        )
+        .expect("independent context");
+        let independent_sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &independent_state.db,
+            &independent_accepted.session,
+            &independent_accepted.run_id,
+            &independent_sink,
+        )
+        .expect("independent preparing");
+        AgentRunRepository::append_event(
+            &independent_state.db,
+            AppendRunEventInput {
+                run_id: independent_accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试确认操作上限".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("independent running");
+        let independent_executor = NormalRunToolExecutor::new(
+            &independent_state,
+            None,
+            &independent_accepted,
+            &independent_context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&independent_context.envelope),
+            &independent_sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+        let too_many_calls = (0..7)
+            .map(|index| {
+                ToolCall::new(
+                    format!("confirmation-{index}"),
+                    "memory_write",
+                    r#"{"operation":"clear_scope","scope":"global"}"#,
+                )
+            })
+            .collect::<Vec<_>>();
+        let error = ToolLoopExecutor::request_change_set(
+            &independent_executor,
+            &independent_accepted.run_id,
+            &too_many_calls,
+            1,
+        )
+        .await
+        .expect_err("the seventh frozen operation must be rejected");
+        assert_eq!(
+            error.to_string(),
+            SafeRunErrorCode::InvalidChangePlan.as_str()
+        );
+        let independent_replay = RunIntake::get(
+            &independent_state.db,
+            &independent_accepted.session,
+            &independent_accepted.run_id,
+        )
+        .expect("independent replay")
+        .expect("independent run");
+        assert_eq!(independent_replay.run.state, RunState::Running);
+        assert!(independent_replay.run.pending_confirmation.is_none());
+        assert!(!independent_replay
+            .events
+            .iter()
+            .any(|event| { matches!(event.payload(), RunEventPayload::ToolStarted { .. }) }));
     }
 
     #[tokio::test]

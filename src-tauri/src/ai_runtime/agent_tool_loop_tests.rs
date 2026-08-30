@@ -35,6 +35,90 @@ fn direct_provider_has_an_explicit_nonzero_turn_budget() {
 }
 
 #[tokio::test]
+async fn post_confirmation_loop_allows_only_four_local_calls_and_reserves_the_second_turn() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_calls_response(vec![
+                tool_call_with_arguments(
+                    "verify-web",
+                    "web_search",
+                    serde_json::json!({"query":"x"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-write",
+                    "replace_selection",
+                    serde_json::json!({"replacement":"must not dispatch"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-runtime",
+                    "system_time_now",
+                    serde_json::json!({}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-1",
+                    "read_note",
+                    serde_json::json!({"path":"a.md"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-2",
+                    "read_note",
+                    serde_json::json!({"path":"b.md"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-3",
+                    "read_note",
+                    serde_json::json!({"path":"c.md"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-4",
+                    "read_note",
+                    serde_json::json!({"path":"d.md"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-5",
+                    "read_note",
+                    serde_json::json!({"path":"e.md"}),
+                ),
+            ]),
+            scripted_final_response("核对完成"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = NameRecordingExecutor::default();
+    let mut observer = NoopObserver;
+    let mut policy = RunBudgetPolicy::standard();
+    policy.post_confirmation_max_model_turns = 2;
+    policy.post_confirmation_max_local_tool_calls = 4;
+
+    let outcome = AgentToolLoop::from_post_confirmation_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-post-confirmation-budget",
+            Vec::new(),
+            vec![
+                web_tool_spec(),
+                readonly_tool_spec("replace_selection"),
+                readonly_tool_spec("system_time_now"),
+                readonly_tool_spec("read_note"),
+            ],
+            &mut observer,
+        )
+        .await
+        .expect("bounded verification retains one final synthesis turn");
+
+    assert_eq!(outcome.content, "核对完成");
+    assert_eq!(outcome.model_turns, 2);
+    assert_eq!(outcome.tool_calls, 4);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        executor.calls.lock().expect("recorded calls").as_slice(),
+        ["read_note", "read_note", "read_note", "read_note"]
+    );
+}
+
+#[tokio::test]
 async fn parent_turn_reuses_one_frozen_budget_for_every_provider_call() {
     let provider = MultiTurnBudgetRecordingProvider {
         responses: Mutex::new(VecDeque::from([
@@ -653,6 +737,11 @@ struct RecordingExecutor {
     web_evidence: bool,
 }
 
+#[derive(Default)]
+struct NameRecordingExecutor {
+    calls: Mutex<Vec<String>>,
+}
+
 struct ResourceTracingExecutor {
     calls: Mutex<Vec<(String, String, String)>>,
 }
@@ -813,6 +902,31 @@ impl ToolLoopExecutor for RecordingExecutor {
 
     fn has_web_evidence(&self) -> bool {
         self.web_evidence && self.calls.load(Ordering::SeqCst) > 0
+    }
+}
+
+impl ToolLoopExecutor for NameRecordingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.calls
+            .lock()
+            .expect("recorded tool calls")
+            .push(call.function.name.clone());
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "resourceId": "verification-read" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
     }
 }
 
