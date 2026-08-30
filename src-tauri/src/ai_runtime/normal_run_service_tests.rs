@@ -1039,6 +1039,7 @@ async fn news_web_fallback_produces_validated_record_from_headless_mcp() {
         file_id: None,
         run_id: None,
         write_target_path: None,
+        confirmed_write_targets: None,
         document_policy: None,
         web_search_enabled: true,
         fresh_fact_policy: None,

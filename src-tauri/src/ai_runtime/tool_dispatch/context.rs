@@ -36,6 +36,9 @@ pub struct ToolDispatchContext<'a> {
     /// Exact note selected by the user's explicit Apply action for this Run.
     /// Model-generated target arguments may never widen this boundary.
     pub write_target_path: Option<&'a str>,
+    /// Exact paths from a consumed frozen change set. This exists only during
+    /// deterministic post-confirmation dispatch and never widens a model turn.
+    pub confirmed_write_targets: Option<&'a [String]>,
     /// Immutable per-Run document policy evaluated before content can cross a
     /// tool boundary. `None` is reserved for isolated unit tests only.
     pub document_policy:
@@ -68,12 +71,21 @@ impl<'a> ToolDispatchContext<'a> {
     }
 
     pub(crate) fn ensure_write_target_matches(&self, path: &str) -> AppResult<()> {
+        let actual = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
+            .map_err(|_| AppError::run(SafeRunErrorCode::WriteTargetViolation))?;
+        if let Some(targets) = self.confirmed_write_targets {
+            let matches_frozen_target = targets.iter().any(|target| {
+                crate::ai_runtime::retrieval_scope::normalize_note_path(target)
+                    .is_ok_and(|expected| expected == actual)
+            });
+            return matches_frozen_target
+                .then_some(())
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::WriteTargetViolation));
+        }
         let Some(expected) = self.write_target_path else {
             return Ok(());
         };
         let expected = crate::ai_runtime::retrieval_scope::normalize_note_path(expected)
-            .map_err(|_| AppError::run(SafeRunErrorCode::WriteTargetViolation))?;
-        let actual = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
             .map_err(|_| AppError::run(SafeRunErrorCode::WriteTargetViolation))?;
         if actual == expected {
             Ok(())

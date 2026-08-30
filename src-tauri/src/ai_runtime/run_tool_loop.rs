@@ -5,7 +5,7 @@
 //! authorized Web search fails without usable evidence. Runs without `web.search` never enable
 //! the tool.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -58,9 +58,9 @@ const WEB_TOOL_CALL_DEADLINE: Duration = Duration::from_secs(20);
 /// Spawning a fresh MCP stdio process commonly takes 3-5s; retrying with less
 /// than this budget just burns time before the outer timeout fires.
 const MIN_RETRY_BUDGET: Duration = Duration::from_secs(5);
-/// Internal control-flow signal: the Run was durably moved to confirmation,
-/// so the model loop must stop without terminalizing it.
-pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
+/// Compatibility export for call sites that historically imported this signal
+/// from the normal Run executor.
+pub(crate) use crate::ai_runtime::agent_tool_loop::CONFIRMATION_PENDING_ERROR;
 const CHANGE_CONFIRMATION_TTL_MS: i64 = 10 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,6 +256,9 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     /// Exact model-visible tool surface frozen for this Run. Empty denies all
     /// model-selected tool calls; confirmed execution uses its dedicated path.
     allowed_tool_names: Vec<String>,
+    /// Set only for post-confirmation verification. It narrows the ordinary
+    /// local-read dispatch path to exact frozen targets.
+    verification_targets: Option<BTreeSet<String>>,
     /// The exact cached Skill plan selected before this Run entered the model.
     /// It is inherited by ChildRuns only as a scope restriction; Skill bodies
     /// never become tools or a second authorization path.
@@ -312,6 +315,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             context,
             authorized_capabilities,
             allowed_tool_names: Vec::new(),
+            verification_targets: None,
             skill_activation_plan: None,
             sink,
             retrieval_scope: context.retrieval_scope.clone(),
@@ -367,6 +371,15 @@ impl<'a> NormalRunToolExecutor<'a> {
     /// `tool_names` from the authorized registry and Run context.
     pub(crate) fn with_allowed_tool_names(mut self, tool_names: &[String]) -> Self {
         self.allowed_tool_names = tool_names.to_vec();
+        self
+    }
+
+    /// Restrict a verification pass to exact plan targets and the `read_note`
+    /// catalog tool. The normal executor still owns all argument, policy and
+    /// audit checks.
+    pub(crate) fn with_verification_targets(mut self, targets: &[String]) -> Self {
+        self.allowed_tool_names = vec!["read_note".to_string()];
+        self.verification_targets = Some(targets.iter().cloned().collect());
         self
     }
 
@@ -671,63 +684,73 @@ impl<'a> NormalRunToolExecutor<'a> {
         entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
         args: &serde_json::Value,
     ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangePlan> {
-        let relative_paths = frozen_relative_paths(entry.name, args, self.context);
-        let base_content_hashes = frozen_base_content_hashes(args, self.context, &relative_paths);
-        let expected_post_content_hashes = expected_post_content_hashes(
-            self.state.as_ref(),
-            entry.name,
-            args,
-            &relative_paths,
-            &base_content_hashes,
-        )?;
+        let operation = self.freeze_change_operation(call, entry, args, &mut BTreeMap::new())?;
         let vault_id = self
             .state
             .vault_path()
             .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
             .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
-        crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze(
-            crate::ai_runtime::frozen_change_plan::FrozenChangePlanInput {
+        crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
+            crate::ai_runtime::frozen_change_plan::FrozenChangeSetInput {
                 confirmation_id: uuid::Uuid::new_v4().to_string(),
                 run_id: self.accepted.run_id.clone(),
                 session_id: self.context.session_id,
                 request_id: self.accepted.run_id.clone(),
-                tool_call_id: call.id.clone(),
                 vault_id,
-                affected_file_count: relative_paths.len(),
-                relative_paths,
-                operation: entry.name.to_string(),
-                base_content_hashes,
-                expected_post_content_hashes,
-                change: args.clone(),
-                rollback_summary: rollback_summary(entry.name),
+                operations: vec![operation],
                 expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
                     + CHANGE_CONFIRMATION_TTL_MS,
             },
         )
     }
 
-    /// Dispatch one previously approved, hash-bound plan without contacting the model.
-    pub(crate) async fn execute_confirmed_frozen_change(
+    fn freeze_change_operation(
+        &self,
+        call: &crate::ai_runtime::ToolCall,
+        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
+        args: &serde_json::Value,
+        virtual_documents: &mut BTreeMap<String, String>,
+    ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput> {
+        let relative_paths = frozen_relative_paths(entry.name, args, self.context);
+        let mut base_content_hashes =
+            frozen_base_content_hashes(args, self.context, &relative_paths);
+        let expected_post_content_hashes = expected_post_content_hashes(
+            self.state.as_ref(),
+            entry.name,
+            args,
+            &relative_paths,
+            &mut base_content_hashes,
+            virtual_documents,
+        )?;
+        Ok(
+            crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput {
+                tool_call_id: call.id.clone(),
+                relative_paths,
+                operation: entry.name.to_string(),
+                base_content_hashes,
+                expected_post_content_hashes,
+                change: args.clone(),
+                rollback_summary: rollback_summary(entry.name),
+            },
+        )
+    }
+
+    /// Execute each operation from one consumed change set in its frozen order.
+    /// A failed or drifted operation stops the suffix; completed prefixes are
+    /// preserved and reported to the caller rather than being silently retried.
+    pub(crate) async fn execute_confirmed_frozen_change_set(
         &self,
         plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
-    ) -> AppResult<ToolCallResult> {
+    ) -> AppResult<Vec<ToolCallResult>> {
         if plan.run_id() != self.accepted.run_id || plan.session_id() != self.context.session_id {
             return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
         plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
-        let entry = catalog_find(plan.operation())
-            .filter(|entry| {
-                entry.requires_confirmation
-                    && entry.implementation
-                        == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable
-            })
-            .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
-        let args = plan.change();
-        let actual_paths = frozen_relative_paths(entry.name, args, self.context);
-        if actual_paths != plan.relative_paths() {
-            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
-        }
-        revalidate_frozen_base_hashes(self.state.as_ref(), plan)?;
+        AgentRunRepository::validate_durable_apply_checkpoint_binding(
+            &self.state.db,
+            &self.accepted.run_id,
+            plan,
+        )?;
         let snapshot = AgentRunRepository::get_for_session(
             &self.state.db,
             &self.accepted.session.session_key,
@@ -737,75 +760,114 @@ impl<'a> NormalRunToolExecutor<'a> {
         if snapshot.run.state != crate::ai_runtime::run_contract::RunState::Running {
             return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
-        let gate = ToolExecutionGate {
-            run_id: &self.accepted.run_id,
-            session_id: Some(self.context.session_id),
-            run_step: 1,
-            entry,
-            args,
-            authorized_capabilities: &self.authorized_capabilities,
-            skill_id: None,
-            subagent_depth: 0,
-        };
-        let gate_outcome = evaluate_tool_execution(&self.state.db, gate)?;
-        let result = if let Some(result) = gate_outcome.tool_result {
-            result
-        } else {
-            AgentRunRepository::validate_durable_apply_checkpoint_binding(
-                &self.state.db,
-                &self.accepted.run_id,
-                plan,
-            )?;
-            AgentRunRepository::append_checkpoint_step(
-                &self.state.db,
-                AppendRunCheckpointInput {
-                    run_id: self.accepted.run_id.clone(),
-                    state_version: snapshot.run.state_version,
-                    checkpoint: durable_apply_checkpoint(
-                        plan,
-                        DurableApplyCheckpointStage::Dispatching,
-                    )?,
-                },
-            )?;
-            let result = self.dispatch_non_web_tool(entry.name, args).await;
-            if result.success {
-                AgentRunRepository::append_checkpoint_step(
-                    &self.state.db,
-                    AppendRunCheckpointInput {
-                        run_id: self.accepted.run_id.clone(),
-                        state_version: snapshot.run.state_version,
-                        checkpoint: durable_apply_checkpoint(
-                            plan,
-                            DurableApplyCheckpointStage::Applied,
-                        )?,
-                    },
-                )?;
-            }
-            result
-        };
-        audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
-        append_model_tool_completed(
+        let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(
             &self.state.db,
-            self.accepted,
-            snapshot.run.state_version,
-            self.sink,
-            entry.name,
-            plan.tool_call_id(),
-            if result.success {
-                "已执行已确认的变更"
+            &self.accepted.run_id,
+        )?
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
+        let start = checkpoint.next_operation_index();
+        let mut checkpoint_stage = checkpoint.stage();
+        let mut results = Vec::new();
+        for (index, operation) in plan.operations().iter().enumerate().skip(start) {
+            let entry = catalog_find(operation.operation())
+                .filter(|entry| entry.requires_confirmation
+                    && entry.implementation == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
+            if frozen_relative_paths(entry.name, operation.change(), self.context)
+                != operation.relative_paths()
+            {
+                return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
+            }
+            let gate = ToolExecutionGate {
+                run_id: &self.accepted.run_id,
+                session_id: Some(self.context.session_id),
+                run_step: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                entry,
+                args: operation.change(),
+                authorized_capabilities: &self.authorized_capabilities,
+                skill_id: None,
+                subagent_depth: 0,
+            };
+            let gate_outcome = evaluate_tool_execution(&self.state.db, gate)?;
+            let result = if let Some(result) = gate_outcome.tool_result {
+                result
+            } else if revalidate_frozen_hash_pairs(
+                self.state.as_ref(),
+                operation.base_content_hashes(),
+            )
+            .is_err()
+            {
+                failed_tool_call(entry.name, "frozen_change_base_hash_drift")
             } else {
-                "已确认的变更未执行"
-            },
-            result.duration_ms,
-            result.success,
-        )?;
-        Ok(result)
+                if checkpoint_stage != DurableApplyCheckpointStage::Dispatching {
+                    AgentRunRepository::append_checkpoint_step(
+                        &self.state.db,
+                        AppendRunCheckpointInput {
+                            run_id: self.accepted.run_id.clone(),
+                            state_version: snapshot.run.state_version,
+                            checkpoint: durable_apply_checkpoint(
+                                plan,
+                                DurableApplyCheckpointStage::Dispatching,
+                                index,
+                            )?,
+                        },
+                    )?;
+                    checkpoint_stage = DurableApplyCheckpointStage::Dispatching;
+                }
+                let result = self
+                    .dispatch_non_web_tool(
+                        entry.name,
+                        operation.change(),
+                        Some(plan.relative_paths()),
+                    )
+                    .await;
+                if result.success {
+                    AgentRunRepository::append_checkpoint_step(
+                        &self.state.db,
+                        AppendRunCheckpointInput {
+                            run_id: self.accepted.run_id.clone(),
+                            state_version: snapshot.run.state_version,
+                            checkpoint: durable_apply_checkpoint(
+                                plan,
+                                DurableApplyCheckpointStage::Applied,
+                                index + 1,
+                            )?,
+                        },
+                    )?;
+                    checkpoint_stage = DurableApplyCheckpointStage::Applied;
+                }
+                result
+            };
+            audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+            append_model_tool_completed(
+                &self.state.db,
+                self.accepted,
+                snapshot.run.state_version,
+                self.sink,
+                entry.name,
+                operation.tool_call_id(),
+                if result.success {
+                    "已执行已确认的变更"
+                } else {
+                    "已确认的变更未执行"
+                },
+                result.duration_ms,
+                result.success,
+            )?;
+            let succeeded = result.success;
+            results.push(result);
+            if !succeeded {
+                break;
+            }
+        }
+        Ok(results)
     }
 
     async fn dispatch_non_web_tool(
         &self,
         tool_name: &str,
         args: &serde_json::Value,
+        confirmed_write_targets: Option<&[String]>,
     ) -> ToolCallResult {
         let dispatch_context = ToolDispatchContext {
             db: Some(&self.state.db),
@@ -816,6 +878,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             file_id: None,
             run_id: Some(&self.accepted.run_id),
             write_target_path: self.context.write_target_path.as_deref(),
+            confirmed_write_targets,
             document_policy: Some(&self.context.document_policy),
             web_search_enabled: self.has_capability("web.search"),
             fresh_fact_policy: Some(crate::ai_runtime::tool_dispatch::FrozenDomainWindow::from(
@@ -1409,6 +1472,17 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     ));
                 }
             };
+            if let Some(targets) = &self.verification_targets {
+                let requested_path = args.get("path").and_then(serde_json::Value::as_str);
+                if call.function.name != "read_note"
+                    || !requested_path.is_some_and(|path| targets.contains(path))
+                {
+                    return Ok(failed_tool_call(
+                        &call.function.name,
+                        "post_confirmation_verification_out_of_scope",
+                    ));
+                }
+            }
             let gate = ToolExecutionGate {
                 run_id,
                 session_id: Some(self.context.session_id),
@@ -1488,7 +1562,8 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             } else if call.function.name == WEB_TOOL_NAME {
                 self.execute_web_search(&args, state_version).await?
             } else {
-                self.dispatch_non_web_tool(&call.function.name, &args).await
+                self.dispatch_non_web_tool(&call.function.name, &args, None)
+                    .await
             };
             audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
             self.register_local_tool_evidence(run_id, &call.function.name, &args, &result)?;
@@ -1531,6 +1606,117 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 );
             }
             Ok(result)
+        })
+    }
+
+    fn request_change_set<'a>(
+        &'a self,
+        run_id: &'a str,
+        calls: &'a [crate::ai_runtime::ToolCall],
+        first_step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+        Box::pin(async move {
+            if run_id != self.accepted.run_id || calls.is_empty() {
+                return Err(AppError::msg("mixed_confirmation_batch"));
+            }
+            let mut prepared = Vec::with_capacity(calls.len());
+            let mut operations = Vec::with_capacity(calls.len());
+            let mut virtual_documents = BTreeMap::new();
+            for (offset, call) in calls.iter().enumerate() {
+                if !self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == &call.function.name)
+                {
+                    return Err(AppError::msg("mixed_confirmation_batch"));
+                }
+                let entry = catalog_find(&call.function.name)
+                    .filter(|entry| entry.requires_confirmation
+                        && entry.implementation == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
+                    .ok_or_else(|| AppError::msg("mixed_confirmation_batch"))?;
+                let args = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .ok()
+                    .filter(serde_json::Value::is_object)
+                    .ok_or_else(|| AppError::msg("mixed_confirmation_batch"))?;
+                let step = first_step.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX));
+                let gate = ToolExecutionGate {
+                    run_id,
+                    session_id: Some(self.context.session_id),
+                    run_step: step,
+                    entry,
+                    args: &args,
+                    authorized_capabilities: &self.authorized_capabilities,
+                    skill_id: None,
+                    subagent_depth: self.subagent_depth,
+                };
+                let outcome = evaluate_tool_execution(&self.state.db, gate)
+                    .map_err(|_| AppError::msg("tool_permission_check_failed"))?;
+                if outcome.tool_result.is_some() || !outcome.decision.can_execute_now() {
+                    return Err(AppError::msg("mixed_confirmation_batch"));
+                }
+                operations.push(self.freeze_change_operation(
+                    call,
+                    entry,
+                    &args,
+                    &mut virtual_documents,
+                )?);
+                prepared.push((call, entry, args, step));
+            }
+            let vault_id = self
+                .state
+                .vault_path()
+                .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
+                .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
+            let plan = crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
+                crate::ai_runtime::frozen_change_plan::FrozenChangeSetInput {
+                    confirmation_id: uuid::Uuid::new_v4().to_string(),
+                    run_id: self.accepted.run_id.clone(),
+                    session_id: self.context.session_id,
+                    request_id: self.accepted.run_id.clone(),
+                    vault_id,
+                    operations,
+                    expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
+                        + CHANGE_CONFIRMATION_TTL_MS,
+                },
+            )?;
+            let mut state_version = None;
+            for (call, entry, args, step) in prepared {
+                let started = append_model_tool_started(
+                    &self.state.db,
+                    self.accepted,
+                    self.sink,
+                    entry.name,
+                    &call.id,
+                )?;
+                let gate = ToolExecutionGate {
+                    run_id,
+                    session_id: Some(self.context.session_id),
+                    run_step: step,
+                    entry,
+                    args: &args,
+                    authorized_capabilities: &self.authorized_capabilities,
+                    skill_id: None,
+                    subagent_depth: self.subagent_depth,
+                };
+                let outcome = evaluate_tool_execution(&self.state.db, gate)
+                    .map_err(|_| AppError::msg("tool_permission_check_failed"))?;
+                audit_tool_confirmation_requested(&self.state.db, &gate, &outcome.decision)?;
+                state_version = Some(started);
+            }
+            let state_version =
+                state_version.ok_or_else(|| AppError::msg("mixed_confirmation_batch"))?;
+            let summary = format!(
+                "等待确认：将按顺序修改 {} 个目标并执行 {} 项操作",
+                plan.relative_paths().len(),
+                plan.operations().len(),
+            );
+            let event = AgentRunRepository::request_frozen_confirmation(
+                &self.state.db,
+                &plan,
+                state_version,
+                &summary,
+            )?;
+            self.sink.emit(&event)
         })
     }
 
@@ -2162,19 +2348,22 @@ impl NormalRunToolExecutor<'_> {
 fn durable_apply_checkpoint(
     plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
     stage: DurableApplyCheckpointStage,
+    next_operation_index: usize,
 ) -> AppResult<DurableApplyCheckpoint> {
-    DurableApplyCheckpoint::new(
+    DurableApplyCheckpoint::new_change_set(
         plan.confirmation_id(),
         plan.plan_hash(),
         stage,
-        plan.base_content_hashes()
+        plan.all_base_content_hashes()
             .iter()
             .map(|(_, hash)| hash.clone())
             .collect(),
-        plan.expected_post_content_hashes()
+        plan.all_expected_post_content_hashes()
             .iter()
             .map(|(_, hash)| hash.clone())
             .collect(),
+        next_operation_index,
+        plan.operations().len(),
         Vec::new(),
     )
 }
@@ -2258,17 +2447,14 @@ fn expected_post_content_hashes(
     tool_name: &str,
     args: &serde_json::Value,
     relative_paths: &[String],
-    base_content_hashes: &[(String, String)],
+    base_content_hashes: &mut [(String, String)],
+    virtual_documents: &mut BTreeMap<String, String>,
 ) -> AppResult<Vec<(String, String)>> {
     if !matches!(tool_name, "insert_text_at_cursor" | "replace_selection") {
         return Ok(Vec::new());
     }
     let path = relative_paths
         .first()
-        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    let base_hash = base_content_hashes
-        .iter()
-        .find_map(|(candidate, hash)| (candidate == path).then_some(hash))
         .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     let range = args
         .get("range")
@@ -2294,21 +2480,36 @@ fn expected_post_content_hashes(
         .and_then(serde_json::Value::as_str)
         .or_else(|| args.get("selection").and_then(serde_json::Value::as_str))
         .unwrap_or("");
-    let vault = state
-        .vault_path()
-        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    let resolved = crate::storage::paths::resolve_vault_path(&vault, path)
-        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    let current = std::fs::read_to_string(resolved)
-        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    if crate::cas::hash::content_hash_str(&current) != *base_hash {
+    let current = if let Some(current) = virtual_documents.get(path) {
+        let current = current.clone();
+        let current_hash = crate::cas::hash::content_hash_str(&current);
+        let (_, frozen_hash) = base_content_hashes
+            .iter_mut()
+            .find(|(candidate, _)| candidate == path)
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+        *frozen_hash = current_hash;
+        current
+    } else {
+        let vault = state
+            .vault_path()
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+        let resolved = crate::storage::paths::resolve_vault_path(&vault, path)
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+        std::fs::read_to_string(resolved)
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?
+    };
+    let effective_base_hash = base_content_hashes
+        .iter()
+        .find_map(|(candidate, hash)| (candidate == path).then_some(hash.as_str()))
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+    if crate::cas::hash::content_hash_str(&current) != effective_base_hash {
         return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
     }
     let applied = crate::cas::patch::apply_patch(
         &crate::ai_types::PatchProposal {
             id: "frozen-change-preview".to_string(),
             target_path: path.clone(),
-            base_content_hash: base_hash.clone(),
+            base_content_hash: effective_base_hash.to_string(),
             range,
             original_text: original_text.to_string(),
             replacement_text: replacement_text.to_string(),
@@ -2320,10 +2521,9 @@ fn expected_post_content_hashes(
         &current,
     )
     .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    Ok(vec![(
-        path.clone(),
-        crate::cas::hash::content_hash_str(&applied),
-    )])
+    let expected_hash = crate::cas::hash::content_hash_str(&applied);
+    virtual_documents.insert(path.clone(), applied);
+    Ok(vec![(path.clone(), expected_hash)])
 }
 
 fn rollback_summary(tool_name: &str) -> String {
@@ -2376,17 +2576,17 @@ fn sanitize_child_run_error(error: &AppError) -> &'static str {
     }
 }
 
-fn revalidate_frozen_base_hashes(
+fn revalidate_frozen_hash_pairs(
     state: &AppState,
-    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+    base_content_hashes: &[(String, String)],
 ) -> AppResult<()> {
-    if plan.base_content_hashes().is_empty() {
+    if base_content_hashes.is_empty() {
         return Ok(());
     }
     let vault = state
         .vault_path()
         .map_err(|_| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
-    for (path, expected_hash) in plan.base_content_hashes() {
+    for (path, expected_hash) in base_content_hashes {
         if path.starts_with("application://") {
             continue;
         }
@@ -3002,7 +3202,7 @@ fn corroborated_source_threshold_met(has_official: bool, independent_domains: us
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, VecDeque};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3064,6 +3264,7 @@ mod tests {
         state.set_vault(vault).expect("activate vault");
         let base_hash = crate::cas::hash::content_hash_str("base");
 
+        let mut base_hashes = vec![("note.md".into(), crate::cas::hash::content_hash_str("base"))];
         let hashes = expected_post_content_hashes(
             &state,
             "replace_selection",
@@ -3074,7 +3275,8 @@ mod tests {
                 "replacement": "after"
             }),
             &["note.md".into()],
-            &[("note.md".into(), crate::cas::hash::content_hash_str("base"))],
+            &mut base_hashes,
+            &mut BTreeMap::new(),
         )
         .expect("precompute expected hash");
 
@@ -3089,6 +3291,60 @@ mod tests {
             std::fs::read_to_string(note).expect("note remains readable"),
             "base",
             "freezing the plan must not apply the write"
+        );
+    }
+
+    #[test]
+    fn frozen_change_set_chains_repeated_note_patches_in_memory_without_writing() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let note = vault.join("note.md");
+        std::fs::write(&note, "base").expect("base note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault).expect("activate vault");
+        let mut virtual_documents = BTreeMap::new();
+
+        let mut first_base = vec![("note.md".into(), crate::cas::hash::content_hash_str("base"))];
+        let first = expected_post_content_hashes(
+            &state,
+            "replace_selection",
+            &serde_json::json!({
+                "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                "range": { "start": 0, "end": 4 },
+                "original_text": "base",
+                "replacement": "after"
+            }),
+            &["note.md".into()],
+            &mut first_base,
+            &mut virtual_documents,
+        )
+        .expect("freeze first patch");
+        let mut second_base = vec![("note.md".into(), crate::cas::hash::content_hash_str("base"))];
+        let second = expected_post_content_hashes(
+            &state,
+            "replace_selection",
+            &serde_json::json!({
+                "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                "range": { "start": 0, "end": 5 },
+                "original_text": "after",
+                "replacement": "final"
+            }),
+            &["note.md".into()],
+            &mut second_base,
+            &mut virtual_documents,
+        )
+        .expect("freeze chained patch");
+
+        assert_eq!(first[0].1, crate::cas::hash::content_hash_str("after"));
+        assert_eq!(
+            second_base[0].1,
+            crate::cas::hash::content_hash_str("after")
+        );
+        assert_eq!(second[0].1, crate::cas::hash::content_hash_str("final"));
+        assert_eq!(
+            std::fs::read_to_string(note).expect("note remains readable"),
+            "base"
         );
     }
 
@@ -4741,7 +4997,11 @@ mod tests {
         .with_skill_activation_plan(Some(plan));
 
         let result = executor
-            .dispatch_non_web_tool("read_note", &serde_json::json!({"path": "blocked.md"}))
+            .dispatch_non_web_tool(
+                "read_note",
+                &serde_json::json!({"path": "blocked.md"}),
+                None,
+            )
             .await;
         assert!(!result.success);
         assert!(result
@@ -4796,6 +5056,69 @@ mod tests {
 
         assert!(!result.success);
         assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn post_confirmation_verification_rejects_other_targets_and_non_read_tools() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        std::fs::write(vault.join("confirmed.md"), "confirmed").expect("confirmed note");
+        std::fs::write(vault.join("other.md"), "other").expect("other note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let targets = vec!["confirmed.md".to_string()];
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("note.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_verification_targets(&targets);
+
+        let outside_target = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("verify-other", "read_note", r#"{"path":"other.md"}"#),
+                1,
+            )
+            .await
+            .expect("out-of-scope read returns a normal tool result");
+        assert!(!outside_target.success);
+        assert_eq!(
+            outside_target.error.as_deref(),
+            Some("post_confirmation_verification_out_of_scope")
+        );
+        let write_attempt = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "verify-write",
+                    "replace_selection",
+                    r#"{"target_path":"confirmed.md","replacement":"unexpected"}"#,
+                ),
+                2,
+            )
+            .await
+            .expect("write attempt returns a normal tool result");
+        assert!(!write_attempt.success);
+        assert_eq!(
+            write_attempt.error.as_deref(),
+            Some("tool_not_in_run_surface")
+        );
     }
 
     #[tokio::test]

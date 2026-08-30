@@ -38,6 +38,7 @@ fn ctx() -> ToolDispatchContext<'static> {
         file_id: None,
         run_id: None,
         write_target_path: None,
+        confirmed_write_targets: None,
         document_policy: None,
         web_search_enabled: false,
         fresh_fact_policy: None,

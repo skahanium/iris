@@ -165,6 +165,56 @@ async fn unexposed_tool_call_is_rejected_without_reaching_executor() {
 }
 
 #[tokio::test]
+async fn confirmation_calls_in_one_model_turn_are_frozen_as_one_ordered_batch() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([scripted_tool_calls_response(vec![
+            tool_call_with_arguments(
+                "change-a",
+                "replace_selection",
+                serde_json::json!({"target_path":"a.md"}),
+            ),
+            tool_call_with_arguments(
+                "change-b",
+                "replace_selection",
+                serde_json::json!({"target_path":"b.md"}),
+            ),
+        ])])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = ChangeSetRecordingExecutor {
+        ordinary_calls: AtomicU32::new(0),
+        batches: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    let mut tool = readonly_tool_spec("replace_selection");
+    tool.requires_confirmation = true;
+
+    let error = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-change-set",
+            Vec::new(),
+            vec![tool],
+            &mut observer,
+        )
+        .await
+        .expect_err("the loop must stop at one pending confirmation");
+
+    assert_eq!(
+        error.to_string(),
+        super::agent_tool_loop::CONFIRMATION_PENDING_ERROR
+    );
+    assert_eq!(executor.ordinary_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        executor.batches.lock().expect("batch lock").as_slice(),
+        &[vec!["change-a".to_string(), "change-b".to_string()]]
+    );
+}
+
+#[tokio::test]
 async fn network_category_cap_rejects_the_second_dispatch_without_calling_executor() {
     let provider = ToolSurfaceRecordingProvider {
         responses: Mutex::new(VecDeque::from([
@@ -205,6 +255,7 @@ async fn network_category_cap_rejects_the_second_dispatch_without_calling_execut
         child_input_tokens_per_turn: 0,
         child_output_tokens_per_turn: 0,
         post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
     };
     let mut observer = NoopObserver;
 
@@ -385,6 +436,7 @@ async fn final_model_turn_is_reserved_after_progressing_tool_rounds() {
         child_input_tokens_per_turn: 0,
         child_output_tokens_per_turn: 0,
         post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
     };
     let mut observer = NoopObserver;
 
@@ -609,6 +661,11 @@ struct RepeatedFailureExecutor {
     calls: AtomicU32,
 }
 
+struct ChangeSetRecordingExecutor {
+    ordinary_calls: AtomicU32,
+    batches: Mutex<Vec<Vec<String>>>,
+}
+
 struct FailingWebExecutor;
 struct LargeResultExecutor;
 struct LargeWebResultExecutor;
@@ -756,6 +813,31 @@ impl ToolLoopExecutor for RecordingExecutor {
 
     fn has_web_evidence(&self) -> bool {
         self.web_evidence && self.calls.load(Ordering::SeqCst) > 0
+    }
+}
+
+impl ToolLoopExecutor for ChangeSetRecordingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.ordinary_calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { unreachable!("change calls must be frozen as a batch") })
+    }
+
+    fn request_change_set<'a>(
+        &'a self,
+        _run_id: &'a str,
+        calls: &'a [ToolCall],
+        _first_step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+        self.batches
+            .lock()
+            .expect("batch lock")
+            .push(calls.iter().map(|call| call.id.clone()).collect());
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -1087,6 +1169,7 @@ async fn interrupted_visible_drafts_count_against_per_turn_and_cumulative_budget
             child_input_tokens_per_turn: 0,
             child_output_tokens_per_turn: 0,
             post_confirmation_max_model_turns: 0,
+            post_confirmation_max_local_tool_calls: 0,
         };
 
         let result = AgentToolLoop::from_policy(&policy)
@@ -2294,6 +2377,7 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
         child_input_tokens_per_turn: 0,
         child_output_tokens_per_turn: 0,
         post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
     };
     let mut observer = NoopObserver;
 
@@ -2378,6 +2462,7 @@ async fn child_policy_reaches_every_provider_turn_with_gateway_token_limits() {
         child_input_tokens_per_turn: 2_000,
         child_output_tokens_per_turn: 1_024,
         post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
     };
     let mut observer = NoopObserver;
 
@@ -2467,6 +2552,7 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
         child_input_tokens_per_turn: 2_000,
         child_output_tokens_per_turn: 1_024,
         post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
     };
     let mut observer = NoopObserver;
 

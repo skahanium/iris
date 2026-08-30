@@ -20,6 +20,9 @@ use crate::storage::db::Database;
 
 const MAX_REPEAT_CALLS: u32 = 2;
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
+/// Internal control-flow signal: a complete immutable change set was persisted
+/// and the Run must wait for its single user confirmation.
+pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
 const CHILD_PROVIDER_SCOPE_SEPARATOR: &str = "::child-provider-scope::";
 /// Web evidence is deliberately allowed a larger envelope than generic tool
 /// output. Twelve compact evidence excerpts need materially more room than a
@@ -167,6 +170,18 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>>;
 
+    /// Persist one complete confirmation-bound change set. The default rejects
+    /// the request so test/read-only executors cannot accidentally gain write
+    /// behaviour by merely implementing the ordinary dispatch method.
+    fn request_change_set<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _calls: &'a [ToolCall],
+        _first_step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+        Box::pin(async { Err(AppError::msg("confirmation_batch_not_supported")) })
+    }
+
     /// Evidence registered by this Run's tool calls for final-message binding.
     fn evidence_ids(&self) -> Vec<i64> {
         Vec::new()
@@ -256,6 +271,26 @@ impl AgentToolLoop {
                         .saturating_mul(policy.child_output_tokens_per_turn),
                 ),
                 max_turn_output_tokens: Some(policy.child_output_tokens_per_turn),
+            },
+        }
+    }
+
+    /// Build the only permitted post-confirmation loop. It reuses transcript
+    /// and provider limits, but cannot spend normal-run Web/external/runtime or
+    /// write budget.
+    pub(crate) fn from_post_confirmation_policy(policy: &RunBudgetPolicy) -> Self {
+        Self {
+            max_model_turns: policy.post_confirmation_max_model_turns,
+            max_tool_calls: policy.post_confirmation_max_local_tool_calls,
+            max_local_tool_calls: policy.post_confirmation_max_local_tool_calls,
+            max_network_tool_calls: 0,
+            max_external_read_tool_calls: 0,
+            max_runtime_tool_calls: 0,
+            max_confirmed_change_calls: 0,
+            turn_budget: AgentModelTurnBudget {
+                max_prompt_tokens: Some(policy.max_prompt_tokens),
+                max_completion_tokens: Some(policy.max_completion_tokens),
+                max_turn_output_tokens: Some(policy.max_turn_output_tokens),
             },
         }
     }
@@ -584,6 +619,44 @@ impl AgentToolLoop {
                     completion_tokens,
                     total_tokens,
                 });
+            }
+
+            let confirmation_calls = response
+                .tool_calls
+                .iter()
+                .filter(|call| {
+                    active_tools
+                        .iter()
+                        .find(|tool| tool.name == call.function.name)
+                        .is_some_and(|tool| tool.requires_confirmation)
+                })
+                .count();
+            if confirmation_calls > 0 {
+                let all_confirmation_calls = confirmation_calls == response.tool_calls.len();
+                let all_valid = response.tool_calls.iter().all(|call| {
+                    active_allowed_tools.contains(call.function.name.as_str())
+                        && valid_call_arguments(call)
+                });
+                let requested = u32::try_from(response.tool_calls.len())
+                    .map_err(|_| AppError::run(SafeRunErrorCode::ToolLoopLimit))?;
+                let class_used = tool_calls_by_class
+                    .get(&ToolBudgetClass::ConfirmedChange)
+                    .copied()
+                    .unwrap_or_default();
+                if !all_confirmation_calls || !all_valid {
+                    return Err(AppError::msg("mixed_confirmation_batch"));
+                }
+                if tool_calls.saturating_add(requested) > self.max_tool_calls
+                    || class_used.saturating_add(requested)
+                        > self.tool_call_limit(ToolBudgetClass::ConfirmedChange)
+                {
+                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+                }
+                observer.on_tools_starting()?;
+                executor
+                    .request_change_set(run_id, &response.tool_calls, tool_calls.saturating_add(1))
+                    .await?;
+                return Err(AppError::msg(CONFIRMATION_PENDING_ERROR));
             }
 
             observer.on_tools_starting()?;

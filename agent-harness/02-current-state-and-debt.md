@@ -16,7 +16,7 @@
 | Provider-neutral `AgentToolLoop`         | 部分实现 | 重构为核心 | 已支持多轮、多工具、重复抑制和全局 8/24 上限   |
 | Run-local evidence 与 `ProvenancePolicy` | 已验证   | 保留并简化 | W/E/L/M 单一解释器；普通自然回答使用受控来源组 |
 | `system_time_now` 等可信 runtime 工具    | 已验证   | 保留       | 本机事实可不联网完成                           |
-| 冻结变更计划、确认和 hash 复核           | 部分实现 | 扩展       | 当前只冻结一个 operation，确认后不再调用模型   |
+| 冻结变更集、确认、hash 复核与限定验证    | 已验证   | 保留       | HR-5 已支持有序变更集、前缀恢复和受限只读验证  |
 | migration 072 与领域旧 Run 读取          | 已实现   | 兼容读取   | 不能删除迁移或要求用户重建数据库               |
 
 ## 2. 已复现的生产问题
@@ -66,11 +66,11 @@
 
 `AwaitingInput` 曾被用于城市等普通字段收集，并要求同 Run 恢复。即使状态恢复可靠，这仍让普通澄清承担事务恢复、历史投影、卡片位置和幂等提交等额外复杂度。HR-4 已使新普通 Run 只接受“未调用工具、单条无来源问题”的自然澄清终态；只有真正不可重复的事务输入才需要暂停同一 Run。
 
-### 3.6 写入只支持单操作
+### 3.6 写入曾只支持单操作（HR-5 已关闭）
 
-现有 `FrozenChangePlan` 冻结单个 operation。模型第一次调用确认型工具后，Run 立即进入 `AwaitingConfirmation`；确认后 Host 只执行该操作，所有 budget profile 的 `post_confirmation_max_model_turns` 都是 0。
+基线时的 `FrozenChangePlan` 只能冻结一个 operation：模型第一次调用确认型工具后，Run 立即进入 `AwaitingConfirmation`，确认后 Host 只执行该操作，所有 budget profile 的 `post_confirmation_max_model_turns` 都是 0。
 
-这能安全完成一次插入或替换，但不能在一次确认中完成有界的多文档变更，也不能在写入后读取目标验证结果。
+HR-5 已保留该格式的兼容读取，并新增有序、至多六项的冻结变更集、逐项 base hash 重验、前缀恢复和仅限已执行目标的 `2` 次模型 / `4` 次 `read_note` 验证。实现与命名证据见 [`05-implementation-roadmap.md`](05-implementation-roadmap.md#8-hr-5冻结变更集)。
 
 ### 3.7 评测证明了错误的事情
 

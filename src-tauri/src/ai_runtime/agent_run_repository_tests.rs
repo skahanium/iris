@@ -80,6 +80,7 @@ fn legacy_v1_budget_json(policy: &RunBudgetPolicy) -> String {
         .as_object_mut()
         .expect("canonical budget must be an object");
     fields.insert("schemaVersion".into(), serde_json::json!(1));
+    fields.insert("postConfirmationMaxModelTurns".into(), serde_json::json!(0));
     for field in [
         "maxPromptTokens",
         "maxCompletionTokens",
@@ -89,6 +90,7 @@ fn legacy_v1_budget_json(policy: &RunBudgetPolicy) -> String {
         "maxExternalReadToolCalls",
         "maxRuntimeToolCalls",
         "maxConfirmedChangeCalls",
+        "postConfirmationMaxLocalToolCalls",
     ] {
         fields.remove(field);
     }
@@ -253,7 +255,7 @@ fn hr3_new_budget_policy_freezes_category_caps_and_materializes_schema_one_rows(
     let policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
         .expect("read budget")
         .expect("frozen budget");
-    assert_eq!(policy.schema_version, 2);
+    assert_eq!(policy.schema_version, 3);
     assert_eq!(policy.max_local_tool_calls, 12);
     assert_eq!(policy.max_network_tool_calls, 6);
     assert_eq!(policy.max_external_read_tool_calls, 6);
@@ -269,6 +271,7 @@ fn hr3_new_budget_policy_freezes_category_caps_and_materializes_schema_one_rows(
         "maxExternalReadToolCalls",
         "maxRuntimeToolCalls",
         "maxConfirmedChangeCalls",
+        "postConfirmationMaxLocalToolCalls",
     ] {
         fields.remove(field);
     }
@@ -378,7 +381,7 @@ fn complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry() {
     let canonical_json = serde_json::to_value(&canonical_direct).expect("canonical direct policy");
 
     let mut unknown_schema = canonical_json.clone();
-    unknown_schema["schemaVersion"] = serde_json::json!(3);
+    unknown_schema["schemaVersion"] = serde_json::json!(4);
 
     let mut expanded_main_budget = canonical_json.clone();
     expanded_main_budget["maxModelTurns"] = serde_json::json!(1_000);
@@ -1720,11 +1723,12 @@ fn durable_confirmation_materializes_a_legacy_v1_budget_before_resuming() {
     let restored = FrozenChangePlan::from_persisted_plan_json(&consumed.plan_json)
         .expect("restore exact plan");
     assert_eq!(restored.plan_hash(), consumed.plan_hash);
-    assert_eq!(restored.change()["content"], "approved");
+    assert_eq!(restored.operations()[0].change()["content"], "approved");
     let materialized = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
         .expect("read materialized durable budget")
         .expect("durable budget");
-    assert_eq!(materialized, canonical_budget);
+    assert_eq!(materialized.post_confirmation_max_model_turns, 0);
+    assert_eq!(materialized.post_confirmation_max_local_tool_calls, 0);
     db.with_read_conn(|conn| {
         let stored: String = conn.query_row(
             "SELECT budget_policy_json FROM agent_runs WHERE run_id = 'run-1'",
@@ -1733,7 +1737,7 @@ fn durable_confirmation_materializes_a_legacy_v1_budget_before_resuming() {
         )?;
         assert_eq!(
             stored,
-            serde_json::to_string(&canonical_budget).expect("canonical durable budget")
+            serde_json::to_string(&materialized).expect("materialized durable budget")
         );
         Ok(())
     })
@@ -1905,6 +1909,79 @@ fn durable_apply_checkpoint_persists_only_hashes_and_advances_in_fixed_order() {
             .stage(),
         DurableApplyCheckpointStage::Completed
     );
+}
+
+#[test]
+fn durable_change_set_checkpoint_resumes_only_the_unapplied_suffix() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key);
+    input.envelope.effort = Effort::Durable;
+    input.envelope.effect = Effect::Apply;
+    AgentRunRepository::accept(&db, input).expect("accepted durable run");
+    let checkpoint = |stage, next_operation_index| {
+        DurableApplyCheckpoint::new_change_set(
+            "confirmation-set",
+            "sha256:set",
+            stage,
+            vec!["sha256:a0".into(), "sha256:b0".into()],
+            vec!["sha256:a1".into(), "sha256:b1".into()],
+            next_operation_index,
+            2,
+            Vec::new(),
+        )
+        .expect("valid set checkpoint")
+    };
+
+    for (stage, cursor) in [
+        (DurableApplyCheckpointStage::Approved, 0),
+        (DurableApplyCheckpointStage::Dispatching, 0),
+        (DurableApplyCheckpointStage::Applied, 1),
+    ] {
+        AgentRunRepository::append_checkpoint_step(
+            &db,
+            AppendRunCheckpointInput {
+                run_id: "run-1".into(),
+                state_version: 0,
+                checkpoint: checkpoint(stage, cursor),
+            },
+        )
+        .expect("ordered prefix checkpoint");
+    }
+    let skipped_suffix = AgentRunRepository::append_checkpoint_step(
+        &db,
+        AppendRunCheckpointInput {
+            run_id: "run-1".into(),
+            state_version: 0,
+            checkpoint: checkpoint(DurableApplyCheckpointStage::Applied, 2),
+        },
+    );
+    assert_eq!(
+        skipped_suffix
+            .expect_err("cannot mark the second operation applied before dispatch")
+            .to_string(),
+        "agent_run_checkpoint_stage_conflict"
+    );
+    for (stage, cursor) in [
+        (DurableApplyCheckpointStage::Dispatching, 1),
+        (DurableApplyCheckpointStage::Applied, 2),
+        (DurableApplyCheckpointStage::Completed, 2),
+    ] {
+        AgentRunRepository::append_checkpoint_step(
+            &db,
+            AppendRunCheckpointInput {
+                run_id: "run-1".into(),
+                state_version: 0,
+                checkpoint: checkpoint(stage, cursor),
+            },
+        )
+        .expect("ordered suffix checkpoint");
+    }
+    let latest = AgentRunRepository::latest_durable_apply_checkpoint(&db, "run-1")
+        .expect("latest checkpoint")
+        .expect("completed checkpoint");
+    assert_eq!(latest.stage(), DurableApplyCheckpointStage::Completed);
+    assert_eq!(latest.next_operation_index(), 2);
+    assert_eq!(latest.operation_count(), 2);
 }
 
 #[test]

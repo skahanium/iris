@@ -100,6 +100,7 @@ impl DurableApplyCheckpointStage {
             (previous, self),
             (Self::Approved, Self::Dispatching)
                 | (Self::Dispatching, Self::Applied)
+                | (Self::Applied, Self::Dispatching)
                 | (Self::Applied, Self::Completed)
         )
     }
@@ -116,6 +117,10 @@ pub(crate) struct DurableApplyCheckpoint {
     base_content_hashes: Vec<String>,
     expected_post_content_hashes: Vec<String>,
     evidence_ids: Vec<i64>,
+    #[serde(default)]
+    next_operation_index: usize,
+    #[serde(default)]
+    operation_count: usize,
 }
 
 impl DurableApplyCheckpoint {
@@ -136,6 +141,8 @@ impl DurableApplyCheckpoint {
             base_content_hashes,
             expected_post_content_hashes,
             evidence_ids,
+            next_operation_index: 0,
+            operation_count: 1,
         };
         checkpoint.validate()?;
         Ok(checkpoint)
@@ -147,7 +154,19 @@ impl DurableApplyCheckpoint {
                 && value.chars().count() <= 256
                 && !value.chars().any(char::is_control)
         };
-        if self.schema_version != 1
+        let valid_v2_cursor = match self.stage {
+            DurableApplyCheckpointStage::Approved => self.next_operation_index == 0,
+            DurableApplyCheckpointStage::Dispatching => {
+                self.next_operation_index < self.operation_count
+            }
+            DurableApplyCheckpointStage::Applied => {
+                self.next_operation_index > 0 && self.next_operation_index <= self.operation_count
+            }
+            DurableApplyCheckpointStage::Completed => {
+                self.next_operation_index == self.operation_count
+            }
+        };
+        if !(self.schema_version == 1 || self.schema_version == 2)
             || !safe_identity(&self.confirmation_id)
             || !safe_identity(&self.plan_hash)
             || self.base_content_hashes.len() != self.expected_post_content_hashes.len()
@@ -162,6 +181,11 @@ impl DurableApplyCheckpoint {
                 .evidence_ids
                 .iter()
                 .any(|evidence_id| *evidence_id <= 0)
+            || (self.schema_version == 2
+                && (self.operation_count == 0
+                    || self.operation_count > 6
+                    || self.next_operation_index > self.operation_count
+                    || !valid_v2_cursor))
         {
             return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
         }
@@ -186,6 +210,52 @@ impl DurableApplyCheckpoint {
 
     pub(crate) fn expected_post_content_hashes(&self) -> &[String] {
         &self.expected_post_content_hashes
+    }
+
+    pub(crate) const fn next_operation_index(&self) -> usize {
+        self.next_operation_index
+    }
+
+    pub(crate) const fn operation_count(&self) -> usize {
+        if self.schema_version == 1 {
+            1
+        } else {
+            self.operation_count
+        }
+    }
+
+    pub(crate) const fn is_legacy_schema(&self) -> bool {
+        self.schema_version == 1
+    }
+
+    /// Construct the v2 checkpoint for a bounded multi-operation change set.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the persisted checkpoint identity is deliberately explicit and body-free"
+    )]
+    pub(crate) fn new_change_set(
+        confirmation_id: impl Into<String>,
+        plan_hash: impl Into<String>,
+        stage: DurableApplyCheckpointStage,
+        base_content_hashes: Vec<String>,
+        expected_post_content_hashes: Vec<String>,
+        next_operation_index: usize,
+        operation_count: usize,
+        evidence_ids: Vec<i64>,
+    ) -> AppResult<Self> {
+        let checkpoint = Self {
+            schema_version: 2,
+            confirmation_id: confirmation_id.into(),
+            plan_hash: plan_hash.into(),
+            stage,
+            base_content_hashes,
+            expected_post_content_hashes,
+            evidence_ids,
+            next_operation_index,
+            operation_count,
+        };
+        checkpoint.validate()?;
+        Ok(checkpoint)
     }
 }
 
@@ -726,6 +796,8 @@ impl AgentRunRepository {
                         || latest.expected_post_content_hashes
                             != input.checkpoint.expected_post_content_hashes
                         || !input.checkpoint.stage.follows(latest.stage)
+                        || latest.operation_count() != input.checkpoint.operation_count()
+                        || !checkpoint_cursor_follows(&latest, &input.checkpoint)
                     {
                         return Err(AppError::run(SafeRunErrorCode::CheckpointStageConflict));
                     }
@@ -791,12 +863,12 @@ impl AgentRunRepository {
         let checkpoint = Self::latest_durable_apply_checkpoint(db, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
         let base_content_hashes = plan
-            .base_content_hashes()
+            .all_base_content_hashes()
             .iter()
             .map(|(_, hash)| hash.clone())
             .collect::<Vec<_>>();
         let expected_post_content_hashes = plan
-            .expected_post_content_hashes()
+            .all_expected_post_content_hashes()
             .iter()
             .map(|(_, hash)| hash.clone())
             .collect::<Vec<_>>();
@@ -804,9 +876,13 @@ impl AgentRunRepository {
             || checkpoint.plan_hash != plan.plan_hash()
             || checkpoint.base_content_hashes != base_content_hashes
             || checkpoint.expected_post_content_hashes != expected_post_content_hashes
+            || checkpoint.operation_count() != plan.operations().len()
+            || checkpoint.next_operation_index() >= checkpoint.operation_count()
             || !matches!(
                 checkpoint.stage,
-                DurableApplyCheckpointStage::Approved | DurableApplyCheckpointStage::Dispatching
+                DurableApplyCheckpointStage::Approved
+                    | DurableApplyCheckpointStage::Dispatching
+                    | DurableApplyCheckpointStage::Applied
             )
         {
             return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
@@ -1312,18 +1388,20 @@ impl AgentRunRepository {
                 {
                     return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
                 }
-                let checkpoint = DurableApplyCheckpoint::new(
+                let checkpoint = DurableApplyCheckpoint::new_change_set(
                     confirmation_id,
                     plan_hash,
                     DurableApplyCheckpointStage::Approved,
-                    plan.base_content_hashes()
+                    plan.all_base_content_hashes()
                         .iter()
                         .map(|(_, hash)| hash.clone())
                         .collect(),
-                    plan.expected_post_content_hashes()
+                    plan.all_expected_post_content_hashes()
                         .iter()
                         .map(|(_, hash)| hash.clone())
                         .collect(),
+                    0,
+                    plan.operations().len(),
                     Vec::new(),
                 )?;
                 let step_seq: i64 = conn.query_row(
@@ -1434,10 +1512,12 @@ impl AgentRunRepository {
                 let checkpoint = latest_durable_apply_checkpoint_in_conn(conn, run_id)?
                     .ok_or_else(|| AppError::run(SafeRunErrorCode::ControlNotAvailable))?;
                 if checkpoint.confirmation_id != confirmation_id
+                    || checkpoint.next_operation_index() >= checkpoint.operation_count()
                     || !matches!(
                         checkpoint.stage,
                         DurableApplyCheckpointStage::Approved
                             | DurableApplyCheckpointStage::Dispatching
+                            | DurableApplyCheckpointStage::Applied
                     )
                 {
                     return Err(AppError::run(SafeRunErrorCode::ControlNotAvailable));
@@ -2069,6 +2149,32 @@ impl AgentRunRepository {
     }
 }
 
+fn checkpoint_cursor_follows(
+    previous: &DurableApplyCheckpoint,
+    next: &DurableApplyCheckpoint,
+) -> bool {
+    if previous.schema_version == 1 && next.schema_version == 1 {
+        return true;
+    }
+    match (previous.stage(), next.stage()) {
+        (DurableApplyCheckpointStage::Approved, DurableApplyCheckpointStage::Dispatching) => {
+            previous.next_operation_index() == next.next_operation_index()
+        }
+        (DurableApplyCheckpointStage::Dispatching, DurableApplyCheckpointStage::Applied) => {
+            next.next_operation_index() == previous.next_operation_index().saturating_add(1)
+        }
+        (DurableApplyCheckpointStage::Applied, DurableApplyCheckpointStage::Dispatching) => {
+            previous.next_operation_index() == next.next_operation_index()
+                && previous.next_operation_index() < previous.operation_count()
+        }
+        (DurableApplyCheckpointStage::Applied, DurableApplyCheckpointStage::Completed) => {
+            previous.next_operation_index() == previous.operation_count()
+                && next.next_operation_index() == next.operation_count()
+        }
+        _ => false,
+    }
+}
+
 fn materialize_budget_policy(
     stored_policy: &str,
     envelope_json: &str,
@@ -2082,25 +2188,116 @@ fn materialize_budget_policy(
         return Ok((canonical_policy, normalized));
     }
     if let Ok(stored_policy) = serde_json::from_str::<RunBudgetPolicy>(stored_policy) {
-        if stored_policy != canonical_policy {
+        if stored_policy.schema_version == canonical_policy.schema_version {
+            if stored_policy != canonical_policy {
+                let legacy_expected = legacy_post_confirmation_zero_policy(&canonical_policy);
+                if stored_policy == legacy_expected {
+                    let normalized = stored_policy_json(&stored_policy)?;
+                    return Ok((stored_policy, normalized));
+                }
+                return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
+            }
+            return Ok((stored_policy, normalized));
+        }
+    }
+    if let Ok(schema_two_policy) =
+        serde_json::from_str::<LegacyRunBudgetPolicySchema2>(stored_policy)
+    {
+        let mut materialized = RunBudgetPolicy::for_envelope(&envelope);
+        let mut legacy_expected = materialized.clone();
+        legacy_expected.post_confirmation_max_model_turns = 0;
+        legacy_expected.post_confirmation_max_local_tool_calls = 0;
+        if schema_two_policy != LegacyRunBudgetPolicySchema2::from(&legacy_expected) {
             return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
         }
-        return Ok((stored_policy, normalized));
+        // A Run accepted before HR-5 never receives newly introduced post-
+        // confirmation capability. Reading it remains safe and deterministic.
+        materialized.post_confirmation_max_model_turns = 0;
+        materialized.post_confirmation_max_local_tool_calls = 0;
+        let normalized = serde_json::to_string(&materialized)
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
+        return Ok((materialized, normalized));
     }
     if let Ok(schema_one_policy) =
         serde_json::from_str::<LegacyRunBudgetPolicySchema1>(stored_policy)
     {
-        if schema_one_policy != LegacyRunBudgetPolicySchema1::from(&canonical_policy) {
+        let legacy_policy = legacy_post_confirmation_zero_policy(&canonical_policy);
+        if schema_one_policy != LegacyRunBudgetPolicySchema1::from(&legacy_policy) {
             return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
         }
-        return Ok((canonical_policy, normalized));
+        let normalized = serde_json::to_string(&legacy_policy)
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
+        return Ok((legacy_policy, normalized));
     }
     let legacy_policy: LegacyRunBudgetPolicyV1 = serde_json::from_str(stored_policy)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
-    if legacy_policy != LegacyRunBudgetPolicyV1::from(&canonical_policy) {
+    let legacy_policy_expected = legacy_post_confirmation_zero_policy(&canonical_policy);
+    if legacy_policy != LegacyRunBudgetPolicyV1::from(&legacy_policy_expected) {
         return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
     }
-    Ok((canonical_policy, normalized))
+    let normalized = serde_json::to_string(&legacy_policy_expected)
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
+    Ok((legacy_policy_expected, normalized))
+}
+
+fn stored_policy_json(policy: &RunBudgetPolicy) -> AppResult<String> {
+    serde_json::to_string(policy).map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))
+}
+
+fn legacy_post_confirmation_zero_policy(policy: &RunBudgetPolicy) -> RunBudgetPolicy {
+    let mut legacy = policy.clone();
+    legacy.post_confirmation_max_model_turns = 0;
+    legacy.post_confirmation_max_local_tool_calls = 0;
+    legacy
+}
+
+/// Complete schema-2 policy before bounded post-confirmation local reads.
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyRunBudgetPolicySchema2 {
+    schema_version: u8,
+    profile: crate::ai_runtime::run_contract::RunBudgetProfile,
+    max_prompt_tokens: u32,
+    max_completion_tokens: u32,
+    max_turn_output_tokens: u32,
+    max_model_turns: u32,
+    max_tool_calls: u32,
+    max_local_tool_calls: u32,
+    max_network_tool_calls: u32,
+    max_external_read_tool_calls: u32,
+    max_runtime_tool_calls: u32,
+    max_confirmed_change_calls: u32,
+    max_child_runs: u32,
+    child_max_model_turns: u32,
+    child_max_tool_calls: u32,
+    child_input_tokens_per_turn: u32,
+    child_output_tokens_per_turn: u32,
+    post_confirmation_max_model_turns: u32,
+}
+
+impl From<&RunBudgetPolicy> for LegacyRunBudgetPolicySchema2 {
+    fn from(policy: &RunBudgetPolicy) -> Self {
+        Self {
+            schema_version: 2,
+            profile: policy.profile,
+            max_prompt_tokens: policy.max_prompt_tokens,
+            max_completion_tokens: policy.max_completion_tokens,
+            max_turn_output_tokens: policy.max_turn_output_tokens,
+            max_model_turns: policy.max_model_turns,
+            max_tool_calls: policy.max_tool_calls,
+            max_local_tool_calls: policy.max_local_tool_calls,
+            max_network_tool_calls: policy.max_network_tool_calls,
+            max_external_read_tool_calls: policy.max_external_read_tool_calls,
+            max_runtime_tool_calls: policy.max_runtime_tool_calls,
+            max_confirmed_change_calls: policy.max_confirmed_change_calls,
+            max_child_runs: policy.max_child_runs,
+            child_max_model_turns: policy.child_max_model_turns,
+            child_max_tool_calls: policy.child_max_tool_calls,
+            child_input_tokens_per_turn: policy.child_input_tokens_per_turn,
+            child_output_tokens_per_turn: policy.child_output_tokens_per_turn,
+            post_confirmation_max_model_turns: policy.post_confirmation_max_model_turns,
+        }
+    }
 }
 
 /// The complete schema-1 policy before classified tool-call limits were added.

@@ -26,7 +26,7 @@ use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::ai_runtime::tool_executor::{constrain_domain_tool_surface, ToolRegistry};
 use crate::ai_runtime::tool_surface::{ToolSurfaceInput, ToolSurfacePlan, ToolSurfacePlanner};
-use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall};
+use crate::ai_runtime::{LlmMessage, MessageContent, MessageRole, ToolCall};
 use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -85,6 +85,103 @@ pub(crate) async fn execute_normal_run(
     sink: &impl RunEventSink,
 ) {
     execute_normal_run_internal(state, accepted, vault, app_handle, sink, None).await;
+}
+
+/// Verify one completed confirmed change set through the normal Provider route,
+/// but expose only `read_note` for the exact frozen targets. Route unavailability
+/// is returned to the caller so it can preserve the factual Host report.
+pub(crate) async fn execute_post_confirmation_verification(
+    state: Arc<AppState>,
+    accepted: AssistantRunAccepted,
+    vault: Option<PathBuf>,
+    targets: &[String],
+    execution_report: &str,
+    sink: &impl RunEventSink,
+) -> AppResult<()> {
+    let db = Arc::clone(&state.db);
+    let context = crate::ai_runtime::run_context::RunContextAssembler::assemble(
+        &db,
+        vault.as_deref(),
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )?;
+    let decision = evaluate_normal_run_policy(&db, &accepted)?;
+    if decision.denial_code.is_some() {
+        return Err(AppError::msg("post_confirmation_verification_unavailable"));
+    }
+    let budget = AgentRunRepository::budget_policy_for_session(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )?
+    .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+    if budget.post_confirmation_max_model_turns == 0 {
+        return Err(AppError::msg("post_confirmation_verification_unavailable"));
+    }
+    let registry = ToolRegistry::for_run(&db, &accepted.run_id)?;
+    let tools = registry
+        .tools_for_authorized_capabilities(&decision.allowed_capabilities, false)
+        .into_iter()
+        .filter(|tool| tool.name == "read_note")
+        .collect::<Vec<_>>();
+    let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+        endpoint_family: None,
+        streaming: true,
+        tools: true,
+        vision: false,
+        reasoning: false,
+        min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(execution_report),
+        min_output_budget_tokens: 1,
+        security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
+    };
+    let route = build_normal_route(
+        &db,
+        &context,
+        requirements.min_input_budget_tokens,
+        false,
+        true,
+    )?;
+    let provider =
+        FailoverStreamingProvider::new(route, requirements, &db, &accepted.session, sink);
+    #[cfg(test)]
+    let provider = if let Some(client) = state.test_streaming_client() {
+        provider.with_test_streaming_client(client)
+    } else {
+        provider
+    };
+    let executor = NormalRunToolExecutor::new(
+        &state,
+        None,
+        &accepted,
+        &context,
+        decision.allowed_capabilities,
+        budget,
+        sink,
+        Vec::new(),
+    )
+    .with_verification_targets(targets);
+    let message = |role, content| LlmMessage {
+        role,
+        content: MessageContent::Text(content),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    };
+    let messages = vec![
+        message(MessageRole::System, "你正在核对已经执行的变更。只能使用 read_note 读取下列已冻结目标；不得搜索、联网、读取其他文件或提出/执行额外修改。完成后简洁说明核对结果。".to_string()),
+        message(MessageRole::User, format!("{execution_report}\n冻结目标：{}", targets.join(", "))),
+    ];
+    RunEngine::execute_post_confirmation_verification_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        messages,
+        tools,
+        &provider,
+        &executor,
+        sink,
+    )
+    .await
 }
 
 /// Evaluation-only headless entry. It shares the complete production

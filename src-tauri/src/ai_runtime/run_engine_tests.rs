@@ -10,7 +10,9 @@ use super::conversation_memory::ConversationMemory;
 use super::domain_executor::{
     DomainExecutor, DomainMaterial, DomainMaterialOrigin, DomainMaterialRole,
 };
-use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
+use super::frozen_change_plan::{
+    FrozenChangeOperationInput, FrozenChangePlan, FrozenChangePlanInput, FrozenChangeSetInput,
+};
 use super::normal_session_repository::NormalSessionRepository;
 use super::policy_decision_engine::RunPolicyDecision;
 use super::run_context::RunContextAssembler;
@@ -1502,8 +1504,8 @@ fn durable_apply_interrupted_after_consumed_confirmation_with_expiry(
             state_version: running.state_version(),
             event_type: RunEventType::ToolStarted,
             payload: RunEventPayload::ToolStarted {
-                capability: plan.operation().to_string(),
-                tool_call_id: plan.tool_call_id().to_string(),
+                capability: plan.operations()[0].operation().to_string(),
+                tool_call_id: plan.operations()[0].tool_call_id().to_string(),
             },
         },
     )
@@ -1546,9 +1548,161 @@ fn startup_recovery_offers_resume_only_when_consumed_target_is_still_at_base_has
 }
 
 #[test]
+fn startup_recovery_resumes_only_the_unapplied_suffix_of_a_consumed_change_set() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    let (confirmation_id, session_id): (String, i64) = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT c.confirmation_id, r.session_id
+                 FROM agent_run_confirmations c
+                 JOIN agent_runs r ON r.run_id = c.run_id
+                 WHERE c.run_id = ?1 AND c.status = 'consumed'",
+                [&accepted.run_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(Into::into)
+        })
+        .expect("consumed confirmation identity");
+    let chained = FrozenChangePlan::freeze_set(FrozenChangeSetInput {
+        confirmation_id,
+        run_id: accepted.run_id.clone(),
+        session_id,
+        request_id: accepted.run_id.clone(),
+        vault_id: crate::cas::hash::content_hash_str(&vault.to_string_lossy()),
+        operations: vec![
+            FrozenChangeOperationInput {
+                tool_call_id: format!("tool-{}", accepted.run_id),
+                operation: "replace_selection".into(),
+                relative_paths: vec!["notes/a.md".into()],
+                base_content_hashes: vec![(
+                    "notes/a.md".into(),
+                    crate::cas::hash::content_hash_str("base"),
+                )],
+                expected_post_content_hashes: vec![(
+                    "notes/a.md".into(),
+                    crate::cas::hash::content_hash_str("after"),
+                )],
+                change: serde_json::json!({
+                    "target_path": "notes/a.md",
+                    "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                    "range": { "start": 0, "end": 4 },
+                    "original_text": "base",
+                    "replacement": "after"
+                }),
+                rollback_summary: "可通过版本历史撤销".into(),
+            },
+            FrozenChangeOperationInput {
+                tool_call_id: format!("tool-{}-suffix", accepted.run_id),
+                operation: "replace_selection".into(),
+                relative_paths: vec!["notes/a.md".into()],
+                base_content_hashes: vec![(
+                    "notes/a.md".into(),
+                    crate::cas::hash::content_hash_str("after"),
+                )],
+                expected_post_content_hashes: vec![(
+                    "notes/a.md".into(),
+                    crate::cas::hash::content_hash_str("final"),
+                )],
+                change: serde_json::json!({
+                    "target_path": "notes/a.md",
+                    "base_content_hash": crate::cas::hash::content_hash_str("after"),
+                    "range": { "start": 0, "end": 5 },
+                    "original_text": "after",
+                    "replacement": "final"
+                }),
+                rollback_summary: "可通过版本历史撤销".into(),
+            },
+        ],
+        expires_at_unix_ms: i64::MAX,
+    })
+    .expect("freeze chained recovery set");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_run_confirmations
+             SET plan_hash = ?1, plan_json = ?2
+             WHERE run_id = ?3 AND status = 'consumed'",
+            rusqlite::params![
+                chained.plan_hash(),
+                chained.persisted_plan_json()?,
+                accepted.run_id,
+            ],
+        )?;
+        conn.execute(
+            "DELETE FROM agent_run_steps WHERE run_id = ?1 AND kind = 'durable_apply'",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("install chained recovery set");
+    let state_version = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("running replay")
+        .expect("run")
+        .run
+        .state_version;
+    let checkpoint = |stage, cursor| {
+        DurableApplyCheckpoint::new_change_set(
+            chained.confirmation_id(),
+            chained.plan_hash(),
+            stage,
+            chained
+                .all_base_content_hashes()
+                .iter()
+                .map(|(_, hash)| hash.clone())
+                .collect(),
+            chained
+                .all_expected_post_content_hashes()
+                .iter()
+                .map(|(_, hash)| hash.clone())
+                .collect(),
+            cursor,
+            chained.operations().len(),
+            Vec::new(),
+        )
+        .expect("recovery set checkpoint")
+    };
+    for (stage, cursor) in [
+        (DurableApplyCheckpointStage::Approved, 0),
+        (DurableApplyCheckpointStage::Dispatching, 0),
+        (DurableApplyCheckpointStage::Applied, 1),
+    ] {
+        AgentRunRepository::append_checkpoint_step(
+            &db,
+            AppendRunCheckpointInput {
+                run_id: accepted.run_id.clone(),
+                state_version,
+                checkpoint: checkpoint(stage, cursor),
+            },
+        )
+        .expect("persist completed prefix");
+    }
+    std::fs::write(vault.join("notes/a.md"), "after").expect("simulate first applied operation");
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover partial set"),
+        1
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("paused run");
+    assert_eq!(replay.run.state, RunState::Paused);
+    assert_eq!(replay.run.recovery, Some(RunRecoveryKind::ResumeAvailable));
+    let latest = AgentRunRepository::latest_durable_apply_checkpoint(&db, &accepted.run_id)
+        .expect("latest checkpoint")
+        .expect("partial checkpoint");
+    assert_eq!(latest.stage(), DurableApplyCheckpointStage::Applied);
+    assert_eq!(latest.next_operation_index(), 1);
+    assert_eq!(
+        std::fs::read_to_string(vault.join("notes/a.md")).expect("prefix stays applied"),
+        "after"
+    );
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
 fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
     let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
-    let (legacy_v1, canonical) = db
+    let (legacy_v1, expected_materialized) = db
         .with_read_conn(|conn| {
             let canonical: String = conn.query_row(
                 "SELECT budget_policy_json FROM agent_runs WHERE run_id = ?1",
@@ -1556,10 +1710,18 @@ fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
                 |row| row.get(0),
             )?;
             let mut legacy_v1: serde_json::Value = serde_json::from_str(&canonical)?;
+            let mut expected_materialized: super::run_contract::RunBudgetPolicy =
+                serde_json::from_str(&canonical)?;
+            expected_materialized.post_confirmation_max_model_turns = 0;
+            expected_materialized.post_confirmation_max_local_tool_calls = 0;
             let fields = legacy_v1
                 .as_object_mut()
                 .expect("canonical budget is an object");
             fields.insert("schemaVersion".to_string(), serde_json::json!(1));
+            fields.insert(
+                "postConfirmationMaxModelTurns".to_string(),
+                serde_json::json!(0),
+            );
             for field in [
                 "maxPromptTokens",
                 "maxCompletionTokens",
@@ -1569,10 +1731,14 @@ fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
                 "maxExternalReadToolCalls",
                 "maxRuntimeToolCalls",
                 "maxConfirmedChangeCalls",
+                "postConfirmationMaxLocalToolCalls",
             ] {
                 fields.remove(field);
             }
-            Ok::<_, crate::error::AppError>((serde_json::to_string(&legacy_v1)?, canonical))
+            Ok::<_, crate::error::AppError>((
+                serde_json::to_string(&legacy_v1)?,
+                serde_json::to_string(&expected_materialized)?,
+            ))
         })
         .expect("derive persisted v1 budget");
     db.with_conn(|conn| {
@@ -1599,8 +1765,8 @@ fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
         })
         .expect("read recovered budget");
     assert_eq!(
-        stored, canonical,
-        "recovery must materialize v1 exactly once"
+        stored, expected_materialized,
+        "recovery must materialize v1 without granting the new verification capability"
     );
 
     std::fs::remove_dir_all(vault).expect("remove recovery vault");

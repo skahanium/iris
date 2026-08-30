@@ -324,6 +324,8 @@ pub(crate) struct RunBudgetPolicy {
     pub(crate) child_input_tokens_per_turn: u32,
     pub(crate) child_output_tokens_per_turn: u32,
     pub(crate) post_confirmation_max_model_turns: u32,
+    /// Maximum target-bounded local read calls after one confirmed change set.
+    pub(crate) post_confirmation_max_local_tool_calls: u32,
 }
 
 /// Physical storage and capability isolation boundary for a Run.
@@ -446,7 +448,7 @@ impl RunBudgetPolicy {
     fn for_profile(profile: RunBudgetProfile) -> Self {
         match profile {
             RunBudgetProfile::Direct => Self {
-                schema_version: 2,
+                schema_version: 3,
                 profile,
                 max_prompt_tokens: 64_000,
                 max_completion_tokens: 8_000,
@@ -464,9 +466,10 @@ impl RunBudgetPolicy {
                 child_input_tokens_per_turn: 0,
                 child_output_tokens_per_turn: 0,
                 post_confirmation_max_model_turns: 0,
+                post_confirmation_max_local_tool_calls: 0,
             },
             RunBudgetProfile::Standard => Self {
-                schema_version: 2,
+                schema_version: 3,
                 profile,
                 max_prompt_tokens: 128_000,
                 max_completion_tokens: 16_000,
@@ -484,9 +487,10 @@ impl RunBudgetPolicy {
                 child_input_tokens_per_turn: 0,
                 child_output_tokens_per_turn: 0,
                 post_confirmation_max_model_turns: 0,
+                post_confirmation_max_local_tool_calls: 0,
             },
             RunBudgetProfile::Delegated => Self {
-                schema_version: 2,
+                schema_version: 3,
                 profile,
                 max_prompt_tokens: 96_000,
                 max_completion_tokens: 12_000,
@@ -504,9 +508,10 @@ impl RunBudgetPolicy {
                 child_input_tokens_per_turn: 2_000,
                 child_output_tokens_per_turn: 1_024,
                 post_confirmation_max_model_turns: 0,
+                post_confirmation_max_local_tool_calls: 0,
             },
             RunBudgetProfile::DurableApply => Self {
-                schema_version: 2,
+                schema_version: 3,
                 profile,
                 max_prompt_tokens: 128_000,
                 max_completion_tokens: 16_000,
@@ -523,7 +528,8 @@ impl RunBudgetPolicy {
                 child_max_tool_calls: 0,
                 child_input_tokens_per_turn: 0,
                 child_output_tokens_per_turn: 0,
-                post_confirmation_max_model_turns: 0,
+                post_confirmation_max_model_turns: 2,
+                post_confirmation_max_local_tool_calls: 4,
             },
         }
     }

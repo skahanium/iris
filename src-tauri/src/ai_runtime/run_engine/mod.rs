@@ -267,13 +267,15 @@ impl RunEngine {
         Ok(true)
     }
 
-    /// Finish a durable confirmation outcome without making another model turn.
-    /// The only visible text is a fixed safety acknowledgement; tool output and
-    /// frozen arguments remain out of the conversation transcript.
-    pub(crate) fn finalize_confirmed_change_with_sink(
+    /// Finish a confirmed change with an exact Host-derived execution report.
+    /// A partial set is terminally reported without manufacturing a completed
+    /// checkpoint for operations that were deliberately not dispatched.
+    pub(crate) fn finalize_confirmed_change_report_with_sink(
         db: &Database,
         session: &AssistantSessionRef,
         run_id: &str,
+        content: &str,
+        completed_all_operations: bool,
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
@@ -283,27 +285,31 @@ impl RunEngine {
         }
         let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointStageConflict))?;
-        AgentRunRepository::append_checkpoint_step(
-            db,
-            crate::ai_runtime::agent_run_repository::AppendRunCheckpointInput {
-                run_id: run_id.to_string(),
-                state_version: snapshot.run.state_version,
-                checkpoint: crate::ai_runtime::agent_run_repository::DurableApplyCheckpoint::new(
-                    checkpoint.confirmation_id(),
-                    checkpoint.plan_hash(),
-                    crate::ai_runtime::agent_run_repository::DurableApplyCheckpointStage::Completed,
-                    checkpoint.base_content_hashes().to_vec(),
-                    checkpoint.expected_post_content_hashes().to_vec(),
-                    Vec::new(),
-                )?,
-            },
-        )?;
+        if completed_all_operations {
+            AgentRunRepository::append_checkpoint_step(
+                db,
+                crate::ai_runtime::agent_run_repository::AppendRunCheckpointInput {
+                    run_id: run_id.to_string(),
+                    state_version: snapshot.run.state_version,
+                    checkpoint: crate::ai_runtime::agent_run_repository::DurableApplyCheckpoint::new_change_set(
+                        checkpoint.confirmation_id(),
+                        checkpoint.plan_hash(),
+                        crate::ai_runtime::agent_run_repository::DurableApplyCheckpointStage::Completed,
+                        checkpoint.base_content_hashes().to_vec(),
+                        checkpoint.expected_post_content_hashes().to_vec(),
+                        checkpoint.operation_count(),
+                        checkpoint.operation_count(),
+                        Vec::new(),
+                    )?,
+                },
+            )?;
+        }
         AgentRunRepository::finalize(
             db,
             FinalizeRunInput {
                 run_id: run_id.to_string(),
                 state_version: snapshot.run.state_version,
-                content: "已执行你确认的变更。".to_string(),
+                content: content.to_string(),
                 evidence_ids: Vec::new(),
                 citation_map: serde_json::json!({}),
                 source_summary: Vec::new(),
@@ -608,6 +614,45 @@ impl RunEngine {
             executor,
             sink,
             None,
+            None,
+            false,
+            true,
+        )
+        .await
+    }
+
+    /// Run the single post-confirmation verification loop while preserving the
+    /// already-running Durable Apply lifecycle. Callers must expose only the
+    /// target-bounded local read surface.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_post_confirmation_verification_with_sink(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        messages: Vec<crate::ai_runtime::LlmMessage>,
+        tools: Vec<crate::ai_runtime::ToolSpec>,
+        provider: &impl ToolLoopProvider,
+        executor: &impl ToolLoopExecutor,
+        sink: &impl RunEventSink,
+    ) -> AppResult<()> {
+        let policy =
+            AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+        Self::execute_tool_loop_with_sink_internal(
+            db,
+            session,
+            run_id,
+            messages,
+            tools,
+            &[],
+            None,
+            provider,
+            executor,
+            sink,
+            None,
+            Some(AgentToolLoop::from_post_confirmation_policy(&policy)),
+            true,
+            false,
         )
         .await
     }
@@ -639,6 +684,9 @@ impl RunEngine {
             executor,
             sink,
             Some(telemetry),
+            None,
+            false,
+            true,
         )
         .await
     }
@@ -656,6 +704,9 @@ impl RunEngine {
         executor: &impl ToolLoopExecutor,
         sink: &impl RunEventSink,
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+        tool_loop_override: Option<AgentToolLoop>,
+        resume_running: bool,
+        fail_on_error: bool,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
@@ -669,6 +720,7 @@ impl RunEngine {
             AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
                 .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         let preparing_version = match snapshot.run.state {
+            RunState::Running if resume_running => snapshot.run.state_version,
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
                 let preparing = AgentRunRepository::append_event(
@@ -689,21 +741,29 @@ impl RunEngine {
             }
             _ => return Err(AppError::run(SafeRunErrorCode::IllegalTransition)),
         };
-        let running = AgentRunRepository::append_event(
-            db,
-            AppendRunEventInput {
-                run_id: run_id.to_string(),
-                state_version: preparing_version,
-                event_type: RunEventType::StageChanged,
-                payload: RunEventPayload::StageChanged {
-                    state: RunState::Running,
-                    stage: "正在调用模型和工具".to_string(),
-                    stage_code: Some(RunStageCode::ModelAndTools),
+        let running = if resume_running && snapshot.run.state == RunState::Running {
+            None
+        } else {
+            Some(AgentRunRepository::append_event(
+                db,
+                AppendRunEventInput {
+                    run_id: run_id.to_string(),
+                    state_version: preparing_version,
+                    event_type: RunEventType::StageChanged,
+                    payload: RunEventPayload::StageChanged {
+                        state: RunState::Running,
+                        stage: "正在调用模型和工具".to_string(),
+                        stage_code: Some(RunStageCode::ModelAndTools),
+                    },
                 },
-            },
-        )?;
-        sink.emit(&running)?;
-        let running_state_version = running.state_version();
+            )?)
+        };
+        if let Some(running) = &running {
+            sink.emit(running)?;
+        }
+        let running_state_version = running
+            .as_ref()
+            .map_or(preparing_version, |event| event.state_version());
         // Tool-call turns may stream provisional text. Keep it private until
         // the loop reaches a final assistant answer so it cannot be duplicated.
         let mut observer = if let Some(telemetry) = telemetry {
@@ -737,7 +797,8 @@ impl RunEngine {
         let finalization_required = tools.iter().any(|tool| {
             tool.name == crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME
         });
-        let tool_loop = AgentToolLoop::from_policy(&budget_policy);
+        let tool_loop =
+            tool_loop_override.unwrap_or_else(|| AgentToolLoop::from_policy(&budget_policy));
         let outcome = if let Some(telemetry) = telemetry {
             tool_loop
                 .execute_with_eval_telemetry(
@@ -758,6 +819,9 @@ impl RunEngine {
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
+                if !fail_on_error {
+                    return Err(error);
+                }
                 if settle_cancelled_run_with_partial(db, session, run_id, &observer, sink, None)? {
                     return Ok(());
                 }

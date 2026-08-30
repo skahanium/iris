@@ -256,36 +256,45 @@ fn classify_consumed_durable_apply(
     if decision.denial_code.is_some() {
         return Ok(DurableRecoveryClassification::ManualReview);
     }
-    let Some(entry) = crate::ai_runtime::tool_catalog::catalog_find(plan.operation()) else {
-        return Ok(DurableRecoveryClassification::ManualReview);
-    };
-    if !(entry.requires_confirmation
-        && entry.implementation
-            == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
-    {
-        return Ok(DurableRecoveryClassification::ManualReview);
-    }
-    let gate = crate::ai_runtime::tool_execution_pipeline::evaluate_tool_execution(
-        db,
-        crate::ai_runtime::tool_execution_pipeline::ToolExecutionGate {
-            run_id,
-            session_id: Some(plan.session_id()),
-            run_step: 1,
-            entry,
-            args: plan.change(),
-            authorized_capabilities: &decision.allowed_capabilities,
-            skill_id: None,
-            subagent_depth: 0,
-        },
-    )?;
-    if gate.tool_result.is_some() {
-        return Ok(DurableRecoveryClassification::ManualReview);
+    for (index, operation) in plan.operations().iter().enumerate() {
+        let Some(entry) = crate::ai_runtime::tool_catalog::catalog_find(operation.operation())
+        else {
+            return Ok(DurableRecoveryClassification::ManualReview);
+        };
+        if !(entry.requires_confirmation
+            && entry.implementation
+                == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
+        {
+            return Ok(DurableRecoveryClassification::ManualReview);
+        }
+        let gate = crate::ai_runtime::tool_execution_pipeline::evaluate_tool_execution(
+            db,
+            crate::ai_runtime::tool_execution_pipeline::ToolExecutionGate {
+                run_id,
+                session_id: Some(plan.session_id()),
+                run_step: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                entry,
+                args: operation.change(),
+                authorized_capabilities: &decision.allowed_capabilities,
+                skill_id: None,
+                subagent_depth: 0,
+            },
+        )?;
+        if gate.tool_result.is_some() {
+            return Ok(DurableRecoveryClassification::ManualReview);
+        }
     }
     let write_target = recovered_write_target_path(db, session_key, run_id)?;
-    let mut change_paths = recovered_change_paths(plan.change());
+    let mut change_paths = plan
+        .operations()
+        .iter()
+        .flat_map(|operation| recovered_change_paths(operation.change()))
+        .collect::<Vec<_>>();
+    change_paths.sort();
+    change_paths.dedup();
     if change_paths.is_empty()
         && matches!(
-            plan.operation(),
+            plan.operations()[0].operation(),
             "insert_text_at_cursor" | "replace_selection"
         )
     {
@@ -294,7 +303,8 @@ fn classify_consumed_durable_apply(
         }
     }
     if change_paths != plan.relative_paths()
-        || write_target.as_deref() != plan.relative_paths().first().map(String::as_str)
+        || (plan.operations().len() == 1
+            && write_target.as_deref() != plan.relative_paths().first().map(String::as_str))
     {
         return Ok(DurableRecoveryClassification::ManualReview);
     }
@@ -311,32 +321,28 @@ fn classify_consumed_durable_apply(
         || checkpoint.plan_hash() != plan.plan_hash()
         || checkpoint.base_content_hashes()
             != plan
-                .base_content_hashes()
+                .all_base_content_hashes()
                 .iter()
                 .map(|(_, hash)| hash.clone())
                 .collect::<Vec<_>>()
         || checkpoint.expected_post_content_hashes()
             != plan
-                .expected_post_content_hashes()
+                .all_expected_post_content_hashes()
                 .iter()
                 .map(|(_, hash)| hash.clone())
                 .collect::<Vec<_>>()
     {
         return Ok(DurableRecoveryClassification::ManualReview);
     }
-    if plan.base_content_hashes().is_empty()
-        || plan.base_content_hashes().len() != plan.expected_post_content_hashes().len()
-    {
-        return Ok(DurableRecoveryClassification::ManualReview);
-    }
-    let mut all_base = true;
-    let mut all_expected = true;
-    for ((path, base_hash), (expected_path, expected_hash)) in plan
-        .base_content_hashes()
-        .iter()
-        .zip(plan.expected_post_content_hashes())
-    {
-        if path != expected_path || path.starts_with("application://") {
+    let boundary = checkpoint.next_operation_index();
+    let expected_at_boundary = hashes_at_operation_boundary(plan, boundary)?;
+    let expected_at_end = hashes_at_operation_boundary(plan, plan.operations().len())?;
+    let mut current_hashes = std::collections::BTreeMap::new();
+    for path in expected_at_boundary.keys().chain(expected_at_end.keys()) {
+        if current_hashes.contains_key(path) {
+            continue;
+        }
+        if path.starts_with("application://") {
             return Ok(DurableRecoveryClassification::ManualReview);
         }
         let resolved = match crate::storage::paths::resolve_vault_path(&vault, path) {
@@ -347,22 +353,52 @@ fn classify_consumed_durable_apply(
             Ok(current) => current,
             Err(_) => return Ok(DurableRecoveryClassification::ManualReview),
         };
-        let current_hash = crate::cas::hash::content_hash_str(&current);
-        all_base &= current_hash == *base_hash;
-        all_expected &= current_hash == *expected_hash;
+        current_hashes.insert(path.clone(), crate::cas::hash::content_hash_str(&current));
     }
-    if all_expected {
+    let matches = |expected: &std::collections::BTreeMap<String, String>| {
+        expected
+            .iter()
+            .all(|(path, hash)| current_hashes.get(path) == Some(hash))
+    };
+    if matches(&expected_at_end) {
         return Ok(DurableRecoveryClassification::AlreadyApplied);
     }
-    if all_base
+    if matches(&expected_at_boundary)
+        && boundary < plan.operations().len()
         && matches!(
             checkpoint.stage(),
-            DurableApplyCheckpointStage::Approved | DurableApplyCheckpointStage::Dispatching
+            DurableApplyCheckpointStage::Approved
+                | DurableApplyCheckpointStage::Dispatching
+                | DurableApplyCheckpointStage::Applied
         )
     {
         return Ok(DurableRecoveryClassification::ResumeAvailable);
     }
     Ok(DurableRecoveryClassification::ManualReview)
+}
+
+fn hashes_at_operation_boundary(
+    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+    boundary: usize,
+) -> AppResult<std::collections::BTreeMap<String, String>> {
+    if boundary > plan.operations().len() {
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
+    }
+    let mut hashes = std::collections::BTreeMap::new();
+    for (index, operation) in plan.operations().iter().enumerate() {
+        let source = if index < boundary {
+            operation.expected_post_content_hashes()
+        } else {
+            operation.base_content_hashes()
+        };
+        for (path, hash) in source {
+            hashes.insert(path.clone(), hash.clone());
+        }
+    }
+    if hashes.is_empty() {
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
+    }
+    Ok(hashes)
 }
 
 fn recovered_change_paths(change: &serde_json::Value) -> Vec<String> {
@@ -458,6 +494,7 @@ fn append_recovered_tool_completed_if_needed(
         let payloads = statement
             .query_map([run_id], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
+        let mut completed = std::collections::BTreeMap::new();
         for payload_json in payloads {
             let payload = serde_json::from_str::<RunEventPayload>(&payload_json)?;
             if let RunEventPayload::ToolCompleted {
@@ -467,34 +504,34 @@ fn append_recovered_tool_completed_if_needed(
                 ..
             } = payload
             {
-                if tool_call_id == plan.tool_call_id() {
-                    return Ok(Some((capability, success)));
-                }
+                completed.insert(tool_call_id, (capability, success));
             }
         }
-        Ok(None)
+        Ok(completed)
     })?;
-    match existing {
-        Some((capability, Some(true))) if capability == plan.operation() => return Ok(()),
-        Some(_) => return Err(AppError::msg("agent_run_recovery_tool_lifecycle_conflict")),
-        None => {}
-    }
-    AgentRunRepository::append_event(
-        db,
-        AppendRunEventInput {
-            run_id: run_id.to_string(),
-            state_version,
-            event_type: RunEventType::ToolCompleted,
-            payload: RunEventPayload::ToolCompleted {
-                capability: plan.operation().to_string(),
-                tool_call_id: plan.tool_call_id().to_string(),
-                summary: "已恢复已确认的变更执行状态".into(),
-                duration_ms: None,
-                success: Some(true),
-                subagent_batch_report: None,
+    for operation in plan.operations() {
+        match existing.get(operation.tool_call_id()) {
+            Some((capability, Some(true))) if capability == operation.operation() => continue,
+            Some(_) => return Err(AppError::msg("agent_run_recovery_tool_lifecycle_conflict")),
+            None => {}
+        }
+        AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: run_id.to_string(),
+                state_version,
+                event_type: RunEventType::ToolCompleted,
+                payload: RunEventPayload::ToolCompleted {
+                    capability: operation.operation().to_string(),
+                    tool_call_id: operation.tool_call_id().to_string(),
+                    summary: "已恢复已确认的变更执行状态".into(),
+                    duration_ms: None,
+                    success: Some(true),
+                    subagent_batch_report: None,
+                },
             },
-        },
-    )?;
+        )?;
+    }
     Ok(())
 }
 
@@ -506,41 +543,68 @@ fn advance_recovered_checkpoint_to_completed(
 ) -> AppResult<()> {
     let latest = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?
         .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointStageConflict))?;
-    let stages: &[DurableApplyCheckpointStage] = match latest.stage() {
-        DurableApplyCheckpointStage::Approved => &[
-            DurableApplyCheckpointStage::Dispatching,
-            DurableApplyCheckpointStage::Applied,
-            DurableApplyCheckpointStage::Completed,
-        ],
-        DurableApplyCheckpointStage::Dispatching => &[
-            DurableApplyCheckpointStage::Applied,
-            DurableApplyCheckpointStage::Completed,
-        ],
-        DurableApplyCheckpointStage::Applied => &[DurableApplyCheckpointStage::Completed],
-        DurableApplyCheckpointStage::Completed => &[],
-    };
-    for stage in stages {
+    let base_hashes = plan
+        .all_base_content_hashes()
+        .iter()
+        .map(|(_, hash)| hash.clone())
+        .collect::<Vec<_>>();
+    let expected_hashes = plan
+        .all_expected_post_content_hashes()
+        .iter()
+        .map(|(_, hash)| hash.clone())
+        .collect::<Vec<_>>();
+    let mut stage = latest.stage();
+    let mut next_operation_index = latest.next_operation_index();
+    let operation_count = latest.operation_count();
+    if operation_count != plan.operations().len() {
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
+    }
+    while stage != DurableApplyCheckpointStage::Completed {
+        let next_stage = match stage {
+            DurableApplyCheckpointStage::Approved | DurableApplyCheckpointStage::Applied
+                if next_operation_index < operation_count =>
+            {
+                DurableApplyCheckpointStage::Dispatching
+            }
+            DurableApplyCheckpointStage::Dispatching => {
+                next_operation_index = next_operation_index.saturating_add(1);
+                DurableApplyCheckpointStage::Applied
+            }
+            DurableApplyCheckpointStage::Applied if next_operation_index == operation_count => {
+                DurableApplyCheckpointStage::Completed
+            }
+            _ => return Err(AppError::run(SafeRunErrorCode::CheckpointStageConflict)),
+        };
+        let checkpoint = if latest.is_legacy_schema() {
+            DurableApplyCheckpoint::new(
+                plan.confirmation_id(),
+                plan.plan_hash(),
+                next_stage,
+                base_hashes.clone(),
+                expected_hashes.clone(),
+                Vec::new(),
+            )?
+        } else {
+            DurableApplyCheckpoint::new_change_set(
+                plan.confirmation_id(),
+                plan.plan_hash(),
+                next_stage,
+                base_hashes.clone(),
+                expected_hashes.clone(),
+                next_operation_index,
+                operation_count,
+                Vec::new(),
+            )?
+        };
         AgentRunRepository::append_checkpoint_step(
             db,
             AppendRunCheckpointInput {
                 run_id: run_id.to_string(),
                 state_version,
-                checkpoint: DurableApplyCheckpoint::new(
-                    plan.confirmation_id(),
-                    plan.plan_hash(),
-                    *stage,
-                    plan.base_content_hashes()
-                        .iter()
-                        .map(|(_, hash)| hash.clone())
-                        .collect(),
-                    plan.expected_post_content_hashes()
-                        .iter()
-                        .map(|(_, hash)| hash.clone())
-                        .collect(),
-                    Vec::new(),
-                )?,
+                checkpoint,
             },
         )?;
+        stage = next_stage;
     }
     Ok(())
 }

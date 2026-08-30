@@ -27,7 +27,7 @@
 | HR-2 | 已验收     | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、新 Run 领域前置阻断  |
 | HR-3 | 已验收     | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
 | HR-4 | 已验收     | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
-| HR-5 | 未开始     | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
+| HR-5 | 已验收     | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
 | HR-6 | 未开始     | 领域 operation 退出核心并净删除      | classifier、默认表面、专用门禁和失效测试     |
 | HR-7 | 未开始     | 通用质量评测与 Provider 能力校准     | 按单一模型/领域编排的成功假设                |
 
@@ -67,7 +67,7 @@
 - HR-1 的普通 Web、普通缺参和普通最终化 `#[should_panic]` 目标夹具已分别在 HR-2/HR-4 替换为绿色回归；当前证据是 `ordinary_external_questions_use_webpreferred_without_strict_finalization`、`ordinary_clarification_completes_and_next_run_receives_conversation_context` 与 `hr1_ordinary_research_reply_uses_natural_source_group_finalization`。HR-3 的旧无进展夹具已由通用绿色回归替代并删除，避免继续固化被撤回的失败语义。
 - `hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource`、`hr1_local_multi_hop_reads_distinct_notes_without_web_access`、`hr1_repeated_failed_tool_call_stops_after_two_real_executions`、`hr1_same_session_runs_keep_w1_bound_to_their_own_evidence` 与恢复投影 Vitest 记录现有可保留的通用边界。
 - `hr1_current_recommendation_quality_fixture_requires_status_scope_and_bound_sources` 仅证明确定性评测可以拒绝遗漏状态、范围或来源绑定的观察；它不等于真实 Provider 的回答质量。
-- `frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption` 继续限定 HR-5 前的单操作确认安全线，不提前实现多操作或写后验证。
+- `frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption` 保留为旧计划兼容与重复确认的安全线；多操作和写后验证由 HR-5 的独立回归覆盖。
 
 退出条件（已满足）：每个生产问题都有先红后绿所需的独立测试夹具，且 fixture 不预编排唯一正确查询或答案正文。HR-1 的“已验收”只表示基线可复现；生产行为仍由后续 HR-2 至 HR-5 改造。
 
@@ -105,7 +105,7 @@
 
 2026-08-28 验收结果：
 
-- `RunBudgetPolicy` 已升级到 schema 2；新 Run 冻结 local 12、network 6、external_read 6、runtime 4、confirmed_change 6，schema 1 及更早的精确旧形状只可按 canonical 值材料化，篡改或未知 schema 仍失败关闭。
+- `RunBudgetPolicy` 已在 HR-5 升级到 schema 3；新 Run 冻结 local 12、network 6、external_read 6、runtime 4、confirmed_change 6。历史 schema 只能按其当时的精确安全形状材料化，不能因升级得到确认后验证额度；篡改或未知 schema 仍失败关闭。
 - `AgentToolLoop` 以 catalog 的单一工具类别计数，成功 fingerprint 不重复、相同失败至多两次；两次完整工具回合没有新增安全 identity、总工具额度耗尽，或只余最后一次模型回合时关闭业务工具面并保留最后一次综合。
 - `FreshResearchPlan`、`EvidenceGap`、研究 checkpoint、search/fetch/repair 平行计数和 Web 专用循环 deadline 已从生产路径删除。Web、local、runtime 与外部读取均通过同一个 ToolLoop；单次 Web 请求仍保留自身超时、结果尺寸、URL 归属、权限和 evidence 安全边界。
 - 新的 `WebRequired` 使用通用模型—工具循环；仅历史非空领域 envelope 保留确定性预取兼容读取路径，不能成为新 Run 的第二规划器。
@@ -127,16 +127,16 @@
 
 ## 8. HR-5：冻结变更集
 
-实现方向：
+2026-08-30 验收结果：
 
-- 扩展现有 `FrozenChangePlan` 为最多 6 个操作、6 个文件的有序计划。
-- 一次确认冻结完整参数、目标、base/expected hash、过期时间和 plan hash。
-- Host 顺序执行；任何授权或 hash 漂移停止剩余操作。
-- 成功后最多 2 次模型和 4 次目标限定的本地只读验证；不开放 Web、外部或新增写入。
+- `FrozenChangePlan` 保留 legacy 计划读取，同时以 schema v2 冻结 1 至 6 个有序操作、至多 6 个路径；每项携带独立 tool call、参数、base/expected hash 与回滚摘要，重复路径必须形成 hash 链。
+- 一次确认只消费整套计划。确认后的执行仅接受计划中的路径，逐项重验授权与 base hash；第二项漂移时已完成前缀被保留，后缀不调度，Run 以明确的部分执行报告完成。
+- `DurableApplyCheckpoint` schema v2 记录无正文的操作游标；`Approved → Dispatching → Applied` 可逐项推进，重启时只恢复未执行后缀；已经处于整套 expected 状态的旧检查点安全终态化而不重放。
+- 新 Durable Run 的确认后验证预算为最多 2 次模型和 4 次 `read_note`；工具面与实际调度同时限制为冻结目标，Web、external、runtime 和任何写入都不可用。旧 Run 物化为 `0/0`，不因升级增权；路由或模型不可用时保留 Host 的执行事实报告。
 
-同步删除：单 operation 假设、确认后固定零模型轮次和无法表达部分执行状态的测试。
+同步删除：新的确认路径不再把多个 confirmation call 拆成多个确认事务；单操作 persisted plan、schema 1 checkpoint 与旧预算只保留兼容读取，不能成为新执行语义。
 
-退出条件：多文件成功、第二项前 hash 漂移、重启恢复、重复确认、部分执行报告、验证越权和再次写入拒绝均通过；不新增数据库表。
+退出条件（已满足）：`confirmed_change_set_applies_two_ordered_operations_once_and_completes_its_cursor` 覆盖两目标顺序成功；`confirmed_change_set_reports_partial_completion_when_second_target_drifted` 覆盖第二项漂移和部分报告；`startup_recovery_resumes_only_the_unapplied_suffix_of_a_consumed_change_set` 覆盖重启前缀恢复；`frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption` 覆盖重复确认；`post_confirmation_verification_rejects_other_targets_and_non_read_tools` 覆盖验证越权。不新增数据库表、迁移、IPC 或 Provider。
 
 ## 9. HR-6：领域核心退役
 
