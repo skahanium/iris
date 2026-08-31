@@ -881,9 +881,6 @@ impl<'a> NormalRunToolExecutor<'a> {
             confirmed_write_targets,
             document_policy: Some(&self.context.document_policy),
             web_search_enabled: self.has_capability("web.search"),
-            fresh_fact_policy: Some(crate::ai_runtime::tool_dispatch::FrozenDomainWindow::from(
-                &self.context.envelope.fresh_fact,
-            )),
             available_tool_names: &self.allowed_tool_names,
             max_web_fetches: 5,
             cold_start_packets: &self.cold_start_packets,
@@ -910,8 +907,6 @@ impl<'a> NormalRunToolExecutor<'a> {
         if !result.success {
             return Ok(());
         }
-        let mut domain_evidence_ids = Vec::new();
-        let mut domain_names = Vec::new();
         let evidence_inputs = match tool_name {
             "read_note" => vec![self.read_note_evidence_input(run_id, args, result)?],
             "search_hybrid" | "search_semantic" | "search_keyword" => result
@@ -938,36 +933,6 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .and_then(local_evidence_input_from_packet)
                 .map(|packet| vec![local_packet_evidence_input(run_id, self.context, packet)])
                 .unwrap_or_default(),
-            "weather_lookup"
-            | "news_lookup"
-            | "finance_lookup"
-            | "entertainment_lookup"
-            | "sports_lookup" => {
-                for record in result.output.as_array().into_iter().flatten() {
-                    let inner = record.as_object().and_then(|object| object.values().next());
-                    if let Some(inner) = inner {
-                        if let Some(origin) = inner.get("origin") {
-                            if let Some(evidence_id) =
-                                origin.get("evidenceId").and_then(serde_json::Value::as_i64)
-                            {
-                                domain_evidence_ids.push(evidence_id);
-                            }
-                            if let Some(url) =
-                                origin.get("sourceUrl").and_then(serde_json::Value::as_str)
-                            {
-                                if let Some(domain) =
-                                    crate::ai_runtime::web_evidence_broker::domain_from_url(url)
-                                {
-                                    if !domain.trim().is_empty() {
-                                        domain_names.push(domain.to_ascii_lowercase());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Vec::new()
-            }
             _ => return Ok(()),
         };
         for input in evidence_inputs {
@@ -976,20 +941,6 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
                 .push(registered.evidence_id);
-        }
-        self.local_evidence_ids
-            .lock()
-            .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
-            .extend(domain_evidence_ids.iter().copied());
-        if !domain_evidence_ids.is_empty() {
-            let mut web_state = self
-                .run_web_evidence
-                .lock()
-                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
-            web_state
-                .evidence_ids
-                .extend(domain_evidence_ids.iter().copied());
-            web_state.domains.extend(domain_names);
         }
         Ok(())
     }
@@ -2376,23 +2327,6 @@ impl NormalRunToolExecutor<'_> {
 
     fn web_failure(&self) -> Option<WebFailure> {
         self.web_failure.lock().ok().and_then(|failure| *failure)
-    }
-
-    /// Return the sanitized state of the deterministic evidence stage. This
-    /// crosses the service boundary only as stable UI/event fields; raw search
-    /// errors remain inside the executor.
-    pub(crate) fn web_verification_failure_details(
-        &self,
-    ) -> (SafeRunErrorCode, WebEvidenceFailureReason, bool, u32) {
-        let failure = self
-            .web_failure()
-            .unwrap_or_else(|| WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false));
-        (
-            failure.code,
-            failure.reason,
-            failure.retryable,
-            self.web_attempt_count().max(1),
-        )
     }
 
     fn record_web_attempt(&self) -> AppResult<u32> {
@@ -5252,7 +5186,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_domain_tool_forged_call_rejected_by_empty_surface() {
+    async fn retired_domain_tool_forged_call_is_rejected_by_empty_surface() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let vault = directory.path().join("vault");
         std::fs::create_dir_all(&vault).expect("vault directory");
@@ -5296,7 +5230,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn internal_web_prefetch_allows_only_web_search() {
+    async fn internal_web_execution_allows_only_web_search() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let vault = directory.path().join("vault");
         std::fs::create_dir_all(&vault).expect("vault directory");

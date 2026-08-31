@@ -11,5 +11,4 @@
 #[path = "tool_dispatch_impl.rs"]
 mod implementation;
 
-pub(crate) use implementation::read_global_memories;
 pub use implementation::*;

@@ -97,7 +97,7 @@ pub fn resolve_required_capability(
         ));
     }
 
-    if capability == "web.search" || capability == "web.fetch" || capability == "web.domain.read" {
+    if capability == "web.search" || capability == "web.fetch" {
         let provider =
             crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)
                 .map_err(|err| {
@@ -107,38 +107,6 @@ pub fn resolve_required_capability(
                         err.to_string(),
                     )
                 })?;
-        if capability == "web.domain.read" {
-            let bindings =
-                crate::ai_runtime::mcp_external_tools::list_bindings(db, Some(&provider.id))
-                    .map_err(|err| {
-                        blocked(
-                            &capability,
-                            CapabilityBlockReason::MissingMcpProfile,
-                            err.to_string(),
-                        )
-                    })?;
-            let binding = bindings.into_iter().find(|binding| {
-                binding.domain_operation.is_some()
-                    && binding.provider_enabled
-                    && binding.config_matches
-                    && binding.output_mapping.is_some()
-            });
-            if let Some(binding) = binding {
-                return Ok(ResolvedCapabilityProvider {
-                    capability,
-                    provider_kind: "mcp".into(),
-                    profile_id: provider.id,
-                    tool_name: binding.mcp_tool_name,
-                    schema_hash: binding.binding_config_hash,
-                    requires_confirmation: false,
-                });
-            }
-            return Err(blocked(
-                &capability,
-                CapabilityBlockReason::MissingMcpProfile,
-                "selected Web provider has no healthy web.domain.read mapping",
-            ));
-        }
         let mapping_json = if capability == "web.search" {
             provider.web_search_mapping_json.as_deref()
         } else {
@@ -194,7 +162,7 @@ fn blocked(
 }
 
 fn is_supported_capability(capability: &str) -> bool {
-    matches!(capability, "web.search" | "web.fetch" | "web.domain.read")
+    matches!(capability, "web.search" | "web.fetch")
 }
 
 fn normalize_capability(raw: &str) -> String {
@@ -253,10 +221,10 @@ mod tests {
     }
 
     #[test]
-    fn target_state_supports_only_web_search_fetch_and_domain_read() {
+    fn target_state_supports_only_web_search_and_fetch() {
         assert!(is_supported_capability("web.search"));
         assert!(is_supported_capability("web.fetch"));
-        assert!(is_supported_capability("web.domain.read"));
+        assert!(!is_supported_capability("web.domain.read"));
 
         for capability in [
             "web.to_markdown",

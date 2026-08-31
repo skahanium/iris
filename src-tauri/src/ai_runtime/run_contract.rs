@@ -82,14 +82,16 @@ pub(crate) enum VerificationRequirement {
     /// A successful explicitly granted `external.read` call in this exact Run
     /// must register usable evidence before a final answer is accepted.
     CurrentRunExternal,
-    /// A successful current-fact domain operation in this exact Run must
-    /// register validated Appendix-D evidence before a final answer is
-    /// accepted. The domain operation may be served by a frozen `web.domain.read`
-    /// MCP mapping or by the generic Web evidence fallback.
+    /// Historical current-fact-domain marker retained only to deserialize
+    /// accepted legacy Runs. New Runs never select it; the normal service
+    /// terminalizes such an active legacy Run before Provider dispatch.
     CurrentRunDomain,
 }
 
-/// Deterministic current-fact domain frozen into an accepted Run.
+/// Historical current-fact domain frozen into a pre-HR-6 accepted Run.
+///
+/// New intake does not create this value. It remains serializable so a stored
+/// legacy envelope can be read and safely terminalized without data loss.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FreshFactDomain {
@@ -104,7 +106,10 @@ pub(crate) enum FreshFactDomain {
     GenericWeb,
 }
 
-/// One concrete current-fact operation authorized for an accepted Run.
+/// One concrete operation stored by the retired current-fact contract.
+///
+/// This remains a wire-compatibility type for existing SQLite rows and MCP
+/// snapshots; it is not part of the new Agent tool surface or routing path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DomainOperation {
     #[serde(rename = "weather.current")]
@@ -201,34 +206,6 @@ impl Default for FreshFactPolicy {
             window_end: None,
             location_requirement: LocationRequirement::None,
         }
-    }
-}
-
-impl FreshFactPolicy {
-    /// Return the operation frozen for this Run, including legacy-envelope defaults.
-    pub(crate) fn effective_operation(&self) -> Option<DomainOperation> {
-        self.operation.or(match self.domain {
-            FreshFactDomain::Weather => Some(DomainOperation::WeatherCurrent),
-            FreshFactDomain::News => Some(DomainOperation::NewsSearch),
-            FreshFactDomain::Finance => Some(DomainOperation::FinanceQuote),
-            FreshFactDomain::Entertainment => Some(DomainOperation::EntertainmentNowPlaying),
-            FreshFactDomain::Sports => Some(DomainOperation::SportsScore),
-            FreshFactDomain::None | FreshFactDomain::Runtime | FreshFactDomain::GenericWeb => None,
-        })
-    }
-
-    /// Return the structured provider operation that is semantically complete
-    /// for this Run. A broad cinema-discovery request has no city because it is
-    /// Web research, not a local showtime lookup, so the local provider surface
-    /// must remain hidden even though both share the legacy `now_playing` label.
-    pub(crate) fn structured_provider_operation(&self) -> Option<DomainOperation> {
-        let operation = self.effective_operation()?;
-        if operation == DomainOperation::EntertainmentNowPlaying
-            && self.location_requirement != LocationRequirement::City
-        {
-            return None;
-        }
-        Some(operation)
     }
 }
 

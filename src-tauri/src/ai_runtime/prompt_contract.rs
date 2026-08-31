@@ -99,11 +99,12 @@ impl PromptContractV3 {
         }
     }
 
-    /// Render Web evidence as untrusted system data for the selected finalization mode.
+    /// Historical strict-Web prompt fixture retained only for migration tests.
     ///
     /// This keeps the expression rule adjacent to the global attribution and
     /// user-visible style contracts; callers only select the already-governed
     /// execution mode and supply the serialized evidence packet.
+    #[cfg(test)]
     pub(crate) fn web_evidence_data_prompt(
         evidence_json: &str,
         structured_finalization: bool,

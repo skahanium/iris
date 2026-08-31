@@ -17,7 +17,11 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 pub(crate) const EXTERNAL_READ_CAPABILITY: &str = "external.read";
-pub(crate) const WEB_DOMAIN_READ_CAPABILITY: &str = "web.domain.read";
+/// Historical snapshot marker for the retired current-fact integration.
+///
+/// It is accepted only when reading legacy rows and is never granted to a new
+/// Run or exposed in a tool surface.
+pub(crate) const LEGACY_WEB_DOMAIN_READ_CAPABILITY: &str = "web.domain.read";
 pub(crate) const MAX_EXTERNAL_MODEL_CHARS: usize = 8_000;
 pub(crate) const MAX_EXTERNAL_EVIDENCE_CHARS: usize = 2_000;
 
@@ -532,7 +536,7 @@ fn binding_hash(
     let (provider_id, provider_config_hash, provider_launch_hash) = provider;
     let (mcp_tool_name, input_schema, argument_mapping, output_policy) = contract;
     let capability = if domain_operation.is_some() {
-        WEB_DOMAIN_READ_CAPABILITY
+        LEGACY_WEB_DOMAIN_READ_CAPABILITY
     } else {
         EXTERNAL_READ_CAPABILITY
     };
@@ -551,29 +555,6 @@ fn binding_hash(
         "domainOperation": domain_operation.map(DomainOperation::as_str),
         "outputMappingJson": output_mapping_to_json(output_mapping)
     }))
-}
-
-#[cfg(test)]
-pub(crate) fn test_binding_hash(
-    provider_id: &str,
-    provider_config_hash: &str,
-    provider_launch_hash: &str,
-    tool_name: &str,
-    input_schema: &Value,
-    domain_operation: DomainOperation,
-    output_mapping: &DomainOutputMapping,
-) -> String {
-    binding_hash(
-        (provider_id, provider_config_hash, provider_launch_hash),
-        (
-            tool_name,
-            input_schema,
-            &serde_json::json!({}),
-            &output_policy(),
-        ),
-        Some(domain_operation),
-        Some(output_mapping),
-    )
 }
 
 pub(crate) fn attest_reviewed_tool(
@@ -820,6 +801,12 @@ pub(crate) fn upsert_binding(
     }) {
         return Err(safe_error("external_tool_mapping_invalid"));
     }
+    // The retired current-fact contract remains readable only for historical
+    // snapshots. New external-tool bindings are uniformly generic read-only
+    // capabilities; no settings path may recreate a domain operation.
+    if input.domain_operation.is_some() || input.output_mapping.is_some() {
+        return Err(safe_error("external_tool_binding_invalid"));
+    }
     let domain_operation = input.domain_operation;
     let output_mapping = input
         .output_mapping
@@ -830,7 +817,7 @@ pub(crate) fn upsert_binding(
         return Err(safe_error("external_tool_binding_invalid"));
     }
     let capability = if domain_operation.is_some() {
-        WEB_DOMAIN_READ_CAPABILITY
+        LEGACY_WEB_DOMAIN_READ_CAPABILITY
     } else {
         EXTERNAL_READ_CAPABILITY
     };
@@ -1214,6 +1201,7 @@ pub(crate) fn freeze_run_grants(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn freeze_domain_run_grants(
     conn: &Connection,
     run_id: &str,
@@ -1283,7 +1271,7 @@ pub(crate) fn freeze_domain_run_grants(
                 let output_mapping = parse_output_mapping(&candidate.9, 9).ok().flatten();
                 candidate.16 == 1
                     && candidate.13 == candidate.17
-                    && candidate.7 == WEB_DOMAIN_READ_CAPABILITY
+                    && candidate.7 == LEGACY_WEB_DOMAIN_READ_CAPABILITY
                     && domain_operation == Some(*operation)
                     && output_mapping.is_some()
                     && candidate.12 == 1
@@ -1356,7 +1344,7 @@ pub(crate) fn freeze_domain_run_grants(
                 return Err(safe_error("external_tool_binding_config_changed"));
             }
             if provider_kind != "mcp"
-                || capability != WEB_DOMAIN_READ_CAPABILITY
+                || capability != LEGACY_WEB_DOMAIN_READ_CAPABILITY
                 || domain_operation.is_none()
                 || output_mapping.is_none()
                 || risk_class != "read_only"
@@ -1717,7 +1705,7 @@ pub(crate) fn snapshot_contract_is_valid(snapshot: &FrozenMcpToolSnapshot) -> bo
             EXTERNAL_READ_CAPABILITY => {
                 snapshot.domain_operation.is_none() && snapshot.output_mapping.is_none()
             }
-            WEB_DOMAIN_READ_CAPABILITY => {
+            LEGACY_WEB_DOMAIN_READ_CAPABILITY => {
                 snapshot.domain_operation.is_some() && snapshot.output_mapping.is_some()
             }
             _ => false,
@@ -2385,7 +2373,7 @@ mod tests {
     }
 
     #[test]
-    fn domain_binding_uses_web_domain_capability_and_normalized_output_mapping_hash() {
+    fn new_domain_binding_input_is_rejected_before_it_can_recreate_retired_routing() {
         let db = Database::open_in_memory().unwrap();
         provider(&db);
         let reviewed =
@@ -2398,28 +2386,11 @@ mod tests {
                 .find(|provider| provider.id == "readonly")
                 .expect("provider")
                 .provider_config_hash;
-        let provider_launch_hash = crate::ai_runtime::mcp_host_runtime::frozen_provider_launch_hash(
-            "readonly",
-            "stdio",
-            r#"{"command":"/bin/true"}"#,
-            "{}",
-        );
         let output_mapping = DomainOutputMapping {
             records_path: "$.records".into(),
             fields: BTreeMap::from([("temperature".to_string(), "$.temp".to_string())]),
         };
         let domain_operation = DomainOperation::WeatherCurrent;
-        let binding_config_hash = binding_hash(
-            ("readonly", &provider_config_hash, &provider_launch_hash),
-            (
-                "weather",
-                &reviewed.input_schema,
-                &serde_json::json!({}),
-                &output_policy(),
-            ),
-            Some(domain_operation),
-            Some(&output_mapping),
-        );
         let input = McpCapabilityBindingInput {
             id: None,
             provider_id: "readonly".into(),
@@ -2431,137 +2402,18 @@ mod tests {
             risk_class: "read_only".into(),
             read_only: true,
             user_trusted: true,
-            attested_binding_config_hash: binding_config_hash.clone(),
-        };
-        let binding =
-            upsert_binding(&db, &input, &reviewed, &provider_config_hash).expect("domain binding");
-        assert_eq!(binding.domain_operation, Some(domain_operation));
-        assert_eq!(binding.output_mapping, Some(output_mapping));
-        assert_eq!(binding.binding_config_hash, binding_config_hash);
-
-        let duplicate_reviewed = review_discovered_tool(
-            "weather_duplicate",
-            &serde_json::json!({"type":"object"}),
-            Some(true),
-        )
-        .expect("reviewed duplicate tool");
-        let duplicate_mapping = DomainOutputMapping {
-            records_path: "$.records".into(),
-            fields: BTreeMap::from([("temperature".to_string(), "$.temp".to_string())]),
-        };
-        let duplicate_hash = binding_hash(
-            ("readonly", &provider_config_hash, &provider_launch_hash),
-            (
-                "weather_duplicate",
-                &duplicate_reviewed.input_schema,
-                &serde_json::json!({}),
-                &output_policy(),
-            ),
-            Some(domain_operation),
-            Some(&duplicate_mapping),
-        );
-        let duplicate = McpCapabilityBindingInput {
-            id: None,
-            provider_id: "readonly".into(),
-            mcp_tool_name: "weather_duplicate".into(),
-            input_schema: duplicate_reviewed.input_schema.clone(),
-            argument_mapping: serde_json::json!({}),
-            domain_operation: Some(domain_operation),
-            output_mapping: Some(duplicate_mapping),
-            risk_class: "read_only".into(),
-            read_only: true,
-            user_trusted: true,
-            attested_binding_config_hash: duplicate_hash,
+            attested_binding_config_hash: String::new(),
         };
         assert_eq!(
-            upsert_binding(&db, &duplicate, &duplicate_reviewed, &provider_config_hash)
-                .expect_err("duplicate provider/operation must fail")
+            upsert_binding(&db, &input, &reviewed, &provider_config_hash)
+                .expect_err("retired domain input must not create a new binding")
                 .to_string(),
-            "external_tool_binding_conflict"
+            "external_tool_binding_invalid"
         );
-    }
-
-    #[test]
-    fn multiple_eligible_domain_bindings_fail_closed_even_for_news() {
-        let db = Database::open_in_memory().unwrap();
-        for provider_id in ["readonly", "second"] {
-            upsert_web_evidence_provider(
-                &db,
-                &WebEvidenceProviderInput {
-                    id: provider_id.into(),
-                    name: format!("{provider_id} provider"),
-                    kind: "mcp".into(),
-                    enabled: true,
-                    transport_kind: "stdio".into(),
-                    transport_config_json: r#"{"command":"/bin/true"}"#.into(),
-                    credential_refs_json: "{}".into(),
-                    web_search_mapping_json: None,
-                    web_fetch_mapping_json: None,
-                },
-            )
-            .unwrap();
-        }
-        let operation = DomainOperation::NewsSearch;
-        for (provider_id, tool_name) in [("readonly", "news_a"), ("second", "news_b")] {
-            let reviewed = review_discovered_tool(
-                tool_name,
-                &serde_json::json!({"type":"object"}),
-                Some(true),
-            )
-            .unwrap();
-            let provider_config_hash =
-                crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&db)
-                    .unwrap()
-                    .into_iter()
-                    .find(|provider| provider.id == provider_id)
-                    .unwrap()
-                    .provider_config_hash;
-            let transport_kind = "stdio";
-            let transport_config_json = r#"{"command":"/bin/true"}"#;
-            let provider_launch_hash =
-                crate::ai_runtime::mcp_host_runtime::frozen_provider_launch_hash(
-                    provider_id,
-                    transport_kind,
-                    transport_config_json,
-                    "{}",
-                );
-            let output_mapping = DomainOutputMapping {
-                records_path: "$.records".into(),
-                fields: BTreeMap::from([("title".to_string(), "$.title".to_string())]),
-            };
-            let binding_config_hash = test_binding_hash(
-                provider_id,
-                &provider_config_hash,
-                &provider_launch_hash,
-                tool_name,
-                &reviewed.input_schema,
-                operation,
-                &output_mapping,
-            );
-            upsert_binding(
-                &db,
-                &McpCapabilityBindingInput {
-                    id: None,
-                    provider_id: provider_id.into(),
-                    mcp_tool_name: tool_name.into(),
-                    input_schema: reviewed.input_schema.clone(),
-                    argument_mapping: serde_json::json!({}),
-                    domain_operation: Some(operation),
-                    output_mapping: Some(output_mapping),
-                    risk_class: "read_only".into(),
-                    read_only: true,
-                    user_trusted: true,
-                    attested_binding_config_hash: binding_config_hash,
-                },
-                &reviewed,
-                &provider_config_hash,
-            )
-            .unwrap();
-        }
         db.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO sessions (session_key, created_at, updated_at)
-                 VALUES ('ambiguous-domain-session', datetime('now'), datetime('now'))",
+                 VALUES ('retired-domain-binding', datetime('now'), datetime('now'))",
                 [],
             )?;
             let session_id = conn.last_insert_rowid();
@@ -2570,20 +2422,30 @@ mod tests {
                  (run_id, client_request_id, session_id, turn_id, status, state_version,
                   effect, effort, security_domain, risk, envelope_json, goal_summary,
                   created_at, updated_at)
-                 VALUES ('ambiguous-domain-run', 'ambiguous-domain-client', ?1, 'turn', 'accepted', 0,
-                         'answer', 'direct', 'normal', 'read_only', '{}', '',
-                         datetime('now'), datetime('now'))",
+                 VALUES ('retired-domain-binding-run', 'retired-domain-binding-client', ?1,
+                         'turn', 'accepted', 0, 'answer', 'direct', 'normal', 'read_only',
+                         '{}', '', datetime('now'), datetime('now'))",
                 [session_id],
             )?;
-            assert_eq!(
-                freeze_domain_run_grants(conn, "ambiguous-domain-run", &[operation], None)
-                    .expect_err("multiple news bindings must not silently fall back")
-                    .to_string(),
-                "agent_run_structured_provider_ambiguous"
-            );
-            Ok(())
+            freeze_domain_run_grants(
+                conn,
+                "retired-domain-binding-run",
+                &[domain_operation],
+                None,
+            )
         })
-        .unwrap();
+        .expect("a rejected new domain binding cannot freeze a legacy grant");
+        let snapshot_count = db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM agent_run_mcp_tool_snapshots
+                     WHERE run_id = 'retired-domain-binding-run'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .expect("snapshot count");
+        assert_eq!(snapshot_count, 0);
     }
 
     #[test]

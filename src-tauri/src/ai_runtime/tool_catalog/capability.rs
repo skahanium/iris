@@ -15,11 +15,6 @@ impl ToolCatalogEntry {
             "get_context_packets" => &["context.read"],
             "system_time_now" | "app_context_read" | "capabilities_read" => &["runtime.read"],
             "web_search" => &["web.search"],
-            "weather_lookup"
-            | "news_lookup"
-            | "finance_lookup"
-            | "entertainment_lookup"
-            | "sports_lookup" => &["web.domain.read"],
             "insert_text_at_cursor" | "replace_selection" => &["note.apply_patch"],
             "vault_create_note"
             | "vault_rename_move"

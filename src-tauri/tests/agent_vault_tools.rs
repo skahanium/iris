@@ -33,7 +33,6 @@ fn ctx_with_scope<'a>(
         confirmed_write_targets: None,
         document_policy: None,
         web_search_enabled: false,
-        fresh_fact_policy: None,
         available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
@@ -398,7 +397,12 @@ async fn markdown_patch_rejects_out_of_vault_target_without_creating_file() {
     )
     .await;
 
-    assert!(!result.success);
+    assert!(
+        result.success,
+        "patch dispatch returns a structured rejection: {:?}",
+        result.error
+    );
+    assert_eq!(result.output["result"]["success"], false);
     assert!(!dir.path().join("outside.md").exists());
     assert_eq!(
         std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap(),

@@ -1509,7 +1509,6 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
         confirmed_write_targets: None,
         document_policy: None,
         web_search_enabled: false,
-        fresh_fact_policy: None,
         available_tool_names: &[],
         max_web_fetches: 5,
         cold_start_packets: &context.local_retrieval_packets,
@@ -1685,7 +1684,6 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
         session_id: 1,
         message_seq_first: 1,
         user_message: "请结合制度写一份请示".into(),
-        provided_input_values: Default::default(),
         content_parts: None,
         envelope: ExecutionEnvelope {
             material_needs: vec![MaterialNeed::Authority, MaterialNeed::Exemplar],

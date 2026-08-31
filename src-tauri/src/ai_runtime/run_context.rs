@@ -6,7 +6,7 @@
 //! scans a vault unless Request Intake has resolved the Run to the
 //! `ImplicitVault` boundary.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 
 use rusqlite::OptionalExtension;
@@ -63,10 +63,6 @@ pub(crate) struct RunContext {
     pub(crate) session_id: i64,
     pub(crate) message_seq_first: i64,
     pub(crate) user_message: String,
-    /// Validated structured values explicitly supplied for this Run. Execution
-    /// consumes these facts directly instead of attempting to rediscover them
-    /// from the provider-facing natural-language prompt.
-    pub(crate) provided_input_values: BTreeMap<String, String>,
     /// Persisted user-owned multimodal parts for this exact Run only.
     pub(crate) content_parts: Option<Vec<crate::ai_types::ContentPart>>,
     pub(crate) envelope: ExecutionEnvelope,
@@ -223,7 +219,7 @@ impl RunContext {
                 "External factual conclusions require eligible evidence from an explicitly granted read-only external tool for this answer. Do not use training knowledge, historical assistant messages, conversation summaries, or older citations as independent evidence. If eligible evidence is unavailable, do not guess."
             }
             crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunDomain => {
-                "External factual conclusions require eligible current-fact domain evidence collected for this answer. Do not use training knowledge, historical assistant messages, conversation summaries, or older citations as independent evidence. If eligible evidence is unavailable, do not guess."
+                "此历史运行使用已退役的当前事实协议，不能恢复执行。"
             }
             crate::ai_runtime::run_contract::VerificationRequirement::None => {
                 "Historical assistant messages, conversation summaries, and older citations are continuity aids, not independent evidence."
@@ -250,7 +246,6 @@ fn requires_current_web_evidence(
     matches!(
         verification_requirement,
         crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb
-            | crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunDomain
     )
 }
 
@@ -442,7 +437,6 @@ mod history_selection_tests {
             session_id: 1,
             message_seq_first: 3,
             user_message: "继续这个对话".to_string(),
-            provided_input_values: BTreeMap::new(),
             content_parts: None,
             envelope: ExecutionEnvelope {
                 effect: crate::ai_runtime::run_contract::Effect::Answer,
@@ -565,12 +559,7 @@ impl RunContextAssembler {
         let envelope = AgentRunRepository::policy_request_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
             .envelope;
-        let input_values = AgentRunRepository::latest_input_values(db, session_key, run_id)?;
-        let user_message = input_values
-            .get("city")
-            .filter(|city| !city.trim().is_empty())
-            .map(|city| format!("{}\n\n[本轮已确认查询城市：{}]", input.user_message, city))
-            .unwrap_or_else(|| input.user_message.clone());
+        let user_message = input.user_message.clone();
         let write_target_path = explicit_apply_target_path(&input, &envelope)?;
         let document_policy =
             crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?;
@@ -762,7 +751,6 @@ impl RunContextAssembler {
             session_id: input.session_id,
             message_seq_first: input.message_seq_first,
             user_message,
-            provided_input_values: input_values,
             content_parts: input.content_parts,
             envelope,
             write_target_path,

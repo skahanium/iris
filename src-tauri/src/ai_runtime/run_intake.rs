@@ -303,8 +303,6 @@ impl RunIntake {
                 envelope,
             },
             &external_tool_grants,
-            &[],
-            None,
             create_session,
         )
     }

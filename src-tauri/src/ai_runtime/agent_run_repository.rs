@@ -327,7 +327,7 @@ impl AgentRunRepository {
         reason = "test fixtures accept Runs without external grants"
     )]
     pub(crate) fn accept(db: &Database, input: AcceptRunInput) -> AppResult<AssistantRunAccepted> {
-        Self::accept_with_external_grants(db, input, &[], &[], None)
+        Self::accept_with_external_grants(db, input, &[])
     }
 
     /// Atomically persist the accepted Run and its explicit MCP snapshots.
@@ -335,18 +335,9 @@ impl AgentRunRepository {
         db: &Database,
         input: AcceptRunInput,
         external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
-        domain_operations: &[crate::ai_runtime::mcp_external_tools::DomainOperation],
-        selected_web_provider_id: Option<&str>,
     ) -> AppResult<AssistantRunAccepted> {
-        Self::accept_with_external_grants_outcome(
-            db,
-            input,
-            external_tool_grants,
-            domain_operations,
-            selected_web_provider_id,
-            false,
-        )
-        .map(|outcome| outcome.accepted)
+        Self::accept_with_external_grants_outcome(db, input, external_tool_grants, false)
+            .map(|outcome| outcome.accepted)
     }
 
     /// Atomically accept a Run and report whether this call created it.
@@ -358,8 +349,6 @@ impl AgentRunRepository {
         db: &Database,
         input: AcceptRunInput,
         external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
-        domain_operations: &[crate::ai_runtime::mcp_external_tools::DomainOperation],
-        selected_web_provider_id: Option<&str>,
         create_session: bool,
     ) -> AppResult<AcceptRunOutcome> {
         if input.envelope.security_domain != SecurityDomain::Normal {
@@ -481,12 +470,6 @@ impl AgentRunRepository {
                     conn,
                     &input.run_id,
                     external_tool_grants,
-                )?;
-                crate::ai_runtime::mcp_external_tools::freeze_domain_run_grants(
-                    conn,
-                    &input.run_id,
-                    domain_operations,
-                    selected_web_provider_id,
                 )?;
                 let event = AssistantRunEvent::new(
                     &input.run_id,
@@ -1650,29 +1633,6 @@ impl AgentRunRepository {
     }
 
     /// Read the immutable current-fact policy frozen in a Run's envelope.
-    pub(crate) fn fresh_fact_policy_for_run(
-        db: &Database,
-        run_id: &str,
-    ) -> AppResult<Option<crate::ai_runtime::run_contract::FreshFactPolicy>> {
-        db.with_read_conn(|conn| {
-            let envelope_json = conn
-                .query_row(
-                    "SELECT envelope_json FROM agent_runs WHERE run_id = ?1",
-                    [run_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            envelope_json
-                .map(|json| {
-                    let envelope: ExecutionEnvelope = serde_json::from_str(&json)
-                        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidRequest))?;
-                    Ok(envelope.fresh_fact)
-                })
-                .transpose()
-        })
-    }
-
-    /// Return the latest recoverable Run for one normal-domain session.
     pub(crate) fn latest_active_for_session(
         db: &Database,
         session_key: &str,
@@ -2050,59 +2010,6 @@ impl AgentRunRepository {
         })
     }
 
-    /// Return the latest validated user input supplied to one Run.
-    pub(crate) fn latest_input_values(
-        db: &Database,
-        session_key: &str,
-        run_id: &str,
-    ) -> AppResult<std::collections::BTreeMap<String, String>> {
-        db.with_read_conn(|conn| {
-            let payload_json = conn
-                .query_row(
-                    "SELECT e.payload_json
-                     FROM agent_run_events e
-                     JOIN agent_runs r ON r.run_id = e.run_id
-                     JOIN sessions s ON s.id = r.session_id
-                     WHERE e.run_id = ?1 AND s.session_key = ?2
-                       AND e.event_type = 'input_provided'
-                     ORDER BY e.event_seq DESC LIMIT 1",
-                    rusqlite::params![run_id, session_key],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            let Some(payload_json) = payload_json else {
-                return Ok(std::collections::BTreeMap::new());
-            };
-            let payload: RunEventPayload = serde_json::from_str(&payload_json)?;
-            match payload {
-                RunEventPayload::InputProvided { values, .. } => Ok(values),
-                _ => Ok(std::collections::BTreeMap::new()),
-            }
-        })
-    }
-
-    /// Return the owning session and user-message sequence for one Run. This
-    /// is the only storage lookup domain tools need when registering a bounded
-    /// provider result as evidence.
-    pub(crate) fn evidence_owner_for_run(
-        db: &Database,
-        run_id: &str,
-    ) -> AppResult<Option<(i64, i64)>> {
-        db.with_read_conn(|conn| {
-            Ok(conn
-                .query_row(
-                    "SELECT r.session_id, m.seq
-                 FROM agent_runs r
-                 JOIN session_messages m
-                   ON m.session_id = r.session_id AND m.turn_id = r.turn_id
-                 WHERE r.run_id = ?1 AND m.role = 'user'",
-                    [run_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?)
-        })
-    }
-    /// Read the immutable execution budget only when the normal-domain session matches.
     ///
     /// Legacy `{}` rows are deterministically materialized once from the
     /// persisted execution envelope before the policy is returned.

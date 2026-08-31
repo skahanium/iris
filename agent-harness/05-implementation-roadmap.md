@@ -20,16 +20,16 @@
 
 ## 2. 阶段总览
 
-| 阶段 | 状态       | 目标                                 | 同阶段必须删除或降级                         |
-| ---- | ---------- | ------------------------------------ | -------------------------------------------- |
-| HR-0 | 已验收     | 重置文档事实和路线                   | 旧现行文件名、旧完成结论、ROADMAP 冲突       |
-| HR-1 | 基线已验收 | 建立能复现生产问题的通用行为基线     | ID 偶合、理想调用顺序和只验管线的假阳性      |
-| HR-2 | 已验收     | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、新 Run 领域前置阻断  |
-| HR-3 | 已验收     | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
-| HR-4 | 已验收     | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
-| HR-5 | 已验收     | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
-| HR-6 | 未开始     | 领域 operation 退出核心并净删除      | classifier、默认表面、专用门禁和失效测试     |
-| HR-7 | 未开始     | 通用质量评测与 Provider 能力校准     | 按单一模型/领域编排的成功假设                |
+| 阶段 | 状态             | 目标                                 | 同阶段必须删除或降级                         |
+| ---- | ---------------- | ------------------------------------ | -------------------------------------------- |
+| HR-0 | 已验收           | 重置文档事实和路线                   | 旧现行文件名、旧完成结论、ROADMAP 冲突       |
+| HR-1 | 基线已验收       | 建立能复现生产问题的通用行为基线     | ID 偶合、理想调用顺序和只验管线的假阳性      |
+| HR-2 | 已验收           | Intake 去领域化并恢复渐进联网        | 所有非排除事实严格联网、新 Run 领域前置阻断  |
+| HR-3 | 已验收           | 统一自适应工具循环和分类预算         | Fresh research 平行预算、闭集 gap 与专用停机 |
+| HR-4 | 已验收           | 自然澄清、普通最终化、错误和 UI 投影 | 新普通 Run 的 AwaitingInput、普通强制终局    |
+| HR-5 | 已验收           | 有界冻结变更集与确认后只读验证       | 单 operation 限制、确认后零验证              |
+| HR-6 | 已验收           | 领域 operation 退出核心并净删除      | classifier、默认表面、专用门禁和失效测试     |
+| HR-7 | 已验收（确定性） | 通用质量评测与 Provider 能力校准     | 按单一模型/领域编排的成功假设；真实试点结论  |
 
 ## 3. HR-0：文档事实重置（已验收）
 
@@ -108,7 +108,7 @@
 - `RunBudgetPolicy` 已在 HR-5 升级到 schema 3；新 Run 冻结 local 12、network 6、external_read 6、runtime 4、confirmed_change 6。历史 schema 只能按其当时的精确安全形状材料化，不能因升级得到确认后验证额度；篡改或未知 schema 仍失败关闭。
 - `AgentToolLoop` 以 catalog 的单一工具类别计数，成功 fingerprint 不重复、相同失败至多两次；两次完整工具回合没有新增安全 identity、总工具额度耗尽，或只余最后一次模型回合时关闭业务工具面并保留最后一次综合。
 - `FreshResearchPlan`、`EvidenceGap`、研究 checkpoint、search/fetch/repair 平行计数和 Web 专用循环 deadline 已从生产路径删除。Web、local、runtime 与外部读取均通过同一个 ToolLoop；单次 Web 请求仍保留自身超时、结果尺寸、URL 归属、权限和 evidence 安全边界。
-- 新的 `WebRequired` 使用通用模型—工具循环；仅历史非空领域 envelope 保留确定性预取兼容读取路径，不能成为新 Run 的第二规划器。
+- 新的 `WebRequired` 使用通用模型—工具循环；历史非空领域 envelope 只保留兼容读取，活跃旧 Run 会在 Provider 调度前安全终态化，不能成为新 Run 的第二规划器。
 
 退出条件（已满足）：差结果改写查询、本地多跳、重复抑制、分类上限、取消、总预算和无进展强制综合均由同一 `AgentToolLoop` 回归覆盖；真实 Provider 表现仍留给 HR-7。
 
@@ -116,7 +116,7 @@
 
 2026-08-30 验收结果：
 
-- `requires_structured_finalization` 只为 `HighStakesCurrentFact` 和非空历史 `FreshFactPolicy` 暴露既有 `submit_final_answer`；普通 `WebRequired` 保持当前 Run evidence gate，并以自然正文与受控来源组完成。
+- `requires_structured_finalization` 只为 `HighStakesCurrentFact` 暴露既有 `submit_final_answer`；普通 `WebRequired` 保持当前 Run evidence gate，并以自然正文与受控来源组完成。
 - 新普通缺参在未调用工具时只能以一条短、无来源的自然问题完成；已有工具调用、正文、URL 或来源标记仍不能绕过 Web/external evidence 门禁。下一用户消息创建新 Run，由会话历史承接，不重放旧 Run。
 - `useAssistantConversationProjection` 继续是唯一 Run-to-message writer：终态以同 Run durable 正文收敛，历史 user-only Run 可补建一条 assistant 行，无同 Run user 行的迟到事件仍被忽略。
 - `FinalizationProtocolInvalid` 稳定错误码保留在事件诊断；用户只看到“本次回答未完成必要的来源校验，请重试”。证据不足、能力不可用、回答未完成和材料无效保持不同产品语义。
@@ -147,16 +147,30 @@
 - 有真实 Provider 的结构化能力通过统一 catalog/MCP snapshot/capability 接入，不创建领域状态机。
 - 删除不再可达的 DTO renderer、fixture、helper、测试和文档；若某适配器仍有真实调用证据，单独记录保留理由。
 
-退出条件：静态搜索证明核心不再依赖 FreshFactDomain/DomainOperation 做新 Run 决策；旧 Run 可安全读取或终态化；代码净减少且无第二路由。
+2026-08-31 验收结果：
+
+- `fresh_domains/`、五个领域 catalog/dispatch 分支、专用地点与 provider renderer、`current_fact_finalization`、Host 预取和领域 fixture 已删除；新 Run 的 WebRequired 统一由模型先请求 `web_search` 再进入既有 `AgentToolLoop`。
+- `FreshFactDomain`、`DomainOperation`、migration 072 和旧 MCP snapshot 只保留反序列化/读取兼容。含旧领域标记的活跃 Run 在 Provider 调度前明确终态化，绝不自动重放事实查询或副作用；设置层同样拒绝写入新的领域 binding。
+- `retired_current_fact_domain_tools_are_not_agent_visible`、`legacy_current_fact_run_is_terminalized_without_provider_replay`、`new_domain_binding_input_is_rejected_before_it_can_recreate_retired_routing` 与静态扫描共同证明新核心没有第二领域路由。该阶段净删除约 6,600 行，不新增表、迁移、IPC 或 Provider。
+
+退出条件（已满足）：新 Run 的权限、工具面、dispatch、finalization 和评测模拟均不以 `FreshFactDomain`/`DomainOperation` 决策；旧数据只能安全读取或终态化，不能回流为新写入。
 
 ## 10. HR-7：质量与 Provider 校准
 
 - 建立普通对话、Web 自适应、本地多跳、混合材料、严格事实、无工具 Provider 和文档修改任务矩阵。
+- 确定性 WebRequired fixture 必须和生产一样由模型先请求 `web_search`，再基于同 Run 的工具结果综合；不得把 Host 预取当作通用模型能力证据。
 - 固定夹具验证行为和安全，不能冒充真实答案质量。
 - 至少使用两个协议形态不同的 mock Gateway，禁止针对 MiniMax 调整核心。
 - 真实 Provider 试点保持另行授权，记录模型、配置 hash、成本 checkpoint、p50/p95、token 和匿名 verdict，不保存正文、查询或 URL。
 
-退出条件：质量、安全、性能和净简化门槛全部满足；真实试点缺失时只能声明 deterministic 能力，不得声明生产模型质量。
+2026-08-31 确定性验收结果：
+
+- 现有 `agent_capacity_eval` 被修正为与生产路径一致：WebRequired 场景先产生 `web_search` 工具调用、再由同一 Run 的工具结果触发综合，不再把 Host 预取误当成模型能力。
+- 24 个通用场景的 deterministic matrix 已 24/24 完成、24/24 通过；其中覆盖普通回答、Web 自适应、本地多跳、混合材料、严格当前事实、无工具能力降级与有界文档修改。
+- `tool_call_25_blocked` 改用 catalog 实际分类（12 本地 + 6 网络 + 6 外部只读）验证总预算：第 24 次可执行，第 25 次不执行且仍保留最终综合。八项硬边界均重复五次通过。
+- OpenAI-compatible 与 Anthropic Messages 的 mock Gateway 都验证了真实工具调用和工具结果续接形态；chat-only 能力继续以显式降级而非伪造工具续接处理。核心未按 MiniMax 或模型名分叉。
+
+退出条件（确定性部分已满足）：通用质量、安全、硬边界和多协议 mock 都有命名回归，且 `npm run agent:eval:smoke` 通过。真实 Provider 试点未经本轮授权，故不产生任何生产模型质量、延迟或成本结论；该限制不是待修复的代码缺口。
 
 ## 11. 阶段纪律
 

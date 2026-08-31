@@ -6,8 +6,6 @@ use crate::ai_runtime::ToolAccessLevel;
 mod boundary_impl;
 #[path = "tool_catalog/capability.rs"]
 mod capability_impl;
-#[path = "tool_catalog/fresh_domains.rs"]
-mod fresh_domains_impl;
 #[path = "tool_catalog/groups.rs"]
 mod groups_impl;
 #[path = "tool_catalog/read.rs"]

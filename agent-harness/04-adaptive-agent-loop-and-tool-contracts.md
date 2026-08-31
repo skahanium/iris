@@ -80,7 +80,7 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 结构化调用协议必须保留，因为它承担参数校验、授权、预算、审计和 Provider 中立。领域 operation 不再承担核心路由：
 
-- 新 Run 的默认工具面不因 `FreshFactDomain` 自动暴露 weather/news/finance/entertainment/sports 工具。
+- 新 Run 的默认工具面不因 `FreshFactDomain` 自动暴露 weather/news/finance/entertainment/sports 工具；这五个旧 lookup 已从生产 catalog 和 dispatcher 删除。
 - 有真实需求的精确数据源通过现有 catalog、MCP snapshot 和 capability 作为可选只读工具接入。
 - 可选工具只返回 typed result，不创建领域 planner、独立 Run 状态或独立 finalization。
 - migration 072、旧 mapping 和旧 envelope 保留读取兼容；未配置 Provider 不影响普通 Web 或本地任务。

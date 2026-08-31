@@ -99,6 +99,15 @@
 
 2026-08-30 的 HR-4 已将普通严格联网自然终局、自然澄清/下一轮承接、同 Run 终态投影与协议错误产品文案从目标夹具升级为命名 Rust/Vitest 回归。它只证明受控 headless 合同，不证明真实模型会稳定判断何时需要澄清或给出高质量结论。
 
+2026-08-31 的 HR-6/HR-7 确定性验收补充如下：
+
+- 新 Run 已没有领域 tool catalog、dispatcher、Host 预取或领域 finalization；旧领域 envelope 只能在 Provider 调度前安全终态化，migration 072 和旧 snapshot 仍可读取。
+- `agent:eval:smoke` 的 24 场景矩阵全部完成并通过。WebRequired 场景使用生产同构的“模型 `web_search` → 当前 Run 工具结果 → 综合”路径；这证明循环合同，不证明真实搜索或模型语义质量。
+- 八项硬边界各重复五次：总工具预算使用实际 12 local + 6 network + 6 external-read 的组合，而不是未知合成工具的保守 6 次回退；第 25 次请求不执行，最终综合仍被允许。
+- OpenAI-compatible 和 Anthropic Messages mock 分别覆盖工具调用与 tool-result 续接。没有以模型名称改变 core；chat-only 仍是明确能力降级。
+
+本轮未连接真实 Provider，也未运行 `agent:eval:live`。因此真实 Provider 的质量、延迟、成本和对 INC-HR-005 的生产级结论仍处于“未评测”，不能从上述 24/24 推导出来。
+
 以下能力仍必须保持“已知缺陷”或“部分实现”：
 
 - 真实 Provider 的回答质量、延迟和成本。

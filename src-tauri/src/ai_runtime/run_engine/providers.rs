@@ -7,18 +7,6 @@ pub(crate) trait DirectAnswerProvider {
     fn answer(&self, run_id: &str, message: &str) -> AppResult<String>;
 }
 
-/// Sanitized terminal metadata for a deterministic Web verification stage.
-///
-/// This deliberately contains no query, URL, provider payload, or credential.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct WebVerificationFailure {
-    pub(crate) code: SafeRunErrorCode,
-    pub(crate) reason: WebEvidenceFailureReason,
-    pub(crate) retryable: bool,
-    pub(crate) attempt_count: u32,
-    pub(crate) duration_bucket: &'static str,
-}
-
 /// Model Gateway adapter for a single, tool-free streaming direct answer.
 pub(crate) struct ModelGatewayStreamingDirectAnswerProvider<'a> {
     gateway: &'a crate::ai_runtime::model_gateway::ModelGateway,

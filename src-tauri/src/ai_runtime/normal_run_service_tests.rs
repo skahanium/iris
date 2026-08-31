@@ -11,16 +11,14 @@ use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProvi
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
     build_cached_skill_activation, execute_normal_run, execute_normal_run_with_eval_telemetry,
-    required_web_query_from_authorized_material, required_web_query_from_user_history,
-    strict_follow_up_capabilities,
 };
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
-    AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent, AssistantRunStartRequest,
-    AssistantSessionRef, AssistantTurnDraft, CapabilityId, ContextMode, Effort, FreshFactDomain,
-    FreshFactPolicy, RunControlAction, RunEventPayload, RunEventType, RunPresentationPayload,
-    RunState, SecurityDomain, WebDecisionReason,
+    AssistantRunAccepted, AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef,
+    AssistantTurnDraft, CapabilityId, ContextMode, Effort, FreshFactDomain, FreshFactPolicy,
+    RunEventPayload, RunEventType, RunPresentationPayload, RunState, SecurityDomain,
+    WebDecisionReason,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
@@ -112,90 +110,6 @@ fn direct_required_web_request() -> AssistantRunStartRequest {
     request
 }
 
-#[test]
-fn required_web_query_avoids_polluting_a_new_question_with_retry_chatter() {
-    let history = vec![
-        "你再试试?".to_string(),
-        "这不会是 OpenAI 自导自演的吧？".to_string(),
-    ];
-
-    assert_eq!(
-        required_web_query_from_user_history(
-            "为什么我总觉得 OpenAI 和 Anthropic 的负责人表演欲望都严重过头？",
-            &history,
-        ),
-        "为什么我总觉得 OpenAI 和 Anthropic 的负责人表演欲望都严重过头？"
-    );
-}
-
-#[test]
-fn required_web_query_uses_last_substantive_turn_for_a_retry_instruction() {
-    let history = vec![
-        "你再试试?".to_string(),
-        "详细讲一下 OpenAI AI 智能体越狱事件".to_string(),
-    ];
-
-    assert_eq!(
-        required_web_query_from_user_history("你再试试?", &history),
-        "详细讲一下 OpenAI AI 智能体越狱事件\n你再试试?"
-    );
-}
-
-#[test]
-fn required_web_query_uses_explicitly_authorized_material_to_resolve_a_deictic_question() {
-    let query = required_web_query_from_authorized_material(
-        "这是什么时候召开的会议？",
-        &[],
-        ["中国共产党第十八次全国代表大会".to_string()],
-    );
-
-    assert!(query.contains("中国共产党第十八次全国代表大会"));
-    assert!(query.contains("这是什么时候召开的会议"));
-}
-
-#[test]
-fn required_web_query_sanitizes_the_authorized_subject_before_disclosure() {
-    let query = required_web_query_from_authorized_material(
-        "这是什么时候召开的会议？",
-        &[],
-        ["  中国共产党\u{0000}\n第十八次全国代表大会\t  ".to_string()],
-    );
-
-    assert_eq!(
-        query,
-        "中国共产党 第十八次全国代表大会 这是什么时候召开的会议？"
-    );
-    assert!(!query.chars().any(char::is_control));
-}
-
-#[test]
-fn required_web_query_never_uses_automatic_local_retrieval_without_explicit_authorization() {
-    let query = required_web_query_from_authorized_material(
-        "这是什么时候召开的会议？",
-        &[],
-        std::iter::empty::<String>(),
-    );
-
-    assert_eq!(query, "这是什么时候召开的会议？");
-}
-
-#[test]
-fn strict_web_follow_up_surface_keeps_only_vault_and_explicit_external_reads() {
-    let capabilities = strict_follow_up_capabilities(&[
-        CapabilityId::new("runtime.read"),
-        CapabilityId::new("vault.read"),
-        CapabilityId::new("web.search"),
-        CapabilityId::new("external.read"),
-        CapabilityId::new("note.apply_patch"),
-    ]);
-    let names = capabilities
-        .iter()
-        .map(CapabilityId::as_str)
-        .collect::<Vec<_>>();
-
-    assert_eq!(names, ["vault.read", "external.read"]);
-}
-
 fn install_headless_contract_mcp(state: &AppState) {
     install_headless_contract_mcp_with_mode(state, "search-only");
 }
@@ -245,115 +159,6 @@ fn install_headless_contract_mcp_with_mode(state: &AppState, mode: &str) {
         },
     )
     .expect("headless MCP registry setup");
-}
-
-fn install_headless_domain_bindings(
-    state: &AppState,
-    operations: &[crate::ai_runtime::run_contract::DomainOperation],
-) {
-    use crate::ai_runtime::mcp_external_tools::{
-        review_discovered_tool, test_binding_hash, upsert_binding, DomainOutputMapping,
-        McpCapabilityBindingInput,
-    };
-
-    let reviewed = review_discovered_tool(
-        "domain",
-        &serde_json::json!({
-            "type": "object",
-            "properties": {
-                "location": {"type":"string"},
-                "days": {"type":"integer"}, "topic": {"type":"string"},
-                "limit": {"type":"integer"}, "instrument": {"type":"string"},
-                "assetKind": {"type":"string"}, "title": {"type":"string"},
-                "channel": {"type":"string"}, "competition": {"type":"string"},
-                "participant": {"type":"string"}, "date": {"type":"string"}
-            },
-            "additionalProperties": false
-        }),
-        Some(true),
-    )
-    .expect("review domain fixture tool");
-    let provider_id = "headless-contract-mcp";
-    let provider = crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db)
-        .expect("list fixture providers")
-        .into_iter()
-        .find(|provider| provider.id == provider_id)
-        .expect("fixture provider");
-    let provider_config_hash = provider.provider_config_hash.clone();
-    let provider_launch_hash = crate::ai_runtime::mcp_host_runtime::frozen_provider_launch_hash(
-        provider_id,
-        &provider.transport_kind,
-        &provider.transport_config_json,
-        &provider.credential_refs_json,
-    );
-    let fields = [
-        "location",
-        "condition",
-        "temperature",
-        "units",
-        "observationTime",
-        "issueTime",
-        "title",
-        "publisher",
-        "publishedAt",
-        "topic",
-        "instrument",
-        "assetKind",
-        "currency",
-        "asOf",
-        "delay",
-        "value",
-        "region",
-        "channel",
-        "date",
-        "checkedAt",
-        "competition",
-        "participants",
-        "startTime",
-        "status",
-        "score",
-        "sourceUrl",
-        "sourceTitle",
-        "observedAt",
-        "evidenceId",
-    ]
-    .into_iter()
-    .map(|field| (field.to_string(), format!("$.{field}")))
-    .collect();
-    let output_mapping = DomainOutputMapping {
-        records_path: "$.structuredContent.records".into(),
-        fields,
-    };
-    for operation in operations {
-        let binding_config_hash = test_binding_hash(
-            provider_id,
-            &provider_config_hash,
-            &provider_launch_hash,
-            "domain",
-            &reviewed.input_schema,
-            *operation,
-            &output_mapping,
-        );
-        upsert_binding(
-            &state.db,
-            &McpCapabilityBindingInput {
-                id: None,
-                provider_id: provider_id.into(),
-                mcp_tool_name: "domain".into(),
-                input_schema: reviewed.input_schema.clone(),
-                argument_mapping: serde_json::json!({}),
-                domain_operation: Some(*operation),
-                output_mapping: Some(output_mapping.clone()),
-                risk_class: "read_only".into(),
-                read_only: true,
-                user_trusted: true,
-                attested_binding_config_hash: binding_config_hash,
-            },
-            &reviewed,
-            &provider_config_hash,
-        )
-        .expect("bind reviewed domain fixture tool");
-    }
 }
 
 fn install_test_routing(state: &AppState, base_url: &str, model_name: &str) {
@@ -1018,55 +823,6 @@ async fn production_runtime_time_uses_frozen_surface_and_recovers() {
 }
 
 #[tokio::test]
-async fn news_web_fallback_produces_validated_record_from_headless_mcp() {
-    use crate::ai_runtime::fresh_domains::service::{FreshDomainRequest, FreshDomainService};
-    use crate::ai_runtime::mcp_external_tools::DomainOperation;
-    use crate::ai_runtime::retrieval_scope::RetrievalScope;
-    use crate::ai_runtime::tool_dispatch::ToolDispatchContext;
-
-    let directory = tempfile::tempdir().expect("temporary app directory");
-    let state = AppState::new(directory.path().join("data")).expect("application state");
-    install_headless_contract_mcp(&state);
-    let db = &state.db;
-    let retrieval_scope = RetrievalScope::default();
-    let available_tool_names: Vec<String> = vec!["news_lookup".into()];
-    let cold_start_packets: Vec<crate::ai_runtime::ContextPacket> = Vec::new();
-    let runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot> = Vec::new();
-    let ctx = ToolDispatchContext {
-        db: Some(db),
-        selected_web_provider_id: None,
-        note_path: None,
-        file_id: None,
-        run_id: None,
-        write_target_path: None,
-        confirmed_write_targets: None,
-        document_policy: None,
-        web_search_enabled: true,
-        fresh_fact_policy: None,
-        available_tool_names: &available_tool_names,
-        max_web_fetches: 2,
-        cold_start_packets: &cold_start_packets,
-        retrieval_scope: &retrieval_scope,
-        runtime_documents: &runtime_documents,
-        app_handle: None,
-        attachment_count: 0,
-        skill_activation_plan: None,
-    };
-    let request = FreshDomainRequest {
-        operation: DomainOperation::NewsSearch,
-        args: serde_json::json!({ "operation": "news.search", "topic": "synthetic", "limit": 5 }),
-        requested_at: chrono::DateTime::parse_from_rfc3339("2026-08-18T08:00:00Z")
-            .expect("fixed time")
-            .with_timezone(&chrono::Utc),
-    };
-    let records = FreshDomainService
-        .execute(request, &ctx)
-        .await
-        .expect("news web fallback must produce validated records from the headless MCP");
-    assert!(!records.is_empty(), "news fallback must not be empty");
-}
-
-#[tokio::test]
 async fn production_location_like_request_does_not_pause_a_new_run_for_structured_input() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
@@ -1203,6 +959,56 @@ async fn ordinary_clarification_completes_and_next_run_receives_conversation_con
             .text_content()
             .contains("请告诉我所在的城市或地区")
     }));
+}
+
+#[tokio::test]
+async fn legacy_current_fact_run_is_terminalized_without_provider_replay() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"must not be requested\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("callable local Provider boundary");
+    install_test_routing(&state, &llm.base_url, "legacy-run-must-not-replay-model");
+    let sink = RecordingSink::default();
+    let accepted = RunIntake::start_with_sink(&state.db, direct_request(), &sink)
+        .expect("accept legacy compatibility fixture");
+    let mut envelope = RunIntake::resolve_envelope(&direct_request())
+        .expect("build historical compatibility envelope");
+    envelope.fresh_fact = FreshFactPolicy {
+        domain: FreshFactDomain::Weather,
+        ..FreshFactPolicy::default()
+    };
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "UPDATE agent_runs SET envelope_json = ?1 WHERE run_id = ?2",
+                rusqlite::params![serde_json::to_string(&envelope)?, accepted.run_id],
+            )?;
+            Ok(())
+        })
+        .expect("install historical envelope");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    assert_eq!(
+        llm.request_count(),
+        0,
+        "a retired historical current-fact Run must terminalize before it reaches a callable Provider"
+    );
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("terminal snapshot")
+        .expect("terminal Run");
+    assert_eq!(response.run.state, RunState::Failed);
+    assert!(response.run.final_message_id.is_none());
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed { code, .. })
+            if *code == super::run_contract::SafeRunErrorCode::FinalizationProtocolInvalid
+    ));
 }
 
 #[tokio::test]
@@ -1345,317 +1151,6 @@ async fn high_stakes_current_fact_keeps_structured_finalization_tool() {
 }
 
 #[tokio::test]
-async fn production_weather_without_provider_fails_closed_instead_of_fabricating() {
-    let directory = tempfile::tempdir().expect("temporary app directory");
-    let state = AppState::new(directory.path().join("data")).expect("application state");
-    let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"weather-call\",\"type\":\"function\",\"function\":{\"name\":\"weather_lookup\",\"arguments\":\"{\\\"operation\\\":\\\"weather.current\\\",\\\"location\\\":\\\"上海\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
-        ),
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"上海今天天气晴朗。\"}}]}\n\ndata: [DONE]\n\n",
-        ),
-    ])
-    .await
-    .expect("local LLM boundary");
-    install_test_routing(&state, &llm.base_url, "headless-contract-model");
-
-    let sink = RecordingSink::default();
-    let mut request = direct_request();
-    request.client_request_id = "production-weather-no-provider".into();
-    request.turn.message = "上海今天天气怎么样？".into();
-    request.web_enabled = true;
-    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
-        .expect("accepted weather run without provider");
-
-    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
-
-    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
-        .expect("run snapshot")
-        .expect("weather run");
-    assert_ne!(
-        response.run.state,
-        RunState::Completed,
-        "weather without a structured provider must not complete with a fabricated answer"
-    );
-    let assistant_message_count: i64 = state
-        .db
-        .with_read_conn(|conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1 AND role = 'assistant'",
-                [1_i64],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
-        })
-        .expect("assistant message query");
-    assert_eq!(
-        assistant_message_count, 0,
-        "no fabricated assistant weather answer may be persisted"
-    );
-}
-
-#[tokio::test]
-async fn legacy_domain_operations_remain_readable_for_recovery_after_new_intake_retires_them() {
-    use crate::ai_runtime::run_contract::DomainOperation;
-
-    let cases = vec![
-        (
-            DomainOperation::WeatherCurrent,
-            "上海今天天气怎么样？",
-            "weather_lookup",
-            serde_json::json!({"operation":"weather.current","location":"上海"}),
-        ),
-        (
-            DomainOperation::WeatherForecast,
-            "上海未来一周天气",
-            "weather_lookup",
-            serde_json::json!({"operation":"weather.forecast","location":"上海","days":3}),
-        ),
-        (
-            DomainOperation::NewsSearch,
-            "最新 synthetic 新闻",
-            "news_lookup",
-            serde_json::json!({"operation":"news.search","topic":"synthetic"}),
-        ),
-        (
-            DomainOperation::FinanceQuote,
-            "AAPL 股票当前股价",
-            "finance_lookup",
-            serde_json::json!({"operation":"finance.quote","instrument":"AAPL"}),
-        ),
-        (
-            DomainOperation::FinanceMetrics,
-            "AAPL 股票市盈率指标",
-            "finance_lookup",
-            serde_json::json!({"operation":"finance.metrics","instrument":"AAPL"}),
-        ),
-        (
-            DomainOperation::FinanceNews,
-            "AAPL 股票新闻",
-            "finance_lookup",
-            serde_json::json!({"operation":"finance.news","instrument":"AAPL"}),
-        ),
-        (
-            DomainOperation::EntertainmentNowPlaying,
-            "上海正在上映什么电影",
-            "entertainment_lookup",
-            serde_json::json!({"operation":"entertainment.now_playing","location":"上海"}),
-        ),
-        (
-            DomainOperation::EntertainmentUpcoming,
-            "有什么电影即将上映",
-            "entertainment_lookup",
-            serde_json::json!({"operation":"entertainment.upcoming"}),
-        ),
-        (
-            DomainOperation::EntertainmentStreaming,
-            "现在能看什么流媒体电影",
-            "entertainment_lookup",
-            serde_json::json!({"operation":"entertainment.streaming"}),
-        ),
-        (
-            DomainOperation::SportsSchedule,
-            "湖人下一场赛程",
-            "sports_lookup",
-            serde_json::json!({"operation":"sports.schedule","participant":"湖人"}),
-        ),
-        (
-            DomainOperation::SportsScore,
-            "湖人比分",
-            "sports_lookup",
-            serde_json::json!({"operation":"sports.score","participant":"湖人"}),
-        ),
-    ];
-
-    for (index, (operation, message, tool_name, arguments)) in cases.into_iter().enumerate() {
-        let directory = tempfile::tempdir().expect("temporary app directory");
-        let state = AppState::new(directory.path().join("data")).expect("application state");
-        install_headless_contract_mcp_with_mode(&state, "domain-dto");
-        install_headless_domain_bindings(&state, &[operation]);
-        state
-            .db
-            .with_conn(|conn| {
-                conn.execute(
-                    "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 1000)",
-                    [],
-                )?;
-                Ok(())
-            })
-            .expect("advance evidence ledger sequence");
-        let tool_call = tool_call_sse(tool_name, arguments);
-        let final_submission = tool_call_sse(
-            "submit_final_answer",
-            serde_json::json!({
-                "blocks": [{
-                    "markdown": "结构化领域结果已核实。",
-                    "sources": ["W1", "E1003"]
-                }]
-            }),
-        );
-        let llm = spawn_llm_protocol_double(vec![
-            HttpResponseScript::sse(&tool_call),
-            HttpResponseScript::sse(&final_submission),
-        ])
-        .await
-        .expect("local LLM boundary");
-        install_test_routing(&state, &llm.base_url, "iris-test-verified-tools-domain");
-
-        let sink = RecordingSink::default();
-        let mut request = direct_request();
-        request.client_request_id = format!("production-domain-operation-{index}");
-        request.turn.message = message.into();
-        request.web_enabled = true;
-        let mut legacy_envelope =
-            RunIntake::resolve_envelope(&request).expect("classify new production Run");
-        assert_eq!(legacy_envelope.fresh_fact, Default::default());
-        let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
-            .expect("accept new production Run");
-        legacy_envelope.fresh_fact = FreshFactPolicy {
-            domain: match operation {
-                DomainOperation::WeatherCurrent | DomainOperation::WeatherForecast => {
-                    FreshFactDomain::Weather
-                }
-                DomainOperation::NewsSearch => FreshFactDomain::News,
-                DomainOperation::FinanceQuote
-                | DomainOperation::FinanceMetrics
-                | DomainOperation::FinanceNews => FreshFactDomain::Finance,
-                DomainOperation::EntertainmentNowPlaying
-                | DomainOperation::EntertainmentUpcoming
-                | DomainOperation::EntertainmentStreaming => FreshFactDomain::Entertainment,
-                DomainOperation::SportsSchedule | DomainOperation::SportsScore => {
-                    FreshFactDomain::Sports
-                }
-            },
-            operation: Some(operation),
-            location_requirement: if operation == DomainOperation::EntertainmentNowPlaying {
-                crate::ai_runtime::run_contract::LocationRequirement::City
-            } else {
-                crate::ai_runtime::run_contract::LocationRequirement::None
-            },
-            ..FreshFactPolicy::default()
-        };
-        legacy_envelope.freshness = crate::ai_runtime::run_contract::Freshness::WebRequired;
-        legacy_envelope.verification_requirement =
-            crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb;
-        legacy_envelope
-            .required_capabilities
-            .push(CapabilityId::new("web.domain.read"));
-        let legacy_envelope_json =
-            serde_json::to_string(&legacy_envelope).expect("serialize legacy envelope");
-        state
-            .db
-            .with_conn(|conn| {
-                conn.execute(
-                    "UPDATE agent_runs SET envelope_json = ?1 WHERE run_id = ?2",
-                    rusqlite::params![legacy_envelope_json, accepted.run_id],
-                )?;
-                crate::ai_runtime::mcp_external_tools::freeze_domain_run_grants(
-                    conn,
-                    &accepted.run_id,
-                    &[operation],
-                    None,
-                )
-            })
-            .expect("install legacy domain policy and frozen grant");
-        let snapshots =
-            crate::ai_runtime::mcp_external_tools::load_run_snapshots(&state.db, &accepted.run_id)
-                .expect("load frozen snapshots");
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].domain_operation, Some(operation));
-
-        tokio::time::timeout(
-            Duration::from_secs(15),
-            execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("{operation:?} production Run timed out"));
-
-        let initial_response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
-            .expect("completed snapshot")
-            .expect("completed Run");
-        if initial_response.run.state == RunState::AwaitingInput {
-            assert_eq!(operation, DomainOperation::EntertainmentNowPlaying);
-            let mut values = std::collections::BTreeMap::new();
-            values.insert("city".to_string(), "上海".to_string());
-            RunIntake::control_with_sink(
-                &state.db,
-                AssistantRunControlRequest {
-                    session: accepted.session.clone(),
-                    run_id: accepted.run_id.clone(),
-                    expected_state_version: initial_response.run.state_version,
-                    action: RunControlAction::SubmitInput {
-                        input_id: format!("location-{}", accepted.run_id),
-                        values,
-                    },
-                },
-                &sink,
-            )
-            .expect("resume historical city-bound Run with persisted input");
-            tokio::time::timeout(
-                Duration::from_secs(15),
-                execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink),
-            )
-            .await
-            .unwrap_or_else(|_| panic!("{operation:?} resumed production Run timed out"));
-        }
-
-        let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
-            .expect("completed snapshot")
-            .expect("completed Run");
-        assert_eq!(
-            response.run.state,
-            RunState::Completed,
-            "{operation:?}: events={:?}, audit={:?}, evidence={:?}, provenance={:?}",
-            response.events.iter().map(AssistantRunEvent::payload).collect::<Vec<_>>(),
-            crate::ai_runtime::tool_audit::query_by_run(&state.db, &accepted.run_id)
-                .expect("tool audit"),
-            crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_registered(
-                &state.db,
-                &accepted.run_id,
-            )
-            .expect("current Run evidence"),
-            crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::provenance_policy(
-                &state.db,
-                &accepted.run_id,
-                true,
-            )
-            .expect("provenance policy")
-        );
-        let calls = tokio::time::timeout(Duration::from_secs(2), llm.finish())
-            .await
-            .expect("LLM completion timed out")
-            .expect("LLM completion");
-        assert_eq!(calls.len(), 2, "{operation:?} must use a tool continuation");
-        let tool = calls[0].body["tools"]
-            .as_array()
-            .expect("model tool surface")
-            .iter()
-            .find(|tool| tool["function"]["name"] == tool_name)
-            .expect("only matching domain tool is exposed");
-        assert_eq!(
-            tool["function"]["parameters"]["properties"]["operation"]["enum"],
-            serde_json::json!([operation.as_str()])
-        );
-        assert!(
-            !calls[1].body.to_string().contains("provider-supplied-id"),
-            "Iris must replace provider-supplied evidence IDs"
-        );
-        assert!(response.run.final_message_id.is_some());
-
-        execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
-        let recovered = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
-            .expect("recovered snapshot")
-            .expect("recovered Run");
-        assert_eq!(recovered.run.state, RunState::Completed);
-        assert_eq!(
-            recovered.run.final_message_id,
-            response.run.final_message_id
-        );
-    }
-}
-
-#[tokio::test]
 async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
@@ -1679,107 +1174,6 @@ async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
             ..
         })
     ));
-}
-
-#[tokio::test]
-async fn news_web_fallback_engine_chain_passes_through_evidence_ledger() {
-    let directory = tempfile::tempdir().expect("temporary app directory");
-    let state = AppState::new(directory.path().join("data")).expect("application state");
-    install_headless_contract_mcp(&state);
-    let mut request = web_tool_loop_request();
-    request.client_request_id = "production-news-web-fallback".into();
-    request.turn.message = "请调研最新 synthetic 新闻。".into();
-    let (sink, accepted, context, domain_plan, initial_evidence) =
-        start_headless_tool_loop(&state, request);
-    let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"news-call\",\"type\":\"function\",\"function\":{\"name\":\"news_lookup\",\"arguments\":\"{\\\"operation\\\":\\\"news.search\\\",\\\"topic\\\":\\\"synthetic\\\",\\\"limit\\\":5}\"}}]}}]}\n\ndata: [DONE]\n\n",
-        ),
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
-        ),
-    ])
-    .await
-    .expect("local LLM boundary");
-    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
-    let provider = ModelGatewayStreamingDirectAnswerProvider::new(
-        &gateway,
-        ProviderConfig {
-            name: "headless-news-model".into(),
-            base_url: llm.base_url.clone(),
-            api_key: None,
-            model: "news-model".into(),
-            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
-        },
-        256,
-    )
-    .expect("model gateway provider");
-    let capabilities = vec![
-        CapabilityId::new("web.search"),
-        CapabilityId::new("web.domain.read"),
-    ];
-    let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
-    assert!(tools.iter().any(|tool| tool.name == "news_lookup"));
-    let provider_snapshot =
-        super::mcp_runtime_registry::resolve_selected_web_search_provider(&state.db)
-            .expect("freeze selected MCP provider before the model tool loop");
-    let executor = NormalRunToolExecutor::new(
-        &state,
-        None,
-        &accepted,
-        &context,
-        capabilities,
-        super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
-        &sink,
-        vec![provider_snapshot],
-    )
-    .with_allowed_tool_names(
-        &tools
-            .iter()
-            .map(|tool| tool.name.clone())
-            .collect::<Vec<_>>(),
-    );
-
-    RunEngine::execute_tool_loop_with_sink(
-        &state.db,
-        &accepted.session,
-        &accepted.run_id,
-        context.messages_with_domain_plan(&domain_plan),
-        tools,
-        &initial_evidence,
-        Some(&domain_plan),
-        &provider,
-        &executor,
-        &sink,
-    )
-    .await
-    .expect("production news web-fallback chain");
-
-    let calls = llm.finish().await.expect("LLM double completion");
-    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
-        .expect("run snapshot")
-        .expect("completed run");
-    assert_eq!(
-        calls.len(),
-        2,
-        "news lookup must complete a real continuation"
-    );
-    assert_eq!(response.run.state, RunState::Completed);
-    let news_evidence_count = state
-        .db
-        .with_read_conn(|conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM session_evidence WHERE origin_run_id = ?1 AND source_type = 'web'",
-                [&accepted.run_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(Into::into)
-        })
-        .expect("evidence ledger query");
-    assert!(
-        news_evidence_count >= 1,
-        "news web-fallback must enter the evidence ledger"
-    );
 }
 
 #[tokio::test]

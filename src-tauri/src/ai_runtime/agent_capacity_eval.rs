@@ -5841,10 +5841,27 @@ async fn execute_headless_core_case_with_local_body(
     let sink = HeadlessEvaluationSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
         .map_err(|_| EvalContractError::new("eval_run_intake_failed"))?;
-    // Required Web evidence is now a real deterministic prefetch before the
-    // provider turn. The protocol double must answer from that injected
-    // evidence instead of fabricating a duplicate model-initiated search.
-    let scripts = vec![sse_content(&final_content)];
+    // Web-required scenarios exercise the same model-driven ToolLoop as every
+    // other tool class: the deterministic provider first asks for one bounded
+    // search, then synthesizes from its returned Run-local evidence.
+    let requires_online_web = scenario.web_state() == WebState::Online
+        && scenario
+            .manifest
+            .required_sources
+            .iter()
+            .any(|source| source.kind == SourceKind::Web);
+    let scripts = if requires_online_web {
+        vec![
+            sse_tool_call(
+                &format!("eval-web-call-{}", scenario.case_id()),
+                "web_search",
+                r#"{"query":"synthetic evaluation evidence"}"#,
+            ),
+            sse_content(&final_content),
+        ]
+    } else {
+        vec![sse_content(&final_content)]
+    };
     let llm = spawn_llm_protocol_double(scripts)
         .await
         .map_err(|_| EvalContractError::new("eval_llm_double_failed"))?;
@@ -5881,8 +5898,8 @@ async fn execute_headless_core_case_with_local_body(
     // Apply it even when a strict offline Run safely terminates before the
     // model double is contacted.
     apply_headless_eval_fault(&state, &accepted, scenario, fault)?;
-    // A strict prefetch failure is a valid terminal observation: the model
-    // double is intentionally unused because no answer may be generated.  Do
+    // A strict Web failure is a valid terminal observation. The model double
+    // may be unused because the Host refuses completion without evidence; do
     // not reinterpret that safe refusal as a protocol-double timeout.
     if debug_snapshot.run.state == crate::ai_runtime::run_contract::RunState::Failed {
         return score_headless_run(
@@ -7351,13 +7368,7 @@ pub(crate) async fn execute_pressure_staircases(
     for level in &schedule(PressureDimension::ToolLoop)?.levels {
         tool_loop.push(
             repeat_pressure_level_async(*level, |value| async move {
-                if value <= 24 {
-                    probe_tool_call_limit(value, true).await
-                } else {
-                    probe_tool_call_limit(value, false)
-                        .await
-                        .map(|verified| !verified)
-                }
+                probe_tool_call_limit(value, value <= 24).await
             })
             .await?,
         );
@@ -8037,6 +8048,7 @@ impl crate::ai_runtime::agent_tool_loop::ToolLoopExecutor for BoundaryToolExecut
     > {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let tool_name = call.function.name.clone();
+        let call_id = call.id.clone();
         let oversized = self.oversized;
         Box::pin(async move {
             Ok(crate::ai_runtime::ToolCallResult {
@@ -8045,7 +8057,10 @@ impl crate::ai_runtime::agent_tool_loop::ToolLoopExecutor for BoundaryToolExecut
                 output: if oversized {
                     serde_json::json!({ "body": "x".repeat(8_500) })
                 } else {
-                    serde_json::json!({ "ok": true })
+                    // Every successful read must contribute a distinct
+                    // resource signal; otherwise the production loop rightly
+                    // closes the surface after two no-progress rounds.
+                    serde_json::json!({ "ok": true, "resource_id": call_id })
                 },
                 duration_ms: 0,
                 tokens_used: None,
@@ -8089,18 +8104,18 @@ fn boundary_gateway_response(
 }
 
 #[cfg(test)]
-fn boundary_tool_call(index: u32) -> crate::ai_runtime::ToolCall {
+fn boundary_tool_call(index: u32, name: &str) -> crate::ai_runtime::ToolCall {
     crate::ai_runtime::ToolCall::new(
         format!("boundary-call-{index}"),
-        "boundary_tool",
+        name,
         format!(r#"{{"index":{index}}}"#),
     )
 }
 
 #[cfg(test)]
-fn boundary_tool_spec() -> crate::ai_runtime::ToolSpec {
+fn boundary_tool_spec(name: &str) -> crate::ai_runtime::ToolSpec {
     crate::ai_runtime::ToolSpec {
-        name: "boundary_tool".to_string(),
+        name: name.to_string(),
         description: "synthetic bounded tool".to_string(),
         input_schema: serde_json::json!({"type": "object"}),
         access_level: crate::ai_runtime::ToolAccessLevel::ReadIndex,
@@ -8108,6 +8123,18 @@ fn boundary_tool_spec() -> crate::ai_runtime::ToolSpec {
         max_results: None,
         capability_affinity: Vec::new(),
     }
+}
+
+#[cfg(test)]
+fn boundary_tool_specs() -> Vec<crate::ai_runtime::ToolSpec> {
+    // Use catalog-owned tools so this probe exercises both the shared 24-call
+    // ceiling and the frozen 12/6/6 category ceilings. An unknown synthetic
+    // name is deliberately accounted as external read and would only prove
+    // that the six-call fallback works.
+    ["search_keyword", "web_search", "fs_read_authorized_folder"]
+        .into_iter()
+        .map(boundary_tool_spec)
+        .collect()
 }
 
 #[cfg(test)]
@@ -8130,7 +8157,7 @@ async fn probe_model_turn_limit(
     if should_complete {
         for index in 1..requested_turns {
             responses.push_back(boundary_gateway_response(
-                vec![boundary_tool_call(index)],
+                vec![boundary_tool_call(index, "search_keyword")],
                 None,
             ));
         }
@@ -8138,7 +8165,7 @@ async fn probe_model_turn_limit(
     } else {
         for index in 1..=requested_turns {
             responses.push_back(boundary_gateway_response(
-                vec![boundary_tool_call(index)],
+                vec![boundary_tool_call(index, "search_keyword")],
                 None,
             ));
         }
@@ -8158,7 +8185,7 @@ async fn probe_model_turn_limit(
         &executor,
         "boundary-model-turns",
         boundary_messages(),
-        vec![boundary_tool_spec()],
+        vec![boundary_tool_spec("search_keyword")],
         &mut observer,
     )
     .await;
@@ -8175,14 +8202,41 @@ async fn probe_tool_call_limit(
     requested_calls: u32,
     should_complete: bool,
 ) -> Result<bool, EvalContractError> {
-    let tool_calls = (1..=requested_calls)
-        .map(boundary_tool_call)
-        .collect::<Vec<_>>();
-    let mut responses =
-        std::collections::VecDeque::from([boundary_gateway_response(tool_calls, None)]);
-    if should_complete {
-        responses.push_back(boundary_gateway_response(Vec::new(), Some("bounded final")));
+    let mut next_call = 1_u32;
+    let mut batch = |count: u32, tool_name: &str| {
+        (0..count)
+            .map(|_| {
+                let call = boundary_tool_call(next_call, tool_name);
+                next_call = next_call.saturating_add(1);
+                call
+            })
+            .collect::<Vec<_>>()
+    };
+    let local_calls = requested_calls.min(12);
+    let network_calls = requested_calls.saturating_sub(local_calls).min(6);
+    let external_calls = requested_calls
+        .saturating_sub(local_calls)
+        .saturating_sub(network_calls);
+    let mut responses = std::collections::VecDeque::new();
+    if local_calls > 0 {
+        responses.push_back(boundary_gateway_response(
+            batch(local_calls, "search_keyword"),
+            None,
+        ));
     }
+    if network_calls > 0 {
+        responses.push_back(boundary_gateway_response(
+            batch(network_calls, "web_search"),
+            None,
+        ));
+    }
+    if external_calls > 0 {
+        responses.push_back(boundary_gateway_response(
+            batch(external_calls, "fs_read_authorized_folder"),
+            None,
+        ));
+    }
+    responses.push_back(boundary_gateway_response(Vec::new(), Some("bounded final")));
     let provider = BoundaryToolProvider {
         responses: std::sync::Mutex::new(responses),
         calls: std::sync::atomic::AtomicU32::new(0),
@@ -8198,24 +8252,23 @@ async fn probe_tool_call_limit(
         &executor,
         "boundary-tool-calls",
         boundary_messages(),
-        vec![boundary_tool_spec()],
+        boundary_tool_specs(),
         &mut observer,
     )
     .await;
     let executed = executor.calls.load(std::sync::atomic::Ordering::SeqCst);
-    Ok(if should_complete {
-        result.is_ok_and(|outcome| outcome.tool_calls == requested_calls)
-            && executed == requested_calls
-    } else {
-        result.is_err_and(|error| error.to_string() == "agent_run_tool_loop_limit") && executed == 0
-    })
+    let permitted_calls = requested_calls.min(24);
+    Ok(result.is_ok_and(|outcome| {
+        outcome.content == "bounded final" && outcome.tool_calls == permitted_calls
+    }) && executed == permitted_calls
+        && (should_complete || requested_calls > permitted_calls))
 }
 
 #[cfg(test)]
 async fn probe_tool_payload_truncation() -> Result<bool, EvalContractError> {
     let provider = BoundaryToolProvider {
         responses: std::sync::Mutex::new(std::collections::VecDeque::from([
-            boundary_gateway_response(vec![boundary_tool_call(1)], None),
+            boundary_gateway_response(vec![boundary_tool_call(1, "search_keyword")], None),
             boundary_gateway_response(Vec::new(), Some("bounded final")),
         ])),
         calls: std::sync::atomic::AtomicU32::new(0),
@@ -8235,7 +8288,7 @@ async fn probe_tool_payload_truncation() -> Result<bool, EvalContractError> {
         &executor,
         "boundary-tool-payload",
         boundary_messages(),
-        vec![boundary_tool_spec()],
+        vec![boundary_tool_spec("search_keyword")],
         &mut observer,
         &telemetry,
     )
@@ -8380,10 +8433,16 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
     let state = crate::app::AppState::new(directory.path().join("data"))
         .map_err(|_| EvalContractError::new("boundary_state_failed"))?;
     install_boundary_mcp(&state, &script, result_count)?;
-    // Strict Web verification performs the mandatory search before the model
-    // turn. The model receives evidence and must answer with a run-local W
-    // citation; it must not spend a second turn deciding to search.
-    let scripts = vec![sse_content("bounded web answer confirmed. [W1]")];
+    // This boundary uses the same ToolLoop semantics as production: request a
+    // bounded search, then answer from the registered Run-local evidence.
+    let scripts = vec![
+        sse_tool_call(
+            "boundary-web-call",
+            "web_search",
+            r#"{"query":"synthetic bounded web evidence"}"#,
+        ),
+        sse_content("bounded web answer confirmed. [W1]"),
+    ];
     let llm = spawn_llm_protocol_double(scripts)
         .await
         .map_err(|_| EvalContractError::new("boundary_llm_double_failed"))?;
@@ -9504,12 +9563,21 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
 #[cfg(test)]
 async fn probe_combined_tool_loop() -> Result<bool, EvalContractError> {
     let calls_per_turn = [4_u32, 4, 4, 3, 3, 3, 3];
+    let tool_per_turn = [
+        "search_keyword",
+        "search_keyword",
+        "search_keyword",
+        "web_search",
+        "web_search",
+        "fs_read_authorized_folder",
+        "fs_read_authorized_folder",
+    ];
     let mut next_call = 1_u32;
     let mut responses = std::collections::VecDeque::new();
-    for call_count in calls_per_turn {
+    for (call_count, tool_name) in calls_per_turn.into_iter().zip(tool_per_turn) {
         let calls = (0..call_count)
             .map(|_| {
-                let call = boundary_tool_call(next_call);
+                let call = boundary_tool_call(next_call, tool_name);
                 next_call = next_call.saturating_add(1);
                 call
             })
@@ -9539,7 +9607,7 @@ async fn probe_combined_tool_loop() -> Result<bool, EvalContractError> {
         &executor,
         "combined-tool-loop",
         boundary_messages(),
-        vec![boundary_tool_spec()],
+        boundary_tool_specs(),
         &mut observer,
         &telemetry,
     )
@@ -11250,7 +11318,16 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
         .into_iter()
         .map(|scenario| {
             let case_id = scenario.case_id();
-            (case_id, live_pilot_dynamic_final_content(&scenario))
+            (
+                case_id,
+                (
+                    live_pilot_dynamic_final_content(&scenario),
+                    matches!(
+                        scenario.evidence_group(),
+                        EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
+                    ),
+                ),
+            )
         })
         .collect::<HashMap<_, _>>();
     let captures = Arc::new(Mutex::new(Vec::new()));
@@ -11261,11 +11338,19 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
                 crate::error::AppError::msg("live_pilot_dynamic_double_accept_failed")
             })?;
             let captured = read_http_request(&mut socket).await?;
-            let (case_id, _, _) = live_pilot_dynamic_request_shape(&captured.body)?;
-            let final_content = plans.get(&case_id).ok_or_else(|| {
+            let (case_id, _, has_web_result) = live_pilot_dynamic_request_shape(&captured.body)?;
+            let (final_content, needs_web) = plans.get(&case_id).ok_or_else(|| {
                 crate::error::AppError::msg("live_pilot_dynamic_double_case_unknown")
             })?;
-            let script = sse_content(final_content);
+            let script = if *needs_web && !has_web_result {
+                sse_tool_call(
+                    &format!("live-pilot-web-call-{case_id}"),
+                    "web_search",
+                    r#"{"query":"synthetic evaluation evidence"}"#,
+                )
+            } else {
+                sse_content(final_content)
+            };
             task_captures
                 .lock()
                 .map_err(|_| crate::error::AppError::msg("eval_protocol_double_lock_failed"))?

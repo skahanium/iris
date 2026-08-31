@@ -1481,11 +1481,13 @@ fn input_submission_resumes_the_same_run_and_replay_is_noop() {
         .expect("run exists");
     assert_eq!(snapshot.run.state, RunState::Preparing);
     assert!(snapshot.run.pending_input.is_none());
-    assert_eq!(
-        AgentRunRepository::latest_input_values(&db, &session.session_key, &accepted.run_id)
-            .expect("submitted input values"),
-        std::collections::BTreeMap::from([("city".to_string(), "上海".to_string())])
-    );
+    assert!(snapshot.events.iter().any(|event| {
+        matches!(
+            event.payload(),
+            RunEventPayload::InputProvided { values, .. }
+                if values == &std::collections::BTreeMap::from([("city".to_string(), "上海".to_string())])
+        )
+    }));
 }
 
 #[test]
@@ -2420,34 +2422,6 @@ fn hr2_task_matrix_uses_task_contracts_instead_of_fresh_fact_domains() {
             Default::default(),
             "{} fresh plan",
             case.name
-        );
-    }
-}
-
-#[test]
-fn hr2_persists_empty_legacy_fresh_fact_policy_for_every_new_run() {
-    let database = Database::open_in_memory().expect("database");
-    for (index, message) in [
-        "上海未来一周天气",
-        "今天有什么重要新闻",
-        "苹果现在股价多少",
-        "最近有什么好看的电影",
-        "今晚湖人比赛几点",
-        "当前应用版本是什么",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut input = request();
-        input.client_request_id = format!("hr2-empty-fresh-policy-{index}");
-        input.turn.message = message.into();
-        input.web_enabled = true;
-        let accepted = RunIntake::start(&database, input).expect("accept new Run");
-        assert_eq!(
-            AgentRunRepository::fresh_fact_policy_for_run(&database, &accepted.run_id)
-                .expect("read fresh policy"),
-            Some(Default::default()),
-            "{message}"
         );
     }
 }

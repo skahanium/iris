@@ -40,7 +40,7 @@ use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, Effect, Effort, PresentationProcessKind, PresentationProcessStatus,
     RunEventPayload, RunEventType, RunPresentationEvent, RunPresentationPayload, RunRecoveryKind,
-    RunStageCode, RunState, SafeRunErrorCode, WebEvidenceFailureReason,
+    RunStageCode, RunState, SafeRunErrorCode,
 };
 use crate::ai_types::{CitationBinding, CitationBindingMode};
 use crate::error::{AppError, AppResult};
@@ -142,52 +142,6 @@ impl RunEngine {
     /// bounded attempts but could not produce evidence safe for a factual
     /// answer. The UI can therefore offer a real retry instead of presenting a
     /// generic model failure.
-    pub(crate) fn fail_web_verification_with_sink(
-        db: &Database,
-        session: &AssistantSessionRef,
-        run_id: &str,
-        failure: WebVerificationFailure,
-        sink: &impl RunEventSink,
-    ) -> AppResult<()> {
-        let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
-        if snapshot.run.state.is_terminal() {
-            return Ok(());
-        }
-        let verification = AgentRunRepository::append_event(
-            db,
-            AppendRunEventInput {
-                run_id: run_id.to_string(),
-                state_version: snapshot.run.state_version,
-                event_type: RunEventType::WebVerificationFailed,
-                payload: RunEventPayload::WebVerificationFailed {
-                    code: failure.code,
-                    failure_reason: failure.reason,
-                    retryable: failure.retryable,
-                    attempt_count: failure.attempt_count.max(1),
-                    duration_bucket: failure.duration_bucket.to_string(),
-                    diagnostic_id: run_id.to_string(),
-                },
-            },
-        )?;
-        sink.emit(&verification)?;
-        let failed = AgentRunRepository::append_event(
-            db,
-            AppendRunEventInput {
-                run_id: run_id.to_string(),
-                state_version: verification.state_version(),
-                event_type: RunEventType::Failed,
-                payload: RunEventPayload::Failed {
-                    code: failure.code,
-                    message: safe_failure_message(failure.code).to_string(),
-                },
-            },
-        )?;
-        emit_durable_event_best_effort(sink, &failed);
-        Ok(())
-    }
-
-    /// Move an accepted Run into the visible Preparing stage before heavy context work.
     pub(crate) fn mark_preparing_with_sink(
         db: &Database,
         session: &AssistantSessionRef,
@@ -1027,32 +981,7 @@ impl RunEngine {
                         );
                     }
                 };
-            let host_submission = if outcome.final_submission.is_none() && finalization_required {
-                AgentRunRepository::fresh_fact_policy_for_run(db, run_id)?
-                    .filter(|policy| {
-                        matches!(
-                            policy.domain,
-                            crate::ai_runtime::run_contract::FreshFactDomain::Weather
-                                | crate::ai_runtime::run_contract::FreshFactDomain::News
-                                | crate::ai_runtime::run_contract::FreshFactDomain::Finance
-                                | crate::ai_runtime::run_contract::FreshFactDomain::Entertainment
-                                | crate::ai_runtime::run_contract::FreshFactDomain::Sports
-                        )
-                    })
-                    .map(|policy| {
-                        crate::ai_runtime::fresh_domains::host_renderer::render_current_run_submission(
-                            db, run_id, &policy,
-                        )
-                    })
-                    .transpose()?
-                    .flatten()
-            } else {
-                None
-            };
-            let submission = outcome
-                .final_submission
-                .as_ref()
-                .or(host_submission.as_ref());
+            let submission = outcome.final_submission.as_ref();
             let outcome = if let Some(submission) = submission {
                 let provenance =
                     match validated_current_run_final_submission(db, run_id, submission, true) {

@@ -36,7 +36,7 @@
 
 [`run_intake.rs`](../src-tauri/src/ai_runtime/run_intake.rs) 已在新 Normal Run 中移除“未命中排除项即 `StrictExternalFact`”的终局分支：普通外部问题在 Web 开启时冻结为 `WebPreferred + None`，Web 关闭时为 `Offline + None`；明确联网或 URL、强时效和高风险当前事实才冻结为 `WebRequired + CurrentRunWeb`。Web 开关仍是唯一能写入 `web.search` 的授权事实。
 
-同时，新 envelope 一律写入空的兼容 `FreshFactPolicy`，不再冻结 `web.domain.read`、领域 operation、时间窗口或城市输入。旧 Run 的非空领域字段只能用于兼容读取和恢复。
+同时，新 envelope 一律写入空的兼容 `FreshFactPolicy`，不再冻结 `web.domain.read`、领域 operation、时间窗口或城市输入。旧 Run 的非空领域字段只能用于兼容读取；活动旧 Run 会在 Provider 调用前安全终态化，不会重放已退役工具合同。
 
 这一入口收敛已在 2026-08-30 由 HR-4 衔接：普通 `WebPreferred` 与普通 `WebRequired` 都不再因内部结构化终局而拒绝自然正文；当前 Run evidence 的完成门禁保持不变。
 
@@ -46,11 +46,11 @@
 
 [`run_tool_loop.rs`](../src-tauri/src/ai_runtime/run_tool_loop.rs) 进一步维护通用 Web budget、Fresh research budget、search/fetch/repair 计数和 `ResearchQueryLedger`。结果是本地检索与 Web 研究没有共享同一套进展和预算语义。
 
-### 3.3 领域分类进入核心执行合同
+### 3.3 已退役领域分类的遗留兼容边界
 
-`FreshFactDomain`、`DomainOperation`、`FreshFactPolicy`、五类工具表面和 11 个 operation 分布在 Intake、tool surface、dispatcher、finalization、恢复和评测中。当前代码把“工具协议存在”误当成“领域能力应当成为核心路由”。
+截至 2026-08-31，五类专用 lookup、`fresh_domains` 执行器、`web.domain.read` 新授权和领域终态门禁已从新 Run 生产路径删除。`FreshFactPolicy`、`FreshFactDomain` 和 `DomainOperation` 仅保留为历史 envelope / migration 072 / 已持久化 MCP snapshot 的反序列化元数据；它们不得再决定新 Run 的权限、工具面、澄清或完成。
 
-这带来三类维护成本：
+此前该分类进入核心造成了三类维护成本：
 
 - 领域关键词和字段规则持续侵入普通对话；
 - 没有真实 Provider 时仍维护 DTO、mapping、renderer 和专用测试；

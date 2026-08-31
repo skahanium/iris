@@ -212,6 +212,22 @@ fn reign_in_catalog_exposes_only_one_network_tool() {
 }
 
 #[test]
+fn retired_current_fact_domain_tools_are_not_agent_visible() {
+    for name in [
+        "weather_lookup",
+        "news_lookup",
+        "finance_lookup",
+        "entertainment_lookup",
+        "sports_lookup",
+    ] {
+        assert!(
+            catalog_find(name).is_none(),
+            "{name} is a retired domain route and must not be exposed to a new Run"
+        );
+    }
+}
+
+#[test]
 fn total_catalog_count() {
     assert!(
         catalog_total_count() < 98,
@@ -239,96 +255,6 @@ fn dead_block_links_tool_is_not_exposed() {
         ])
         .is_empty()
     );
-}
-
-#[test]
-fn fresh_domain_tools_are_unique_closed_schema_dispatchable() {
-    let names = [
-        "weather_lookup",
-        "news_lookup",
-        "finance_lookup",
-        "entertainment_lookup",
-        "sports_lookup",
-    ];
-    let mut seen = Vec::new();
-    for name in names {
-        let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
-        assert!(
-            !seen.contains(&name),
-            "fresh domain tool name duplicated: {name}"
-        );
-        seen.push(name);
-        assert_eq!(
-            entry.input_schema["additionalProperties"],
-            serde_json::Value::Bool(false),
-            "{name} schema must reject extra properties"
-        );
-        assert_eq!(
-            entry.implementation,
-            ToolImplementationStatus::Dispatchable,
-            "{name} must be dispatchable"
-        );
-        assert_eq!(
-            entry.access_level,
-            crate::ai_runtime::ToolAccessLevel::Network
-        );
-        assert!(!entry.requires_confirmation);
-        assert!(
-            entry.max_results.is_some(),
-            "{name} must have bounded max_results"
-        );
-        let metadata = entry.execution_metadata.expect("{name} metadata");
-        assert_eq!(metadata.output_policy, "bounded_packets");
-        assert_eq!(metadata.evidence_policy, "current_run_domain");
-        assert_eq!(entry.required_capability_ids(), &["web.domain.read"]);
-    }
-}
-
-#[test]
-fn fresh_domain_tools_hidden_when_web_search_is_not_authorized() {
-    use crate::ai_runtime::run_contract::CapabilityId;
-    use crate::ai_runtime::tool_executor::ToolRegistry;
-
-    let registry = ToolRegistry::new();
-    let surface =
-        registry.tools_for_authorized_capabilities(&[CapabilityId::new("web.domain.read")], false);
-    for name in [
-        "weather_lookup",
-        "news_lookup",
-        "finance_lookup",
-        "entertainment_lookup",
-        "sports_lookup",
-    ] {
-        assert!(
-            !surface.iter().any(|tool| tool.name == name),
-            "{name} must not surface when the Web switch is off"
-        );
-    }
-}
-
-#[test]
-fn fresh_domain_tools_surface_with_web_domain_read_and_web_search() {
-    use crate::ai_runtime::run_contract::CapabilityId;
-    use crate::ai_runtime::tool_executor::ToolRegistry;
-
-    let registry = ToolRegistry::new();
-    let surface = registry.tools_for_authorized_capabilities(
-        &[
-            CapabilityId::new("web.search"),
-            CapabilityId::new("web.domain.read"),
-        ],
-        false,
-    );
-    let names: Vec<_> = surface.iter().map(|tool| tool.name.as_str()).collect();
-    for name in [
-        "weather_lookup",
-        "news_lookup",
-        "finance_lookup",
-        "entertainment_lookup",
-        "sports_lookup",
-    ] {
-        assert!(names.contains(&name), "{name} missing from Web surface");
-    }
 }
 
 #[test]
