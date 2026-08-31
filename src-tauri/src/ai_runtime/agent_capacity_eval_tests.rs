@@ -13,6 +13,7 @@ use super::agent_capacity_eval::{
     current_fact_answer_does_not_deny_web_after_search,
     current_fact_movie_follow_up_answer_grounded, discover_live_profile_candidates_from_database,
     evaluate_case, execute_headless_core_case, execute_pressure_staircases,
+    execute_smoke_continuity_and_tool_boundaries,
     filter_live_profile_candidates_by_model_allowlist, generate_core_scenarios,
     generate_pressure_staircases, live_pilot_dynamic_request_shape, live_pilot_evidence_oracle,
     live_pilot_prompt, live_pilot_result_status,
@@ -28,7 +29,6 @@ use super::agent_capacity_eval::{
     run_security_track, runtime_capability_to_eval_tool_name, select_core_scenarios,
     select_live_pilot_scenarios, selected_live_pilot_web_fact_claims,
     serialize_agent_capacity_report, serialize_evaluation_summary, serialize_live_preflight_report,
-    source_group_binding_covers_web_citation_requirement,
     spawn_live_pilot_dynamic_llm_protocol_double, spawn_llm_protocol_double,
     summarize_web_query_boundary, validate_serialized_evaluation_summary,
     validate_serialized_live_pilot_result, validate_serialized_live_preflight_report,
@@ -240,37 +240,6 @@ fn live_pilot_protocol_double_tracks_local_and_web_tool_results_separately() {
         live_pilot_dynamic_request_shape(&request).expect("protocol shape"),
         (48, true, true)
     );
-}
-
-#[test]
-fn source_group_binding_satisfies_only_web_citation_requirements() {
-    let source_group = crate::ai_types::CitationBinding {
-        mode: crate::ai_types::CitationBindingMode::SourceGroupFallback,
-        referenced_indices: Vec::new(),
-        fallback_reason: Some("missing_marker".to_string()),
-    };
-    let exact = crate::ai_types::CitationBinding {
-        mode: crate::ai_types::CitationBindingMode::Exact,
-        referenced_indices: vec![1],
-        fallback_reason: None,
-    };
-
-    assert!(source_group_binding_covers_web_citation_requirement(
-        Some(&source_group),
-        Some(SourceKind::Web),
-    ));
-    assert!(!source_group_binding_covers_web_citation_requirement(
-        Some(&source_group),
-        Some(SourceKind::Local),
-    ));
-    assert!(!source_group_binding_covers_web_citation_requirement(
-        Some(&exact),
-        Some(SourceKind::Web),
-    ));
-    assert!(!source_group_binding_covers_web_citation_requirement(
-        None,
-        Some(SourceKind::Web)
-    ));
 }
 
 #[test]
@@ -2199,14 +2168,11 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
     let summary = run_headless_core_evaluation(mode, None)
         .await
         .expect("headless evaluation");
-    let serialized = serialize_evaluation_summary(&summary).expect("strict summary");
     let output_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
         .join("target/agent-eval");
     std::fs::create_dir_all(&output_dir).expect("create ignored evaluation output");
-    std::fs::write(output_dir.join(file_name), serialized)
-        .expect("write strict evaluation summary");
     let hard_boundaries = run_hard_boundary_probes()
         .await
         .expect("execute real production hard boundaries");
@@ -2214,6 +2180,14 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
         hard_boundaries.iter().all(|probe| probe.passed()),
         "hard boundary regression"
     );
+    if mode == EvalRunMode::Smoke {
+        assert!(
+            execute_smoke_continuity_and_tool_boundaries()
+                .await
+                .expect("execute smoke continuity and tool boundaries"),
+            "smoke continuity or tool boundary regression"
+        );
+    }
     let security = run_security_track()
         .await
         .expect("execute deterministic security track");
@@ -2272,6 +2246,13 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
             );
         }
     }
+    // The summary is the completion marker consumed by the CLI and release
+    // gate.  Write it only after every requested matrix, boundary probe, and
+    // report check has succeeded; a failed full run must never leave a
+    // previous-looking "48/48" artifact behind.
+    let serialized = serialize_evaluation_summary(&summary).expect("strict summary");
+    std::fs::write(output_dir.join(file_name), serialized)
+        .expect("write strict evaluation summary");
 }
 
 #[tokio::test]
@@ -2739,6 +2720,21 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
             .validation_status_code(),
         "non_scalar_suite"
     );
+}
+
+#[tokio::test]
+async fn twenty_fifth_tool_request_is_a_rejected_capacity_boundary_even_when_final_synthesis_survives(
+) {
+    let executions = execute_pressure_staircases()
+        .await
+        .expect("pressure execution must observe the 24/25 tool boundary");
+    let tool_loop = executions
+        .iter()
+        .find(|execution| execution.dimension() == PressureDimension::ToolLoop)
+        .expect("tool-loop pressure evidence");
+
+    assert_eq!(tool_loop.stable_level(), Some(24));
+    assert_eq!(tool_loop.next_level(), Some(25));
 }
 
 #[tokio::test]

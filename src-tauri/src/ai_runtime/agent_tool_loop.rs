@@ -209,6 +209,20 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         false
     }
 
+    /// Whether a natural final answer must bind to evidence produced by this
+    /// Run.  The executor owns the concrete source syntax because the loop is
+    /// deliberately domain- and provider-neutral.
+    fn requires_natural_source_binding(&self) -> bool {
+        false
+    }
+
+    /// Validate source bindings in a natural final answer against this Run's
+    /// evidence.  A `false` result asks the loop for one no-tool repair turn;
+    /// it is not an internal execution failure.
+    fn natural_source_binding_is_valid(&self, _content: &str) -> bool {
+        true
+    }
+
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
     /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
@@ -220,6 +234,9 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         Ok(false)
     }
 }
+
+pub(crate) const EVIDENCE_LIMITED_RESPONSE: &str =
+    "我无法将本轮已有资料可靠地对应到具体结论，因此不展示未经核实的答复。请调整问题或稍后重试。";
 
 /// Executes the only permitted shape of an Agent tool loop.
 #[derive(Debug, Clone, Copy)]
@@ -402,8 +419,17 @@ impl AgentToolLoop {
         let mut tool_calls_by_class = HashMap::<ToolBudgetClass, u32>::new();
         let mut observed_progress = HashSet::<String>::new();
         let mut final_submission_repair_used = false;
+        let mut missing_evidence_repair_used = false;
+        let mut source_binding_repair_used = false;
+        let mut source_binding_repair_required = false;
         let mut incomplete_final_answer_repair_used = false;
         let mut incomplete_final_draft = None::<String>;
+        // Distinguish an answer that skipped a required Web lookup from one
+        // produced after an attempted lookup yielded no usable evidence. The
+        // former receives one tool-enabled repair; asking the model to repair
+        // the latter cannot create a source and used to turn an empty or
+        // failed search into a provider/internal failure.
+        let mut web_search_attempted_without_evidence = false;
         let mut no_progress_rounds = 0_u8;
         let mut synthesis_required = false;
         let synthesis_tools = tools
@@ -416,12 +442,14 @@ impl AgentToolLoop {
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
-            let active_tools: &[ToolSpec] =
-                if incomplete_final_draft.is_some() || synthesis_required {
-                    &synthesis_tools
-                } else {
-                    &tools
-                };
+            let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some()
+                || synthesis_required
+                || source_binding_repair_required
+            {
+                &synthesis_tools
+            } else {
+                &tools
+            };
             enforce_prompt_budget(&messages, active_tools, self.turn_budget)?;
             if self
                 .turn_budget
@@ -539,7 +567,28 @@ impl AgentToolLoop {
                     && !executor.has_web_evidence()
                     && !natural_clarification
                 {
-                    return Err(AppError::run(SafeRunErrorCode::WebEvidenceRequired));
+                    if web_search_attempted_without_evidence
+                        || missing_evidence_repair_used
+                        || model_turns >= self.max_model_turns
+                    {
+                        return Ok(evidence_limited_outcome(
+                            model_turns,
+                            tool_calls,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        ));
+                    }
+                    missing_evidence_repair_used = true;
+                    messages.push(LlmMessage {
+                        role: MessageRole::Assistant,
+                        content: content.into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    });
+                    messages.push(missing_evidence_repair_instruction());
+                    continue;
                 }
                 if executor.requires_external_evidence()
                     && !executor.has_external_evidence()
@@ -590,6 +639,31 @@ impl AgentToolLoop {
                         reasoning_content: None,
                     });
                     messages.push(incomplete_answer_continuation_instruction());
+                    continue;
+                }
+                if executor.requires_natural_source_binding()
+                    && !natural_clarification
+                    && !executor.natural_source_binding_is_valid(&content)
+                {
+                    if source_binding_repair_used || model_turns >= self.max_model_turns {
+                        return Ok(evidence_limited_outcome(
+                            model_turns,
+                            tool_calls,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        ));
+                    }
+                    source_binding_repair_used = true;
+                    source_binding_repair_required = true;
+                    messages.push(LlmMessage {
+                        role: MessageRole::Assistant,
+                        content: content.into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    });
+                    messages.push(source_binding_repair_instruction());
                     continue;
                 }
                 return Ok(AgentToolLoopOutcome {
@@ -700,6 +774,12 @@ impl AgentToolLoop {
                                     usage.tool_calls = tool_calls;
                                 }
                                 let result = executor.execute(run_id, call, tool_calls).await?;
+                                if matches!(
+                                    call.function.name.as_str(),
+                                    "web_search" | "web.search"
+                                ) {
+                                    web_search_attempted_without_evidence = true;
+                                }
                                 if result.success {
                                     successful_fingerprints.insert(fingerprint);
                                     round_made_progress |=
@@ -828,6 +908,49 @@ fn tool_surface_closed_instruction() -> LlmMessage {
         tool_calls: None,
         reasoning_content: None,
     }
+}
+
+fn missing_evidence_repair_instruction() -> LlmMessage {
+    LlmMessage {
+        role: MessageRole::System,
+        content: "The previous draft cannot be shown because this Run requires current evidence and no usable evidence has been registered. Use an available authorized read tool now to verify the answer. Do not invent facts or claim that you searched when no tool result is present.".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }
+}
+
+fn source_binding_repair_instruction() -> LlmMessage {
+    LlmMessage {
+        role: MessageRole::System,
+        content: "The previous draft cannot be shown because it does not bind its factual claims to this Run's sources. Revise it using only the existing transcript and cite the supplied Run-local source labels precisely. Do not call further business tools or invent a source.".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }
+}
+
+fn evidence_limited_outcome(
+    model_turns: u32,
+    tool_calls: u32,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    total_tokens: u32,
+) -> AgentToolLoopOutcome {
+    AgentToolLoopOutcome {
+        content: EVIDENCE_LIMITED_RESPONSE.to_string(),
+        finish_reason: "evidence_limited".to_string(),
+        final_submission: None,
+        model_turns,
+        tool_calls,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    }
+}
+
+pub(crate) fn is_evidence_limited_response(content: &str) -> bool {
+    content.trim() == EVIDENCE_LIMITED_RESPONSE
 }
 
 fn enforce_prompt_budget(

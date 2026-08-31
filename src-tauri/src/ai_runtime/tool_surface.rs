@@ -14,7 +14,6 @@ use crate::ai_runtime::run_contract::{CapabilityId, Effort};
 pub(crate) enum WebToolInstruction {
     None,
     MustSearchIfNeeded,
-    AlreadyRetrievedDoNotDeny,
     NoWebDoNotFabricate,
 }
 
@@ -26,7 +25,6 @@ pub(crate) struct ToolSurfaceInput {
     /// This is intentionally a contract fact, not a domain classifier result.
     pub(crate) requires_current_web_evidence: bool,
     pub(crate) effort: Effort,
-    pub(crate) web_prefetched: bool,
     pub(crate) authorized_capabilities: Vec<CapabilityId>,
 }
 
@@ -35,7 +33,6 @@ pub(crate) struct ToolSurfaceInput {
 pub(crate) struct ToolSurfacePlan {
     pub(crate) effort: Effort,
     pub(crate) expose_web_search: bool,
-    pub(crate) web_prefetched: bool,
     pub(crate) web_instruction: WebToolInstruction,
     /// Exact model-visible tool names frozen for this Run. Filled by the
     /// production orchestrator after combining the plan with the authorized
@@ -58,7 +55,6 @@ impl ToolSurfacePlanner {
             return ToolSurfacePlan {
                 effort: input.effort,
                 expose_web_search: false,
-                web_prefetched: input.web_prefetched,
                 web_instruction: if requires_current_web_evidence {
                     WebToolInstruction::NoWebDoNotFabricate
                 } else {
@@ -68,30 +64,18 @@ impl ToolSurfacePlanner {
             };
         }
 
-        // Evidence was already prefetched by the strict path. The final model
-        // does not need to search again; it must only be told not to deny that
-        // retrieval happened. Keeping the tool hidden also preserves the
-        // ability to finish with a non-tool-capable model.
-        if input.web_prefetched {
-            return ToolSurfacePlan {
-                effort: input.effort,
-                expose_web_search: false,
-                web_prefetched: true,
-                web_instruction: WebToolInstruction::AlreadyRetrievedDoNotDeny,
-                tool_names: Vec::new(),
-            };
-        }
-
-        // A Run that requires current Web evidence must be able to search.
-        // Direct mode never exposes web_search, so promote it to ToolLoop.
-        let effort = if requires_current_web_evidence && input.effort == Effort::Direct {
+        // A Web capability is a read surface the user has authorized for this
+        // Run.  Direct mode would hide it from the model, turning
+        // `WebPreferred` into a Host-side promise that cannot be exercised.
+        // Use the same bounded loop for both preferred and required Web; the
+        // verification requirement only changes the completion contract.
+        let effort = if input.effort == Effort::Direct {
             Effort::ToolLoop
         } else {
             input.effort
         };
 
-        // Direct mode does not expose web_search; ToolLoop/Durable do.
-        let expose_web_search = effort != Effort::Direct;
+        let expose_web_search = true;
         let web_instruction = if requires_current_web_evidence {
             WebToolInstruction::MustSearchIfNeeded
         } else {
@@ -101,7 +85,6 @@ impl ToolSurfacePlanner {
         ToolSurfacePlan {
             effort,
             expose_web_search,
-            web_prefetched: false,
             web_instruction,
             tool_names: Vec::new(),
         }
@@ -130,7 +113,6 @@ mod tests {
             web_enabled: true,
             requires_current_web_evidence: true,
             effort: Effort::Direct,
-            web_prefetched: false,
             authorized_capabilities: web_capabilities(),
         });
 
@@ -145,7 +127,6 @@ mod tests {
             web_enabled: false,
             requires_current_web_evidence: true,
             effort: Effort::Direct,
-            web_prefetched: false,
             authorized_capabilities: no_web_capabilities(),
         });
 
@@ -158,35 +139,16 @@ mod tests {
     }
 
     #[test]
-    fn prefetched_evidence_keeps_tool_hidden_but_denies_nothing() {
-        let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
-            web_enabled: true,
-            requires_current_web_evidence: true,
-            effort: Effort::Direct,
-            web_prefetched: true,
-            authorized_capabilities: web_capabilities(),
-        });
-
-        assert_eq!(plan.effort, Effort::Direct);
-        assert!(!plan.expose_web_search);
-        assert_eq!(
-            plan.web_instruction,
-            WebToolInstruction::AlreadyRetrievedDoNotDeny
-        );
-    }
-
-    #[test]
-    fn webpreferred_contract_stays_in_its_frozen_effort() {
+    fn webpreferred_contract_promotes_direct_to_tool_loop_and_exposes_search() {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: true,
             requires_current_web_evidence: false,
             effort: Effort::Direct,
-            web_prefetched: false,
             authorized_capabilities: web_capabilities(),
         });
 
-        assert_eq!(plan.effort, Effort::Direct);
-        assert!(!plan.expose_web_search);
+        assert_eq!(plan.effort, Effort::ToolLoop);
+        assert!(plan.expose_web_search);
         assert_eq!(plan.web_instruction, WebToolInstruction::None);
     }
 
@@ -196,7 +158,6 @@ mod tests {
             web_enabled: true,
             requires_current_web_evidence: true,
             effort: Effort::ToolLoop,
-            web_prefetched: false,
             authorized_capabilities: web_capabilities(),
         });
 

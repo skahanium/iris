@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
     is_natural_clarification, AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor,
-    ToolLoopProvider,
+    ToolLoopProvider, EVIDENCE_LIMITED_RESPONSE,
 };
 use super::model_gateway::{StreamEventObserver, StreamSurface};
 use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
@@ -761,6 +761,11 @@ struct LargeWebResultExecutor;
 struct OversizedWebResultExecutor;
 struct RequiredWebExecutor;
 struct RequiredExternalExecutor;
+struct SourceBindingExecutor;
+struct EmptyWebEvidenceExecutor;
+struct RecoverableWebExecutor {
+    registered: AtomicBool,
+}
 
 impl ToolLoopExecutor for RequiredWebExecutor {
     fn execute<'a>(
@@ -789,6 +794,80 @@ impl ToolLoopExecutor for RequiredExternalExecutor {
 
     fn requires_external_evidence(&self) -> bool {
         true
+    }
+}
+
+impl ToolLoopExecutor for EmptyWebEvidenceExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "items": [] }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+}
+
+impl ToolLoopExecutor for SourceBindingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("source binding repair closes the business tool surface") })
+    }
+
+    fn requires_natural_source_binding(&self) -> bool {
+        true
+    }
+
+    fn natural_source_binding_is_valid(&self, content: &str) -> bool {
+        content.contains("[W1]")
+    }
+}
+
+impl ToolLoopExecutor for RecoverableWebExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.registered.store(true, Ordering::SeqCst);
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "canonicalUrl": "https://example.test/current" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+
+    fn has_web_evidence(&self) -> bool {
+        self.registered.load(Ordering::SeqCst)
     }
 }
 
@@ -1555,6 +1634,85 @@ async fn final_submission_retries_one_withheld_plain_draft() {
         .all(|message| message.reasoning_content.is_none()));
 }
 
+#[tokio::test]
+async fn natural_answer_with_missing_source_binding_gets_one_no_tool_repair_turn() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_final_response("未绑定来源的草稿。"),
+            scripted_final_response("已绑定来源的答复。[W1]"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &SourceBindingExecutor,
+            "run-natural-source-repair",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a valid repaired natural answer completes");
+
+    assert_eq!(outcome.content, "已绑定来源的答复。[W1]");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("repair messages")
+        .iter()
+        .any(|message| message
+            .content
+            .text_content()
+            .contains("does not bind its factual claims")));
+}
+
+#[tokio::test]
+async fn required_web_draft_gets_one_tool_enabled_repair_before_completion() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_final_response("未核实的初稿。"),
+            scripted_tool_calls_response(vec![web_tool_call()]),
+            scripted_final_response("已通过本轮工具核实的答复。"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecoverableWebExecutor {
+        registered: AtomicBool::new(false),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-required-web-repair",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("the model may recover by using the existing Web surface");
+
+    assert_eq!(outcome.content, "已通过本轮工具核实的答复。");
+    assert_eq!(outcome.tool_calls, 1);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("repair messages")
+        .iter()
+        .any(|message| message
+            .content
+            .text_content()
+            .contains("requires current evidence")));
+}
+
 #[test]
 fn final_submission_rejects_model_authored_web_markers() {
     for markdown in ["模型手写的来源。[W99]", "模型手写的来源。[w99]"] {
@@ -2078,6 +2236,54 @@ async fn web_required_rejects_a_final_answer_without_registered_evidence() {
         .await
         .expect_err("web-required must not silently finalize");
     assert_eq!(error.to_string(), "agent_run_web_evidence_required");
+}
+
+#[tokio::test]
+async fn empty_web_search_finishes_with_a_bounded_limitation_without_spending_a_useless_repair_turn(
+) {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "empty-search",
+                    "web_search",
+                    serde_json::json!({"query":"current fact"}),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("unsupported current claim [W1]".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &EmptyWebEvidenceExecutor,
+            "run-empty-web-evidence",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("an empty current Web result should complete safely");
+
+    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert_eq!(outcome.model_turns, 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 
 #[test]

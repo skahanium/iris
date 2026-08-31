@@ -108,7 +108,7 @@ impl RunIntake {
             ContextMode::ExplicitScope
         } else if implicit_vault_required {
             ContextMode::ImplicitVault
-        } else if is_novel_writing_request(&directive_text) || request.session.is_some() {
+        } else if request.session.is_some() {
             ContextMode::Conversation
         } else {
             ContextMode::None
@@ -142,20 +142,13 @@ impl RunIntake {
         if !request.turn.explicit_references.is_empty() {
             material_needs.push(MaterialNeed::Reference);
         }
-        if is_official_writing_request(&directive_text) {
-            material_needs.push(MaterialNeed::Exemplar);
-        }
-        if needs_authority_material(&directive_text) {
-            material_needs.push(MaterialNeed::Authority);
-        }
         if freshness != Freshness::Offline {
             material_needs.push(MaterialNeed::Web);
         }
         material_needs.sort_by_key(|need| match need {
-            MaterialNeed::Exemplar => 0,
-            MaterialNeed::Authority => 1,
-            MaterialNeed::Reference => 2,
-            MaterialNeed::Web => 3,
+            MaterialNeed::Reference => 0,
+            MaterialNeed::Web => 1,
+            MaterialNeed::Authority | MaterialNeed::Exemplar => 2,
         });
         material_needs.dedup();
         // The envelope is the only source of capabilities that may reach a
@@ -893,7 +886,7 @@ struct ExclusionClassifier;
 impl ExclusionClassifier {
     fn resolve(
         request: &AssistantRunStartRequest,
-        message: &str,
+        _message: &str,
         directive_text: &str,
         local_only: bool,
     ) -> WebIntentDecision {
@@ -911,45 +904,13 @@ impl ExclusionClassifier {
         }
         let explicit_web = has_explicit_web_instruction(directive_text);
 
-        // Soft exclusions. Conversation-meta must be evaluated even when the
-        // message mentions past browsing ("browse the web", "联网查"), otherwise
-        // those keywords false-positive as ExplicitWebRequest.
-        if is_short_greeting(directive_text) {
-            return offline(WebDecisionReason::ConversationMeta);
-        }
-        if is_conversation_meta_request(directive_text) {
-            return offline(WebDecisionReason::ConversationMeta);
-        }
-        if request.session.is_some() && is_short_runtime_follow_up(directive_text) {
-            return offline(WebDecisionReason::ConversationMeta);
-        }
-        if !explicit_web {
-            if is_trusted_runtime_request(directive_text) {
-                return offline(WebDecisionReason::TrustedRuntimeFact);
-            }
-            if is_local_transformation_request(directive_text)
-                && is_material_bound_transformation(request, message, directive_text)
-            {
-                return offline(WebDecisionReason::LocalTransformation);
-            }
-            if is_material_bound_evidence_request(request, directive_text)
-                && !is_volatile_external_request(directive_text)
-                && !is_high_stakes_current_request(directive_text)
-                && !requests_external_evidence(directive_text)
-            {
-                return offline(WebDecisionReason::LocalTransformation);
-            }
-            if looks_like_strong_vault_dependency(directive_text)
-                && !is_volatile_external_request(directive_text)
-                && !is_high_stakes_current_request(directive_text)
-                && !requests_external_evidence(directive_text)
-                && !rejects_local_material_as_factual_source(directive_text)
-            {
-                return offline(WebDecisionReason::LocalTransformation);
-            }
-            if is_creative_generation_request(directive_text) {
-                return offline(WebDecisionReason::CreativeGeneration);
-            }
+        // Only trusted runtime facts bypass the Web surface.  Conversation
+        // follow-ups, creative requests and local-material work are semantic
+        // choices for the model, not Host-side capability revocations: a user
+        // may challenge a prior factual answer or ask to verify it in any of
+        // those forms.
+        if !explicit_web && is_trusted_runtime_request(directive_text) {
+            return offline(WebDecisionReason::TrustedRuntimeFact);
         }
 
         // An explicit external grant is the user's selected evidence source.
@@ -987,109 +948,6 @@ impl ExclusionClassifier {
     }
 }
 
-fn is_material_bound_transformation(
-    request: &AssistantRunStartRequest,
-    message: &str,
-    directive_text: &str,
-) -> bool {
-    request.explicit_action.is_some()
-        || !request.turn.explicit_references.is_empty()
-        || has_quoted_material(message)
-        || contains_any(
-            directive_text,
-            &[
-                "provided material",
-                "provided text",
-                "supplied",
-                "attached material",
-                "attachment",
-                "the text above",
-                "text above",
-                "this text",
-                "this sentence",
-                "this paragraph",
-                "my draft",
-                "my text",
-                "provided draft",
-                "我提供的材料",
-                "上面的材料",
-                "上面的段落",
-                "上面的",
-                "附件",
-                "这段",
-                "这句话",
-                "这段话",
-                "这段文字",
-            ],
-        )
-}
-
-/// User-provided material is authoritative for a request that explicitly asks
-/// to summarize, compare, or extract only that material. This is deliberately
-/// narrower than merely attaching a file: an attachment must not suppress the
-/// Web requirement for a question that also seeks current external facts.
-fn is_material_bound_evidence_request(
-    request: &AssistantRunStartRequest,
-    directive_text: &str,
-) -> bool {
-    !request.turn.explicit_references.is_empty()
-        && contains_any(
-            directive_text,
-            &[
-                "based on",
-                "according to",
-                "summarize",
-                "compare",
-                "extract",
-                "only use",
-                "仅根据",
-                "根据",
-                "总结",
-                "概括",
-                "提炼",
-                "对比",
-                "列出",
-            ],
-        )
-}
-
-/// Signals that an otherwise material-bound comparison also asks for external
-/// proof. This is intentionally used only to *veto* a local-only exemption:
-/// the default for anything not clearly a material transformation remains
-/// strict current-Run Web verification, so an unrecognised phrasing fails
-/// toward verification rather than a factual answer from local context alone.
-fn requests_external_evidence(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "web evidence",
-            "online evidence",
-            "public evidence",
-            "public information",
-            "public status",
-            "current public",
-            "external evidence",
-            "external source",
-            "external",
-            "on the web",
-            "on the internet",
-            "联网搜索",
-            "联网检索",
-            "联网核验",
-            "联网查证",
-            "联网查询",
-            "网页证据",
-            "公开证据",
-            "公开信息",
-            "公开状态",
-            "当前公开",
-            "外部证据",
-            "外部来源",
-            "外部",
-        ],
-    )
-}
-
 /// A request that rejects local notes as proof cannot enter the implicit-vault
 /// shortcut merely because it names those notes; it remains a strict factual
 /// request and therefore follows the normal Web decision path.
@@ -1112,15 +970,6 @@ fn rejects_local_material_as_factual_source(message: &str) -> bool {
             "without local",
         ],
     )
-}
-
-fn has_quoted_material(message: &str) -> bool {
-    message.chars().any(|character| {
-        matches!(
-            character,
-            '"' | '\'' | '“' | '”' | '‘' | '’' | '「' | '」' | '『' | '』' | '`'
-        )
-    })
 }
 
 fn offline(reason: WebDecisionReason) -> WebIntentDecision {
@@ -1223,6 +1072,17 @@ fn is_local_transformation_request(message: &str) -> bool {
 }
 
 fn has_explicit_web_instruction(message: &str) -> bool {
+    // Mentioning a previous search in an explanation question is not itself
+    // an instruction to search again.  The model still receives the generic
+    // WebPreferred surface when enabled and can decide to verify a disputed
+    // factual claim from conversation context.
+    if message.starts_with("why did ")
+        || message.starts_with("why was ")
+        || message.starts_with("为什么你")
+        || message.starts_with("为什么刚才")
+    {
+        return false;
+    }
     contains_any(
         message,
         &[
@@ -1288,83 +1148,20 @@ fn is_trusted_runtime_request(message: &str) -> bool {
     )
 }
 
-fn is_conversation_meta_request(message: &str) -> bool {
-    if contains_any(
-        message,
-        &[
-            "previous run",
-            "tool called",
-            "browsing fail",
-            "what did you do",
-        ],
-    ) {
-        return true;
-    }
-    let has_prior_reference = contains_any(
-        message,
-        &[
-            "刚才",
-            "刚刚",
-            "上一条",
-            "上一个",
-            "之前",
-            "previous",
-            "earlier",
-            "prior",
-            "previous run",
-        ],
-    );
-    let has_assistant_reference = contains_any(
-        message,
-        &["你", "助手", "模型", "harness", "you", "assistant"],
-    );
-    let has_behavior_reference = contains_any(
-        message,
-        &[
-            "联网", "搜索", "工具", "调用", "报错", "出错", "错误", "失败", "坏掉", "罢工",
-            "browse", "search", "tool", "error", "failed",
-        ],
-    );
-    (has_prior_reference && (has_assistant_reference || has_behavior_reference))
-        || (has_assistant_reference
-            && has_behavior_reference
-            && contains_any(
-                message,
-                &["为什么", "为何", "怎么", "还联网", "why", "how come"],
-            ))
-}
-
-/// A short follow-up about a failure or the assistant's behavior belongs to
-/// the immediately active conversation, not to the public Web. Requiring an
-/// existing session prevents an isolated question such as "why did it fail"
-/// from silently changing its ordinary factual meaning.
-fn is_short_runtime_follow_up(message: &str) -> bool {
-    let compact = message.trim();
-    compact.chars().count() <= 32
-        && contains_any(
-            compact,
-            &[
-                "why",
-                "how come",
-                "what happened",
-                "failed",
-                "failure",
-                "error",
-                "怎么了",
-                "为什么",
-                "为何",
-                "失败",
-                "出错",
-                "报错",
-            ],
-        )
-}
-
 fn is_volatile_external_request(message: &str) -> bool {
+    // Discourse about a prior turn may contain temporal words such as “just
+    // now”, but it does not by itself assert a current external fact.  Keep
+    // Web available as a preference; do not turn it into a strict factual
+    // contract merely because the conversation is being discussed.
+    if is_reflective_dialogue_request(message) {
+        return false;
+    }
     contains_any(
         message,
         &[
             "最新",
+            "近期",
+            "最近",
             "当前",
             "现在",
             "今日",
@@ -1385,6 +1182,7 @@ fn is_volatile_external_request(message: &str) -> bool {
             "天气",
             "新闻",
             "latest",
+            "recent",
             "current",
             "today",
             "tonight",
@@ -1401,6 +1199,25 @@ fn is_volatile_external_request(message: &str) -> bool {
             "breaking news",
         ],
     )
+}
+
+fn is_reflective_dialogue_request(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("what did you do") {
+        return true;
+    }
+    (contains_any(
+        message,
+        &["刚才", "刚刚", "上一条", "之前", "你", "助手", "模型"],
+    ) && contains_any(
+        message,
+        &["为什么", "怎么", "失败", "调用", "搜索", "工具", "报错"],
+    )) || (lower.contains("previous") || lower.contains("earlier") || lower.contains("prior"))
+        && (lower.contains("tool")
+            || lower.contains("search")
+            || lower.contains("browse")
+            || lower.contains("fail")
+            || lower.contains("error"))
 }
 
 fn is_high_stakes_current_request(message: &str) -> bool {
@@ -1449,72 +1266,6 @@ fn is_high_stakes_current_request(message: &str) -> bool {
         )
 }
 
-fn is_short_greeting(message: &str) -> bool {
-    let normalized = message.trim_matches(|ch: char| {
-        ch.is_whitespace() || ch.is_ascii_punctuation() || "，。！？；：、（）“”‘’".contains(ch)
-    });
-    matches!(
-        normalized,
-        "hi" | "hello"
-            | "hey"
-            | "thanks"
-            | "thank you"
-            | "你好"
-            | "您好"
-            | "嗨"
-            | "哈喽"
-            | "在吗"
-            | "你还在吗"
-            | "早上好"
-            | "晚上好"
-            | "谢谢"
-    )
-}
-
-fn is_creative_generation_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "write a poem",
-            "write a story",
-            "brainstorm",
-            "fictional",
-            "fantasy scene",
-            "invent a character",
-            "invent a",
-            "short story",
-            "write a song",
-            "creative writing",
-            "opening remarks",
-            "launch opening",
-            "opening line",
-            "without external research",
-            "do not research",
-            "\u{5199}\u{4e00}\u{9996}\u{8bd7}",
-            "\u{5199}\u{4e00}\u{4e2a}\u{5f00}\u{573a}\u{767d}",
-            "\u{5f00}\u{573a}\u{767d}",
-            "\u{5ba3}\u{4f20}\u{6587}\u{6848}",
-            "\u{53e3}\u{53f7}",
-            "\u{4e0d}\u{4f9d}\u{8d56}\u{5916}\u{90e8}\u{8d44}\u{6599}",
-            "\u{4e0d}\u{8981}\u{68c0}\u{7d22}",
-            "\u{521b}\u{4f5c}",
-            "\u{865a}\u{6784}",
-        ],
-    )
-}
-fn is_novel_writing_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "chapter",
-            "novel",
-            "fiction",
-            "write a story",
-            "\u{5c0f}\u{8bf4}",
-        ],
-    )
-}
-
 /// Offline Answers without explicit `@`/`#` materials still need a tool loop when the
 /// user clearly depends on vault notes; otherwise the model cannot call `read_note` /
 /// `search_hybrid`. Creative, greeting, and pure rewrite paths stay Direct.
@@ -1526,12 +1277,6 @@ pub(crate) fn needs_offline_vault_tool_loop(
         return false;
     }
     if request.security_domain == SecurityDomain::Classified {
-        return false;
-    }
-    if is_novel_writing_request(message)
-        || is_short_greeting(message)
-        || is_conversation_meta_request(message)
-    {
         return false;
     }
     // 「只用本地资料改写/翻译」uses「本地」as an offline constraint, not a vault
@@ -1546,8 +1291,8 @@ pub(crate) fn needs_offline_vault_tool_loop(
 ///
 /// Decision table:
 /// - Explicit `@`/`#` or folder/tag scope → allow (path scope enforces bounds)
-/// - Ordinary/work task with clear local dependency → allow full vault
-/// - Creative / rewrite / novel / classified / no local dependency → deny
+/// - A request with a clear local dependency → allow the bounded vault surface
+/// - Classified or no-local-dependency requests → deny
 pub(crate) fn allow_implicit_vault_for_run(
     security_domain: SecurityDomain,
     user_message: &str,
@@ -1560,12 +1305,6 @@ pub(crate) fn allow_implicit_vault_for_run(
         return false;
     }
     if security_domain == SecurityDomain::Classified {
-        return false;
-    }
-    if is_novel_writing_request(user_message)
-        || is_short_greeting(user_message)
-        || is_conversation_meta_request(user_message)
-    {
         return false;
     }
     if is_local_transformation_request(user_message) {
@@ -1625,22 +1364,6 @@ fn mentions_vault_as_material_source(message: &str) -> bool {
             "vault 里的",
             "读取 vault",
             "搜索 vault",
-        ],
-    )
-}
-
-fn is_official_writing_request(message: &str) -> bool {
-    contains_any(message, &["memo", "brief", "official notice"])
-}
-fn needs_authority_material(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "regulation",
-            "compliance",
-            "policy",
-            "procedure",
-            "responsibility",
         ],
     )
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai_types::CitationBinding;
 
 const MAX_FINAL_OUTPUT_CHARS: usize = 32_000;
 
@@ -36,7 +37,10 @@ pub(super) fn apply_required_web_degradation_notice(
     content: &mut String,
     web_degraded: bool,
 ) -> AppResult<()> {
-    if !web_degraded || content.trim().is_empty() {
+    if !web_degraded
+        || content.trim().is_empty()
+        || crate::ai_runtime::agent_tool_loop::is_evidence_limited_response(content)
+    {
         return Ok(());
     }
     *content = format!("> 联网搜索未取得结果，以下为离线回答。\n\n{content}");

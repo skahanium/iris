@@ -81,7 +81,7 @@ impl ConversationMemory {
             content_hash: summarized_content_hash(summarized),
             goal_summary: extract_summary(
                 summarized,
-                &["goal:", "Goal:"],
+                &["goal:", "Goal:", "目标：", "目标:"],
                 &[
                     "goal",
                     "want",
@@ -96,7 +96,17 @@ impl ConversationMemory {
             ),
             preference_summary: extract_summary(
                 summarized,
-                &["prefer:", "Preference:"],
+                &[
+                    "prefer:",
+                    "Preference:",
+                    "偏好：",
+                    "偏好:",
+                    "约束：",
+                    "约束:",
+                    "更正：",
+                    "更正:",
+                    "correction:",
+                ],
                 &[
                     "prefer",
                     "style",
@@ -105,13 +115,17 @@ impl ConversationMemory {
                     "\u{504f}\u{597d}",
                     "\u{559c}\u{6b22}",
                     "\u{4e0d}\u{8981}",
+                    "\u{66f4}\u{6b63}",
+                    "\u{64a4}\u{56de}",
+                    "constraint",
+                    "correction",
                 ],
                 "preference",
                 SummaryFallback::Optional,
             ),
             decision_summary: extract_summary(
                 summarized,
-                &["decision:", "Decision:"],
+                &["decision:", "Decision:", "已完成：", "已完成:"],
                 &[
                     "decision",
                     "decided",
@@ -127,7 +141,7 @@ impl ConversationMemory {
             ),
             open_threads_summary: extract_summary(
                 summarized,
-                &["open:"],
+                &["open:", "待处理：", "待处理:", "下一步：", "下一步:"],
                 &[
                     "open",
                     "todo",
@@ -554,6 +568,26 @@ mod memory_extraction_tests {
             !goal.contains("What is the weather in Paris?"),
             "the first user message must not become the permanent goal of later unrelated requests"
         );
+    }
+
+    #[test]
+    fn latest_explicit_correction_is_preserved_as_a_constraint() {
+        let messages = vec![
+            msg(1, "user", "目标：准备代号甲的摘要。"),
+            msg(2, "assistant", "收到。"),
+            msg(3, "user", "更正：代号应为乙，撤回甲；保持简洁中文。"),
+        ];
+
+        let preference = extract_summary(
+            &messages,
+            &["更正：", "更正:"],
+            &["更正", "撤回"],
+            "preference",
+            SummaryFallback::Optional,
+        );
+
+        assert!(preference.contains("代号应为乙"));
+        assert!(preference.contains("撤回甲"));
     }
 
     #[test]

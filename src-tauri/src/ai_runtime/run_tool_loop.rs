@@ -459,7 +459,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             .filter(|material| {
                 matches!(
                     material.origin,
-                    crate::ai_runtime::domain_executor::DomainMaterialOrigin::LocalRetrieval { .. }
+                    crate::ai_runtime::context_materials::ContextMaterialOrigin::LocalRetrieval { .. }
                 )
             })
             .map(|material| material.content.clone())
@@ -1826,6 +1826,23 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         self.external_evidence_ids
             .lock()
             .is_ok_and(|ids| !ids.is_empty())
+    }
+
+    fn requires_natural_source_binding(&self) -> bool {
+        self.requires_web_evidence()
+    }
+
+    fn natural_source_binding_is_valid(&self, content: &str) -> bool {
+        let citations = AgentEvidenceRepository::list_current_run_web_citation_links(
+            &self.state.db,
+            &self.accepted.run_id,
+        );
+        citations.is_ok_and(|citations| {
+            crate::ai_runtime::citation_linkify::bind_strict_current_run_citations(
+                content, &citations,
+            )
+            .is_ok()
+        })
     }
 
     fn emit_deferred_web_degradation_if_needed(

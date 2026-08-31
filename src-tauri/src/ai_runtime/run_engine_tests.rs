@@ -6,10 +6,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
+use super::context_materials::ContextMaterialPlan;
 use super::conversation_memory::ConversationMemory;
-use super::domain_executor::{
-    DomainExecutor, DomainMaterial, DomainMaterialOrigin, DomainMaterialRole,
-};
 use super::frozen_change_plan::{
     FrozenChangeOperationInput, FrozenChangePlan, FrozenChangePlanInput, FrozenChangeSetInput,
 };
@@ -931,7 +929,7 @@ fn history_selection_never_exceeds_eight_thousand_tokens_or_splits_pairs() {
 }
 
 #[tokio::test]
-async fn strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_calls() {
+async fn strict_web_multi_turn_pressure_keeps_run_local_precise_citations_without_repair_calls() {
     for repetition in 0..20 {
         let db = Database::open_in_memory().expect("database");
         let sink = RecordingSink::default();
@@ -969,30 +967,14 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_c
                 },
             )
             .expect("register strict-web pressure evidence");
-            let responses = if turn % 5 == 0 {
-                vec![crate::ai_runtime::model_gateway::GatewayResponse {
-                    content: Some(format!("第 {turn} 轮结论。")),
-                    tool_calls: vec![],
-                    usage: Default::default(),
-                    finish_reason: "stop".to_string(),
-                    reasoning_content: None,
-                    continuation: None,
-                }]
-            } else {
-                let marker = match turn % 3 {
-                    0 => "[W1]",
-                    1 => "[1]",
-                    _ => "[¹]",
-                };
-                vec![crate::ai_runtime::model_gateway::GatewayResponse {
-                    content: Some(format!("第 {turn} 轮结论。{marker}")),
-                    tool_calls: vec![],
-                    usage: Default::default(),
-                    finish_reason: "stop".to_string(),
-                    reasoning_content: None,
-                    continuation: None,
-                }]
-            };
+            let responses = vec![crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some(format!("第 {turn} 轮结论。[W1]")),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            }];
             let provider = ScriptedToolLoopProvider {
                 responses: std::sync::Mutex::new(VecDeque::from(responses)),
             };
@@ -1037,17 +1019,8 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_c
                 .expect("strict-web pressure persisted answer");
             assert!(citation_map.contains("\"index\":1"));
             assert!(!citation_map.contains("\"index\":2"));
-            if turn % 5 == 0 {
-                assert_eq!(content, format!("第 {turn} 轮结论。"));
-                assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
-            } else {
-                assert_eq!(content, format!("第 {turn} 轮结论。"));
-                assert!(
-                    !content.contains("[W1]"),
-                    "uncalibrated source-group routes must not expose a model-authored precise marker"
-                );
-                assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
-            }
+            assert_eq!(content, format!("第 {turn} 轮结论。[W1]"));
+            assert!(citation_map.contains("\"mode\":\"exact\""));
         }
     }
 }
@@ -3542,7 +3515,7 @@ async fn tool_loop_appends_one_recovery_turn_after_a_title_only_answer() {
                 continuation: None,
             },
             crate::ai_runtime::model_gateway::GatewayResponse {
-                content: Some("近期报道主要聚焦其国内政策与外交活动。".to_string()),
+                content: Some("近期报道主要聚焦其国内政策与外交活动。[W1]".to_string()),
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
@@ -3588,7 +3561,7 @@ async fn tool_loop_appends_one_recovery_turn_after_a_title_only_answer() {
         .expect("persisted recovered answer");
     assert_eq!(
         persisted,
-        "特朗普 最新新闻 2026年8月\n\n近期报道主要聚焦其国内政策与外交活动。"
+        "特朗普 最新新闻 2026年8月\n\n近期报道主要聚焦其国内政策与外交活动。[W1]"
     );
     assert!(provider
         .responses
@@ -3693,7 +3666,7 @@ async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
 }
 
 #[tokio::test]
-async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_claim_support() {
+async fn strict_web_answer_without_current_run_marker_withholds_unsupported_draft() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3760,7 +3733,9 @@ async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_cl
         &sink,
     )
     .await
-    .expect("missing current-run marker must degrade to a current-run source binding, not claim support");
+    .expect(
+        "missing current-run marker produces a completed limitation, not a false source binding",
+    );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
@@ -3776,8 +3751,8 @@ async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_cl
             )
             .map_err(Into::into)
         })
-        .expect("persisted source-group answer");
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+        .expect("persisted limitation answer");
+    assert!(!citation_map.contains("source_group_fallback"));
     assert!(!citation_map.contains("claim_support"));
     let content: String = db
         .with_read_conn(|conn| {
@@ -3788,12 +3763,15 @@ async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_cl
             )
             .map_err(Into::into)
         })
-        .expect("persisted source-group body");
-    assert_eq!(content, "缺少本轮引用的答复。");
+        .expect("persisted limitation body");
+    assert_eq!(
+        content,
+        crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+    );
 }
 
 #[tokio::test]
-async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker() {
+async fn natural_web_answer_keeps_only_the_current_run_precise_marker() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3857,7 +3835,7 @@ async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker(
         &sink,
     )
     .await
-    .expect("uncalibrated source-group answer completes");
+    .expect("precisely bound current-run answer completes");
 
     let (content, citation_map): (String, String) = db
         .with_read_conn(|conn| {
@@ -3870,17 +3848,18 @@ async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker(
             .map_err(Into::into)
         })
         .expect("persisted strict-web answer");
-    assert_eq!(content, "根据可用的信息，查到的网页资料表明版本已发布。");
-    assert!(!content.contains("[W1]"));
-    assert!(!content.contains("你提供"));
-    assert!(!content.contains("本轮"));
+    assert_eq!(
+        content,
+        "根据你提供的信息，本轮 web 证据表明版本已发布。[W1]"
+    );
+    assert!(content.contains("[W1]"));
     assert!(citation_map.contains("https://example.test/current-run"));
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
-    assert!(citation_map.contains("\"uncalibrated_route\""));
+    assert!(!citation_map.contains("source_group_fallback"));
+    assert!(citation_map.contains("\"mode\":\"exact\""));
 }
 
 #[tokio::test]
-async fn strict_web_missing_marker_uses_current_run_source_binding_only() {
+async fn strict_web_missing_marker_withholds_unsupported_draft() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3943,7 +3922,7 @@ async fn strict_web_missing_marker_uses_current_run_source_binding_only() {
         &sink,
     )
     .await
-    .expect("source-group fallback completes");
+    .expect("unsupported draft is safely withheld");
 
     let (content, citation_map): (String, String) = db
         .with_read_conn(|conn| {
@@ -3954,14 +3933,16 @@ async fn strict_web_missing_marker_uses_current_run_source_binding_only() {
             )
             .map_err(Into::into)
     })
-        .expect("source-group answer persisted");
-    assert_eq!(content, "结论来自当前轮证据。");
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
-    assert!(!citation_map.contains("claim_support"));
+        .expect("limitation answer persisted");
+    assert_eq!(
+        content,
+        crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+    );
+    assert!(!citation_map.contains("source_group_fallback"));
 }
 
 #[tokio::test]
-async fn source_group_web_follow_up_does_not_rehydrate_historical_precise_citations() {
+async fn web_follow_up_keeps_current_run_citations_separate_from_history() {
     let db = Database::open_in_memory().expect("database");
     let first = RunIntake::start(&db, request()).expect("first accepted");
     let first_evidence = AgentEvidenceRepository::register_web(
@@ -4070,8 +4051,8 @@ async fn source_group_web_follow_up_does_not_rehydrate_historical_precise_citati
     let follow_up_context =
         RunContextAssembler::assemble(&db, None, &follow_up.session.session_key, &follow_up.run_id)
             .expect("assemble follow-up context with prior strict-web answer");
-    let follow_up_messages =
-        follow_up_context.messages_with_domain_plan(&follow_up_context.domain_plan());
+    let follow_up_messages = follow_up_context
+        .messages_with_context_material_plan(&follow_up_context.context_material_plan());
     let historical_answer = follow_up_messages
         .iter()
         .find(|message| message.content.text_content().contains("首轮回答"))
@@ -4113,8 +4094,9 @@ async fn source_group_web_follow_up_does_not_rehydrate_historical_precise_citati
             .map_err(Into::into)
         })
         .expect("follow-up persisted");
-    assert_eq!(content, "第二轮回答。");
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+    assert_eq!(content, "第二轮回答。[W1]");
+    assert!(!citation_map.contains("source_group_fallback"));
+    assert!(citation_map.contains("\"mode\":\"exact\""));
     assert!(citation_map.contains("\"index\":1"));
     assert!(!citation_map.contains("\"index\":2"));
 }
@@ -4410,26 +4392,11 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
 
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
-    let plan = DomainExecutor::plan(
-        &super::run_contract::ExecutionEnvelope {
-            effect: super::run_contract::Effect::Answer,
-            context: super::run_contract::ContextMode::None,
-            freshness: super::run_contract::Freshness::Offline,
-            web_reason: super::run_contract::WebDecisionReason::LegacyUnknown,
-            verification_requirement: super::run_contract::VerificationRequirement::None,
-            effort: super::run_contract::Effort::Direct,
-            security_domain: SecurityDomain::Normal,
-            risk: super::run_contract::RiskClass::ReadOnly,
-            modalities: vec![super::run_contract::Modality::Image],
-            material_needs: Vec::new(),
-            required_capabilities: vec![CapabilityId::new("model.vision")],
-            explicit_constraints: Vec::new(),
-            fresh_fact: Default::default(),
-        },
-        "描述图片",
-        &[],
-        &[],
-    );
+    let plan = ContextMaterialPlan {
+        prompt_instructions: String::new(),
+        rendered_authorized_material: String::new(),
+        rendered_local_retrieval: String::new(),
+    };
     let provider = CapturingProvider {
         messages: std::sync::Mutex::new(Vec::new()),
     };
@@ -4452,7 +4419,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
         reasoning_content: None,
     }];
 
-    RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+    RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -4489,109 +4456,6 @@ fn terminal_event_count(events: &[super::run_contract::AssistantRunEvent]) -> us
             )
         })
         .count()
-}
-
-struct LeakingStreamingProvider;
-
-impl ToolLoopProvider for LeakingStreamingProvider {
-    fn answer_turn<'a>(
-        &'a self,
-        run_id: &'a str,
-        _messages: &'a [crate::ai_runtime::LlmMessage],
-        _tools: &'a [crate::ai_runtime::ToolSpec],
-        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
-        observer: &'a mut dyn StreamEventObserver,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
-                + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async move {
-            let leaked = "北京市教育局将于2026年3月12日组织专项检查。".to_string();
-            observer.observe(
-                &StreamEvent {
-                    request_id: run_id.to_string(),
-                    event_type: StreamEventType::Token,
-                    data: StreamEventData::Token {
-                        token: leaked.clone(),
-                        replace_visible: false,
-                    },
-                    surface: StreamSurface::VisibleAnswer,
-                    classified: false,
-                },
-                0,
-            )?;
-            Ok(crate::ai_runtime::model_gateway::GatewayResponse {
-                content: Some(leaked),
-                tool_calls: vec![],
-                usage: Default::default(),
-                finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
-            })
-        })
-    }
-}
-
-#[tokio::test]
-async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final_persistence() {
-    let db = Database::open_in_memory().expect("database");
-    let accepted = RunIntake::start(&db, request()).expect("accepted");
-    let plan = DomainExecutor::plan(
-        &super::run_contract::ExecutionEnvelope {
-            effect: super::run_contract::Effect::Draft,
-            context: super::run_contract::ContextMode::ExplicitReferences,
-            freshness: super::run_contract::Freshness::Offline,
-            web_reason: super::run_contract::WebDecisionReason::LegacyUnknown,
-            verification_requirement: super::run_contract::VerificationRequirement::None,
-            effort: super::run_contract::Effort::Direct,
-            security_domain: SecurityDomain::Normal,
-            risk: super::run_contract::RiskClass::ReadOnly,
-            modalities: vec![super::run_contract::Modality::Text],
-            material_needs: vec![super::run_contract::MaterialNeed::Exemplar],
-            required_capabilities: vec![CapabilityId::new("model.text")],
-            explicit_constraints: vec![],
-            fresh_fact: Default::default(),
-        },
-        "起草一份检查通知",
-        &[DomainMaterial {
-            origin: DomainMaterialOrigin::LocalRetrieval {
-                role: DomainMaterialRole::Exemplar,
-            },
-            label: "通知范文".into(),
-            content: "北京市教育局将于2026年3月12日组织专项检查。".into(),
-        }],
-        &[],
-    );
-    let sink = RecordingSink::default();
-
-    let error = RunEngine::execute_direct_streaming_with_prompt_evidence_and_domain_plan_with_sink(
-        &db,
-        &accepted.session,
-        &accepted.run_id,
-        "authorized prompt",
-        &[],
-        &plan,
-        &LeakingStreamingProvider,
-        &sink,
-    )
-    .await
-    .expect_err("exemplar-only facts must be rejected before persistence");
-
-    assert_eq!(
-        error.to_string(),
-        SafeRunErrorCode::EvidenceInvalid.as_str()
-    );
-    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
-        .expect("replay")
-        .expect("run exists");
-    assert_eq!(replay.run.state, RunState::Failed);
-    assert!(replay.run.final_message_id.is_none());
-    assert!(replay.events.iter().all(|event| {
-        serde_json::to_value(event).expect("serialize event")["type"] != "content_delta"
-    }));
 }
 
 #[test]

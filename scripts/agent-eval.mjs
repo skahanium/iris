@@ -372,6 +372,15 @@ function main() {
     );
     process.exit(2);
   }
+  const output = path.join(
+    workspaceRoot,
+    "target",
+    "agent-eval",
+    mode === "smoke" ? "core-smoke.json" : "core-full.json",
+  );
+  // Do not let a failed subprocess be mistaken for a fresh evaluation merely
+  // because a report from an earlier run remains on disk.
+  rmSync(output, { force: true });
   const result = runCargoEntrypoint(
     "ai_runtime::agent_capacity_eval_tests::deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested",
     {
@@ -386,12 +395,6 @@ function main() {
     buildAgentEvalChildEnvironment,
   );
   exitFromCargo(result, "agent_eval_runner_failed");
-  const output = path.join(
-    workspaceRoot,
-    "target",
-    "agent-eval",
-    mode === "smoke" ? "core-smoke.json" : "core-full.json",
-  );
   if (!existsSync(output)) {
     console.error("agent_eval_summary_missing");
     process.exit(1);

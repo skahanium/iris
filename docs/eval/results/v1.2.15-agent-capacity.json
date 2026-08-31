@@ -39,11 +39,33 @@
   ],
   "core": {
     "caseCount": 48,
-    "failed": 0,
+    "dimensions": {
+      "continuity": {
+        "passed": 4,
+        "required": 4
+      },
+      "contract": {
+        "passed": 48,
+        "required": 48
+      },
+      "provenance": {
+        "passed": 36,
+        "required": 36
+      },
+      "safety": {
+        "passed": 48,
+        "required": 48
+      },
+      "usability": {
+        "passed": 36,
+        "required": 36
+      }
+    },
+    "failed": 12,
     "hybrid": 12,
     "localOnly": 12,
     "noRetrieval": 12,
-    "passed": 48,
+    "passed": 36,
     "webOnly": 12
   },
   "evidenceLevel": "headless_deterministic",
@@ -157,7 +179,7 @@
   "schemaVersion": "agent-capacity-report-v1",
   "scorecard": {
     "faultRecovery": {
-      "constraintFailCases": 0,
+      "constraintFailCases": 12,
       "degradationCases": 0,
       "truncationCases": 0
     },
@@ -168,8 +190,8 @@
       "zeroToleranceGate": true
     },
     "performance": {
-      "modelTurns": 36,
-      "toolCalls": 0,
+      "modelTurns": 48,
+      "toolCalls": 12,
       "totalModelTimeP50Ms": null,
       "totalModelTimeP95Ms": null,
       "ttftP50Ms": null,
@@ -371,17 +393,17 @@
         },
         {
           "level": 20,
-          "passCount": 0,
+          "passCount": 5,
           "repetitions": 5
         },
         {
           "level": 50,
-          "passCount": 0,
+          "passCount": 5,
           "repetitions": 5
         },
         {
           "level": 100,
-          "passCount": 0,
+          "passCount": 5,
           "repetitions": 5
         }
       ],

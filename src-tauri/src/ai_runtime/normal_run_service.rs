@@ -29,7 +29,6 @@ use crate::storage::db::Database;
 fn plan_tool_surface(
     context: &crate::ai_runtime::run_context::RunContext,
     authorized_capabilities: &[CapabilityId],
-    web_prefetched: bool,
 ) -> ToolSurfacePlan {
     let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
         web_enabled: authorized_capabilities
@@ -40,13 +39,11 @@ fn plan_tool_surface(
             VerificationRequirement::CurrentRunWeb
         ),
         effort: context.envelope.effort,
-        web_prefetched,
         authorized_capabilities: authorized_capabilities.to_vec(),
     });
     tracing::debug!(
         effort = ?plan.effort,
         expose_web_search = plan.expose_web_search,
-        web_prefetched = plan.web_prefetched,
         web_instruction = ?plan.web_instruction,
         "tool surface planned"
     );
@@ -294,7 +291,7 @@ async fn execute_normal_run_internal(
         );
         return;
     }
-    let domain_plan = context.domain_plan();
+    let material_plan = context.context_material_plan();
     // Never route an external-fact Run to a direct model answer when Web is
     // unavailable. This is a safety denial, not a degraded offline answer.
     if context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb
@@ -334,7 +331,7 @@ async fn execute_normal_run_internal(
         &db,
         &accepted,
         &context,
-        &domain_plan,
+        &material_plan,
         &evidence_ids,
         &authorized_capabilities,
         &budget_policy,
@@ -407,7 +404,7 @@ pub(crate) fn build_cached_skill_activation(
     state: &AppState,
     vault: Option<&std::path::Path>,
     context: &crate::ai_runtime::run_context::RunContext,
-    authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
+    _authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
 ) -> AppResult<CachedSkillActivation> {
     let Some(vault) = vault else {
         return Ok(CachedSkillActivation {
@@ -437,7 +434,7 @@ pub(crate) fn build_cached_skill_activation(
                 .filter_map(|packet| packet.source_path.clone()),
         )
         .collect::<Vec<_>>();
-    let intent = skill_intent_for_run(context, authorized_capabilities);
+    let intent = skill_intent_for_run(context);
     let query_embedding = crate::ai_runtime::skills::SKILL_VECTOR_RERANK_DEFAULT_ENABLED
         .then(|| embedding_scheduler.cached_skill_activation_query(&context.user_message))
         .flatten();
@@ -464,24 +461,11 @@ pub(crate) fn build_cached_skill_activation(
     })
 }
 
-fn skill_intent_for_run(
-    context: &crate::ai_runtime::run_context::RunContext,
-    authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
-) -> AgentIntent {
+fn skill_intent_for_run(context: &crate::ai_runtime::run_context::RunContext) -> AgentIntent {
     use crate::ai_runtime::run_contract::Effect;
 
     match context.envelope.effect {
         Effect::Draft | Effect::Apply => AgentIntent::Write,
-        // The policy snapshot is the only source from which Skills can infer
-        // that Web research is available. Freshness is a completion
-        // requirement, never an implicit capability grant.
-        Effect::Answer
-            if authorized_capabilities
-                .iter()
-                .any(|capability| capability.as_str() == "web.search") =>
-        {
-            AgentIntent::Research
-        }
         Effect::Answer
             if !context.materials.is_empty() || !context.retrieval_scope.is_unrestricted() =>
         {
@@ -498,7 +482,7 @@ async fn dispatch_normal_run_after_context(
     db: &Database,
     accepted: &AssistantRunAccepted,
     context: &crate::ai_runtime::run_context::RunContext,
-    domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
+    material_plan: &crate::ai_runtime::context_materials::ContextMaterialPlan,
     registered_evidence_ids: &[i64],
     authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
     budget_policy: &RunBudgetPolicy,
@@ -508,9 +492,11 @@ async fn dispatch_normal_run_after_context(
 ) -> AppResult<()> {
     let active_skills =
         build_cached_skill_activation(state, vault, context, authorized_capabilities)?;
-    let messages =
-        context.messages_with_domain_plan_and_skills(domain_plan, &active_skills.prompt_overlay);
-    let routing_prompt = context.prompt_with_domain_plan(domain_plan);
+    let messages = context.messages_with_context_material_plan_and_skills(
+        material_plan,
+        &active_skills.prompt_overlay,
+    );
+    let routing_prompt = context.prompt_with_context_material_plan(material_plan);
     let mut evidence_ids = registered_evidence_ids.to_vec();
     evidence_ids.sort_unstable();
     evidence_ids.dedup();
@@ -541,7 +527,7 @@ async fn dispatch_normal_run_after_context(
             .flatten()
             .unwrap_or_default();
         let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-        let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, false);
+        let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities);
         let mut tools = ToolRegistry::constrain_for_run_context(
             registry.tools_for_authorized_capabilities(
                 authorized_capabilities,
@@ -553,10 +539,9 @@ async fn dispatch_normal_run_after_context(
         if !tool_surface_plan.expose_web_search {
             tools.retain(|tool| tool.name != "web_search");
         }
-        // Evidence obligation and structured terminalization are independent:
-        // ordinary WebRequired answers remain natural and use the controlled
-        // source group in RunEngine. Only the narrow strict contracts frozen
-        // above receive the reserved final submission tool.
+        // Evidence obligation and structured terminalization are independent.
+        // Ordinary WebRequired answers remain natural; only the narrow strict
+        // contracts frozen above receive the reserved final-submission tool.
         if requires_structured_finalization(context) {
             tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
         }
@@ -611,7 +596,7 @@ async fn dispatch_normal_run_after_context(
                 messages,
                 tools,
                 &evidence_ids,
-                Some(domain_plan),
+                Some(material_plan),
                 &provider,
                 &executor,
                 sink,
@@ -626,7 +611,7 @@ async fn dispatch_normal_run_after_context(
                 messages,
                 tools,
                 &evidence_ids,
-                Some(domain_plan),
+                Some(material_plan),
                 &provider,
                 &executor,
                 sink,
@@ -663,26 +648,26 @@ async fn dispatch_normal_run_after_context(
         provider
     };
     if let Some(telemetry) = telemetry {
-        RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_eval_telemetry(
+        RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_eval_telemetry(
             db,
             &accepted.session,
             &accepted.run_id,
             &messages,
             &evidence_ids,
-            domain_plan,
+            material_plan,
             &provider,
             sink,
             telemetry,
         )
         .await
     } else {
-        RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+        RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_sink(
             db,
             &accepted.session,
             &accepted.run_id,
             &messages,
             &evidence_ids,
-            domain_plan,
+            material_plan,
             &provider,
             sink,
         )

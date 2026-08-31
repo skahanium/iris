@@ -205,7 +205,7 @@ fn start_headless_tool_loop(
     RecordingSink,
     AssistantRunAccepted,
     crate::ai_runtime::run_context::RunContext,
-    crate::ai_runtime::domain_executor::DomainExecutionPlan,
+    crate::ai_runtime::context_materials::ContextMaterialPlan,
     Vec<i64>,
 ) {
     let sink = RecordingSink::default();
@@ -218,11 +218,11 @@ fn start_headless_tool_loop(
         &accepted.run_id,
     )
     .expect("run context");
-    let domain_plan = context.domain_plan();
+    let material_plan = context.context_material_plan();
     let initial_evidence =
         RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
             .expect("initial evidence registration");
-    (sink, accepted, context, domain_plan, initial_evidence)
+    (sink, accepted, context, material_plan, initial_evidence)
 }
 
 #[tokio::test]
@@ -638,7 +638,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         &accepted.run_id,
     )
     .expect("run context");
-    let domain_plan = context.domain_plan();
+    let material_plan = context.context_material_plan();
     let initial_evidence =
         RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
             .expect("initial evidence registration");
@@ -692,10 +692,10 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         &state.db,
         &accepted.session,
         &accepted.run_id,
-        context.messages_with_domain_plan(&domain_plan),
+        context.messages_with_context_material_plan(&material_plan),
         tools,
         &initial_evidence,
-        Some(&domain_plan),
+        Some(&material_plan),
         &provider,
         &executor,
         &sink,
@@ -738,7 +738,7 @@ async fn production_runtime_time_uses_frozen_surface_and_recovers() {
     request.client_request_id = "production-runtime-time".into();
     request.turn.message = "请调研当前时间，并使用 system_time_now 工具确认后汇总。".into();
     request.web_enabled = false;
-    let (sink, accepted, context, domain_plan, initial_evidence) =
+    let (sink, accepted, context, material_plan, initial_evidence) =
         start_headless_tool_loop(&state, request);
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
@@ -787,10 +787,10 @@ async fn production_runtime_time_uses_frozen_surface_and_recovers() {
         &state.db,
         &accepted.session,
         &accepted.run_id,
-        context.messages_with_domain_plan(&domain_plan),
+        context.messages_with_context_material_plan(&material_plan),
         tools,
         &initial_evidence,
-        Some(&domain_plan),
+        Some(&material_plan),
         &provider,
         &executor,
         &sink,
@@ -945,8 +945,8 @@ async fn ordinary_clarification_completes_and_next_run_receives_conversation_con
         &follow_up.run_id,
     )
     .expect("assemble follow-up conversation context");
-    let follow_up_messages =
-        follow_up_context.messages_with_domain_plan(&follow_up_context.domain_plan());
+    let follow_up_messages = follow_up_context
+        .messages_with_context_material_plan(&follow_up_context.context_material_plan());
     assert!(follow_up_messages.iter().any(|message| {
         message
             .content
@@ -1012,7 +1012,7 @@ async fn legacy_current_fact_run_is_terminalized_without_provider_replay() {
 }
 
 #[tokio::test]
-async fn hr1_ordinary_research_reply_uses_natural_source_group_finalization() {
+async fn ordinary_research_reply_repairs_missing_run_local_citation_before_completion() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
@@ -1023,6 +1023,9 @@ async fn hr1_ordinary_research_reply_uses_natural_source_group_finalization() {
         )),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。[W1]\"}}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -1066,7 +1069,11 @@ async fn hr1_ordinary_research_reply_uses_natural_source_group_finalization() {
         "the normal answer must be persisted exactly once"
     );
     let calls = llm.finish().await.expect("LLM completion");
-    assert_eq!(calls.len(), 2, "the real loop must reach a normal reply");
+    assert_eq!(
+        calls.len(),
+        3,
+        "the real loop repairs the source binding once"
+    );
     let tool_names = calls[0].body["tools"]
         .as_array()
         .expect("tool surface")
@@ -1076,7 +1083,7 @@ async fn hr1_ordinary_research_reply_uses_natural_source_group_finalization() {
     assert!(tool_names.contains(&"web_search"));
     assert!(
         !tool_names.contains(&"submit_final_answer"),
-        "ordinary WebRequired answers must use the existing natural source-group path"
+        "ordinary WebRequired answers must not require a structured finalization tool"
     );
     let citation_map: String = state
         .db
@@ -1089,8 +1096,9 @@ async fn hr1_ordinary_research_reply_uses_natural_source_group_finalization() {
             )
             .map_err(Into::into)
         })
-        .expect("source-group citation map");
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+        .expect("precise citation map");
+    assert!(!citation_map.contains("source_group_fallback"));
+    assert!(citation_map.contains("https://"));
 }
 
 #[tokio::test]
@@ -1177,8 +1185,7 @@ async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
 }
 
 #[tokio::test]
-async fn production_news_web_fallback_uses_natural_source_group_with_high_ledger_ids_and_recovers()
-{
+async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recovers() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     state
@@ -1199,6 +1206,9 @@ async fn production_news_web_fallback_uses_natural_source_group_with_high_ledger
         )),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -1248,7 +1258,7 @@ async fn production_news_web_fallback_uses_natural_source_group_with_high_ledger
         "HR-3 的严格联网任务也必须从通用循环暴露 Web 工具"
     );
     assert!(!names.contains(&"submit_final_answer"));
-    assert_eq!(calls.len(), 2);
+    assert_eq!(calls.len(), 3);
     let current_evidence =
         crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_registered(
             &state.db,
@@ -1274,7 +1284,7 @@ async fn production_news_web_fallback_uses_natural_source_group_with_high_ledger
 }
 
 #[tokio::test]
-async fn webpreferred_movie_research_uses_generic_web_evidence_without_city_or_domain_tools() {
+async fn recent_movie_research_uses_generic_web_evidence_without_city_or_domain_tools() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     state
@@ -1295,6 +1305,9 @@ async fn webpreferred_movie_research_uses_generic_web_evidence_without_city_or_d
         )),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。[W1]\"}}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -1323,7 +1336,7 @@ async fn webpreferred_movie_research_uses_generic_web_evidence_without_city_or_d
     assert_eq!(
         response.run.state,
         RunState::Completed,
-        "ordinary WebPreferred research must complete naturally; events={:?}; evidence={:?}",
+        "ordinary current research must complete naturally; events={:?}; evidence={:?}",
         response
             .events
             .iter()
@@ -1337,7 +1350,7 @@ async fn webpreferred_movie_research_uses_generic_web_evidence_without_city_or_d
         AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
             .expect("movie research evidence");
     assert!(evidence.iter().all(|item| item.evidence_id > 2000));
-    assert_eq!(llm.finish().await.expect("LLM completion").len(), 2);
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 3);
 }
 
 #[tokio::test]

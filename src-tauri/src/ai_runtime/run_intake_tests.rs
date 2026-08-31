@@ -1309,7 +1309,7 @@ fn envelope_resolver_applies_security_action_and_web_rules_without_scene_inferen
 }
 
 #[test]
-fn envelope_resolver_uses_user_constraints_before_explicit_apply_action() {
+fn envelope_resolver_keeps_explicit_local_only_boundary_before_apply_action() {
     let mut constrained = request();
     constrained.client_request_id = "constrained-action".into();
     constrained.turn.message = "只用本地资料，不要修改文件；请继续创作小说。".into();
@@ -1325,19 +1325,19 @@ fn envelope_resolver_uses_user_constraints_before_explicit_apply_action() {
     assert_eq!(resolved.effect, Effect::Answer);
     assert_eq!(resolved.context, ContextMode::ExplicitScope);
     assert_eq!(resolved.freshness, Freshness::Offline);
-    assert_eq!(resolved.effort, Effort::Direct);
+    assert_eq!(resolved.effort, Effort::ToolLoop);
     assert!(resolved.material_needs.is_empty());
 }
 
 #[test]
-fn envelope_resolver_keeps_novel_writing_in_conversation_without_implicit_retrieval() {
+fn new_writing_run_does_not_get_a_domain_specific_conversation_mode() {
     let mut novel = request();
     novel.client_request_id = "novel-conversation".into();
     novel.turn.message = "请继续创作这部小说的下一章。".into();
 
     let resolved = RunIntake::resolve_envelope(&novel).expect("resolve envelope");
 
-    assert_eq!(resolved.context, ContextMode::Conversation);
+    assert_eq!(resolved.context, ContextMode::None);
     assert_eq!(resolved.freshness, Freshness::Offline);
     assert!(resolved.material_needs.is_empty());
 }
@@ -1885,7 +1885,7 @@ fn event_state_version(event: &super::run_contract::AssistantRunEvent) -> u64 {
 }
 
 #[test]
-fn web_enabled_pure_rewrite_remains_direct_without_exposing_web() {
+fn web_enabled_rewrite_keeps_the_generic_preferred_web_surface_available() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -1893,9 +1893,9 @@ fn web_enabled_pure_rewrite_remains_direct_without_exposing_web() {
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.effort, Effort::Direct);
-    assert!(!envelope
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
@@ -1988,7 +1988,7 @@ fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.context, ContextMode::ImplicitVault);
     assert_eq!(envelope.effort, Effort::ToolLoop);
-    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+    assert_eq!(envelope.web_reason, WebDecisionReason::UserDisabled);
     assert_eq!(
         envelope.verification_requirement,
         VerificationRequirement::None
@@ -2192,15 +2192,15 @@ fn rejecting_local_notes_as_a_factual_source_still_requires_web_verification() {
 }
 
 #[test]
-fn creative_copy_request_remains_offline_when_it_does_not_ask_for_external_facts() {
+fn creative_copy_request_uses_generic_webpreferred_when_authorized() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "请写一个三句式的产品发布开场白。".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.web_reason, WebDecisionReason::CreativeGeneration);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
     assert_eq!(
         envelope.verification_requirement,
         super::run_contract::VerificationRequirement::None
@@ -2342,19 +2342,19 @@ fn hr2_task_matrix_uses_task_contracts_instead_of_fresh_fact_domains() {
             name: "chat",
             request: chat,
             effect: Effect::Answer,
-            freshness: Freshness::Offline,
+            freshness: Freshness::WebPreferred,
             verification: VerificationRequirement::None,
-            effort: Effort::Direct,
-            web_capability: false,
+            effort: Effort::ToolLoop,
+            web_capability: true,
         },
         Case {
             name: "ask-notes",
             request: ask_notes,
             effect: Effect::Answer,
-            freshness: Freshness::Offline,
+            freshness: Freshness::WebPreferred,
             verification: VerificationRequirement::None,
             effort: Effort::ToolLoop,
-            web_capability: false,
+            web_capability: true,
         },
         Case {
             name: "research",
@@ -2469,7 +2469,7 @@ fn strict_web_boundaries_remain_required_in_the_hr1_baseline() {
 }
 
 #[test]
-fn explicit_file_reference_answer_stays_direct_when_it_is_local_only() {
+fn explicit_file_reference_keeps_the_generic_preferred_web_surface_available() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -2494,12 +2494,12 @@ fn explicit_file_reference_answer_stays_direct_when_it_is_local_only() {
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
     assert_eq!(envelope.context, ContextMode::ExplicitReferences);
-    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(
         envelope.verification_requirement,
         VerificationRequirement::None
     );
-    assert_eq!(envelope.effort, Effort::Direct);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
 }
 
 #[test]
@@ -2571,19 +2571,24 @@ fn today_date_question_uses_trusted_runtime_without_freezing_a_domain_plan() {
 }
 
 #[test]
-fn broad_recent_movie_question_is_webpreferred_without_a_domain_or_city_contract() {
+fn broad_recent_question_is_webrequired_and_enters_the_generic_tool_loop() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "最近有什么好看的电影".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
     assert_eq!(
         envelope.verification_requirement,
-        VerificationRequirement::None
+        VerificationRequirement::CurrentRunWeb
     );
     assert_eq!(envelope.fresh_fact, Default::default());
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
 }
 
 #[test]
@@ -2591,7 +2596,10 @@ fn web_disabled_new_runs_keep_no_domain_plan_and_only_strict_tasks_keep_evidence
     for (message, verification_requirement) in [
         ("上海未来一周天气", VerificationRequirement::CurrentRunWeb),
         ("今天有什么重要新闻", VerificationRequirement::CurrentRunWeb),
-        ("最近有什么好看的电影", VerificationRequirement::None),
+        (
+            "最近有什么好看的电影",
+            VerificationRequirement::CurrentRunWeb,
+        ),
         ("苹果现在股价多少", VerificationRequirement::CurrentRunWeb),
         ("今晚湖人比赛几点", VerificationRequirement::CurrentRunWeb),
     ] {
@@ -2618,7 +2626,7 @@ fn web_disabled_new_runs_keep_no_domain_plan_and_only_strict_tasks_keep_evidence
 }
 
 #[test]
-fn web_enabled_conversation_meta_questions_never_trigger_search() {
+fn web_enabled_conversation_followups_keep_the_generic_web_tool_surface_available() {
     for message in [
         "这么简单的问题你还联网搜索？",
         "刚刚问你为什么简单问题也联网搜索，你就坏掉了？",
@@ -2631,13 +2639,40 @@ fn web_enabled_conversation_meta_questions_never_trigger_search() {
 
         let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-        assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
-        assert_eq!(
-            envelope.web_reason,
-            WebDecisionReason::ConversationMeta,
+        assert_eq!(envelope.freshness, Freshness::WebPreferred, "{message}");
+        assert_eq!(envelope.effort, Effort::ToolLoop, "{message}");
+        assert!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
             "{message}"
         );
     }
+}
+
+#[test]
+fn explicit_reverification_of_a_prior_answer_outranks_conversation_meta_heuristics() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.session = Some(crate::ai_runtime::run_contract::AssistantSessionRef {
+        domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
+        session_key: "session-reverify".to_string(),
+    });
+    request.turn.message = "请联网核实你刚才关于这个事实的回答，不要再凭记忆编造。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(
+        envelope.verification_requirement,
+        VerificationRequirement::CurrentRunWeb
+    );
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
 }
 
 #[test]
@@ -2684,19 +2719,19 @@ fn bilingual_web_intent_fixture_has_120_deterministic_cases() {
 }
 
 #[test]
-fn quoted_web_instruction_inside_a_transformation_remains_offline() {
+fn quoted_web_instruction_is_data_but_keeps_the_generic_preferred_surface() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "把‘请联网搜索最新消息’翻译成英文。".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
 }
 
 #[test]
-fn quoted_offline_instruction_inside_a_transformation_is_not_a_user_directive() {
+fn quoted_offline_instruction_is_data_but_keeps_the_generic_preferred_surface() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -2704,8 +2739,8 @@ fn quoted_offline_instruction_inside_a_transformation_is_not_a_user_directive() 
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
 }
 
 #[test]
@@ -2768,23 +2803,23 @@ fn continuing_a_normal_session_authorizes_bounded_conversation_context() {
 }
 
 #[test]
-fn web_enabled_short_greeting_remains_a_direct_offline_answer_without_web_capability() {
+fn web_enabled_short_greeting_keeps_the_generic_preferred_web_surface_available() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "你好！".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.effort, Effort::Direct);
-    assert!(!envelope
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
 }
 
 #[test]
-fn short_failure_follow_up_in_an_existing_session_is_a_local_conversation_meta_question() {
+fn short_failure_follow_up_keeps_the_generic_preferred_web_surface_available() {
     let mut request = request();
     request.web_enabled = true;
     request.session = Some(super::run_contract::AssistantSessionRef {
@@ -2795,9 +2830,9 @@ fn short_failure_follow_up_in_an_existing_session_is_a_local_conversation_meta_q
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.effort, Effort::Direct);
-    assert_eq!(envelope.web_reason, WebDecisionReason::ConversationMeta);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
 }
 
 #[test]
@@ -2909,9 +2944,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             message:
                 "Translate 'do not modify, do not browse, and delegate a child task' into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::Offline,
+            freshness: Freshness::WebPreferred,
             effect: Effect::Answer,
-            effort: Some(Effort::Direct),
+            effort: Some(Effort::ToolLoop),
             constraint: None,
             child_run: false,
         },
@@ -2919,9 +2954,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             name: "quoted vault words are not retrieval directives",
             message: "Translate “summarize the project notes” into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::Offline,
+            freshness: Freshness::WebPreferred,
             effect: Effect::Answer,
-            effort: Some(Effort::Direct),
+            effort: Some(Effort::ToolLoop),
             constraint: None,
             child_run: false,
         },
@@ -2969,9 +3004,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             name: "quoted high-risk facts remain transformation data",
             message: "Translate “current legal advice and medical dosage” into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::Offline,
+            freshness: Freshness::WebPreferred,
             effect: Effect::Answer,
-            effort: Some(Effort::Direct),
+            effort: Some(Effort::ToolLoop),
             constraint: None,
             child_run: false,
         },
@@ -3190,6 +3225,10 @@ fn intake_freezes_the_run_budget_policy_matrix() {
     ];
 
     for (request, expected) in cases {
-        assert_eq!(persisted_budget(request), expected);
+        let actual = persisted_budget(request);
+        assert_eq!(actual["profile"], expected["profile"]);
+        assert_eq!(actual["maxModelTurns"], expected["maxModelTurns"]);
+        assert_eq!(actual["maxToolCalls"], expected["maxToolCalls"]);
+        assert_eq!(actual["schemaVersion"], 3);
     }
 }

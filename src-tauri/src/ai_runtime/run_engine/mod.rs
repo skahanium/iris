@@ -28,10 +28,11 @@ use crate::ai_runtime::agent_run_repository::{
     DurableApplyCheckpointStage, FinalizeRunInput,
 };
 use crate::ai_runtime::agent_tool_loop::{
-    resolved_turn_usage, AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
+    is_evidence_limited_response, resolved_turn_usage, AgentModelTurnBudget, AgentToolLoop,
+    ToolLoopExecutor, ToolLoopProvider, EVIDENCE_LIMITED_RESPONSE,
 };
 use crate::ai_runtime::citation_linkify::{
-    bind_strict_current_run_citations, linkify_web_citations, strip_model_authored_citation_markers,
+    bind_strict_current_run_citations, linkify_web_citations,
 };
 use crate::ai_runtime::conversation_memory::ConversationMemory;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
@@ -42,7 +43,6 @@ use crate::ai_runtime::run_contract::{
     RunEventPayload, RunEventType, RunPresentationEvent, RunPresentationPayload, RunRecoveryKind,
     RunStageCode, RunState, SafeRunErrorCode,
 };
-use crate::ai_types::{CitationBinding, CitationBindingMode};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -458,43 +458,15 @@ impl RunEngine {
         .await
     }
 
-    /// Drive a streaming Run with a stateless domain verification gate.
-    #[cfg(test)]
+    /// Drive a streaming Run with multimodal messages and authorized material.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn execute_direct_streaming_with_prompt_evidence_and_domain_plan_with_sink(
-        db: &Database,
-        session: &AssistantSessionRef,
-        run_id: &str,
-        prompt: &str,
-        evidence_ids: &[i64],
-        domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
-        provider: &impl ToolLoopProvider,
-        sink: &impl RunEventSink,
-    ) -> AppResult<()> {
-        let messages = [direct_user_message(prompt)];
-        Self::execute_direct_streaming_with_messages_and_sink(
-            db,
-            session,
-            run_id,
-            &messages,
-            evidence_ids,
-            Some(domain_plan),
-            provider,
-            sink,
-            None,
-        )
-        .await
-    }
-
-    /// Drive a streaming Run with multimodal messages and a stateless domain verification gate.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+    pub(crate) async fn execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_sink(
         db: &Database,
         session: &AssistantSessionRef,
         run_id: &str,
         messages: &[crate::ai_runtime::LlmMessage],
         evidence_ids: &[i64],
-        domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
+        material_plan: &crate::ai_runtime::context_materials::ContextMaterialPlan,
         provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
@@ -504,7 +476,7 @@ impl RunEngine {
             run_id,
             messages,
             evidence_ids,
-            Some(domain_plan),
+            Some(material_plan),
             provider,
             sink,
             None,
@@ -515,13 +487,13 @@ impl RunEngine {
     /// Evaluation-only direct path with the same messages, evidence, verifier,
     /// Gateway and finalization stages as production.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn execute_direct_streaming_with_messages_evidence_and_domain_plan_with_eval_telemetry(
+    pub(crate) async fn execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_eval_telemetry(
         db: &Database,
         session: &AssistantSessionRef,
         run_id: &str,
         messages: &[crate::ai_runtime::LlmMessage],
         evidence_ids: &[i64],
-        domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
+        material_plan: &crate::ai_runtime::context_materials::ContextMaterialPlan,
         provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
         telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
@@ -532,7 +504,7 @@ impl RunEngine {
             run_id,
             messages,
             evidence_ids,
-            Some(domain_plan),
+            Some(material_plan),
             provider,
             sink,
             Some(telemetry),
@@ -551,7 +523,7 @@ impl RunEngine {
         messages: Vec<crate::ai_runtime::LlmMessage>,
         tools: Vec<crate::ai_runtime::ToolSpec>,
         evidence_ids: &[i64],
-        domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
+        material_plan: Option<&crate::ai_runtime::context_materials::ContextMaterialPlan>,
         provider: &impl ToolLoopProvider,
         executor: &impl ToolLoopExecutor,
         sink: &impl RunEventSink,
@@ -563,7 +535,7 @@ impl RunEngine {
             messages,
             tools,
             evidence_ids,
-            domain_plan,
+            material_plan,
             provider,
             executor,
             sink,
@@ -620,7 +592,7 @@ impl RunEngine {
         messages: Vec<crate::ai_runtime::LlmMessage>,
         tools: Vec<crate::ai_runtime::ToolSpec>,
         evidence_ids: &[i64],
-        domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
+        material_plan: Option<&crate::ai_runtime::context_materials::ContextMaterialPlan>,
         provider: &impl ToolLoopProvider,
         executor: &impl ToolLoopExecutor,
         sink: &impl RunEventSink,
@@ -633,7 +605,7 @@ impl RunEngine {
             messages,
             tools,
             evidence_ids,
-            domain_plan,
+            material_plan,
             provider,
             executor,
             sink,
@@ -653,7 +625,7 @@ impl RunEngine {
         messages: Vec<crate::ai_runtime::LlmMessage>,
         tools: Vec<crate::ai_runtime::ToolSpec>,
         evidence_ids: &[i64],
-        domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
+        _material_plan: Option<&crate::ai_runtime::context_materials::ContextMaterialPlan>,
         provider: &impl ToolLoopProvider,
         executor: &impl ToolLoopExecutor,
         sink: &impl RunEventSink,
@@ -838,41 +810,35 @@ impl RunEngine {
             }
         }
         observer.clear_deferred_visible_deltas();
-        let mut content = match validated_final_model_answer_with_telemetry(
-            &outcome.content,
-            outcome
-                .final_submission
-                .is_none()
-                .then_some(outcome.finish_reason.as_str()),
-            executor.requires_web_evidence() || executor.requires_external_evidence(),
-            telemetry,
-        ) {
-            Ok(content) => content,
-            Err(failure) => {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    failure,
-                );
+        // `EVIDENCE_LIMITED_RESPONSE` is created by the Host after it has
+        // withheld an unsupported model draft. It is a complete, safe normal
+        // answer, not provider output that should be subjected to the model
+        // finish-reason/integrity recovery path a second time.
+        let evidence_limited = is_evidence_limited_response(&outcome.content);
+        let mut content = if evidence_limited {
+            EVIDENCE_LIMITED_RESPONSE.to_string()
+        } else {
+            match validated_final_model_answer_with_telemetry(
+                &outcome.content,
+                outcome
+                    .final_submission
+                    .is_none()
+                    .then_some(outcome.finish_reason.as_str()),
+                executor.requires_web_evidence() || executor.requires_external_evidence(),
+                telemetry,
+            ) {
+                Ok(content) => content,
+                Err(failure) => {
+                    return fail_finalization_with_sink(
+                        db,
+                        run_id,
+                        running_state_version,
+                        sink,
+                        failure,
+                    );
+                }
             }
         };
-        if let Some(plan) = domain_plan {
-            if let Err(error) = plan.verify_output(&content) {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    RunFinalizationFailure::new(
-                        RunFinalizationStage::EvidenceValidation,
-                        SafeRunErrorCode::EvidenceInvalid,
-                        format!("{error:?}"),
-                    ),
-                );
-            }
-        }
         if let Err(error) =
             apply_required_web_degradation_notice(db, session, run_id, &mut content, web_degraded)
         {
@@ -892,7 +858,7 @@ impl RunEngine {
         final_evidence_ids.extend(executor.evidence_ids());
         final_evidence_ids.sort_unstable();
         final_evidence_ids.dedup();
-        if !natural_clarification {
+        if !natural_clarification && !is_evidence_limited_response(&content) {
             validate_final_evidence_or_fail(
                 db,
                 run_id,
@@ -921,23 +887,25 @@ impl RunEngine {
                 ),
             );
         }
-        content = match validated_final_model_answer_with_telemetry(
-            &content,
-            None,
-            executor.requires_web_evidence() || executor.requires_external_evidence(),
-            telemetry,
-        ) {
-            Ok(content) => content,
-            Err(failure) => {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    failure,
-                );
-            }
-        };
+        if !is_evidence_limited_response(&content) {
+            content = match validated_final_model_answer_with_telemetry(
+                &content,
+                None,
+                executor.requires_web_evidence() || executor.requires_external_evidence(),
+                telemetry,
+            ) {
+                Ok(content) => content,
+                Err(failure) => {
+                    return fail_finalization_with_sink(
+                        db,
+                        run_id,
+                        running_state_version,
+                        sink,
+                        failure,
+                    );
+                }
+            };
+        }
         let citation_evidence_ids = if executor.requires_web_evidence() {
             executor.evidence_ids()
         } else {
@@ -946,7 +914,10 @@ impl RunEngine {
         let mut citation_binding = None;
         let mut source_summary = None;
         let mut attribution = None;
-        if executor.requires_web_evidence() && !natural_clarification {
+        if executor.requires_web_evidence()
+            && !natural_clarification
+            && !is_evidence_limited_response(&content)
+        {
             if !AgentEvidenceRepository::has_current_run_web_evidence(
                 db,
                 run_id,
@@ -1000,7 +971,7 @@ impl RunEngine {
                 source_summary = Some(provenance.source_summary);
                 attribution = Some(provenance.attribution);
                 match bind_strict_current_run_citations(&content, &citations) {
-                    Ok(outcome) => outcome,
+                    Ok(outcome) => Some(outcome),
                     Err(error) => {
                         return fail_finalization_with_sink(
                             db,
@@ -1027,36 +998,43 @@ impl RunEngine {
                         "current-fact run required a grounded final submission",
                     ),
                 );
+            } else if is_evidence_limited_response(&content) {
+                // The ToolLoop used its single repair slot and deliberately
+                // withheld an unsupported draft.  This is a normal assistant
+                // limitation, not a red internal failure and it must not
+                // invent a source-group binding.
+                None
             } else {
-                // No production route is admitted to strict structured-final
-                // mode until it passes the live-model calibration gate. A
-                // normal model answer is therefore bound to the verified
-                // current-Run source set; missing markers become an explicit
-                // source group instead of discarding usable content.
-                crate::ai_runtime::citation_linkify::CitationBindingOutcome {
-                    content: crate::ai_runtime::text_support::normalize_source_group_visible_text(
-                        &strip_model_authored_citation_markers(&content),
-                    ),
-                    binding: CitationBinding {
-                        mode: CitationBindingMode::SourceGroupFallback,
-                        referenced_indices: Vec::new(),
-                        fallback_reason: Some("uncalibrated_route".to_string()),
-                    },
+                // Natural factual answers are admitted only with exact
+                // Run-local source markers. Production reaches this branch
+                // after the ToolLoop's repair turn; this fallback also keeps
+                // direct callers from persisting an unsupported draft.
+                match bind_strict_current_run_citations(&content, &citations) {
+                    Ok(outcome) => Some(outcome),
+                    Err(_) => {
+                        content = EVIDENCE_LIMITED_RESPONSE.to_string();
+                        None
+                    }
                 }
             };
-            tracing::info!(
-                run_id = %run_id,
-                binding_mode = ?outcome.binding.mode,
-                fallback_reason = ?outcome.binding.fallback_reason,
-                referenced_count = outcome.binding.referenced_indices.len(),
-                "current Run citation binding resolved"
-            );
-            content = outcome.content;
-            citation_binding = Some(outcome.binding);
+            if let Some(outcome) = outcome {
+                tracing::info!(
+                    run_id = %run_id,
+                    binding_mode = ?outcome.binding.mode,
+                    fallback_reason = ?outcome.binding.fallback_reason,
+                    referenced_count = outcome.binding.referenced_indices.len(),
+                    "current Run citation binding resolved"
+                );
+                content = outcome.content;
+                citation_binding = Some(outcome.binding);
+            }
         } else {
             content = linkify_final_web_citations(db, &citation_evidence_ids, content);
         }
-        if executor.requires_web_evidence() && !natural_clarification {
+        if executor.requires_web_evidence()
+            && !natural_clarification
+            && !is_evidence_limited_response(&content)
+        {
             if let Err(error) =
                 validate_current_run_citation_links(db, &citation_evidence_ids, &content)
             {
@@ -1106,7 +1084,7 @@ impl RunEngine {
         run_id: &str,
         messages: &[crate::ai_runtime::LlmMessage],
         evidence_ids: &[i64],
-        domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
+        material_plan: Option<&crate::ai_runtime::context_materials::ContextMaterialPlan>,
         provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
@@ -1130,7 +1108,7 @@ impl RunEngine {
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
-                let analyzing_materials = domain_plan.is_some_and(|plan| {
+                let analyzing_materials = material_plan.is_some_and(|plan| {
                     !plan.rendered_authorized_material.trim().is_empty()
                         || !plan.rendered_local_retrieval.trim().is_empty()
                 });
@@ -1171,9 +1149,9 @@ impl RunEngine {
         )?;
         sink.emit(&running)?;
         let running_state_version = running.state_version();
-        let defer_visible_deltas = domain_plan.is_some_and(
-            crate::ai_runtime::domain_executor::DomainExecutionPlan::requires_output_verification,
-        );
+        // Generic material provenance is a prompt boundary, not a brittle
+        // string-based semantic verifier. Stream normal answers normally.
+        let defer_visible_deltas = false;
         let mut observer = if let Some(telemetry) = telemetry {
             AgentRunStreamObserver::new_with_eval_telemetry(
                 db,
@@ -1317,21 +1295,6 @@ impl RunEngine {
                 );
             }
         };
-        if let Some(plan) = domain_plan {
-            if let Err(error) = plan.verify_output(&content) {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    RunFinalizationFailure::new(
-                        RunFinalizationStage::EvidenceValidation,
-                        SafeRunErrorCode::EvidenceInvalid,
-                        format!("{error:?}"),
-                    ),
-                );
-            }
-        }
         if let Err(error) =
             apply_required_web_degradation_notice(db, session, run_id, &mut content, false)
         {
