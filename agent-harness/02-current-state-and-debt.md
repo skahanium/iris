@@ -40,11 +40,11 @@
 
 这一入口收敛已在 2026-08-30 由 HR-4 衔接：普通 `WebPreferred` 与普通 `WebRequired` 都不再因内部结构化终局而拒绝自然正文；当前 Run evidence 的完成门禁保持不变。
 
-### 3.2 通用 ToolLoop 被 Web 专用控制层污染
+### 3.2 已清除的 Web 专用控制层及其审计边界
 
-[`agent_tool_loop.rs`](../src-tauri/src/ai_runtime/agent_tool_loop.rs) 已经是 Provider-neutral 多轮循环，支持 8 次模型调用、24 次工具调用、重复成功拒绝和失败重试。但它同时直接依赖 `ResearchBudget`、Web evidence 计数、Web deadline 和 Web 专用无进展错误。
+截至 2026-08-31，HR-3/HR-6 已从当前 `AgentToolLoop` 与新 Run 的控制路径移除 `ResearchBudget`、`FreshResearchPlan`、`EvidenceGap`、Web deadline，以及 search/fetch/repair 专用计数。现行循环只读取同一份冻结 `RunBudgetPolicy`：模型调用上限、总工具上限、分类工具上限、重复成功拒绝、失败重试与连续无进展收敛均对本地读取、Web、外部只读和 runtime 一致。
 
-[`run_tool_loop.rs`](../src-tauri/src/ai_runtime/run_tool_loop.rs) 进一步维护通用 Web budget、Fresh research budget、search/fetch/repair 计数和 `ResearchQueryLedger`。结果是本地检索与 Web 研究没有共享同一套进展和预算语义。
+这些名字仍可能出现在 Git 历史、旧 migration 字段或历史 Run 兼容读取中；它们不是新 Run 的规划、预算或完成门禁。后续审计不得把兼容 DTO 的存在误报为核心路由仍依赖 Web 专用研究骨架。
 
 ### 3.3 已退役领域分类的遗留兼容边界
 
@@ -88,5 +88,5 @@ HR-5 已保留该格式的兼容读取，并新增有序、至多六项的冻结
 
 - 不需要新建第二 Agent 系统；现有 Run、权限、catalog、Gateway、ledger 和通用 ToolLoop 是正确基础。
 - 需要删除的是 Web/领域专用平行控制层和普通回答上的过强门禁，而不是删除多轮工具能力。
-- 11 个领域 operation 当前确实存在，但目标处置是退出核心；是否保留某个真实 Provider 适配器必须由实际需求和 PDR 单独决定。
+- 11 个领域 operation 只作为历史 binding、快照和旧 Run 的兼容读取类型存在；它们已退出新 Run 的 Intake、默认工具面、授权和完成门禁。是否保留某个真实 Provider 适配器必须由实际需求和 PDR 单独决定。
 - 真实 Provider 尚未纳入本轮，任何 fixture 结果都不能写成真实模型质量结论。

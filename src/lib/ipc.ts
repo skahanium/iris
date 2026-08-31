@@ -891,8 +891,6 @@ export interface McpCapabilityBindingInput {
   mcpToolName: string;
   inputSchema: Record<string, unknown>;
   argumentMapping: Record<string, string>;
-  domainOperation?: DomainOperation;
-  outputMapping?: DomainOutputMapping;
   riskClass: "read_only";
   readOnly: true;
   userTrusted: true;
@@ -911,7 +909,9 @@ export interface McpCapabilityBindingSummary {
     maxModelChars: number;
     maxEvidenceChars: number;
   };
+  /** @deprecated 仅为删除或展示历史 binding 保留；新 Run 不会授权。 */
   domainOperation?: DomainOperation;
+  /** @deprecated 仅为删除或展示历史 binding 保留；新 Run 不会授权。 */
   outputMapping?: DomainOutputMapping;
   providerConfigHash: string;
   bindingConfigHash: string;

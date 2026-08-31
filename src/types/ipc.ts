@@ -668,7 +668,9 @@ export interface FeedChangedEvent {
   errorCode: string | null;
 }
 
-/** 已审核领域稳定操作。 */
+/**
+ * @deprecated 仅用于读取历史 MCP binding；新 Run 不再创建或授权领域操作。
+ */
 export type DomainOperation =
   | "weather.current"
   | "weather.forecast"
@@ -682,7 +684,9 @@ export type DomainOperation =
   | "sports.schedule"
   | "sports.score";
 
-/** 领域 provider 输出白名单映射。 */
+/**
+ * @deprecated 仅用于读取历史 MCP binding；新 binding 统一使用 `external.read`。
+ */
 export interface DomainOutputMapping {
   recordsPath: string;
   fields: Record<string, string>;

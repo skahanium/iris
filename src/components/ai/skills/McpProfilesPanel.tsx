@@ -1,15 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   credentialDelete,
@@ -26,8 +18,6 @@ import {
   webEvidenceProviderUpsert,
   webSearchRouteGet,
   webSearchRouteSet,
-  type DomainOperation,
-  type DomainOutputMapping,
   type WebEvidenceProviderDiagnostics,
   type WebEvidenceProviderInput,
   type WebEvidenceProviderSummary,
@@ -37,12 +27,6 @@ import {
 
 import { McpProfileCard, type McpCredentialSave } from "./McpProfileCard";
 import { McpProviderDetail } from "./McpProviderDetail";
-import {
-  DOMAIN_OPERATION_OPTIONS,
-  domainOperationMeta,
-  normalizeOutputMapping,
-  validateDomainMappingSave,
-} from "./mcpProfileParsers";
 import {
   mcpListMappingShortLabel,
   mcpListTransportShortLabel,
@@ -60,39 +44,6 @@ interface McpProfilesPanelProps {
 }
 
 type DiagnosticsByProvider = Record<string, WebEvidenceProviderDiagnostics>;
-
-interface DomainMappingDraft {
-  operation: DomainOperation | "";
-  recordsPath: string;
-  fields: Record<string, string>;
-  advancedOpen: boolean;
-  error: string | null;
-}
-
-function emptyDomainMappingDraft(): DomainMappingDraft {
-  return {
-    operation: "",
-    recordsPath: "$.records",
-    fields: {},
-    advancedOpen: false,
-    error: null,
-  };
-}
-
-function draftFromExistingBinding(
-  binding: McpCapabilityBindingSummary | undefined,
-): DomainMappingDraft {
-  if (!binding?.domainOperation || !binding.outputMapping) {
-    return emptyDomainMappingDraft();
-  }
-  return {
-    operation: binding.domainOperation,
-    recordsPath: binding.outputMapping.recordsPath,
-    fields: { ...binding.outputMapping.fields },
-    advancedOpen: false,
-    error: null,
-  };
-}
 
 function credentialServicesFromRefsJson(raw: string): string[] {
   try {
@@ -252,9 +203,6 @@ export function McpProfilesPanel({
   const [discoveredReadTools, setDiscoveredReadTools] = useState<
     McpReadOnlyToolCandidate[]
   >([]);
-  const [domainDrafts, setDomainDrafts] = useState<
-    Record<string, DomainMappingDraft>
-  >({});
   const [externalToolsBusy, setExternalToolsBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [localSelectedProviderId, setLocalSelectedProviderId] = useState<
@@ -482,7 +430,6 @@ export function McpProfilesPanel({
 
   useEffect(() => {
     setDiscoveredReadTools([]);
-    setDomainDrafts({});
     if (!open || !detailProvider || (draft && draft.id === detailProvider.id)) {
       setExternalBindings([]);
       return;
@@ -499,17 +446,6 @@ export function McpProfilesPanel({
     try {
       const result = await mcpReadOnlyToolsDiscover(providerId);
       setDiscoveredReadTools(result.tools);
-      setDomainDrafts(
-        Object.fromEntries(
-          result.tools.map((tool) => {
-            const existing = externalBindings.find(
-              (binding) =>
-                binding.mcpToolName === tool.name && binding.domainOperation,
-            );
-            return [tool.name, draftFromExistingBinding(existing)];
-          }),
-        ),
-      );
       setMessage(
         result.rejectedCount > 0
           ? `已发现 ${result.tools.length} 个可审查只读工具；另有 ${result.rejectedCount} 个副作用或不受支持工具已排除。`
@@ -517,84 +453,6 @@ export function McpProfilesPanel({
       );
     } catch (error) {
       setMessage(invokeErrorMessage(error));
-    } finally {
-      setExternalToolsBusy(false);
-    }
-  };
-
-  const updateDomainDraft = useCallback(
-    (toolName: string, patch: Partial<DomainMappingDraft>) => {
-      setDomainDrafts((current) => ({
-        ...current,
-        [toolName]: {
-          ...(current[toolName] ?? emptyDomainMappingDraft()),
-          ...patch,
-        },
-      }));
-    },
-    [],
-  );
-
-  const saveDomainBinding = async (
-    providerId: string,
-    tool: McpReadOnlyToolCandidate,
-  ) => {
-    if (typeof mcpCapabilityBindingUpsert !== "function") return;
-    const draft = domainDrafts[tool.name] ?? emptyDomainMappingDraft();
-    const existingOperations = externalBindings
-      .filter(
-        (
-          binding,
-        ): binding is McpCapabilityBindingSummary & {
-          domainOperation: DomainOperation;
-        } =>
-          binding.providerId === providerId && binding.domainOperation != null,
-      )
-      .map((binding) => binding.domainOperation);
-    const draftOperations = Object.entries(domainDrafts)
-      .filter(([name, item]) => name !== tool.name && item.operation)
-      .map(([, item]) => item.operation as DomainOperation);
-    const validationError = validateDomainMappingSave({
-      readOnly: tool.readOnly,
-      riskClass: tool.riskClass,
-      operation: draft.operation,
-      recordsPath: draft.recordsPath,
-      fields: draft.fields,
-      existingOperations: [...existingOperations, ...draftOperations],
-    });
-    if (validationError) {
-      updateDomainDraft(tool.name, { error: validationError });
-      return;
-    }
-    if (!draft.operation) return;
-    const outputMapping: DomainOutputMapping = normalizeOutputMapping({
-      recordsPath: draft.recordsPath,
-      fields: draft.fields,
-    });
-    setExternalToolsBusy(true);
-    setMessage(null);
-    try {
-      await mcpCapabilityBindingUpsert({
-        providerId,
-        mcpToolName: tool.name,
-        inputSchema: tool.inputSchema,
-        argumentMapping: {},
-        domainOperation: draft.operation,
-        outputMapping,
-        riskClass: "read_only",
-        readOnly: true,
-        userTrusted: true,
-        attestedBindingConfigHash: tool.bindingConfigHash,
-      });
-      await refreshExternalBindings(providerId);
-      updateDomainDraft(tool.name, { error: null });
-      setMessage(
-        "已保存当前事实映射；若这是该操作唯一健康映射，Composer 无需逐轮选择。",
-      );
-    } catch (error) {
-      updateDomainDraft(tool.name, {
-        error: invokeErrorMessage(error),
-      });
     } finally {
       setExternalToolsBusy(false);
     }
@@ -787,8 +645,8 @@ export function McpProfilesPanel({
                   <div>
                     <p className="font-medium">{binding.mcpToolName}</p>
                     <p className="text-muted-foreground">
-                      {binding.domainOperation
-                        ? `web.domain.read · ${binding.domainOperation} · 已配置当前事实`
+                      {binding.domainOperation || binding.outputMapping
+                        ? "已退役的旧领域映射 · 仅兼容读取，不可用于新 Run"
                         : "external.read · 参数同名映射"}{" "}
                       ·{" "}
                       {binding.providerEnabled && binding.configMatches
@@ -810,52 +668,29 @@ export function McpProfilesPanel({
                 </div>
               ))}
               {discoveredReadTools.map((tool) => {
-                const draft =
-                  domainDrafts[tool.name] ?? emptyDomainMappingDraft();
                 const bound = externalBindings.some(
                   (binding) => binding.mcpToolName === tool.name,
                 );
-                const existingDomainBinding = externalBindings.find(
-                  (binding) =>
-                    binding.mcpToolName === tool.name &&
-                    binding.domainOperation,
-                );
-                const schemaRecord =
-                  tool.inputSchema &&
-                  typeof tool.inputSchema === "object" &&
-                  !Array.isArray(tool.inputSchema)
-                    ? (tool.inputSchema as {
-                        properties?: Record<string, unknown>;
-                      })
-                    : null;
-                const schemaPropertyNames =
-                  schemaRecord?.properties &&
-                  typeof schemaRecord.properties === "object" &&
-                  !Array.isArray(schemaRecord.properties)
-                    ? Object.keys(schemaRecord.properties)
-                    : [];
-                const meta = draft.operation
-                  ? domainOperationMeta(draft.operation)
-                  : null;
                 return (
                   <div
                     key={tool.name}
-                    data-testid={`mcp-domain-mapping-tool-${tool.name}`}
+                    data-testid={`mcp-external-read-tool-${tool.name}`}
                     className="space-y-3 rounded-md border border-border-subtle bg-surface-inset/20 p-3 text-xs"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-medium">{tool.name}</p>
                         <p className="text-muted-foreground">
-                          {existingDomainBinding
-                            ? `web.domain.read · ${existingDomainBinding.domainOperation} · 已配置`
-                            : "可配置为当前事实映射，或保留逐 Run 外部只读审核"}
+                          {bound
+                            ? "已有 binding；若为旧领域映射，请先删除后重新审核为 external.read"
+                            : "可审核为逐 Run external.read；不会创建领域路由或自动授权"}
                         </p>
                       </div>
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
+                        data-testid={`mcp-external-bind-${tool.name}`}
                         disabled={externalToolsBusy || bound}
                         onClick={() =>
                           void bindReadOnlyTool(detailProvider.id, tool)
@@ -864,147 +699,16 @@ export function McpProfilesPanel({
                         {bound ? "已绑定" : "审核并信任为只读"}
                       </Button>
                     </div>
-
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <label className="space-y-1 font-medium text-foreground">
-                        当前事实操作
-                        <select
-                          data-testid={`mcp-domain-operation-${tool.name}`}
-                          value={draft.operation}
-                          disabled={
-                            externalToolsBusy || !detailProvider.enabled
-                          }
-                          className="iris-focus-soft flex h-9 w-full rounded-md border border-border bg-card px-2 text-sm text-foreground"
-                          onChange={(event) => {
-                            updateDomainDraft(tool.name, {
-                              operation: event.target.value as
-                                | DomainOperation
-                                | "",
-                              error: null,
-                            });
-                          }}
-                        >
-                          <option value="">选择当前事实操作…</option>
-                          {DOMAIN_OPERATION_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.group} · {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-1 font-medium text-foreground">
-                        记录路径
-                        <Input
-                          data-testid={`mcp-domain-records-path-${tool.name}`}
-                          value={draft.recordsPath}
-                          disabled={
-                            externalToolsBusy || !detailProvider.enabled
-                          }
-                          spellCheck={false}
-                          placeholder="$.records"
-                          onChange={(event) =>
-                            updateDomainDraft(tool.name, {
-                              recordsPath: event.target.value,
-                              error: null,
-                            })
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    {draft.operation && meta ? (
-                      <div className="space-y-2 rounded-md border border-border/60 bg-background/40 p-3">
-                        <p className="font-medium text-foreground">
-                          必需字段映射
-                        </p>
-                        {meta.requiredFields.map((field) => (
-                          <label
-                            key={field}
-                            className="grid gap-2 md:grid-cols-[120px_minmax(0,1fr)_200px]"
-                          >
-                            <span className="self-center text-muted-foreground">
-                              {meta.fieldLabels[field] ?? field}
-                            </span>
-                            <Input
-                              data-testid={`mcp-domain-field-${tool.name}-${field}`}
-                              value={draft.fields[field] ?? ""}
-                              disabled={
-                                externalToolsBusy || !detailProvider.enabled
-                              }
-                              spellCheck={false}
-                              placeholder="$.field"
-                              list={`mcp-domain-schema-${tool.name}`}
-                              onChange={(event) =>
-                                updateDomainDraft(tool.name, {
-                                  fields: {
-                                    ...draft.fields,
-                                    [field]: event.target.value,
-                                  },
-                                  error: null,
-                                })
-                              }
-                            />
-                            <select
-                              aria-label={`${meta.fieldLabels[field] ?? field} 从 schema 选择`}
-                              value=""
-                              disabled={
-                                externalToolsBusy || !detailProvider.enabled
-                              }
-                              className="iris-focus-soft flex h-9 w-full rounded-md border border-border bg-card px-2 text-sm text-foreground"
-                              onChange={(event) => {
-                                if (!event.target.value) return;
-                                updateDomainDraft(tool.name, {
-                                  fields: {
-                                    ...draft.fields,
-                                    [field]: event.target.value,
-                                  },
-                                  error: null,
-                                });
-                              }}
-                            >
-                              <option value="">schema 字段下拉</option>
-                              {schemaPropertyNames.map((property) => (
-                                <option key={property} value={`$.${property}`}>
-                                  {property}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        ))}
-                        <datalist id={`mcp-domain-schema-${tool.name}`}>
-                          {schemaPropertyNames.map((property) => (
-                            <option key={property} value={`$.${property}`} />
-                          ))}
-                        </datalist>
-                      </div>
-                    ) : null}
-
-                    <Collapsible
-                      open={draft.advancedOpen}
-                      onOpenChange={(open) =>
-                        updateDomainDraft(tool.name, { advancedOpen: open })
-                      }
-                    >
-                      <CollapsibleTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          data-testid={`mcp-domain-advanced-${tool.name}`}
-                          className="h-8 gap-1.5 text-xs text-muted-foreground"
-                        >
-                          <ChevronDown
-                            className={cn(
-                              "h-4 w-4 transition-transform duration-fast",
-                              draft.advancedOpen && "rotate-180",
-                            )}
-                          />
-                          高级：只读 schema 与哈希
-                        </Button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="space-y-2 border-t border-border-subtle pt-3">
+                    <details className="space-y-2 border-t border-border-subtle pt-3">
+                      <summary
+                        data-testid={`mcp-external-advanced-${tool.name}`}
+                        className="cursor-pointer text-xs text-muted-foreground"
+                      >
+                        高级：只读 schema 与哈希
+                      </summary>
+                      <div className="space-y-2 pt-2">
                         <pre
-                          data-testid={`mcp-domain-schema-${tool.name}`}
+                          data-testid={`mcp-external-schema-${tool.name}`}
                           className="max-h-48 overflow-auto rounded-md bg-surface-inset/40 p-2 text-[11px] text-muted-foreground"
                         >
                           {JSON.stringify(tool.inputSchema, null, 2)}
@@ -1015,28 +719,8 @@ export function McpProfilesPanel({
                         <p className="text-muted-foreground">
                           Binding config hash：{tool.bindingConfigHash}
                         </p>
-                      </CollapsibleContent>
-                    </Collapsible>
-
-                    {draft.error ? (
-                      <p role="alert" className="text-xs text-destructive">
-                        {draft.error}
-                      </p>
-                    ) : null}
-
-                    <div className="flex justify-end">
-                      <Button
-                        type="button"
-                        size="sm"
-                        data-testid={`mcp-domain-save-${tool.name}`}
-                        disabled={externalToolsBusy || !detailProvider.enabled}
-                        onClick={() =>
-                          void saveDomainBinding(detailProvider.id, tool)
-                        }
-                      >
-                        保存当前事实映射
-                      </Button>
-                    </div>
+                      </div>
+                    </details>
                   </div>
                 );
               })}

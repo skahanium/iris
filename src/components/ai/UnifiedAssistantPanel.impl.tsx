@@ -222,7 +222,11 @@ export function UnifiedAssistantPanel({
         .then((bindings) => {
           if (!active) return;
           const available = bindings.filter(
-            (binding) => binding.providerEnabled && binding.configMatches,
+            (binding) =>
+              binding.providerEnabled &&
+              binding.configMatches &&
+              !binding.domainOperation &&
+              !binding.outputMapping,
           );
           setExternalBindings(available);
           setSelectedExternalBindingIds((selected) =>

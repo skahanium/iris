@@ -150,10 +150,10 @@
 2026-08-31 验收结果：
 
 - `fresh_domains/`、五个领域 catalog/dispatch 分支、专用地点与 provider renderer、`current_fact_finalization`、Host 预取和领域 fixture 已删除；新 Run 的 WebRequired 统一由模型先请求 `web_search` 再进入既有 `AgentToolLoop`。
-- `FreshFactDomain`、`DomainOperation`、migration 072 和旧 MCP snapshot 只保留反序列化/读取兼容。含旧领域标记的活跃 Run 在 Provider 调度前明确终态化，绝不自动重放事实查询或副作用；设置层同样拒绝写入新的领域 binding。
-- `retired_current_fact_domain_tools_are_not_agent_visible`、`legacy_current_fact_run_is_terminalized_without_provider_replay`、`new_domain_binding_input_is_rejected_before_it_can_recreate_retired_routing` 与静态扫描共同证明新核心没有第二领域路由。该阶段净删除约 6,600 行，不新增表、迁移、IPC 或 Provider。
+- `FreshFactDomain`、`DomainOperation`、migration 072 和旧 MCP snapshot 只保留反序列化/读取兼容。含旧领域标记的活跃 Run 在 Provider 调度前明确终态化，绝不自动重放事实查询或副作用；设置层拒绝写入新的领域 binding，历史 binding 只可展示和删除。
+- `retired_current_fact_domain_tools_are_not_agent_visible`、`legacy_current_fact_run_is_terminalized_without_provider_replay`、`new_domain_binding_input_is_rejected_before_it_can_recreate_retired_routing` 和 `tests/mcp-domain-capability-mapping.test.tsx` 共同证明：新工具只会建立 `external.read`，历史领域 binding 不会进入 Composer 的逐 Run 授权面。该阶段净删除约 6,600 行，不新增表、迁移、IPC 或 Provider。
 
-退出条件（已满足）：新 Run 的权限、工具面、dispatch、finalization 和评测模拟均不以 `FreshFactDomain`/`DomainOperation` 决策；旧数据只能安全读取或终态化，不能回流为新写入。
+退出条件（已满足）：新 Run 的权限、工具面、dispatch、finalization、MCP 管理输入和评测模拟均不以 `FreshFactDomain`/`DomainOperation` 决策；旧数据只能安全读取、展示/删除或终态化，不能回流为新写入或授权。
 
 ## 10. HR-7：质量与 Provider 校准
 
