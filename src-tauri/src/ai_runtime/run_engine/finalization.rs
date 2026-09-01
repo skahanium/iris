@@ -624,7 +624,7 @@ pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
         "agent_run_tool_loop_limit" => SafeRunErrorCode::ToolLoopLimit,
         "agent_run_output_too_long" => SafeRunErrorCode::OutputTooLong,
         "agent_run_incomplete_output" => SafeRunErrorCode::IncompleteOutput,
-        "agent_run_invalid_model_response" => SafeRunErrorCode::InvalidRequest,
+        "agent_run_invalid_model_response" => SafeRunErrorCode::EmptyOutput,
         "agent_run_final_submission_required" | "agent_run_final_submission_invalid" => {
             SafeRunErrorCode::FinalizationProtocolInvalid
         }
@@ -738,6 +738,17 @@ mod apply_notice_tests {
             classify_tool_loop_failure(&AppError::msg("agent_run_provenance_reference_invalid"));
 
         assert_eq!(code, SafeRunErrorCode::FinalizationProtocolInvalid);
+    }
+
+    #[test]
+    fn empty_provider_response_is_not_reported_as_a_capability_failure() {
+        let code = classify_tool_loop_failure(&AppError::msg("agent_run_invalid_model_response"));
+
+        assert_eq!(code, SafeRunErrorCode::EmptyOutput);
+        assert_ne!(
+            safe_failure_message(code),
+            safe_failure_message(SafeRunErrorCode::InvalidRequest)
+        );
     }
 
     #[test]

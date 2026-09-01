@@ -1,10 +1,17 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -61,9 +68,10 @@ const allowedControlKeys = new Set([
   "IRIS_AGENT_EVAL_APPROVED_PROFILE",
   "IRIS_AGENT_EVAL_COST_CONFIRMATION",
   "IRIS_AGENT_EVAL_CREDENTIAL_PROBE",
-  "IRIS_AGENT_EVAL_UPDATE_VERSIONED",
   "IRIS_AGENT_EVAL_DIRECT_HTTPS",
   "IRIS_AGENT_EVAL_MODEL_ALLOWLIST",
+  "IRIS_AGENT_EVAL_LIVE_RESULT_TO_VALIDATE",
+  "IRIS_AGENT_EVAL_LIVE_RESULT_SHA256",
   "IRIS_DATA_DIR",
   "IRIS_CONFIG_DIR",
 ]);
@@ -284,7 +292,7 @@ function runLive() {
       console.error("agent_eval_live_requires_an_explicit_approved_profile");
       process.exit(2);
     }
-    if (costConfirmation !== "one-24-case-interaction-matrix-pilot") {
+    if (costConfirmation !== "one-6-case-interaction-matrix-pilot") {
       console.error("agent_eval_live_pilot_requires_user_cost_checkpoint");
       process.exit(2);
     }
@@ -360,15 +368,278 @@ function runLive() {
   console.log(`agent_eval_summary=${path.relative(workspaceRoot, output)}`);
 }
 
+function runProductGate() {
+  const outputDirectory = path.join(workspaceRoot, "target", "agent-eval");
+  const output = path.join(outputDirectory, "product-gate.json");
+  mkdirSync(outputDirectory, { recursive: true });
+  // A failed invocation must never leave a previously passed gate visible.
+  rmSync(output, { force: true });
+  const liveResults = process.env.IRIS_AGENT_EVAL_LIVE_RESULTS;
+  const liveReview = process.env.IRIS_AGENT_EVAL_LIVE_REVIEW;
+  const requestedPaths = liveResults
+    ?.split(path.delimiter)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (
+    requestedPaths?.length !== 2 ||
+    requestedPaths.some((value) => !path.isAbsolute(value))
+  ) {
+    console.error("agent_eval_two_live_results_required");
+    process.exit(2);
+  }
+  if (!liveReview || !path.isAbsolute(liveReview)) {
+    console.error("agent_eval_live_review_required");
+    process.exit(2);
+  }
+  let canonicalResults;
+  let reportSnapshots;
+  let reports;
+  let canonicalReview;
+  let review;
+  try {
+    const resolvedPaths = resolveLiveEvaluationPaths(process.env);
+    const targetRoot = realpathSync(
+      path.join(workspaceRoot, "target", "agent-eval"),
+    );
+    canonicalResults = requestedPaths.map((requested) => {
+      const canonical = realpathSync(requested);
+      if (!canonical.startsWith(`${targetRoot}${path.sep}`)) {
+        throw new Error("agent_eval_live_result_outside_target");
+      }
+      const metadata = statSync(canonical);
+      if (!metadata.isFile() || metadata.size > 256 * 1024) {
+        throw new Error("agent_eval_live_result_invalid");
+      }
+      return canonical;
+    });
+    if (new Set(canonicalResults).size !== 2) {
+      throw new Error("agent_eval_live_routes_must_be_distinct");
+    }
+    reportSnapshots = canonicalResults.map((canonical) =>
+      readFileSync(canonical),
+    );
+    for (let index = 0; index < canonicalResults.length; index += 1) {
+      const canonical = canonicalResults[index];
+      const snapshotHash = createHash("sha256")
+        .update(reportSnapshots[index])
+        .digest("hex");
+      const validation = runCargoEntrypoint(
+        "ai_runtime::agent_capacity_eval_tests::live_result_validation_command_entrypoint_rejects_tampered_artifacts",
+        {
+          IRIS_AGENT_EVAL_LIVE_RESULT_TO_VALIDATE: canonical,
+          IRIS_AGENT_EVAL_LIVE_RESULT_SHA256: snapshotHash,
+          IRIS_CONFIG_DIR: resolvedPaths.configDir,
+        },
+        buildAgentEvalChildEnvironment,
+      );
+      if (validation.error || validation.status !== 0) {
+        throw new Error("agent_eval_live_result_strict_validation_failed");
+      }
+    }
+    reports = reportSnapshots.map((snapshot) =>
+      JSON.parse(snapshot.toString("utf8")),
+    );
+    canonicalReview = realpathSync(liveReview);
+    if (!canonicalReview.startsWith(`${targetRoot}${path.sep}`)) {
+      throw new Error("agent_eval_live_review_outside_target");
+    }
+    const reviewMetadata = statSync(canonicalReview);
+    if (!reviewMetadata.isFile() || reviewMetadata.size > 128 * 1024) {
+      throw new Error("agent_eval_live_review_invalid");
+    }
+    review = JSON.parse(readFileSync(canonicalReview, "utf8"));
+    validateProductQualityArtifacts(
+      reports,
+      review,
+      canonicalResults.map((canonical) => path.basename(canonical)),
+    );
+  } catch (error) {
+    console.error(
+      error instanceof Error
+        ? error.message
+        : "agent_eval_live_artifact_invalid",
+    );
+    process.exit(2);
+  }
+  const contract = spawnSync(process.execPath, [scriptPath, "full"], {
+    cwd: workspaceRoot,
+    env: buildAgentEvalChildEnvironment(process.env),
+    stdio: "inherit",
+  });
+  if (contract.error || contract.status !== 0) {
+    console.error("agent_eval_contract_gate_failed");
+    process.exit(contract.status ?? 1);
+  }
+  const totalLiveRuns = reports.reduce(
+    (total, report) => total + report.caseCount,
+    0,
+  );
+  const productReport = {
+    schemaVersion: "agent-product-gate-v1",
+    status: "product_gate_passed",
+    liveRunCount: totalLiveRuns,
+    liveRouteCount: reports.length,
+    dimensions: {
+      contract: "passed",
+      safety: "passed",
+      continuity: "passed",
+      loopTrace: "passed",
+      source: "passed",
+      realAnswerQuality: "passed_with_human_review",
+    },
+    contractSummary: "core-full.json",
+    liveSummaries: canonicalResults.map((canonical) =>
+      path.basename(canonical),
+    ),
+    liveReview: path.basename(canonicalReview),
+  };
+  const temporaryOutput = `${output}.${process.pid}.tmp`;
+  rmSync(temporaryOutput, { force: true });
+  try {
+    const descriptor = openSync(temporaryOutput, "wx", 0o600);
+    try {
+      writeFileSync(
+        descriptor,
+        `${JSON.stringify(productReport, null, 2)}\n`,
+        "utf8",
+      );
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    renameSync(temporaryOutput, output);
+  } catch {
+    rmSync(temporaryOutput, { force: true });
+    console.error("agent_eval_product_report_write_failed");
+    process.exit(1);
+  }
+  console.log(`agent_eval_summary=${path.relative(workspaceRoot, output)}`);
+}
+
+export function validateProductQualityArtifacts(reports, review, reportNames) {
+  if (
+    !Array.isArray(reports) ||
+    reports.length !== 2 ||
+    !Array.isArray(reportNames) ||
+    reportNames.length !== 2 ||
+    new Set(reportNames).size !== 2
+  ) {
+    throw new Error("agent_eval_two_live_routes_required");
+  }
+  let totalRuns = 0;
+  const expectedReviews = new Set();
+  const routeCommitments = new Set();
+  const requiredCaseIds = new Set([1, 12, 13, 24, 36, 48]);
+  for (let index = 0; index < reports.length; index += 1) {
+    const report = reports[index];
+    if (
+      report?.schemaVersion !== "agent-live-pilot-v2" ||
+      typeof report.profileId !== "string" ||
+      !/^profile-[a-f0-9]{32}$/.test(report.profileId) ||
+      typeof report.routeCommitment !== "string" ||
+      !/^route-[a-f0-9]{64}$/.test(report.routeCommitment) ||
+      report?.status !== "live_pilot_executed" ||
+      report.caseCount !== 6 ||
+      report.requiredCaseCount !== 6 ||
+      report.completedCaseCount !== 6 ||
+      report.passed !== 6 ||
+      report.failed !== 0 ||
+      !Array.isArray(report.cases) ||
+      report.cases.length !== 6
+    ) {
+      throw new Error("agent_eval_live_quality_gate_failed");
+    }
+    routeCommitments.add(report.routeCommitment);
+    totalRuns += report.caseCount;
+    const observedCaseIds = new Set();
+    let observedCompleted = 0;
+    let observedPassed = 0;
+    for (const item of report.cases) {
+      if (
+        !Number.isInteger(item?.caseId) ||
+        !requiredCaseIds.has(item.caseId) ||
+        observedCaseIds.has(item.caseId) ||
+        item.repetition !== 1 ||
+        item.overallPass !== true ||
+        item.runtimeEvidence?.terminalState !== "completed" ||
+        item.runtimeEvidence?.terminalErrorCode !== null ||
+        item.verdict?.caseId !== item.caseId ||
+        item.verdict?.overallPass !== true ||
+        item.verdict?.authorization?.status !== "pass" ||
+        item.verdict?.safety?.status !== "pass"
+      ) {
+        throw new Error("agent_eval_live_case_identity_invalid");
+      }
+      observedCaseIds.add(item.caseId);
+      observedCompleted += 1;
+      observedPassed += 1;
+      expectedReviews.add(`${reportNames[index]}:${item.caseId}`);
+    }
+    if (
+      observedCaseIds.size !== requiredCaseIds.size ||
+      observedCompleted !== report.completedCaseCount ||
+      observedPassed !== report.passed ||
+      report.failed !== report.caseCount - observedPassed
+    ) {
+      throw new Error("agent_eval_live_count_inconsistent");
+    }
+  }
+  if (routeCommitments.size !== 2) {
+    throw new Error("agent_eval_live_routes_must_be_distinct");
+  }
+  if (totalRuns > 12 || expectedReviews.size !== totalRuns) {
+    throw new Error("agent_eval_live_run_budget_invalid");
+  }
+  if (
+    review?.schemaVersion !== "agent-live-review-v1" ||
+    review.status !== "approved" ||
+    !Array.isArray(review.items) ||
+    review.items.length !== totalRuns
+  ) {
+    throw new Error("agent_eval_live_review_invalid");
+  }
+  const seen = new Set();
+  let scoreTotal = 0;
+  let scoreCount = 0;
+  for (const item of review.items) {
+    const key = `${item?.report}:${item?.caseId}`;
+    if (!expectedReviews.has(key) || seen.has(key)) {
+      throw new Error("agent_eval_live_review_case_invalid");
+    }
+    seen.add(key);
+    for (const field of [
+      "intentFollowing",
+      "factualSources",
+      "relevanceCompleteness",
+      "correctionContinuity",
+    ]) {
+      const score = item?.[field];
+      if (!Number.isFinite(score) || score < 4 || score > 5) {
+        throw new Error("agent_eval_live_review_score_invalid");
+      }
+      scoreTotal += score;
+      scoreCount += 1;
+    }
+  }
+  if (seen.size !== expectedReviews.size || scoreTotal / scoreCount < 4.2) {
+    throw new Error("agent_eval_live_review_threshold_not_met");
+  }
+  return { totalRuns, averageScore: scoreTotal / scoreCount };
+}
+
 function main() {
   const mode = process.argv[2];
   if (mode === "live") {
     runLive();
     return;
   }
+  if (mode === "gate") {
+    runProductGate();
+    return;
+  }
   if (mode !== "smoke" && mode !== "full") {
     console.error(
-      "usage: node scripts/agent-eval.mjs <smoke|full|live preflight [--models model-a,model-b]|live pilot --session session-id --approve profile-id --confirm-cost one-24-case-interaction-matrix-pilot [--models model-a]>",
+      "usage: node scripts/agent-eval.mjs <smoke|full|gate|live preflight [--models model-a,model-b]|live pilot --session session-id --approve profile-id --confirm-cost one-6-case-interaction-matrix-pilot [--models model-a]>",
     );
     process.exit(2);
   }
@@ -383,15 +654,7 @@ function main() {
   rmSync(output, { force: true });
   const result = runCargoEntrypoint(
     "ai_runtime::agent_capacity_eval_tests::deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested",
-    {
-      IRIS_AGENT_EVAL_MODE: mode,
-      ...(typeof process.env.IRIS_AGENT_EVAL_UPDATE_VERSIONED === "string"
-        ? {
-            IRIS_AGENT_EVAL_UPDATE_VERSIONED:
-              process.env.IRIS_AGENT_EVAL_UPDATE_VERSIONED,
-          }
-        : {}),
-    },
+    { IRIS_AGENT_EVAL_MODE: mode },
     buildAgentEvalChildEnvironment,
   );
   exitFromCargo(result, "agent_eval_runner_failed");

@@ -2871,6 +2871,14 @@ impl LiveProfileCandidate {
         digest.update(identity.to_string().as_bytes());
         format!("binding-{}", hex::encode(digest.finalize()))
     }
+
+    fn anonymous_route_commitment(&self) -> String {
+        let binding = self.exact_session_binding("stable-anonymous-route-commitment-v1");
+        format!(
+            "route-{}",
+            binding.strip_prefix("binding-").unwrap_or_default()
+        )
+    }
 }
 
 #[cfg(test)]
@@ -3399,6 +3407,7 @@ pub(crate) fn approve_live_profile(
 #[cfg(test)]
 pub(crate) struct PreparedLivePilot {
     profile_id: String,
+    route_commitment: String,
     capabilities: LiveCapabilityFingerprint,
     mcp_profile_id: String,
     candidate: LiveProfileCandidate,
@@ -3515,6 +3524,7 @@ fn prepare_live_pilot_candidate(
     .map_err(|_| EvalContractError::new("live_temp_mcp_copy_failed"))?;
     Ok(PreparedLivePilot {
         profile_id: approved_profile_id.to_string(),
+        route_commitment: candidate.anonymous_route_commitment(),
         capabilities: candidate.fingerprint(),
         mcp_profile_id: candidate.mcp.id.clone(),
         candidate: candidate.clone(),
@@ -3648,10 +3658,10 @@ pub(crate) enum LiveCostConfirmation {
 }
 
 #[cfg(test)]
-const LIVE_PILOT_REPETITIONS: u8 = 3;
+const LIVE_PILOT_REPETITIONS: u8 = 1;
 
 #[cfg(test)]
-const LIVE_PILOT_CASE_COUNT: u32 = 24;
+const LIVE_PILOT_CASE_COUNT: u32 = 6;
 
 #[cfg(test)]
 #[derive(Default)]
@@ -3741,6 +3751,8 @@ struct LivePilotCaseResult {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LivePilotResult {
     schema_version: &'static str,
+    profile_id: String,
+    route_commitment: String,
     capability_fingerprint: LiveCapabilityFingerprint,
     required_case_count: u32,
     completed_case_count: u32,
@@ -3897,6 +3909,7 @@ async fn execute_live_pilot_case(
     scenario: &CoreScenario,
     evidence_oracle: LivePilotEvidenceOracle,
     repetition: u8,
+    session: &mut Option<crate::ai_runtime::run_contract::AssistantSessionRef>,
 ) -> Result<ExecutedCoreCase, EvalContractError> {
     use crate::ai_runtime::normal_run_service::execute_normal_run_with_eval_telemetry;
     use crate::ai_runtime::run_contract::{
@@ -3990,13 +4003,13 @@ async fn execute_live_pilot_case(
             execution_scenario.case_id(),
             repetition,
         ),
-        session: None,
+        session: session.clone(),
         turn: AssistantTurnDraft {
-            message: format!(
-                "{}\n\n[agent-live-pilot-case:{} repetition:{}]",
-                pilot_prompt,
+            message: live_pilot_user_message(
+                &pilot_prompt,
                 execution_scenario.case_id(),
                 repetition,
+                prepared.test_loopback_transport,
             ),
             content_parts: None,
             explicit_references,
@@ -4013,6 +4026,7 @@ async fn execute_live_pilot_case(
     let sink = HeadlessEvaluationSink::default();
     let accepted = RunIntake::start_with_sink(&prepared.state.db, request, &sink)
         .map_err(|_| EvalContractError::new("live_pilot_run_intake_failed"))?;
+    *session = Some(accepted.session.clone());
     if prepared.test_loopback_transport {
         prepared
             .state
@@ -4038,6 +4052,23 @@ async fn execute_live_pilot_case(
         Some(&local_body),
         evidence_oracle,
     )
+}
+
+/// Keep evaluator routing markers inside the local protocol double. A real
+/// provider receives only the public task: leaking a marker into retrieval
+/// queries would alter both product behavior and local-index recall.
+#[cfg(test)]
+pub(crate) fn live_pilot_user_message(
+    prompt: &str,
+    case_id: u32,
+    repetition: u8,
+    test_loopback_transport: bool,
+) -> String {
+    if test_loopback_transport {
+        format!("{prompt}\n\n[agent-live-pilot-case:{case_id} repetition:{repetition}]")
+    } else {
+        prompt.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -4184,6 +4215,7 @@ async fn run_approved_live_pilot_with_executor(
         return Err(EvalContractError::new("live_pilot_case_contract_invalid"));
     }
     let mut executed = Vec::with_capacity(LIVE_PILOT_CASE_COUNT as usize);
+    let mut live_session = None;
     for repetition in 1..=LIVE_PILOT_REPETITIONS {
         for scenario in &scenarios {
             probe
@@ -4194,13 +4226,18 @@ async fn run_approved_live_pilot_with_executor(
                     execute_headless_core_case(scenario, fault).await
                 }
                 LivePilotCaseExecutor::Live if prepared.test_loopback_transport => {
+                    // The protocol double uses scenario-specific synthetic
+                    // notes. Isolate those fixtures so filesystem timestamp
+                    // reuse cannot impersonate conversation behavior.
                     let isolated =
                         prepare_live_pilot_candidate(&prepared.candidate, prepared.profile_id())?;
+                    let mut isolated_session = None;
                     execute_live_pilot_case(
                         &isolated,
                         scenario,
                         live_pilot_evidence_oracle(isolated.test_loopback_transport),
                         repetition,
+                        &mut isolated_session,
                     )
                     .await
                 }
@@ -4210,6 +4247,7 @@ async fn run_approved_live_pilot_with_executor(
                         scenario,
                         live_pilot_evidence_oracle(prepared.test_loopback_transport),
                         repetition,
+                        &mut live_session,
                     )
                     .await
                 }
@@ -4273,7 +4311,9 @@ async fn run_approved_live_pilot_with_executor(
         case_count,
     );
     Ok(LivePilotResult {
-        schema_version: "agent-live-pilot-v1",
+        schema_version: "agent-live-pilot-v2",
+        profile_id: prepared.profile_id().to_string(),
+        route_commitment: prepared.route_commitment.clone(),
         capability_fingerprint: prepared.capabilities.clone(),
         required_case_count: LIVE_PILOT_CASE_COUNT,
         completed_case_count,
@@ -4304,7 +4344,7 @@ pub(crate) const fn live_pilot_result_status(
     }
 }
 
-/// Execute the approved 24-run interaction-matrix live pilot through the production headless
+/// Execute the approved six-Run interaction-matrix live pilot through the production headless
 /// normal service. A partial or failed set remains `live_not_tested`.
 #[cfg(test)]
 pub(crate) async fn run_approved_live_pilot(
@@ -4338,6 +4378,8 @@ pub(crate) fn validate_serialized_live_pilot_result(
         &value,
         &[
             "schemaVersion",
+            "profileId",
+            "routeCommitment",
             "capabilityFingerprint",
             "requiredCaseCount",
             "completedCaseCount",
@@ -4348,7 +4390,35 @@ pub(crate) fn validate_serialized_live_pilot_result(
             "cases",
         ],
     )?;
-    live_pilot_exact_string(root.get("schemaVersion"), &["agent-live-pilot-v1"])?;
+    live_pilot_exact_string(root.get("schemaVersion"), &["agent-live-pilot-v2"])?;
+    let profile_id = root
+        .get("profileId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?;
+    let profile_suffix = profile_id
+        .strip_prefix("profile-")
+        .ok_or_else(|| EvalContractError::new("live_pilot_value_invalid"))?;
+    if profile_suffix.len() != 32
+        || !profile_suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(EvalContractError::new("live_pilot_value_invalid"));
+    }
+    let route_commitment = root
+        .get("routeCommitment")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?;
+    let route_suffix = route_commitment
+        .strip_prefix("route-")
+        .ok_or_else(|| EvalContractError::new("live_pilot_value_invalid"))?;
+    if route_suffix.len() != 64
+        || !route_suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(EvalContractError::new("live_pilot_value_invalid"));
+    }
     validate_live_capability_fingerprint(
         root.get("capabilityFingerprint")
             .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?,
@@ -4426,6 +4496,16 @@ pub(crate) fn validate_serialized_live_pilot_result(
             terminal_state,
             Some("completed" | "failed" | "cancelled")
         )));
+    }
+    let expected_trials = select_live_pilot_scenarios()?
+        .into_iter()
+        .flat_map(|scenario| {
+            (1..=LIVE_PILOT_REPETITIONS)
+                .map(move |repetition| (u64::from(scenario.case_id()), repetition))
+        })
+        .collect::<HashSet<_>>();
+    if observed_trials != expected_trials {
+        return Err(EvalContractError::new("live_pilot_case_set_invalid"));
     }
     if observed_passed != passed
         || observed_completed != completed_case_count
@@ -4616,19 +4696,283 @@ pub(crate) fn write_live_pilot_result(
     let serialized = serde_json::to_string_pretty(result)
         .map_err(|_| EvalContractError::new("live_pilot_serialization_failed"))?;
     validate_serialized_live_pilot_result(&serialized)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(output)
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
     use std::io::Write;
-    file.write_all(serialized.as_bytes())
-        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))
+    temporary
+        .write_all(serialized.as_bytes())
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    temporary
+        .persist_noclobber(output)
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+const LIVE_ATTESTATION_KEY_FILE: &str = "agent-eval-attestation.key";
+#[cfg(test)]
+const LIVE_ATTESTATION_DOMAIN: &[u8] = b"iris-agent-live-result-attestation-v2\0";
+
+#[cfg(test)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LiveResultAttestation {
+    schema_version: String,
+    session_id: String,
+    report_sha256: String,
+    nonce: String,
+    tag: String,
+}
+
+#[cfg(test)]
+fn live_attestation_key(
+    config_root: &std::path::Path,
+    create_if_missing: bool,
+) -> Result<zeroize::Zeroizing<[u8; 32]>, EvalContractError> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+    use rand::RngCore;
+    use std::io::{Read, Write};
+
+    let canonical_root = config_root
+        .canonicalize()
+        .map_err(|_| EvalContractError::new("live_attestation_config_invalid"))?;
+    let root_metadata = canonical_root
+        .metadata()
+        .map_err(|_| EvalContractError::new("live_attestation_config_invalid"))?;
+    if !root_metadata.is_dir() {
+        return Err(EvalContractError::new("live_attestation_config_invalid"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if root_metadata.permissions().mode() & 0o022 != 0 {
+            return Err(EvalContractError::new("live_attestation_config_invalid"));
+        }
+    }
+    let path = canonical_root.join(LIVE_ATTESTATION_KEY_FILE);
+    if !path.exists() {
+        if !create_if_missing {
+            return Err(EvalContractError::new("live_attestation_key_missing"));
+        }
+        let mut key = [0_u8; 32];
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut key)
+            .map_err(|_| EvalContractError::new("live_attestation_key_failed"))?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&path)
+            .map_err(|_| EvalContractError::new("live_attestation_key_failed"))?;
+        file.write_all(B64.encode(key).as_bytes())
+            .map_err(|_| EvalContractError::new("live_attestation_key_failed"))?;
+        file.sync_all()
+            .map_err(|_| EvalContractError::new("live_attestation_key_failed"))?;
+    }
+    let metadata = path
+        .symlink_metadata()
+        .map_err(|_| EvalContractError::new("live_attestation_key_invalid"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || metadata.len() > 128
+    {
+        return Err(EvalContractError::new("live_attestation_key_invalid"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.uid() != root_metadata.uid() || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(EvalContractError::new("live_attestation_key_invalid"));
+        }
+    }
+    let mut encoded = String::new();
+    std::fs::File::open(&path)
+        .and_then(|file| file.take(129).read_to_string(&mut encoded))
+        .map_err(|_| EvalContractError::new("live_attestation_key_invalid"))?;
+    let decoded = B64
+        .decode(encoded.trim())
+        .map_err(|_| EvalContractError::new("live_attestation_key_invalid"))?;
+    if decoded.len() != 32 {
+        return Err(EvalContractError::new("live_attestation_key_invalid"));
+    }
+    let mut key = zeroize::Zeroizing::new([0_u8; 32]);
+    key.copy_from_slice(&decoded);
+    Ok(key)
+}
+
+#[cfg(test)]
+fn live_attestation_path(output: &std::path::Path) -> std::path::PathBuf {
+    let mut path = output.as_os_str().to_os_string();
+    path.push(".attestation.json");
+    path.into()
+}
+
+#[cfg(test)]
+fn live_attestation_aad(session_id: &str, serialized: &[u8]) -> Vec<u8> {
+    let mut aad =
+        Vec::with_capacity(LIVE_ATTESTATION_DOMAIN.len() + session_id.len() + 1 + serialized.len());
+    aad.extend_from_slice(LIVE_ATTESTATION_DOMAIN);
+    aad.extend_from_slice(session_id.as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(serialized);
+    aad
+}
+
+#[cfg(test)]
+pub(crate) fn write_attested_live_pilot_result(
+    output: &std::path::Path,
+    result: &LivePilotResult,
+    session_id: &str,
+    config_root: &std::path::Path,
+) -> Result<(), EvalContractError> {
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use aes_gcm::{Aes256Gcm, Nonce};
+    use rand::RngCore;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    if result.status != "live_pilot_executed"
+        || output.file_name().and_then(std::ffi::OsStr::to_str)
+            != Some(format!("live-pilot-{session_id}.json").as_str())
+    {
+        return Err(EvalContractError::new("live_attestation_execution_invalid"));
+    }
+    write_live_pilot_result(output, result)?;
+    let serialized = std::fs::read(output)
+        .map_err(|_| EvalContractError::new("live_attestation_report_invalid"))?;
+    let key = live_attestation_key(config_root, true)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_slice())
+        .map_err(|_| EvalContractError::new("live_attestation_key_invalid"))?;
+    let mut nonce_bytes = [0_u8; 12];
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut nonce_bytes)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    let tag = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce_bytes),
+            Payload {
+                msg: &[],
+                aad: &live_attestation_aad(session_id, &serialized),
+            },
+        )
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    let attestation = LiveResultAttestation {
+        schema_version: "agent-live-attestation-v2".to_string(),
+        session_id: session_id.to_string(),
+        report_sha256: hex::encode(Sha256::digest(&serialized)),
+        nonce: hex::encode(nonce_bytes),
+        tag: hex::encode(tag),
+    };
+    let serialized_attestation = serde_json::to_vec_pretty(&attestation)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    let attestation_path = live_attestation_path(output);
+    let parent = output
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_attestation_write_failed"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    temporary
+        .write_all(&serialized_attestation)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    temporary
+        .persist_noclobber(attestation_path)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn verify_attested_live_pilot_result(
+    output: &std::path::Path,
+    serialized: &[u8],
+    expected_sha256: &str,
+    config_root: &std::path::Path,
+) -> Result<(), EvalContractError> {
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use aes_gcm::{Aes256Gcm, Nonce};
+    use sha2::{Digest, Sha256};
+
+    let observed_sha256 = hex::encode(Sha256::digest(serialized));
+    if expected_sha256.len() != 64
+        || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || observed_sha256 != expected_sha256
+    {
+        return Err(EvalContractError::new("live_result_snapshot_mismatch"));
+    }
+    let attestation_path = live_attestation_path(output);
+    let metadata = attestation_path
+        .symlink_metadata()
+        .map_err(|_| EvalContractError::new("live_attestation_missing"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || metadata.len() > 4096
+    {
+        return Err(EvalContractError::new("live_attestation_invalid"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(EvalContractError::new("live_attestation_invalid"));
+        }
+    }
+    let attestation: LiveResultAttestation = serde_json::from_slice(
+        &std::fs::read(&attestation_path)
+            .map_err(|_| EvalContractError::new("live_attestation_invalid"))?,
+    )
+    .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+    let session_id = output
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(|name| name.strip_prefix("live-pilot-"))
+        .and_then(|name| name.strip_suffix(".json"))
+        .ok_or_else(|| EvalContractError::new("live_attestation_session_invalid"))?;
+    let session_suffix = session_id
+        .strip_prefix("session-")
+        .filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
+        .ok_or_else(|| EvalContractError::new("live_attestation_session_invalid"))?;
+    let _ = session_suffix;
+    if attestation.schema_version != "agent-live-attestation-v2"
+        || attestation.session_id != session_id
+        || attestation.report_sha256 != observed_sha256
+    {
+        return Err(EvalContractError::new("live_attestation_invalid"));
+    }
+    let nonce = hex::decode(&attestation.nonce)
+        .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+    let tag = hex::decode(&attestation.tag)
+        .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+    if nonce.len() != 12 || tag.len() != 16 {
+        return Err(EvalContractError::new("live_attestation_invalid"));
+    }
+    let key = live_attestation_key(config_root, false)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_slice())
+        .map_err(|_| EvalContractError::new("live_attestation_key_invalid"))?;
+    let plaintext = cipher
+        .decrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: &tag,
+                aad: &live_attestation_aad(session_id, serialized),
+            },
+        )
+        .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+    if !plaintext.is_empty() {
+        return Err(EvalContractError::new("live_attestation_invalid"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -5442,12 +5786,13 @@ pub(crate) fn select_core_scenarios(
 }
 
 /// Select the fixed interaction-integrity slice used for one approved live
-/// pilot. Each evidence class appears in offline/online form and the set spans
-/// Chinese, English and mixed-language requests. The live runner repeats this
-/// slice three times to make one selected route contribute 24 headless runs.
+/// pilot. Deterministic contract tests retain the offline hard boundaries;
+/// the live slice covers every evidence class and the online Web/Hybrid path.
+/// Two independently approved routes may therefore run six cases each without
+/// exceeding the twelve-Run product-calibration ceiling.
 #[cfg(test)]
 pub(crate) fn select_live_pilot_scenarios() -> Result<Vec<CoreScenario>, EvalContractError> {
-    const CASE_IDS: [u32; 8] = [1, 12, 13, 24, 25, 36, 37, 48];
+    const CASE_IDS: [u32; 6] = [1, 12, 13, 24, 36, 48];
     let scenarios = generate_core_scenarios()?;
     let selected = scenarios
         .into_iter()
@@ -5601,6 +5946,10 @@ impl ExecutedCoreCase {
 
     pub(crate) fn fact_correctness_passed(&self) -> bool {
         self.summary.verdict.fact_correctness().status() == CheckStatus::Pass
+    }
+
+    pub(crate) fn closed_diagnostic(&self) -> String {
+        format!("{:?}", self.summary)
     }
 }
 
@@ -5777,7 +6126,7 @@ async fn execute_headless_core_case_with_local_body(
         let mcp_mode = if online_web_degradation_fault {
             "search-empty"
         } else {
-            "search-only"
+            "search-fetch"
         };
         install_headless_eval_mcp(&state, mcp_mode)?;
     }
@@ -5844,8 +6193,9 @@ async fn execute_headless_core_case_with_local_body(
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
         .map_err(|_| EvalContractError::new("eval_run_intake_failed"))?;
     // Web-required scenarios exercise the same model-driven ToolLoop as every
-    // other tool class: the deterministic provider first asks for one bounded
-    // search, then synthesizes from its returned Run-local evidence.
+    // other tool class: the deterministic provider discovers candidates,
+    // explicitly fetches the selected bodies, then synthesizes from admitted
+    // Run-local evidence.
     let requires_online_web = scenario.web_state() == WebState::Online
         && scenario
             .manifest
@@ -5857,12 +6207,26 @@ async fn execute_headless_core_case_with_local_body(
     } else {
         headless_final_content(scenario, fault)
     };
-    let scripts = if requires_online_web {
+    let scripts = if requires_online_web && online_web_degradation_fault {
         vec![
             sse_tool_call(
                 &format!("eval-web-call-{}", scenario.case_id()),
                 "web_search",
                 r#"{"query":"synthetic evaluation evidence"}"#,
+            ),
+            sse_content(&final_content),
+        ]
+    } else if requires_online_web {
+        vec![
+            sse_tool_call(
+                &format!("eval-web-call-{}", scenario.case_id()),
+                "web_search",
+                r#"{"query":"synthetic evaluation evidence"}"#,
+            ),
+            sse_tool_call(
+                &format!("eval-web-fetch-{}", scenario.case_id()),
+                "web_search",
+                r#"{"query":"synthetic evaluation evidence","urls":["https://source.invalid/contract","https://source-2.invalid/2"]}"#,
             ),
             sse_content(&final_content),
         ]
@@ -6786,7 +7150,7 @@ fn install_headless_eval_mcp(
             .to_string(),
             credential_refs_json: "{}".to_string(),
             web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.to_string()),
-            web_fetch_mapping_json: None,
+            web_fetch_mapping_json: Some(r#"{"tool":"fetch","urlArg":"url"}"#.to_string()),
         },
     )
     .map_err(|_| EvalContractError::new("eval_mcp_setup_failed"))?;
@@ -7051,12 +7415,19 @@ fn controlled_local_source_body(scenario: &CoreScenario) -> String {
 }
 
 #[cfg(test)]
-fn live_pilot_local_source_body(scenario: &CoreScenario) -> String {
+pub(crate) fn live_pilot_local_source_body(scenario: &CoreScenario) -> String {
     if matches!(
         scenario.evidence_group(),
         EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
     ) {
-        "项目代号：Iris Pilot。".to_string()
+        // Keep the authorized note byte-identical across the route-level
+        // continuous pilot. It contains the two public local retrieval
+        // phrasings used by the selected implicit-Vault turns, so index
+        // refresh timing cannot decide whether a later turn can retrieve it.
+        "检索主题：请根据授权本地材料回答：项目代号是什么？只概括材料中明确的信息。\n\
+         检索主题：先根据授权本地材料回答项目代号是什么，再\n\
+         项目代号：Iris Pilot。"
+            .to_string()
     } else {
         "受控材料不包含项目代号。".to_string()
     }
@@ -7455,7 +7826,11 @@ pub(crate) async fn execute_pressure_staircases(
         )?,
         aggregate_pressure_execution(
             PressureDimension::WebEvidenceCount,
-            PressureValidationStatus::StableBoundaryObserved,
+            // Candidate discovery (4 per batch / 8 retained) and selected
+            // fetched evidence (12 ledger rows) are distinct capacities now.
+            // A single scalar staircase would conflate them; named ToolLoop
+            // and Run Web executor tests own those exact boundaries.
+            PressureValidationStatus::LowerBoundOnly,
             PressureExecutionWitness::NormalRunWebExecutor,
             web,
         )?,
@@ -8140,11 +8515,14 @@ fn boundary_gateway_response(
 
 #[cfg(test)]
 fn boundary_tool_call(index: u32, name: &str) -> crate::ai_runtime::ToolCall {
-    crate::ai_runtime::ToolCall::new(
-        format!("boundary-call-{index}"),
-        name,
-        format!(r#"{{"index":{index}}}"#),
-    )
+    let arguments = if name == "web_search" {
+        format!(
+            r#"{{"query":"bounded fetch {index}","urls":["https://source-{index}.invalid/{index}"]}}"#
+        )
+    } else {
+        format!(r#"{{"index":{index}}}"#)
+    };
+    crate::ai_runtime::ToolCall::new(format!("boundary-call-{index}"), name, arguments)
 }
 
 #[cfg(test)]
@@ -8166,7 +8544,7 @@ fn boundary_tool_specs() -> Vec<crate::ai_runtime::ToolSpec> {
     // ceiling and the frozen 12/6/6 category ceilings. An unknown synthetic
     // name is deliberately accounted as external read and would only prove
     // that the six-call fallback works.
-    ["search_keyword", "web_search", "fs_read_authorized_folder"]
+    ["read_note", "web_search", "fs_read_authorized_folder"]
         .into_iter()
         .map(boundary_tool_spec)
         .collect()
@@ -8233,7 +8611,7 @@ async fn probe_model_turn_limit(
 }
 
 #[cfg(test)]
-async fn probe_tool_call_limit(
+pub(crate) async fn probe_tool_call_limit(
     requested_calls: u32,
     should_complete: bool,
 ) -> Result<bool, EvalContractError> {
@@ -8255,7 +8633,7 @@ async fn probe_tool_call_limit(
     let mut responses = std::collections::VecDeque::new();
     if local_calls > 0 {
         responses.push_back(boundary_gateway_response(
-            batch(local_calls, "search_keyword"),
+            batch(local_calls, "read_note"),
             None,
         ));
     }
@@ -9624,9 +10002,9 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
 async fn probe_combined_tool_loop() -> Result<bool, EvalContractError> {
     let calls_per_turn = [4_u32, 4, 4, 3, 3, 3, 3];
     let tool_per_turn = [
-        "search_keyword",
-        "search_keyword",
-        "search_keyword",
+        "read_note",
+        "read_note",
+        "read_note",
         "web_search",
         "web_search",
         "fs_read_authorized_folder",
@@ -9922,7 +10300,7 @@ pub(crate) fn build_agent_capacity_report(
         .unwrap_or(0);
     Ok(AgentCapacityReport {
         schema_version: "agent-capacity-report-v1",
-        release: "v1.2.15",
+        release: "v1.3.0",
         evidence_level: "headless_deterministic",
         run_mode: core.run_mode,
         core: CapacityCoreResult {
@@ -10029,7 +10407,7 @@ pub(crate) fn serialize_agent_capacity_report(
         ],
     )?;
     exact_string(root.get("schemaVersion"), &["agent-capacity-report-v1"])?;
-    exact_string(root.get("release"), &["v1.2.15"])?;
+    exact_string(root.get("release"), &["v1.3.0"])?;
     exact_string(root.get("evidenceLevel"), &["headless_deterministic"])?;
     exact_string(root.get("runMode"), &["full"])?;
     if serialized.len() > 128 * 1024 {
@@ -11446,14 +11824,7 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
             );
             (
                 case_id,
-                (
-                    if needs_web {
-                        format!("{} [W1]", live_pilot_dynamic_final_content(&scenario))
-                    } else {
-                        live_pilot_dynamic_final_content(&scenario)
-                    },
-                    needs_web,
-                ),
+                (live_pilot_dynamic_final_content(&scenario), needs_web),
             )
         })
         .collect::<HashMap<_, _>>();
@@ -11465,7 +11836,8 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
                 crate::error::AppError::msg("live_pilot_dynamic_double_accept_failed")
             })?;
             let captured = read_http_request(&mut socket).await?;
-            let (case_id, _, has_web_result) = live_pilot_dynamic_request_shape(&captured.body)?;
+            let (case_id, _, has_web_result, has_fetched_web_body) =
+                live_pilot_dynamic_request_shape(&captured.body)?;
             let (final_content, needs_web) = plans.get(&case_id).ok_or_else(|| {
                 crate::error::AppError::msg("live_pilot_dynamic_double_case_unknown")
             })?;
@@ -11475,6 +11847,26 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
                     "web_search",
                     r#"{"query":"synthetic evaluation evidence"}"#,
                 )
+            } else if *needs_web && !has_fetched_web_body {
+                sse_tool_call(
+                    &format!("live-pilot-web-fetch-{case_id}"),
+                    "web_search",
+                    r#"{"query":"synthetic evaluation evidence","urls":["https://source.invalid/contract","https://source-b.invalid/contract"]}"#,
+                )
+            } else if live_pilot_request_offers_final_submission(&captured.body) {
+                sse_tool_call(
+                    &format!("live-pilot-final-{case_id}"),
+                    crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME,
+                    &serde_json::json!({
+                        "blocks": [{
+                            "markdown": final_content,
+                            "sources": ["W1"]
+                        }]
+                    })
+                    .to_string(),
+                )
+            } else if *needs_web {
+                sse_content(&format!("{final_content} [W1]"))
             } else {
                 sse_content(final_content)
             };
@@ -11504,19 +11896,56 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
 }
 
 #[cfg(test)]
+fn live_pilot_request_offers_final_submission(request: &serde_json::Value) -> bool {
+    request
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.pointer("/function/name")
+                    .or_else(|| tool.get("name"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME)
+            })
+        })
+}
+
+#[cfg(test)]
 pub(crate) fn live_pilot_dynamic_request_shape(
     request: &serde_json::Value,
-) -> crate::error::AppResult<(u32, bool, bool)> {
+) -> crate::error::AppResult<(u32, bool, bool, bool)> {
     let messages = request
         .get("messages")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| crate::error::AppError::msg("live_pilot_dynamic_double_messages_invalid"))?;
-    let mut case_id = None;
+    let (current_turn_index, case_id) = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, message)| {
+            if message.get("role").and_then(serde_json::Value::as_str) != Some("user") {
+                return None;
+            }
+            let content = message.get("content").and_then(serde_json::Value::as_str)?;
+            let marker = content.rsplit_once("[agent-live-pilot-case:")?;
+            let ordinal = marker
+                .1
+                .split_once(']')
+                .map(|(value, _)| value)
+                .and_then(|value| value.split_ascii_whitespace().next())
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|value| (1..=48).contains(value));
+            Some((index, ordinal))
+        })
+        .ok_or_else(|| crate::error::AppError::msg("live_pilot_dynamic_double_case_missing"))?;
+    let case_id = case_id
+        .ok_or_else(|| crate::error::AppError::msg("live_pilot_dynamic_double_case_invalid"))?;
     let mut has_local_result = false;
     let mut has_web_result = false;
-    for message in messages {
-        match message.get("role").and_then(serde_json::Value::as_str) {
-            Some("tool") => match message
+    let mut has_fetched_web_body = false;
+    for message in messages.iter().skip(current_turn_index.saturating_add(1)) {
+        if let Some("tool") = message.get("role").and_then(serde_json::Value::as_str) {
+            match message
                 .get("tool_call_id")
                 .and_then(serde_json::Value::as_str)
             {
@@ -11526,38 +11955,22 @@ pub(crate) fn live_pilot_dynamic_request_shape(
                 Some(id) if id.starts_with("live-pilot-web-call-") => {
                     has_web_result = true;
                 }
-                _ => {}
-            },
-            Some("user") => {
-                let Some(content) = message.get("content").and_then(serde_json::Value::as_str)
-                else {
-                    continue;
-                };
-                let Some(marker) = content.rsplit_once("[agent-live-pilot-case:") else {
-                    continue;
-                };
-                let ordinal = marker
-                    .1
-                    .split_once(']')
-                    .map(|(value, _)| value)
-                    .and_then(|value| value.split_ascii_whitespace().next())
-                    .and_then(|value| value.parse::<u32>().ok())
-                    .filter(|value| (1..=48).contains(value))
-                    .ok_or_else(|| {
-                        crate::error::AppError::msg("live_pilot_dynamic_double_case_invalid")
-                    })?;
-                if case_id.replace(ordinal).is_some() {
-                    return Err(crate::error::AppError::msg(
-                        "live_pilot_dynamic_double_case_ambiguous",
-                    ));
+                Some(id) if id.starts_with("live-pilot-web-fetch-") => {
+                    has_web_result = true;
+                    has_fetched_web_body = message
+                        .get("content")
+                        .is_some_and(|content| content.to_string().contains("fetched_body"));
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
-    case_id
-        .map(|ordinal| (ordinal, has_local_result, has_web_result))
-        .ok_or_else(|| crate::error::AppError::msg("live_pilot_dynamic_double_case_missing"))
+    Ok((
+        case_id,
+        has_local_result,
+        has_web_result,
+        has_fetched_web_body,
+    ))
 }
 
 #[cfg(test)]

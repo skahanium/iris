@@ -169,7 +169,13 @@ impl RunIntake {
             Effect::Answer => {}
         }
         if matches!(effort, Effort::ToolLoop | Effort::Durable) {
-            required_capabilities.push(CapabilityId::new("context.read"));
+            // A ToolLoop is an execution shape, not an authorization source.
+            // Context/Vault reads are exposed only when the user selected
+            // material or the request itself established an implicit Vault
+            // dependency. A Web-only loop must not inherit local read tools.
+            if has_explicit_materials_or_scope {
+                required_capabilities.push(CapabilityId::new("context.read"));
+            }
             if allow_implicit_vault_for_run(
                 request.security_domain,
                 &directive_text,

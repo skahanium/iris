@@ -2066,6 +2066,33 @@ fn web_enabled_external_question_persists_the_web_capability_contract() {
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "context.read"));
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "vault.read"));
+}
+
+#[test]
+fn tool_loop_does_not_grant_local_context_without_a_user_material_scope() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "请联网核实 HTTP 状态码 404 的含义，并引用公开网页来源。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| { matches!(capability.as_str(), "context.read" | "vault.read") }));
 }
 
 #[test]

@@ -4,6 +4,16 @@ use crate::ai_runtime::{ToolAccessLevel, ToolCapabilityAffinity};
 use super::{ToolBudgetClass, ToolCatalogEntry};
 
 impl ToolCatalogEntry {
+    /// Whether this tool discovers candidate resources rather than reading one
+    /// already-selected target. The loop uses this capability-shaped metadata
+    /// only to bound one model turn; it never infers a task domain from it.
+    pub(crate) fn is_discovery(&self) -> bool {
+        matches!(
+            self.name,
+            "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault" | "web_search"
+        )
+    }
+
     /// Stable capability contract required before this tool can be exposed or
     /// dispatched. This is intentionally exact by tool name: access levels are
     /// presentation metadata and must never broaden a Run authorization.

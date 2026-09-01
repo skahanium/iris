@@ -32,17 +32,18 @@ use super::agent_capacity_eval::{
     spawn_live_pilot_dynamic_llm_protocol_double, spawn_llm_protocol_double,
     summarize_web_query_boundary, validate_serialized_evaluation_summary,
     validate_serialized_live_pilot_result, validate_serialized_live_preflight_report,
-    write_blind_review_packet, write_live_pilot_result, write_live_preflight_report,
-    write_live_preflight_session_state, AnswerObservation, BudgetOutcome, CaseManifest,
-    CheckStatus, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
-    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
-    LiveCostConfirmation, LivePilotCallProbe, LivePilotEvidenceOracle, LiveProfileCandidate,
-    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
-    McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
-    ProtocolValidationLevel, RequiredFact, RequiredSource, SafetyViolation, ScenarioLanguage,
-    SourceKind, StableLevelObservation, TruncationOutcome, VerdictReason, WebAnswerContamination,
-    WebQueryBoundary, WebSearchPolicy, WebState, CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
-    CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE, CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
+    verify_attested_live_pilot_result, write_attested_live_pilot_result, write_blind_review_packet,
+    write_live_pilot_result, write_live_preflight_report, write_live_preflight_session_state,
+    AnswerObservation, BudgetOutcome, CaseManifest, CheckStatus, CitationObservation, EvalFault,
+    EvalRunMode, EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
+    ImplicitVaultExpectation, LiveCostConfirmation, LivePilotCallProbe, LivePilotEvidenceOracle,
+    LiveProfileCandidate, LlmProtocolDouble, McpCapabilityContract, McpOperation,
+    McpTransportContract, McpTransportFailureContract, ObservedSource, PressureDimension,
+    ProtocolContractOutcome, ProtocolValidationLevel, RequiredFact, RequiredSource,
+    SafetyViolation, ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
+    VerdictReason, WebAnswerContamination, WebQueryBoundary, WebSearchPolicy, WebState,
+    CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES, CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE,
+    CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
 };
 
 #[test]
@@ -214,15 +215,15 @@ fn external_terminal_without_visible_answer_is_inconclusive_not_a_model_claim() 
 }
 
 #[test]
-fn live_pilot_uses_the_eight_scenario_interaction_matrix_for_three_repetitions() {
+fn live_pilot_uses_a_six_scenario_slice_per_approved_route() {
     let scenarios = select_live_pilot_scenarios().expect("interaction matrix");
-    assert_eq!(scenarios.len(), 8);
+    assert_eq!(scenarios.len(), 6);
     assert_eq!(
         scenarios
             .iter()
             .map(super::agent_capacity_eval::CoreScenario::case_id)
             .collect::<Vec<_>>(),
-        vec![1, 12, 13, 24, 25, 36, 37, 48]
+        vec![1, 12, 13, 24, 36, 48]
     );
 }
 
@@ -232,13 +233,42 @@ fn live_pilot_protocol_double_tracks_local_and_web_tool_results_separately() {
         "messages": [
             {"role": "user", "content": "question\n[agent-live-pilot-case:48 repetition:3]"},
             {"role": "tool", "tool_call_id": "live-pilot-local-call-48", "content": "local"},
-            {"role": "tool", "tool_call_id": "live-pilot-web-call-48", "content": "web"}
+            {"role": "tool", "tool_call_id": "live-pilot-web-call-48", "content": "web"},
+            {"role": "tool", "tool_call_id": "live-pilot-web-fetch-48", "content": "{\"observationDepth\":\"fetched_body\"}"}
         ]
     });
 
     assert_eq!(
         live_pilot_dynamic_request_shape(&request).expect("protocol shape"),
-        (48, true, true)
+        (48, true, true, true)
+    );
+}
+
+#[test]
+fn real_live_prompt_has_no_internal_case_marker_but_protocol_double_keeps_one() {
+    let prompt = "请根据授权本地材料回答：项目代号是什么？";
+    let public = super::agent_capacity_eval::live_pilot_user_message(prompt, 24, 1, false);
+    let doubled = super::agent_capacity_eval::live_pilot_user_message(prompt, 24, 1, true);
+
+    assert_eq!(public, prompt);
+    assert!(doubled.starts_with(prompt));
+    assert!(doubled.contains("[agent-live-pilot-case:24 repetition:1]"));
+}
+
+#[test]
+fn live_pilot_protocol_double_reads_only_the_latest_turn_in_a_continuous_session() {
+    let request = serde_json::json!({
+        "messages": [
+            {"role": "user", "content": "first\n[agent-live-pilot-case:36 repetition:1]"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "tool", "tool_call_id": "live-pilot-web-fetch-36", "content": "{\"observationDepth\":\"fetched_body\"}"},
+            {"role": "user", "content": "follow-up\n[agent-live-pilot-case:48 repetition:1]"}
+        ]
+    });
+
+    assert_eq!(
+        live_pilot_dynamic_request_shape(&request).expect("latest turn shape"),
+        (48, false, false, false)
     );
 }
 
@@ -276,6 +306,41 @@ fn real_live_pilot_uses_the_public_web_oracle_while_local_doubles_stay_synthetic
     assert_eq!(
         live_pilot_evidence_oracle(true),
         LivePilotEvidenceOracle::Synthetic,
+    );
+}
+
+#[test]
+fn live_local_oracle_contains_the_same_retrieval_anchor_as_the_public_prompt() {
+    let local_scenarios = select_live_pilot_scenarios()
+        .expect("interaction matrix")
+        .into_iter()
+        .filter(|scenario| {
+            matches!(
+                scenario.evidence_group(),
+                EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
+            ) && scenario.implicit_vault() == ImplicitVaultExpectation::Allowed
+        })
+        .collect::<Vec<_>>();
+    let bodies = local_scenarios
+        .iter()
+        .map(super::agent_capacity_eval::live_pilot_local_source_body)
+        .collect::<Vec<_>>();
+
+    for (scenario, body) in local_scenarios.iter().zip(&bodies) {
+        let prompt = live_pilot_prompt(scenario);
+        let retrieval_anchor =
+            crate::ai_runtime::run_context::implicit_vault_retrieval_query(&prompt);
+
+        assert!(
+            body.contains(&retrieval_anchor),
+            "case {}",
+            scenario.case_id()
+        );
+        assert!(body.contains("Iris Pilot"), "case {}", scenario.case_id());
+    }
+    assert!(
+        bodies.windows(2).all(|pair| pair[0] == pair[1]),
+        "the live note must stay byte-identical while the shared session advances"
     );
 }
 
@@ -1840,10 +1905,10 @@ fn transient_retry_contract_advances_once_without_claiming_vendor_validation() {
 
 #[tokio::test]
 async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary() {
-    let primary = spawn_llm_protocol_double(vec![HttpResponseScript::raw(
-        500,
-        r#"{"error":{"message":"synthetic transient"}}"#,
-    )])
+    let primary = spawn_llm_protocol_double(vec![
+        HttpResponseScript::raw(500, r#"{"error":{"message":"synthetic transient"}}"#),
+        HttpResponseScript::raw(500, r#"{"error":{"message":"synthetic transient"}}"#),
+    ])
     .await
     .unwrap();
     let secondary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
@@ -1888,13 +1953,163 @@ async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary()
         .unwrap();
 
     assert_eq!(response.content.as_deref(), Some("recovered"));
-    assert_eq!(primary_calls.len(), 1);
+    assert_eq!(primary_calls.len(), 2);
     assert_eq!(secondary_calls.len(), 1);
     assert!(replay.events.iter().any(|event| matches!(
         event.payload(),
         RunEventPayload::ProviderSwitched { ref provider_id, .. }
             if provider_id == "contract-secondary"
     )));
+}
+
+#[tokio::test]
+async fn empty_stream_retries_once_then_fails_over_before_any_visible_output() {
+    let primary = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse("data: [DONE]\n\n"),
+        HttpResponseScript::sse("data: [DONE]\n\n"),
+    ])
+    .await
+    .unwrap();
+    let secondary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered after empty\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .unwrap();
+    let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+        resolved: retry_candidate("empty-primary", &primary.base_url),
+        failover_candidates: vec![retry_candidate("empty-secondary", &secondary.base_url)],
+    })
+    .unwrap();
+    let db = Database::open_in_memory().unwrap();
+    let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let sink = CapacityNoopSink;
+    let provider =
+        FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)
+            .with_test_streaming_client(reqwest::Client::new());
+    let messages = vec![LlmMessage {
+        role: MessageRole::User,
+        content: "answer without an empty response".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }];
+    let mut observer = CapacityNoopStreamObserver;
+
+    let response = provider
+        .answer_turn(
+            &accepted.run_id,
+            &messages,
+            &[],
+            crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget::default(),
+            &mut observer,
+        )
+        .await
+        .expect("an unusable empty response should use the bounded recovery route");
+    let primary_calls = primary.finish().await.unwrap();
+    let secondary_calls = secondary.finish().await.unwrap();
+    let route_summary: serde_json::Value = db
+        .with_read_conn(|conn| {
+            let summary = conn.query_row(
+                "SELECT provider_route_summary_json FROM agent_runs WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get::<_, String>(0),
+            )?;
+            Ok(serde_json::from_str(&summary)?)
+        })
+        .unwrap();
+
+    assert_eq!(response.content.as_deref(), Some("recovered after empty"));
+    assert_eq!(primary_calls.len(), 2);
+    assert_eq!(secondary_calls.len(), 1);
+    let attempts = route_summary["attempts"]
+        .as_array()
+        .expect("route attempts");
+    assert_eq!(attempts.len(), 3);
+    assert_eq!(attempts[0]["decision"], "retry_same_provider");
+    assert_eq!(attempts[1]["decision"], "switch_provider");
+    assert_eq!(attempts[2]["decision"], "continue_run");
+    assert!(attempts[0]["emptyResponse"].as_bool().unwrap());
+    assert!(attempts
+        .iter()
+        .all(|attempt| attempt.get("request").is_none()));
+}
+
+#[tokio::test]
+async fn bounded_recovery_retries_only_the_original_route_before_advancing_candidates() {
+    let primary = spawn_llm_protocol_double(vec![
+        HttpResponseScript::raw(500, r#"{"error":{"message":"primary transient"}}"#),
+        HttpResponseScript::raw(500, r#"{"error":{"message":"primary transient"}}"#),
+    ])
+    .await
+    .unwrap();
+    let secondary = spawn_llm_protocol_double(vec![HttpResponseScript::raw(
+        500,
+        r#"{"error":{"message":"secondary transient"}}"#,
+    )])
+    .await
+    .unwrap();
+    let tertiary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"third route recovered\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .unwrap();
+    let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+        resolved: retry_candidate("bounded-primary", &primary.base_url),
+        failover_candidates: vec![
+            retry_candidate("bounded-secondary", &secondary.base_url),
+            retry_candidate("bounded-tertiary", &tertiary.base_url),
+        ],
+    })
+    .unwrap();
+    let db = Database::open_in_memory().unwrap();
+    let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let sink = CapacityNoopSink;
+    let provider =
+        FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)
+            .with_test_streaming_client(reqwest::Client::new());
+    let messages = vec![LlmMessage {
+        role: MessageRole::User,
+        content: "use a bounded recovery ladder".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }];
+    let mut observer = CapacityNoopStreamObserver;
+
+    let response = provider
+        .answer_turn(
+            &accepted.run_id,
+            &messages,
+            &[],
+            crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget::default(),
+            &mut observer,
+        )
+        .await
+        .expect("the third candidate should recover without retrying every fallback");
+
+    assert_eq!(response.content.as_deref(), Some("third route recovered"));
+    assert_eq!(primary.finish().await.unwrap().len(), 2);
+    assert_eq!(secondary.finish().await.unwrap().len(), 1);
+    assert_eq!(tertiary.finish().await.unwrap().len(), 1);
+    let route_summary: serde_json::Value = db
+        .with_read_conn(|conn| {
+            let summary = conn.query_row(
+                "SELECT provider_route_summary_json FROM agent_runs WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get::<_, String>(0),
+            )?;
+            Ok(serde_json::from_str(&summary)?)
+        })
+        .unwrap();
+    assert_eq!(
+        route_summary["attempts"]
+            .as_array()
+            .expect("route attempts")
+            .iter()
+            .filter(|attempt| attempt["decision"] == "retry_same_provider")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -2224,27 +2439,34 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
         let report = serialize_agent_capacity_report(&report).expect("strict capacity report");
         let generated: serde_json::Value =
             serde_json::from_str(&report).expect("generated capacity JSON");
-        let versioned_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("workspace root")
-            .join("docs/eval/results/v1.2.15-agent-capacity.json");
-        let versioned: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&versioned_path).expect("versioned capacity JSON"),
-        )
-        .expect("versioned capacity JSON");
+        assert_eq!(generated["release"], "v1.3.0");
+        assert_eq!(generated["core"]["dimensions"]["contract"]["passed"], 48);
+        assert_eq!(generated["core"]["dimensions"]["contract"]["required"], 48);
+        assert_eq!(generated["core"]["dimensions"]["safety"]["passed"], 48);
+        assert_eq!(generated["core"]["dimensions"]["safety"]["required"], 48);
+        assert_eq!(generated["core"]["dimensions"]["usability"]["passed"], 36);
+        assert_eq!(generated["core"]["dimensions"]["usability"]["required"], 36);
+        assert_eq!(generated["core"]["dimensions"]["provenance"]["passed"], 36);
+        assert_eq!(
+            generated["core"]["dimensions"]["provenance"]["required"],
+            36
+        );
+        assert_eq!(
+            generated["core"]["dimensions"]["continuity"]["passed"],
+            generated["core"]["dimensions"]["continuity"]["required"]
+        );
+        assert_eq!(generated["securityGate"], true);
+        assert!(generated["hardBoundaries"]
+            .as_array()
+            .is_some_and(|boundaries| boundaries.len() == 8
+                && boundaries.iter().all(|boundary| boundary["passed"] == true)));
+        assert!(generated["combinedTerminalCases"]
+            .as_array()
+            .is_some_and(
+                |cases| cases.len() == 6 && cases.iter().all(|case| case["passed"] == true)
+            ));
         std::fs::write(output_dir.join("capacity-full.json"), &report)
             .expect("write strict capacity report");
-        if std::env::var_os("IRIS_AGENT_EVAL_UPDATE_VERSIONED").is_some() {
-            let updated_text =
-                serde_json::to_string_pretty(&generated).expect("serialize updated capacity");
-            std::fs::write(&versioned_path, format!("{updated_text}\n"))
-                .expect("update versioned capacity report");
-        } else {
-            assert_eq!(
-                generated, versioned,
-                "versioned capacity result must match deterministic full"
-            );
-        }
     }
     // The summary is the completion marker consumed by the CLI and release
     // gate.  Write it only after every requested matrix, boundary probe, and
@@ -2293,8 +2515,12 @@ async fn headless_online_web_case_binds_its_prefetched_evidence_to_the_fact() {
         .await
         .expect("headless online web case");
 
-    assert!(executed.fact_correctness_passed());
-    assert!(executed.overall_pass());
+    assert!(
+        executed.fact_correctness_passed(),
+        "{}",
+        executed.closed_diagnostic()
+    );
+    assert!(executed.overall_pass(), "{}", executed.closed_diagnostic());
 }
 
 #[tokio::test]
@@ -2309,7 +2535,7 @@ async fn headless_high_risk_web_case_requires_two_controlled_sources() {
         .await
         .expect("headless high-risk web case");
 
-    assert!(executed.overall_pass());
+    assert!(executed.overall_pass(), "{}", executed.closed_diagnostic());
 }
 
 #[tokio::test]
@@ -2328,7 +2554,7 @@ async fn headless_strict_hybrid_case_can_retrieve_implicit_local_evidence() {
     assert_eq!(
         executed.tool_call_count(),
         1,
-        "implicit local retrieval is pre-model; the only model-selected tool is Web search"
+        "the closed observation records the unique web_search capability; invocation counts remain in telemetry"
     );
     assert!(executed.observed_web_source());
     assert!(executed.fact_correctness_passed());
@@ -2353,7 +2579,7 @@ async fn headless_no_retrieval_rewrite_cases_remain_offline_and_complete() {
 }
 
 #[tokio::test]
-async fn headless_offline_web_case_records_a_safe_refusal_as_an_evaluation_pass() {
+async fn headless_offline_web_case_records_a_safe_refusal_without_counting_an_answer() {
     let scenario = generate_core_scenarios()
         .expect("core scenarios")
         .into_iter()
@@ -2364,7 +2590,9 @@ async fn headless_offline_web_case_records_a_safe_refusal_as_an_evaluation_pass(
         .await
         .expect("headless offline web case");
 
-    assert!(executed.overall_pass());
+    assert!(!executed.overall_pass());
+    assert_eq!(executed.tool_call_count(), 0);
+    assert!(!executed.observed_web_source());
 }
 
 #[tokio::test]
@@ -2671,7 +2899,6 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         (PressureDimension::LocalMaterial, 12, 13),
         (PressureDimension::LocalMaterialChars, 32_000, 32_001),
         (PressureDimension::ToolLoop, 24, 25),
-        (PressureDimension::WebEvidenceCount, 8, 9),
         (PressureDimension::Output, 32_000, 32_001),
     ] {
         let execution = executions
@@ -2686,6 +2913,14 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
             .iter()
             .find(|execution| execution.dimension() == PressureDimension::RetrievalDistractors)
             .expect("retrieval distractors")
+            .validation_status_code(),
+        "lower_bound_only"
+    );
+    assert_eq!(
+        executions
+            .iter()
+            .find(|execution| execution.dimension() == PressureDimension::WebEvidenceCount)
+            .expect("staged Web evidence")
             .validation_status_code(),
         "lower_bound_only"
     );
@@ -2735,6 +2970,18 @@ async fn twenty_fifth_tool_request_is_a_rejected_capacity_boundary_even_when_fin
 
     assert_eq!(tool_loop.stable_level(), Some(24));
     assert_eq!(tool_loop.next_level(), Some(25));
+}
+
+#[tokio::test]
+async fn tool_call_boundary_probe_distinguishes_the_24th_and_25th_request() {
+    assert!(super::agent_capacity_eval::probe_tool_call_limit(24, true)
+        .await
+        .expect("24-call probe"));
+    assert!(
+        !super::agent_capacity_eval::probe_tool_call_limit(25, false)
+            .await
+            .expect("25-call probe")
+    );
 }
 
 #[tokio::test]
@@ -2855,7 +3102,7 @@ fn local_transport_live_candidate(
             web_search_mapping_json: Some(
                 r#"{"tool":"search","queryArg":"query","maxResultsArg":"count"}"#.into(),
             ),
-            web_fetch_mapping_json: None,
+            web_fetch_mapping_json: Some(r#"{"tool":"fetch","urlArg":"url"}"#.into()),
         },
     )
     .expect("test-only loopback profile")
@@ -3029,13 +3276,27 @@ async fn serve_live_pilot_mcp_request(
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "iris-live-pilot-loopback", "version": "1"}
         }),
-        "tools/call" => serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": live_pilot_mcp_evidence_text()
-            }],
-            "isError": false
-        }),
+        "tools/call" => {
+            let tool_name = request
+                .pointer("/params/name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let text = if tool_name == "fetch" {
+                format!(
+                    "Fetched body from the selected source. {}",
+                    live_pilot_mcp_evidence_text()
+                )
+            } else {
+                live_pilot_mcp_evidence_text()
+            };
+            serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": text
+                }],
+                "isError": false
+            })
+        }
         _ => serde_json::json!({}),
     };
     let body = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
@@ -3059,14 +3320,12 @@ fn live_pilot_mcp_fixture_covers_every_selected_web_fact() {
     assert_eq!(
         selected_live_pilot_web_fact_claims().expect("selected Web claims"),
         vec![
-            "fact-web-25=value-25".to_string(),
             "fact-web-36=value-36".to_string(),
-            "fact-web-37=value-37".to_string(),
             "fact-web-48=value-48".to_string(),
         ]
     );
 
-    for claim in ["fact-web-25=value-25", "fact-web-48=value-48"] {
+    for claim in ["fact-web-36=value-36", "fact-web-48=value-48"] {
         assert!(
             evidence.contains(claim),
             "missing live-pilot claim: {claim}"
@@ -3385,7 +3644,7 @@ fn approved_live_profile_is_copied_to_an_isolated_temporary_state_without_status
     assert_eq!(providers[0].id, "sensitive-mcp-name");
     assert_eq!(prepared.profile_id(), profile_id);
     assert_eq!(prepared.result_status_code(), "live_not_tested");
-    assert_eq!(prepared.pilot_case_limit(), 24);
+    assert_eq!(prepared.pilot_case_limit(), 6);
     assert_eq!(probe.hydration_calls(), 1);
 }
 
@@ -3832,7 +4091,7 @@ async fn live_preflight_ids_and_approval_tokens_are_random_session_bound_and_non
     .expect("current-session approval runs once");
     assert_eq!(
         result.completed_case_count(),
-        18,
+        6,
         "the closed result exposes terminal state without secret-bearing transport data: {result:?}"
     );
 
@@ -3924,17 +4183,10 @@ async fn approved_live_pilot_executes_the_interaction_matrix_with_task2_local_do
     .expect("approved pilot");
 
     assert_eq!(probe.hydration_calls(), 1);
-    assert_eq!(probe.dispatch_calls(), 24);
-    assert_eq!(result.required_case_count(), 24);
-    // The interaction matrix repeats the two offline external-fact cases
-    // (WebOnly and Hybrid) three times. Under the current-run verification contract they
-    // must end in the safe
-    // `WebVerificationRequired` terminal state before a model call, rather
-    // than being counted as a completed answer.
-    assert_eq!(result.completed_case_count(), 18);
-    assert!(result
-        .terminal_error_codes()
-        .contains(&"agent_run_web_verification_required"));
+    assert_eq!(probe.dispatch_calls(), 6);
+    assert_eq!(result.required_case_count(), 6);
+    assert_eq!(result.completed_case_count(), 6);
+    assert!(result.terminal_error_codes().is_empty());
     assert_eq!(result.status_code(), "live_not_tested");
     let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -3958,16 +4210,23 @@ async fn approved_live_pilot_executes_the_interaction_matrix_with_task2_local_do
             "completedCaseCount",
             "failed",
             "passed",
+            "profileId",
             "requiredCaseCount",
+            "routeCommitment",
             "schemaVersion",
             "status",
         ]
     );
-    assert_eq!(value["caseCount"], 24);
-    assert_eq!(value["cases"].as_array().map(Vec::len), Some(24));
+    assert_eq!(value["schemaVersion"], "agent-live-pilot-v2");
+    assert_eq!(value["profileId"], profile_id);
+    assert!(value["routeCommitment"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("route-") && value.len() == 70));
+    assert_eq!(value["caseCount"], 6);
+    assert_eq!(value["cases"].as_array().map(Vec::len), Some(6));
     assert_eq!(
         value["passed"].as_u64().unwrap_or_default() + value["failed"].as_u64().unwrap_or_default(),
-        24
+        6
     );
     for case in value["cases"].as_array().expect("pilot cases") {
         let verdict = case["verdict"].as_object().expect("closed verdict");
@@ -4020,6 +4279,13 @@ async fn approved_live_pilot_executes_the_interaction_matrix_with_task2_local_do
             "Web/MCP latency is not model duration"
         );
     }
+    let mut wrong_identity = value.clone();
+    wrong_identity["cases"][5]["caseId"] = serde_json::json!(47);
+    wrong_identity["cases"][5]["verdict"]["caseId"] = serde_json::json!(47);
+    let error = validate_serialized_live_pilot_result(&wrong_identity.to_string())
+        .expect_err("live result must contain the fixed six-case calibration slice");
+    assert_eq!(error.reason_code(), "live_pilot_case_set_invalid");
+
     let mut malicious = value;
     malicious["cases"][0]["telemetry"]["webLatencyMs"] = serde_json::json!(1);
     let error = validate_serialized_live_pilot_result(&malicious.to_string())
@@ -4052,6 +4318,41 @@ async fn approved_live_pilot_executes_the_interaction_matrix_with_task2_local_do
     }
 }
 
+#[test]
+fn live_result_validation_command_entrypoint_rejects_tampered_artifacts() {
+    let Ok(requested) = std::env::var("IRIS_AGENT_EVAL_LIVE_RESULT_TO_VALIDATE") else {
+        return;
+    };
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let target = workspace
+        .join("target/agent-eval")
+        .canonicalize()
+        .expect("agent eval target");
+    let artifact = std::path::PathBuf::from(requested)
+        .canonicalize()
+        .expect("canonical live result");
+    assert!(
+        artifact.starts_with(&target),
+        "live result must stay in target"
+    );
+    let metadata = artifact.metadata().expect("live result metadata");
+    assert!(metadata.is_file() && metadata.len() <= 256 * 1024);
+    let serialized = std::fs::read(&artifact).expect("live result bytes");
+    let expected_sha256 =
+        std::env::var("IRIS_AGENT_EVAL_LIVE_RESULT_SHA256").expect("live result snapshot hash");
+    let config_root = std::env::var_os("IRIS_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("live result attestation config root");
+    verify_attested_live_pilot_result(&artifact, &serialized, &expected_sha256, &config_root)
+        .expect("trusted live execution attestation");
+    let serialized = String::from_utf8(serialized).expect("live result text");
+    validate_serialized_live_pilot_result(&serialized).expect("strict live result");
+    let value: serde_json::Value = serde_json::from_str(&serialized).expect("live result JSON");
+    assert_eq!(value["status"], "live_pilot_executed");
+}
+
 #[tokio::test]
 async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
     let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
@@ -4073,8 +4374,8 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
     .expect("faulted approved pilot");
 
     assert_eq!(probe.hydration_calls(), 1);
-    assert_eq!(probe.dispatch_calls(), 24);
-    assert_eq!(result.completed_case_count(), 18);
+    assert_eq!(probe.dispatch_calls(), 6);
+    assert_eq!(result.completed_case_count(), 6);
     assert!(result.passed() < result.required_case_count());
     assert!(result.failed() > 0);
     assert_eq!(
@@ -4112,12 +4413,6 @@ async fn live_pilot_completed_failures_are_derived_from_closed_runtime_evidence(
             13,
             "citationSupport",
             "required_citation_missing_or_unsupported",
-        ),
-        (
-            EvalFault::OfflineWebDispatch { case_id: 25 },
-            25,
-            "authorization",
-            "offline_web_dispatch",
         ),
         (
             EvalFault::UnauthorizedLocalRead { case_id: 13 },
@@ -4165,11 +4460,7 @@ async fn live_pilot_completed_failures_are_derived_from_closed_runtime_evidence(
             .find(|case| case["caseId"] == case_id)
             .expect("faulted smoke case");
 
-        let expected_terminal_state = if case_id == 25 { "failed" } else { "completed" };
-        assert_eq!(
-            faulted["runtimeEvidence"]["terminalState"],
-            expected_terminal_state
-        );
+        assert_eq!(faulted["runtimeEvidence"]["terminalState"], "completed");
         assert_eq!(
             faulted["verdict"][check]["status"], "fail",
             "{fault:?} did not fail {check}"
@@ -4209,9 +4500,9 @@ async fn live_pilot_records_each_infrastructure_error_and_completes_the_matrix()
     .expect("infrastructure failures remain reportable");
 
     assert_eq!(probe.hydration_calls(), 1);
-    assert_eq!(probe.dispatch_calls(), 24);
+    assert_eq!(probe.dispatch_calls(), 6);
     assert_eq!(result.completed_case_count(), 0);
-    assert_eq!(result.failed(), 24);
+    assert_eq!(result.failed(), 6);
     assert_eq!(result.status_code(), "live_not_tested");
     assert!(result
         .terminal_error_codes()
@@ -4286,6 +4577,7 @@ async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_
     .expect("test-only selected LLM credential binding")])
     .expect("anonymous preflight");
     let profile_id = session.report().profile_ids()[0].to_string();
+    let attestation_session_id = session.report().session_id().to_string();
     let approval =
         approve_live_profile(&mut session, Some(&profile_id), 60_000).expect("approved profile");
     assert!(
@@ -4319,7 +4611,7 @@ async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_
     let mcp_captures = mcp.finish().await.expect("captured local MCP dispatch");
 
     assert_eq!(probe.hydration_calls(), 1);
-    assert_eq!(probe.dispatch_calls(), 24);
+    assert_eq!(probe.dispatch_calls(), 6);
     let serialized_result = serde_json::to_value(&result).expect("closed live pilot result");
     let failed_case_ids = serialized_result["cases"]
         .as_array()
@@ -4330,7 +4622,7 @@ async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_
         .collect::<Vec<_>>();
     assert_eq!(
         result.completed_case_count(),
-        24,
+        6,
         "closed failed case ids={failed_case_ids:?}; terminal errors={:?}; LLM request count is {}; LLM shapes={:?}; MCP methods={:?}",
         result.terminal_error_codes(),
         llm.request_count(),
@@ -4364,7 +4656,7 @@ async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_
         .collect::<Vec<_>>();
     assert_eq!(
         result.passed(),
-        24,
+        6,
         "completed cases with a closed verdict failure={non_passing_case_ids:?}, verdicts={non_passing_verdicts:?}; LLM shapes={:?}; MCP methods={:?}",
         llm.request_shape_summary(),
         mcp_captures
@@ -4373,6 +4665,48 @@ async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_
             .collect::<Vec<_>>()
     );
     assert_eq!(result.status_code(), "live_pilot_executed");
+    let config_root = tempfile::tempdir().expect("private attestation config root");
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let attested_output = workspace.join(format!(
+        "target/agent-eval/live-pilot-{attestation_session_id}.json"
+    ));
+    write_attested_live_pilot_result(
+        &attested_output,
+        &result,
+        &attestation_session_id,
+        config_root.path(),
+    )
+    .expect("attested live result");
+    let attested_bytes = std::fs::read(&attested_output).expect("attested result bytes");
+    let attested_hash = {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(&attested_bytes))
+    };
+    verify_attested_live_pilot_result(
+        &attested_output,
+        &attested_bytes,
+        &attested_hash,
+        config_root.path(),
+    )
+    .expect("same immutable snapshot verifies");
+    let mut forged_bytes = attested_bytes.clone();
+    forged_bytes.push(b' ');
+    let forged_hash = {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(&forged_bytes))
+    };
+    verify_attested_live_pilot_result(
+        &attested_output,
+        &forged_bytes,
+        &forged_hash,
+        config_root.path(),
+    )
+    .expect_err("a re-snapshotted mutation cannot reuse the execution attestation");
+    std::fs::remove_file(&attested_output).expect("remove attested result");
+    std::fs::remove_file(format!("{}.attestation.json", attested_output.display()))
+        .expect("remove result attestation");
     assert!(
         serialized_result["cases"]
             .as_array()
@@ -4487,7 +4821,7 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
         .expect("live_pilot_profile_approval_required");
     assert_eq!(
         std::env::var("IRIS_AGENT_EVAL_COST_CONFIRMATION").as_deref(),
-        Ok("one-24-case-interaction-matrix-pilot"),
+        Ok("one-6-case-interaction-matrix-pilot"),
         "live_pilot_cost_confirmation_required"
     );
     let session_suffix = session_id
@@ -4562,17 +4896,19 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
         crate::credentials::credential_access_probe_snapshot()
     );
     assert_eq!(probe.hydration_calls(), 1);
-    assert_eq!(probe.dispatch_calls(), 24);
-    write_live_pilot_result(
+    assert_eq!(probe.dispatch_calls(), 6);
+    write_attested_live_pilot_result(
         &workspace.join(format!("target/agent-eval/live-pilot-{session_id}.json")),
         &result,
+        &session_id,
+        &config_root,
     )
-    .expect("strict live pilot result");
+    .expect("strict attested live pilot result");
     let error_codes = result
         .terminal_error_codes()
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>();
-    if result.completed_case_count() < 24 {
+    if result.completed_case_count() < 6 {
         eprintln!(
             "live_pilot_partial status={} completed={} passed={} safe_error_codes={:?}",
             result.status_code(),

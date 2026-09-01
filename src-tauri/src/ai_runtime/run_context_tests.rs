@@ -1846,6 +1846,124 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
 }
 
 #[test]
+fn failed_previous_run_exposes_bounded_runtime_facts_without_a_failed_draft() {
+    use crate::ai_runtime::run_contract::{RunEventPayload, RunEventType, RunState};
+
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "failed-history-first".into(),
+            run_id: "failed-history-run-first".into(),
+            turn_id: "failed-history-turn-first".into(),
+            message: "近期有什么电影正在热映？".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: envelope(),
+        },
+    )
+    .expect("first accepted run");
+    for (state_version, state) in [(0, RunState::Preparing), (1, RunState::Running)] {
+        AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: "failed-history-run-first".into(),
+                state_version,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state,
+                    stage: "model".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("advance run");
+    }
+    for (attempt, decision) in [(1, "retry_same_provider"), (2, "terminal_no_fallback")] {
+        AgentRunRepository::append_provider_route_diagnostic(
+            &db,
+            "failed-history-run-first",
+            serde_json::json!({
+                "providerId": "provider-a",
+                "modelId": "model-a",
+                "attempt": attempt,
+                "protocolStage": "model_turn",
+                "outcome": "failed",
+                "errorCategory": "invalid_response",
+                "emptyResponse": true,
+                "hadVisibleOutput": false,
+                "hadToolCalls": false,
+                "decision": decision,
+            }),
+        )
+        .expect("provider route diagnostic");
+    }
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "failed-history-run-first".into(),
+            state_version: 2,
+            event_type: RunEventType::Failed,
+            payload: RunEventPayload::Failed {
+                code: SafeRunErrorCode::EmptyOutput,
+                message: "safe failure".into(),
+            },
+        },
+    )
+    .expect("failed run");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "failed-history-current".into(),
+            run_id: "failed-history-run-current".into(),
+            turn_id: "failed-history-turn-current".into(),
+            message: "刚才为什么失败？".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::Conversation,
+                ..envelope()
+            },
+        },
+    )
+    .expect("current accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        None,
+        &session.session_key,
+        "failed-history-run-current",
+    )
+    .expect("assembled context");
+    let summary = context
+        .previous_run_summary
+        .as_deref()
+        .expect("previous runtime facts");
+
+    assert!(summary.contains("status=failed"));
+    assert!(summary.contains("model_started=true"));
+    assert!(summary.contains("tool_started=false"));
+    assert!(summary.contains("attempt_count=2"));
+    assert!(summary.contains("provider_switch_count=0"));
+    assert!(summary.contains("last_provider_id=\"provider-a\""));
+    assert!(summary.contains("last_model_id=\"model-a\""));
+    assert!(summary.contains("safe_code=agent_run_empty_output"));
+    assert!(summary.contains("previous_request=\"近期有什么电影正在热映？\""));
+    assert!(context.recent_messages.is_empty());
+}
+
+#[test]
 fn provider_history_sanitizes_prior_web_citations_without_changing_answer_text() {
     let db = Database::open_in_memory().expect("database");
     let session = NormalSessionRepository::create(&db).expect("session");

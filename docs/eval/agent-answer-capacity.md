@@ -103,15 +103,17 @@ binding 都匹配；即便两个配置具有相同 capability fingerprint，替�
 消费，旧会话不能重放。
 
 用户必须同时提供当前 session、该 session 下的匿名 profile，并逐次确认
-`one-24-case-interaction-matrix-pilot` 成本 checkpoint。随后才会签发短时效、同会话绑定、一次性
+`one-6-case-interaction-matrix-pilot` 成本 checkpoint。随后才会签发短时效、同会话绑定、一次性
 的随机 approval token；所有门禁完成后，选中的非密钥路由与 MCP 元数据才复制
-到 `tempfile` 管理的独立 `AppState`。每个已选模型固定执行 8 个交互完整性场景、各重复 3 次，
-共 24 个 normal headless Run；MiniMax-M3 与 MiMo v2.5 分别完成后构成 48 次真实试运行。
-确定性
-对端继续复用完整 synthetic oracle；真实网络对端改用公开核验任务和对应的 live
-oracle，二者绝不共享伪造网页事实。只有每个选中模型的 24 个真实 Run（两个模型合计 48 个）全部到达终态、每题封闭 verdict
-均通过，且没有归因、内部协议、权限或来源边界违规，结果才标记 `live_pilot_executed`；
-离线网页场景的合规安全拒绝是通过的终态，保留在 `completedCaseCount` 之外但不得阻止放行。
+到 `tempfile` 管理的独立 `AppState`。每条批准路由固定执行 6 个 normal headless Run，
+两条独立路由合计不超过 12 Run。确定性对端继续复用 synthetic oracle；真实网络对端改用
+公开核验任务和对应的 live oracle，二者绝不共享伪造网页事实。只有一条路由的 6 Run 全部
+完成、每题封闭 verdict 均通过，且没有归因、内部协议、权限或来源边界违规，结果才标记
+`live_pilot_executed`。
+
+`agent:eval` 还要求两份稳定匿名 `routeCommitment` 不同的 live 结果和一份逐场景人工评分文件；随机 `profileId` 和文件名不同都不能冒充路由不同。进入评分前，Rust 严格验证器会重新检查固定六场景集合、逐项 runtime/verdict/telemetry 和顶层派生计数。人工量表为意图遵循、事实与
+来源、相关性与完整性、纠正与连续性四项；单项至少 4/5、总平均至少 4.2。contract、两条
+live 路由和人工复核全部通过后，脚本才原子生成 `target/agent-eval/product-gate.json`。
 若评测器自身在某个案例的准备或取分阶段出错，该案例会以闭集
 `agent_run_evaluation_inconclusive` 记录为失败，剩余案例仍会继续并写出完整报告；
 原始错误不进入结果文件，标准错误流只输出固定 reason code 供本地诊断。
@@ -211,9 +213,11 @@ v1.2.15 确定性 full 结果为 48/48：
 索引规模 >48、向量可用性与 Web 延迟在确定性层固定为 `live_not_tested`；
 检索干扰 >48 不在 CI 中物化，只保留调度与下界声明。
 
-压力探针与生产 `NormalRunToolExecutor` 共用 Web 证据预算：首次检索最多 8 条，
-一次回答累计最多 12 条，第 13 条必须拒绝；两者禁止使用不同的隐含上限。这里的
-`web_evidence_count` 只表示 Iris 的证据预算，绝不表示网络
+压力探针与生产 `NormalRunToolExecutor` 共用 Web 分层预算：每次发现最多 4 个候选，
+每 Run 最多保留 8 个候选；候选不写 evidence ledger。模型选中 URL 并抓取正文后才占用
+累计最多 12 条的最终证据容量，第 13 条必须拒绝。候选层和最终证据层不是同一标量，
+因此 `web_evidence_count` 阶梯只声明 `lower_bound_only`；4/8 候选与 12/13 evidence
+分别由命名回归和硬边界验证。该轴只表示 Iris 的证据预算，绝不表示网络
 延迟；机器报告将 `webLatency` 单独固定为 `live_not_tested`。检索干扰项
 在 48 篇上仍为 5/5，只能声明 `lower_bound_only`；组合终局不是标量，
 声明为 `non_scalar_suite`。推理深度各层虽经过真实 headless RunEngine，
@@ -304,17 +308,20 @@ prompt、answer、路径、URL、证据正文、工具参数、凭证或真实�
 
 ```bash
 npm run agent:eval:smoke
-npm run agent:eval
+npm run agent:eval:contract
 npm run rag:eval
-npm run agent:eval:live -- preflight
+npm run agent:eval:live -- preflight --models <model>
 npm run agent:eval:live -- pilot --session session-<64hex> \
-  --approve profile-<32hex> --confirm-cost one-24-case-interaction-matrix-pilot
+  --approve profile-<32hex> --confirm-cost one-6-case-interaction-matrix-pilot \
+  --models <model>
+IRIS_AGENT_EVAL_LIVE_RESULTS="<result-a>:<result-b>" \
+IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
 ```
 
 `agent:eval:smoke` 执行完整 24 条 online headless interaction matrix，且仅当
 `caseCount`、`completedCaseCount` 与 `passed` 均为 24、`failed` 为 0 时通过；
-离线和硬边界由独立安全轨执行。`agent:eval` 执行 48 题、逐层五次压力执行、
-硬边界、安全轨、六个组合终端并生成严格白名单报告。
+离线和硬边界由独立安全轨执行。`agent:eval:contract` 执行 48 题、逐层五次压力执行、
+硬边界、安全轨和组合终端；`agent:eval` 是额外产品门，不能由 contract 单独满足。
 安全案例失败会写入 `securityGate=false`，不会阻止报告生成。版本化确定性结果见
 `docs/eval/results/v1.2.15-agent-capacity.json`。`agent:eval:live -- preflight`
 只生成被 Git 忽略的 `target/agent-eval/live-preflight.json`；它不是 live
@@ -327,18 +334,20 @@ tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` �
 发布 source guard 要求同一 SHA 已有成功的 main push CI（其中包含 Windows x64
 桌面 E2E）；最终草稿 Release 同时依赖完整 Agent 基线和两个平台包。
 
-## 终验记录（v1.2.15 优雅补齐）
+## 历史终验记录（v1.2.15，已被当前产品门取代）
 
 本轮（harness 诚实 + 产品授权收窄）后已执行并通过：
 
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib agent_capacity_eval`
 - `cargo test --manifest-path src-tauri/Cargo.toml --test agent_permission_boundaries`
 - `npm run agent:eval:smoke`
-- `npm run agent:eval`（版本化报告已更新为 48/48、`securityGate=true`）
+- 当时语义下的 `npm run agent:eval`（版本化报告曾更新为 48/48、`securityGate=true`）
 
-压力轴 `index_scale>48` / `vector_availability` / `webLatency` 继续
+这段记录只描述旧提交上的确定性合同，不代表当前 `agent:eval` 产品门通过。压力轴 `index_scale>48` / `vector_availability` / `webLatency` 继续
 `live_not_tested`。版本化确定性报告也固定使用
 `claimBoundary.liveProfiles=live_not_tested`：它不能携带、继承或推广真实模型的
 放行结论。真实联网证据只能来自被忽略的、按精确模型与路由绑定的 live-pilot
-记录；只有 MiniMax-M3 与 MiMo v2.5 都完成获批的重复试运行，且所有 hard
+记录。每份 live 报告还必须携带由受约束 Rust live 执行路径生成、本机私有评测密钥绑定 session 与精确报告字节的认证旁证；最终门用同一 SHA-256 快照完成认证、严格校验和 JSON 判定，禁止复制后改写报告或在校验期间替换文件。只有 MiniMax-M3 与 MiMo v2.5 都完成获批的试运行，且所有 hard
 admission 与人格门槛均通过后，才可以将对应路由加入严格结构化终局校准表。
+
+2026-09-01 的 MiniMax 诊断校准最后一轮结果是 5/6 完成、4/6 合同通过，产品门保持失败；过程中发现并修正了评测标记进入真实检索文本、Web-only Run 获得本地 context 工具、连续样本覆盖同一路径导致索引漂移等评测/控制面缺陷。MiMo 与四维人工评分未在本轮预算内完成，任何文档不得将本轮写成真实质量通过。

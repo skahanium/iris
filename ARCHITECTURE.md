@@ -53,9 +53,13 @@ React 19 UI
 
 normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `assistant_run_get` 执行、控制和回放。每个 normal-domain Run 在 accepted 后持久化，再进行策略、上下文、路由与 provider 调度；`assistant:run_event` 是唯一的前端生命周期事件，断流使用 `assistant_run_get` 回放。
 
+有任一只读工具时，模型进入唯一 `AgentToolLoop`。Standard 预算为 8 次模型、24 次总工具，并受 local 12、network 6、external-read 6、runtime 4 分类上限约束。每个模型回合最多执行 2 个 catalog 标记的发现调用；超出的独立发现动作返回 `deferred_for_feedback`，不消耗额度。每次工具批次结束后必须把有界观察返回模型，Host 不自动规划后续搜索。进展只由新资源、正文深度、内容 hash、revision、首次错误类别或终局修复等机械事实计算。
+
 新 Normal Run 的普通回答（包括要求本轮 Web 证据的普通事实）以自然正文完成；Run Engine 仍核验当前 Run evidence，并从账本投影受控来源组，但不向模型暴露内部 `submit_final_answer`。只有高风险当前事实以及含非空历史 `FreshFactPolicy` 的兼容 Run 使用既有结构化终局。普通地点、范围、偏好等缺参由模型在未调用工具前以一条无来源的自然问题结束当前 Run；下一条用户消息创建新 Run 并从会话历史承接。`AwaitingInput` 与 `submit_input` 仅保留旧 Run 读取/恢复兼容，不是新普通对话的路径。
 
 `agent_run_events` 是追加式、安全的过程回放日志，而不是可据以重建全部 Run 的执行日志：事件不包含工具参数或原始输出，只保存稳定 capability、调用 ID、受限摘要、状态和安全错误码。`assistant_run_get` 的回放仅恢复安全快照与过程展示；Direct 与 ToolLoop 不支持进程级续跑，进程中断后不会从事件重新执行模型或工具。只有 Durable Run 才具有暂停与检查点语义：新计划冻结至多 6 个有序操作和 6 个目标，一次确认后按无正文游标逐项重验和执行；重启只恢复未执行后缀，hash 漂移保留已完成前缀并停止后缀。确认后若 Provider 可用，最多以目标限定的 `read_note` 做 2 次模型/4 次本地只读核对；不可用时保留 Host 的执行事实报告，绝不重放写入或开放新工具。
+
+模型路由把空正文且无工具调用视为无效响应。在尚无可见正文、工具调用、continuation 或副作用时，瞬态/无效响应先重试同一 Provider 一次，再切换同工具能力候选；已有动作后不跨 Provider 隐式续接。尝试、错误类别和切换决定以有界脱敏对象追加到现有 route summary，不保存请求、响应或凭证正文。最近失败 Run 只向下一轮提供请求、终态、安全错误、模型/工具是否开始、尝试与切换计数，不提供失败草稿或旧来源。
 
 会话通过不透明 `AssistantSessionRef` 寻址，并按 normal/classified 安全域物理隔离。涉密 Run 仅在当前进程内易失执行：解锁文档、prompt 与模型输出以 `Zeroizing` 保存，不拥有 SQLite 或 CEF Run 句柄；`assistant_run_get` 仅可在同一进程内按显式 run ID 读取无正文的易失快照与安全事件，不支持省略 run ID 的活动 Run 查询、持久化断流回放或进程级恢复。完成正文只能由 `assistant_classified_run_take_result` 一次性取走。已持久化的涉密 Markdown 与会话数据继续构成 CEF 加密持久化边界，普通 SQLite 会话表不承载其正文。当前编辑器、活动 tab、scene、intent、旧 task ID 和笔记正文不进入隐式请求上下文；只有用户明确提交的引用和一次性 action snapshot 可以进入 Run。`Apply` 还必须把确认计划、模型工具参数和真实写入绑定到同一个显式目标与基准 hash；取消信号会进入 provider、工具调度和写盘前提交检查。
 
@@ -65,7 +69,7 @@ normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `as
 
 普通搜索和 AI 检索均在 Rust 侧执行。Run 仅按显式引用和获授权范围请求材料；显式材料在读取/送模前、工具读取在打开文件前、Markdown 提交在写盘前都会复核文档策略。检索结果通过证据 ID 与安全展示元数据进入账本，不将证据正文作为系统指令。
 
-模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。
+模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。无 URL 的发现调用每次最多返回 4 个有界候选、每 Run 最多保存 8 个；候选只标记为 `search_snippet`，不写 evidence ledger。模型可从当前 Run 候选或用户显式 URL 中选择目标再次调用同一 `web_search`，只有抓取到 `fetched_body` 的选中页面才登记为可引用 evidence。未选候选和失败抓取不能生成 `Wn`。
 
 Feed 与 AI 网页抓取的 URL 读取使用同一逐跳安全网门：每跳重新校验 HTTPS、解析并拒绝任一私网地址；直连固定到已验证地址，HTTP CONNECT/SOCKS5 也只发送固定 IP 目标，同时 TLS SNI、证书校验与 Host 保持原域名。它消费唯一的 `follow_system_proxy` 设置；PAC、HTTPS-to-proxy 或认证代理稳定失败且不会回退直连。
 

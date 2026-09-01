@@ -847,14 +847,28 @@ fn load_previous_run_safety_summary(
 ) -> AppResult<Option<String>> {
     let previous = db.with_read_conn(|conn| {
         let result = conn.query_row(
-            "SELECT r.run_id, r.status
+            "SELECT r.run_id, r.status, m.content,
+                    EXISTS(
+                        SELECT 1 FROM session_messages assistant
+                        WHERE assistant.session_id = r.session_id
+                          AND assistant.turn_id = r.turn_id
+                          AND assistant.role = 'assistant'
+                    ), r.provider_route_summary_json
              FROM agent_runs r
              JOIN session_messages m
                ON m.session_id = r.session_id AND m.turn_id = r.turn_id AND m.role = 'user'
              WHERE r.session_id = ?1 AND m.seq < ?2
              ORDER BY m.seq DESC LIMIT 1",
             rusqlite::params![session_id, before_seq],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, bool>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
         );
         match result {
             Ok(value) => Ok(Some(value)),
@@ -862,7 +876,9 @@ fn load_previous_run_safety_summary(
             Err(error) => Err(error.into()),
         }
     })?;
-    let Some((run_id, status)) = previous else {
+    let Some((run_id, status, previous_request, has_assistant_message, route_summary_json)) =
+        previous
+    else {
         return Ok(None);
     };
     let (events, has_web_evidence) = db.with_read_conn(|conn| {
@@ -886,6 +902,11 @@ fn load_previous_run_safety_summary(
     let mut web_result = "skipped";
     let mut safe_code = "none";
     let mut attempt_count = 0;
+    let mut model_started = false;
+    let mut tool_started = false;
+    let mut provider_switch_count = 0_u32;
+    let mut last_provider_id = None::<String>;
+    let mut last_model_id = None::<String>;
     for payload_json in events {
         let Ok(payload) =
             serde_json::from_str::<crate::ai_runtime::run_contract::RunEventPayload>(&payload_json)
@@ -893,10 +914,19 @@ fn load_previous_run_safety_summary(
             continue;
         };
         match payload {
+            crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
+                state: crate::ai_runtime::run_contract::RunState::Running,
+                ..
+            } => {
+                model_started = true;
+            }
             crate::ai_runtime::run_contract::RunEventPayload::ToolStarted {
                 capability, ..
-            } if capability == "web.search" || capability == "web_search" => {
-                web_attempted = true;
+            } => {
+                tool_started = true;
+                if capability == "web.search" || capability == "web_search" {
+                    web_attempted = true;
+                }
             }
             crate::ai_runtime::run_contract::RunEventPayload::CapabilityDegraded {
                 code,
@@ -911,16 +941,123 @@ fn load_previous_run_safety_summary(
             crate::ai_runtime::run_contract::RunEventPayload::Failed { code, .. } => {
                 safe_code = code.as_str();
             }
+            crate::ai_runtime::run_contract::RunEventPayload::ProviderSwitched {
+                provider_id,
+                model_id,
+                attempt,
+                ..
+            } => {
+                provider_switch_count = provider_switch_count.saturating_add(1);
+                attempt_count = attempt_count.max(attempt);
+                last_provider_id = Some(provider_id);
+                last_model_id = Some(model_id);
+            }
             _ => {}
+        }
+    }
+    if let Ok(route_summary) = serde_json::from_str::<serde_json::Value>(&route_summary_json) {
+        let attempts = route_summary
+            .as_object()
+            .filter(|summary| {
+                summary
+                    .get("schemaVersion")
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(1)
+            })
+            .and_then(|summary| summary.get("attempts"))
+            .and_then(serde_json::Value::as_array)
+            .filter(|attempts| !attempts.is_empty() && attempts.len() <= 12);
+        if let Some(attempts) = attempts {
+            let mut parsed_attempt_count = 0_u32;
+            let mut parsed_switch_count = 0_u32;
+            let mut parsed_provider_id = None::<String>;
+            let mut parsed_model_id = None::<String>;
+            let mut valid = true;
+            for attempt in attempts {
+                let Some(object) = attempt.as_object() else {
+                    valid = false;
+                    break;
+                };
+                let attempt_number = object
+                    .get("attempt")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .filter(|value| *value > 0 && *value <= 100);
+                let provider_id = object
+                    .get("providerId")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| {
+                        !value.is_empty()
+                            && value.chars().count() <= 128
+                            && !value.chars().any(char::is_control)
+                    });
+                let model_id = object
+                    .get("modelId")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| {
+                        !value.is_empty()
+                            && value.chars().count() <= 128
+                            && !value.chars().any(char::is_control)
+                    });
+                let decision = object
+                    .get("decision")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| {
+                        matches!(
+                            *value,
+                            "retry_same_provider"
+                                | "switch_provider"
+                                | "continue_run"
+                                | "terminal"
+                                | "terminal_no_fallback"
+                        )
+                    });
+                let (Some(attempt_number), Some(provider_id), Some(model_id), Some(decision)) =
+                    (attempt_number, provider_id, model_id, decision)
+                else {
+                    valid = false;
+                    break;
+                };
+                parsed_attempt_count = parsed_attempt_count.max(attempt_number);
+                parsed_switch_count =
+                    parsed_switch_count.saturating_add(u32::from(decision == "switch_provider"));
+                parsed_provider_id = Some(provider_id.to_string());
+                parsed_model_id = Some(model_id.to_string());
+            }
+            if valid {
+                attempt_count = attempt_count.max(parsed_attempt_count);
+                provider_switch_count = parsed_switch_count;
+                last_provider_id = parsed_provider_id;
+                last_model_id = parsed_model_id;
+            }
         }
     }
     if web_result != "degraded" && has_web_evidence {
         web_attempted = true;
         web_result = "succeeded";
     }
-    Ok(Some(format!(
-        "status={status} web_attempted={web_attempted} evidence_outcome={web_result} attempt_count={attempt_count} safe_code={safe_code}"
-    )))
+    let mut summary = format!(
+        "status={status} model_started={model_started} tool_started={tool_started} web_attempted={web_attempted} evidence_outcome={web_result} attempt_count={attempt_count} provider_switch_count={provider_switch_count} safe_code={safe_code}"
+    );
+    if let Some(provider_id) = last_provider_id {
+        let provider_json = serde_json::to_string(&provider_id).unwrap_or_else(|_| "\"\"".into());
+        summary.push_str(&format!(" last_provider_id={provider_json}"));
+    }
+    if let Some(model_id) = last_model_id {
+        let model_json = serde_json::to_string(&model_id).unwrap_or_else(|_| "\"\"".into());
+        summary.push_str(&format!(" last_model_id={model_json}"));
+    }
+    if status != "completed" || !has_assistant_message {
+        let bounded_request = previous_request
+            .chars()
+            .filter(|character| !character.is_control() || character.is_whitespace())
+            .take(512)
+            .collect::<String>();
+        let request_json =
+            serde_json::to_string(&bounded_request).unwrap_or_else(|_| "\"\"".into());
+        summary.push_str(&format!(" previous_request={request_json}"));
+    }
+    Ok(Some(summary))
 }
 
 /// Map the internal origin to the unchanged evidence-table role column.

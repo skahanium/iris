@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -19,6 +20,7 @@ import {
   buildLivePilotChildEnvironment,
   hasUnsafeCredentialMetadata,
   resolveLiveEvaluationPaths,
+  validateProductQualityArtifacts,
 } from "./agent-eval.mjs";
 
 const workspaceRoot = path.resolve(
@@ -158,10 +160,225 @@ test("live pilot CLI requires session, profile and exact one-run cost confirmati
       "--approve",
       profile,
       "--confirm-cost",
-      "one-24-case-interaction-matrix-pilot",
+      "one-6-case-interaction-matrix-pilot",
     ).stderr,
     /agent_eval_live_custom_roots_required/,
   );
+});
+
+test("product gate refuses to claim quality without an explicit live result", () => {
+  const output = path.join(
+    workspaceRoot,
+    "target",
+    "agent-eval",
+    "product-gate.json",
+  );
+  const previous = existsSync(output) ? readFileSync(output, "utf8") : null;
+  mkdirSync(path.dirname(output), { recursive: true });
+  writeFileSync(output, '{"status":"stale-pass"}\n', "utf8");
+  try {
+    const child = spawnSync(
+      process.execPath,
+      [path.join(workspaceRoot, "scripts/agent-eval.mjs"), "gate"],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          IRIS_AGENT_EVAL_MODE: "smoke",
+        },
+        encoding: "utf8",
+      },
+    );
+
+    assert.notEqual(child.status, 0);
+    assert.match(child.stderr, /agent_eval_two_live_results_required/);
+    assert.equal(existsSync(output), false);
+  } finally {
+    if (previous !== null) {
+      writeFileSync(output, previous, "utf8");
+    } else {
+      rmSync(output, { force: true });
+    }
+  }
+});
+
+test("product quality requires two six-run live routes and complete human review", () => {
+  const report = (profileId, routeCommitment) => ({
+    schemaVersion: "agent-live-pilot-v2",
+    profileId,
+    routeCommitment,
+    status: "live_pilot_executed",
+    caseCount: 6,
+    requiredCaseCount: 6,
+    completedCaseCount: 6,
+    passed: 6,
+    failed: 0,
+    cases: [1, 12, 13, 24, 36, 48].map((caseId) => ({
+      caseId,
+      repetition: 1,
+      overallPass: true,
+      runtimeEvidence: {
+        terminalState: "completed",
+        terminalErrorCode: null,
+      },
+      verdict: {
+        caseId,
+        overallPass: true,
+        authorization: { status: "pass" },
+        safety: { status: "pass" },
+      },
+    })),
+  });
+  const reports = [
+    report(
+      "profile-11111111111111111111111111111111",
+      `route-${"1".repeat(64)}`,
+    ),
+    report(
+      "profile-22222222222222222222222222222222",
+      `route-${"2".repeat(64)}`,
+    ),
+  ];
+  const reportNames = ["minimax-live.json", "mimo-live.json"];
+  const items = reports.flatMap((value, reportIndex) =>
+    value.cases.map(({ caseId }) => ({
+      report: reportNames[reportIndex],
+      caseId,
+      intentFollowing: 4.5,
+      factualSources: 4.5,
+      relevanceCompleteness: 4,
+      correctionContinuity: 4.5,
+    })),
+  );
+
+  assert.deepEqual(
+    validateProductQualityArtifacts(
+      reports,
+      { schemaVersion: "agent-live-review-v1", status: "approved", items },
+      reportNames,
+    ),
+    { totalRuns: 12, averageScore: 4.375 },
+  );
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        [reports[0]],
+        { schemaVersion: "agent-live-review-v1", status: "approved", items },
+        [reportNames[0]],
+      ),
+    /agent_eval_two_live_routes_required/,
+  );
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        [
+          reports[0],
+          { ...reports[1], routeCommitment: reports[0].routeCommitment },
+        ],
+        { schemaVersion: "agent-live-review-v1", status: "approved", items },
+        reportNames,
+      ),
+    /agent_eval_live_routes_must_be_distinct/,
+  );
+  const hollow = structuredClone(reports);
+  hollow[0].cases = hollow[0].cases.map(({ caseId }) => ({ caseId }));
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        hollow,
+        { schemaVersion: "agent-live-review-v1", status: "approved", items },
+        reportNames,
+      ),
+    /agent_eval_live_case_identity_invalid/,
+  );
+  const weak = structuredClone(items);
+  weak[0].factualSources = 3.5;
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        reports,
+        {
+          schemaVersion: "agent-live-review-v1",
+          status: "approved",
+          items: weak,
+        },
+        reportNames,
+      ),
+    /agent_eval_live_review_score_invalid/,
+  );
+});
+
+test("product gate runs the Rust strict validator before trusting live counters", () => {
+  const directory = path.join(workspaceRoot, "target", "agent-eval");
+  mkdirSync(directory, { recursive: true });
+  const suffix = `${process.pid}-${Date.now()}`;
+  const first = path.join(directory, `tampered-live-a-${suffix}.json`);
+  const second = path.join(directory, `tampered-live-b-${suffix}.json`);
+  const review = path.join(directory, `tampered-review-${suffix}.json`);
+  const hollow = (profile, route) => ({
+    schemaVersion: "agent-live-pilot-v2",
+    profileId: profile,
+    routeCommitment: route,
+    requiredCaseCount: 6,
+    completedCaseCount: 6,
+    caseCount: 6,
+    passed: 6,
+    failed: 0,
+    status: "live_pilot_executed",
+    cases: [1, 12, 13, 24, 36, 48].map((caseId) => ({ caseId })),
+  });
+  writeFileSync(
+    first,
+    JSON.stringify(
+      hollow(
+        "profile-11111111111111111111111111111111",
+        `route-${"1".repeat(64)}`,
+      ),
+    ),
+  );
+  writeFileSync(
+    second,
+    JSON.stringify(
+      hollow(
+        "profile-22222222222222222222222222222222",
+        `route-${"2".repeat(64)}`,
+      ),
+    ),
+  );
+  writeFileSync(
+    review,
+    JSON.stringify({
+      schemaVersion: "agent-live-review-v1",
+      status: "approved",
+      items: [],
+    }),
+  );
+  try {
+    const child = spawnSync(
+      process.execPath,
+      [path.join(workspaceRoot, "scripts/agent-eval.mjs"), "gate"],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          IRIS_AGENT_EVAL_LIVE_RESULTS: [first, second].join(path.delimiter),
+          IRIS_AGENT_EVAL_LIVE_REVIEW: review,
+        },
+        encoding: "utf8",
+      },
+    );
+
+    assert.notEqual(child.status, 0);
+    assert.match(
+      child.stderr,
+      /agent_eval_live_result_strict_validation_failed/,
+    );
+    assert.equal(existsSync(path.join(directory, "product-gate.json")), false);
+  } finally {
+    for (const artifact of [first, second, review]) {
+      rmSync(artifact, { force: true });
+    }
+  }
 });
 
 test("default live paths bind one canonical source database data root and config root", () => {

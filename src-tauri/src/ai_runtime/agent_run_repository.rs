@@ -736,6 +736,71 @@ impl AgentRunRepository {
         })
     }
 
+    /// Append one bounded, secret-free model routing diagnostic to the Run's
+    /// existing route summary column. Callers may provide identifiers and
+    /// protocol outcomes only; request, response and credential bodies are
+    /// deliberately excluded from this storage contract.
+    pub(crate) fn append_provider_route_diagnostic(
+        db: &Database,
+        run_id: &str,
+        diagnostic: Value,
+    ) -> AppResult<()> {
+        let diagnostic = diagnostic
+            .as_object()
+            .cloned()
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+        let diagnostic_json = serde_json::to_string(&diagnostic)?;
+        if diagnostic_json.chars().count() > 1_000 {
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
+        }
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let stored = conn
+                    .query_row(
+                        "SELECT provider_route_summary_json FROM agent_runs WHERE run_id = ?1",
+                        [run_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(not_found_or_db)?;
+                let mut summary = serde_json::from_str::<Value>(&stored)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                let summary_object = summary
+                    .as_object_mut()
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+                let attempts = summary_object
+                    .entry("attempts")
+                    .or_insert_with(|| serde_json::json!([]))
+                    .as_array_mut()
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+                if attempts.len() >= 12 {
+                    attempts.remove(0);
+                }
+                attempts.push(Value::Object(diagnostic));
+                summary_object.insert("schemaVersion".into(), Value::from(1));
+                let mut serialized = serde_json::to_string(&summary)?;
+                while serialized.chars().count() > 16_000 {
+                    let attempts = summary
+                        .as_object_mut()
+                        .and_then(|object| object.get_mut("attempts"))
+                        .and_then(Value::as_array_mut)
+                        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+                    if attempts.len() <= 1 {
+                        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
+                    }
+                    attempts.remove(0);
+                    serialized = serde_json::to_string(&summary)?;
+                }
+                conn.execute(
+                    "UPDATE agent_runs
+                     SET provider_route_summary_json = ?1, updated_at = ?2
+                     WHERE run_id = ?3",
+                    rusqlite::params![serialized, chrono::Utc::now().to_rfc3339(), run_id],
+                )?;
+                Ok(())
+            })
+        })
+    }
+
     /// Persist the next body-free Durable Apply checkpoint.
     pub(crate) fn append_checkpoint_step(
         db: &Database,

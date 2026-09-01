@@ -2,7 +2,7 @@
 
 > **文档状态**：现行
 > **文档类型**：目标合同
-> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
+> **事实基线**：2026-09-01，审计起点 `e30f47d1`
 
 ## 1. 单一 Harness 数据流
 
@@ -64,14 +64,16 @@ Web、本地检索、runtime 和外部只读工具全部进入同一个循环：
 
 ```text
 model turn
-  -> zero or more authorized tool calls
-  -> sanitized bounded results
+  -> zero or one bounded batch of authorized tool calls
+  -> sanitized bounded observations
   -> model assesses relevance / coverage / conflict
   -> refine query, read another resource, or answer
   -> Host stops on success, no progress, cancellation or budget
 ```
 
 Host 只用稳定资源 ID、URL、内容 hash、revision 和调用 fingerprint 判断是否有新进展，不实现语义 `EvidenceGap` 闭集。连续无进展或探索额度用尽后关闭工具，并保留最后一次综合机会。
+
+同一模型回合最多执行 2 个彼此独立的发现调用；精确 URL/本地文件读取仍受分类和总预算控制。依赖上一结果的动作必须等待观察返回。Web 标题片段只是候选观察，只有模型选中 URL 且正文抓取成功后才进入 evidence ledger。
 
 ## 6. 结构化工具的定位
 
@@ -102,7 +104,9 @@ Gateway 冻结 Provider 是否支持 tools、continuation、parallel calls、str
 
 - 工具能力完整：进入相同通用循环。
 - 不支持 continuation：Direct 或明确降级，不能伪造多轮研究。
-- 协议中途漂移：保留已提交事实，返回稳定能力错误，不切换未冻结权限。
+- 首次调用尚无正文、工具或 continuation 时，瞬态/空响应/畸形响应先原路由重试一次，再在同工具能力候选中切换。
+- 协议中途漂移或已有可见动作后：保留已提交事实，返回稳定错误，不跨 Provider 隐式续接。
+- 下一轮只读取脱敏运行事实来解释失败，不从公共网络编造本地 Provider 故障原因。
 
 ## 10. 禁止的平行架构
 

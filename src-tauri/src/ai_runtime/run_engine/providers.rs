@@ -100,6 +100,45 @@ fn may_failover_after_model_attempt(
         && failure.permits_cross_provider_failover()
 }
 
+#[allow(clippy::too_many_arguments)]
+fn record_model_route_diagnostic(
+    db: &Database,
+    run_id: &str,
+    provider_id: &str,
+    model_id: &str,
+    attempt: u32,
+    outcome: &str,
+    error_category: Option<&str>,
+    empty_response: bool,
+    had_visible_output: bool,
+    had_tool_calls: bool,
+    decision: &str,
+) {
+    if let Err(error) = AgentRunRepository::append_provider_route_diagnostic(
+        db,
+        run_id,
+        serde_json::json!({
+            "providerId": provider_id,
+            "modelId": model_id,
+            "attempt": attempt,
+            "protocolStage": "model_turn",
+            "outcome": outcome,
+            "errorCategory": error_category,
+            "emptyResponse": empty_response,
+            "hadVisibleOutput": had_visible_output,
+            "hadToolCalls": had_tool_calls,
+            "decision": decision,
+        }),
+    ) {
+        tracing::warn!(
+            run_id,
+            reason = "provider_route_diagnostic_persist_failed",
+            error = %error,
+            "provider route diagnostic was not persisted"
+        );
+    }
+}
+
 #[cfg(test)]
 mod llm_failover_guard_tests {
     use super::may_failover_after_model_attempt;
@@ -343,7 +382,10 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                 })
                 .unwrap_or(0);
             let continuation = stored_continuation.map(|state| state.continuation);
+            let mut original_route_retry_used = false;
+            let mut dispatch_attempt = 0_u32;
             loop {
+                dispatch_attempt = dispatch_attempt.saturating_add(1);
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
@@ -370,11 +412,39 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                         dispatch,
                         continuation.clone(),
                     )?;
-                match provider
+                let attempt = provider
                     .answer_turn(provider_state_key, messages, tools, budget, observer)
-                    .await
-                {
+                    .await;
+                let attempt = match attempt {
+                    Ok(response)
+                        if response
+                            .content
+                            .as_deref()
+                            .is_none_or(|content| content.trim().is_empty())
+                            && response.tool_calls.is_empty() =>
+                    {
+                        Err(AppError::provider(
+                            crate::error::ProviderErrorKind::InvalidResponse,
+                            "empty model response",
+                        ))
+                    }
+                    other => other,
+                };
+                match attempt {
                     Ok(response) => {
+                        record_model_route_diagnostic(
+                            self.db,
+                            parent_run_id,
+                            &from_provider_id,
+                            &from_model_id,
+                            dispatch_attempt,
+                            "accepted",
+                            None,
+                            false,
+                            observer.has_visible_content(),
+                            !response.tool_calls.is_empty(),
+                            "continue_run",
+                        );
                         crate::ai_runtime::circuit_breaker::record_llm_success(
                             &from_provider_id,
                             &from_model_id,
@@ -442,6 +512,20 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                             observer.has_visible_content(),
                             provider_bound,
                         ) {
+                            record_model_route_diagnostic(
+                                self.db,
+                                parent_run_id,
+                                &from_provider_id,
+                                &from_model_id,
+                                dispatch_attempt,
+                                "failed",
+                                Some(failover_reason(failure)),
+                                failure
+                                    == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
+                                observer.has_visible_content(),
+                                provider_bound,
+                                "terminal",
+                            );
                             return Err(error);
                         }
                         if failure.is_retryable() {
@@ -450,6 +534,25 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                 &from_model_id,
                             );
                         }
+                        if failure.is_retryable() && !original_route_retry_used {
+                            record_model_route_diagnostic(
+                                self.db,
+                                parent_run_id,
+                                &from_provider_id,
+                                &from_model_id,
+                                dispatch_attempt,
+                                "failed",
+                                Some(failover_reason(failure)),
+                                failure
+                                    == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
+                                false,
+                                false,
+                                "retry_same_provider",
+                            );
+                            original_route_retry_used = true;
+                            observer.reset_visible_answer_for_new_attempt();
+                            continue;
+                        }
                         let Some(next_index) =
                             self.route.next_selected_index_after_for_requirements(
                                 self.requirements,
@@ -457,12 +560,40 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                 failure,
                             )
                         else {
+                            record_model_route_diagnostic(
+                                self.db,
+                                parent_run_id,
+                                &from_provider_id,
+                                &from_model_id,
+                                dispatch_attempt,
+                                "failed",
+                                Some(failover_reason(failure)),
+                                failure
+                                    == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
+                                false,
+                                false,
+                                "terminal_no_fallback",
+                            );
                             return Err(error);
                         };
                         let (provider_id, model_id) = self
                             .route
                             .selected_provider_model_for_requirements(self.requirements, next_index)
                             .ok_or_else(|| AppError::run(SafeRunErrorCode::NoCapableModel))?;
+                        record_model_route_diagnostic(
+                            self.db,
+                            parent_run_id,
+                            &from_provider_id,
+                            &from_model_id,
+                            dispatch_attempt,
+                            "failed",
+                            Some(failover_reason(failure)),
+                            failure
+                                == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
+                            false,
+                            false,
+                            "switch_provider",
+                        );
                         let snapshot = AgentRunRepository::get_for_session(
                             self.db,
                             &self.session.session_key,

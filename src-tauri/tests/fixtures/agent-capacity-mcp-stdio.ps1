@@ -90,7 +90,8 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
 
     if ($line.Contains('"method":"tools/call"')) {
         if ($line.Contains('"name":"fetch"')) {
-            Write-McpResponse $id @{ content = @(@{ type = "text"; text = "fetch-result" }); isError = $false }
+            $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: 2026-08-18T07:00:00Z"
+            Write-McpResponse $id @{ content = @(@{ type = "text"; text = "fetch-result $claims" }); isError = $false }
         }
         elseif ($line.Contains('"name":"domain"')) {
             Write-McpResponse $id @{

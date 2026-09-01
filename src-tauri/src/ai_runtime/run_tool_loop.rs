@@ -48,6 +48,8 @@ use sha2::{Digest, Sha256};
 
 const WEB_TOOL_NAME: &str = "web_search";
 const MAX_WEB_EVIDENCE_PER_RUN: usize = 12;
+const MAX_WEB_CANDIDATES_PER_RUN: usize = 8;
+const MAX_WEB_CANDIDATES_PER_DISCOVERY: usize = 4;
 /// Required-run and diagnostic search limit. Keeping this shared prevents a one-row smoke probe
 /// from passing while the actual evidence request exceeds a provider's output budget.
 pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 8;
@@ -154,6 +156,7 @@ const fn failure_reason_for_code(code: SafeRunErrorCode) -> WebEvidenceFailureRe
 #[derive(Debug)]
 struct RunWebEvidenceState {
     evidence_ids: Vec<i64>,
+    candidate_urls: BTreeSet<String>,
     domains: BTreeSet<String>,
     has_official_source: bool,
     slots_in_use: usize,
@@ -164,12 +167,37 @@ impl Default for RunWebEvidenceState {
     fn default() -> Self {
         Self {
             evidence_ids: Vec::new(),
+            candidate_urls: BTreeSet::new(),
             domains: BTreeSet::new(),
             has_official_source: false,
             slots_in_use: 0,
             max_evidence: MAX_WEB_EVIDENCE_PER_RUN,
         }
     }
+}
+
+fn remember_candidate_urls(
+    state: &mut RunWebEvidenceState,
+    urls: impl IntoIterator<Item = String>,
+) -> AppResult<(usize, usize)> {
+    let mut new_resources = 0_usize;
+    let mut duplicate_resources = 0_usize;
+    for url in urls {
+        let normalized = normalize_fetch_url(&url);
+        if !normalized.starts_with("https://") {
+            continue;
+        }
+        if state.candidate_urls.contains(&normalized) {
+            duplicate_resources = duplicate_resources.saturating_add(1);
+            continue;
+        }
+        if state.candidate_urls.len() >= MAX_WEB_CANDIDATES_PER_RUN {
+            break;
+        }
+        state.candidate_urls.insert(normalized);
+        new_resources = new_resources.saturating_add(1);
+    }
+    Ok((new_resources, duplicate_resources))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -493,23 +521,43 @@ impl<'a> NormalRunToolExecutor<'a> {
             })
             .unwrap_or_default();
         let mut current_run_urls =
-            AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?;
+            AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?
+                .into_iter()
+                .map(|url| normalize_fetch_url(&url))
+                .collect::<BTreeSet<_>>();
         current_run_urls.extend(explicit_user_urls(&self.context.user_message));
+        current_run_urls.extend(
+            self.run_web_evidence
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
+                .candidate_urls
+                .iter()
+                .cloned(),
+        );
         let urls = validate_current_run_fetch_urls(&requested_urls, &current_run_urls)?;
+        let discovery_only = urls.is_empty();
         let max_fetches = urls.len();
-        let Some(evidence_reservation) =
-            WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
-        else {
-            self.set_web_failure(Some(WebFailure::new(
-                SafeRunErrorCode::WebEvidenceInvalid,
-                false,
-            )))?;
-            return Ok(failed_tool_call(
-                WEB_TOOL_NAME,
-                "web_evidence_budget_exhausted",
-            ));
+        let evidence_reservation = if discovery_only {
+            None
+        } else {
+            let Some(reservation) =
+                WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
+            else {
+                self.set_web_failure(Some(WebFailure::new(
+                    SafeRunErrorCode::WebEvidenceInvalid,
+                    false,
+                )))?;
+                return Ok(failed_tool_call(
+                    WEB_TOOL_NAME,
+                    "web_evidence_budget_exhausted",
+                ));
+            };
+            Some(reservation)
         };
-        let remaining = evidence_reservation.capacity();
+        let remaining = evidence_reservation
+            .as_ref()
+            .map(WebEvidenceReservation::capacity)
+            .unwrap_or(MAX_WEB_CANDIDATES_PER_DISCOVERY);
         // A single Web dispatch is bounded, while cross-call exploration is
         // governed exclusively by the generic network category budget.
         let provider_snapshots = self.ordered_web_provider_snapshots();
@@ -584,8 +632,106 @@ impl<'a> NormalRunToolExecutor<'a> {
             };
         self.remember_web_provider_winner(&output.usage)?;
         self.emit_mcp_failover_events(&provider_snapshots, &output.usage)?;
+        if discovery_only {
+            let previously_known_urls = self
+                .run_web_evidence
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
+                .candidate_urls
+                .clone();
+            let candidates = pack_web_candidates_for_model(
+                &output.items,
+                &previously_known_urls,
+                MAX_WEB_CANDIDATES_PER_DISCOVERY,
+            );
+            let previously_seen_count = output
+                .items
+                .iter()
+                .map(|item| normalize_fetch_url(&item.canonical_url))
+                .filter(|url| previously_known_urls.contains(url))
+                .collect::<BTreeSet<_>>()
+                .len();
+            if candidates.is_empty() {
+                let failure = classify_web_evidence_output_failure(&output);
+                self.set_web_failure(Some(failure))?;
+                return Ok(failed_web_tool_call(
+                    failure,
+                    self.web_attempt_count(),
+                    call_started.elapsed(),
+                    remaining_web_tool_budget_ms(call_started.elapsed()),
+                ));
+            }
+            let proposed_urls = candidates
+                .iter()
+                .map(|item| item.canonical_url.clone())
+                .collect::<Vec<_>>();
+            let (new_resource_count, duplicate_resource_count, admitted_urls) = {
+                let mut state = self
+                    .run_web_evidence
+                    .lock()
+                    .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
+                let (new_resources, duplicate_resources) =
+                    remember_candidate_urls(&mut state, proposed_urls)?;
+                (
+                    new_resources,
+                    duplicate_resources.saturating_add(previously_seen_count),
+                    state.candidate_urls.clone(),
+                )
+            };
+            let observations = candidates
+                .iter()
+                .filter(|item| admitted_urls.contains(&item.canonical_url))
+                .map(|item| {
+                    serde_json::json!({
+                        "title": item.title,
+                        "url": item.url,
+                        "canonicalUrl": item.canonical_url,
+                        "domain": item.domain,
+                        "snippet": item.snippet,
+                        "observationDepth": "search_snippet",
+                    })
+                })
+                .collect::<Vec<_>>();
+            let canonical_urls = observations
+                .iter()
+                .filter_map(|item| item.get("canonicalUrl").and_then(serde_json::Value::as_str))
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            self.set_web_failure(None)?;
+            return Ok(ToolCallResult {
+                tool_name: WEB_TOOL_NAME.to_string(),
+                success: true,
+                output: serde_json::json!({
+                    "results": observations,
+                    "canonicalUrls": canonical_urls,
+                    "evidenceIds": [],
+                    "count": observations.len(),
+                    "newResourceCount": new_resource_count,
+                    "duplicateResourceCount": duplicate_resource_count,
+                    "observationDepth": "search_snippet",
+                    "requiresFetchForCitation": true,
+                    "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
+                    "webUsage": output.usage,
+                }),
+                duration_ms: bounded_duration_ms(call_started.elapsed()),
+                tokens_used: None,
+                error: None,
+            });
+        }
+        let selected_urls = urls.iter().cloned().collect::<BTreeSet<_>>();
+        let selected_items = output
+            .items
+            .iter()
+            .filter(|item| selected_urls.contains(&normalize_fetch_url(&item.canonical_url)))
+            .filter(|item| {
+                item.fetched_excerpt
+                    .as_deref()
+                    .is_some_and(|excerpt| !excerpt.trim().is_empty())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         let packed_items =
-            match pack_web_evidence_for_model(query, &output.items, remaining, &output.usage) {
+            match pack_web_evidence_for_model(query, &selected_items, remaining, &output.usage) {
                 Ok(items) if !items.is_empty() => items,
                 Ok(_) | Err(_) => {
                     let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
@@ -622,7 +768,9 @@ impl<'a> NormalRunToolExecutor<'a> {
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
             .extend(evidence_ids.iter().copied());
-        evidence_reservation.commit(&evidence_ids)?;
+        evidence_reservation
+            .expect("selected URL fetch reserves evidence capacity")
+            .commit(&evidence_ids)?;
         self.record_web_evidence_quality(&packed_items)?;
         let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
             query,
@@ -641,6 +789,8 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "resourceIds": resource_ids,
                 "evidenceIds": evidence_ids,
                 "count": evidence_ids.len(),
+                "observationDepth": "fetched_body",
+                "requiresFetchForCitation": false,
                 "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
                 "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
                 "webUsage": output.usage,
@@ -1093,14 +1243,18 @@ fn validate_current_run_fetch_urls(
 }
 
 fn normalize_fetch_url(url: &str) -> String {
-    let mut normalized = url.trim().to_lowercase();
-    if let Some((without_fragment, _)) = normalized.split_once('#') {
-        normalized = without_fragment.to_string();
+    let trimmed = url.trim();
+    let Ok(mut normalized) = reqwest::Url::parse(trimmed) else {
+        return trimmed.to_string();
+    };
+    normalized.set_fragment(None);
+    if matches!(
+        (normalized.scheme(), normalized.port()),
+        ("https", Some(443)) | ("http", Some(80))
+    ) {
+        let _ = normalized.set_port(None);
     }
-    while normalized.ends_with('/') {
-        normalized.pop();
-    }
-    normalized
+    normalized.to_string()
 }
 
 fn explicit_user_urls(message: &str) -> BTreeSet<String> {
@@ -3024,6 +3178,40 @@ fn pack_web_evidence_for_model(
     Ok(packed)
 }
 
+fn pack_web_candidates_for_model(
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    excluded_urls: &BTreeSet<String>,
+    limit: usize,
+) -> Vec<crate::ai_runtime::web_evidence_broker::WebEvidenceItem> {
+    let mut seen = BTreeSet::new();
+    let mut packed = Vec::new();
+    for item in items {
+        if item.failure_reason.is_some()
+            || !item.url.starts_with("https://")
+            || !item.canonical_url.starts_with("https://")
+            || item.snippet.trim().is_empty()
+        {
+            continue;
+        }
+        let canonical_url = normalize_fetch_url(&truncate_web_field(&item.canonical_url, 512));
+        if excluded_urls.contains(&canonical_url) || !seen.insert(canonical_url.clone()) {
+            continue;
+        }
+        let mut item = item.clone();
+        item.title = truncate_web_field(&item.title, 256);
+        item.url = truncate_web_field(&item.url, 512);
+        item.canonical_url = canonical_url;
+        item.domain = truncate_web_field(&item.domain, 255);
+        item.snippet = truncate_web_field(&item.snippet, 800);
+        item.fetched_excerpt = None;
+        packed.push(item);
+        if packed.len() >= limit {
+            break;
+        }
+    }
+    packed
+}
+
 fn serialized_web_tool_payload_chars(
     query: &str,
     items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
@@ -3242,9 +3430,10 @@ mod tests {
     use super::{
         append_model_tool_completed_with_report, append_model_tool_started,
         corroborated_source_threshold_met, emit_deferred_web_degradation,
-        expected_post_content_hashes, mcp_failover_events, validate_current_run_fetch_urls,
+        expected_post_content_hashes, mcp_failover_events, normalize_fetch_url,
+        pack_web_candidates_for_model, remember_candidate_urls, validate_current_run_fetch_urls,
         web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
-        NormalRunToolExecutor, CONFIRMATION_PENDING_ERROR,
+        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -5300,6 +5489,134 @@ mod tests {
                 .to_string(),
             "web_url_not_in_current_run"
         );
+    }
+
+    #[test]
+    fn discovery_candidates_are_bounded_without_consuming_evidence_slots() {
+        let mut state = RunWebEvidenceState::default();
+        let candidates = (0..12).map(|index| format!("https://example.com/{index}"));
+
+        let (new_resources, duplicate_resources) =
+            remember_candidate_urls(&mut state, candidates).expect("candidate observation");
+
+        assert_eq!(new_resources, 8);
+        assert_eq!(duplicate_resources, 0);
+        assert_eq!(state.candidate_urls.len(), 8);
+        assert_eq!(state.slots_in_use, 0);
+        assert!(state.evidence_ids.is_empty());
+    }
+
+    #[test]
+    fn a_candidate_selected_by_the_model_becomes_fetchable_without_becoming_evidence() {
+        let mut state = RunWebEvidenceState::default();
+        remember_candidate_urls(
+            &mut state,
+            ["https://example.com/chosen", "https://example.com/other"].map(str::to_string),
+        )
+        .expect("candidate observation");
+
+        let urls = validate_current_run_fetch_urls(
+            &["https://example.com/chosen".to_string()],
+            &state.candidate_urls,
+        )
+        .expect("current Run candidate may be fetched");
+
+        assert_eq!(urls, ["https://example.com/chosen"]);
+        assert!(state.evidence_ids.is_empty());
+        assert_eq!(state.slots_in_use, 0);
+    }
+
+    #[test]
+    fn fetch_url_normalization_preserves_case_sensitive_path_and_query() {
+        assert_eq!(
+            normalize_fetch_url("HTTPS://Example.COM/Article/ABC?sig=XyZ#section"),
+            "https://example.com/Article/ABC?sig=XyZ"
+        );
+    }
+
+    #[test]
+    fn discovery_candidate_limit_is_applied_after_canonical_url_deduplication() {
+        let item = |url: &str| crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: url.to_string(),
+            canonical_url: url.to_string(),
+            title: format!("title {url}"),
+            domain: "example.com".into(),
+            snippet: format!("snippet {url}"),
+            fetched_excerpt: None,
+            provider_id: "test".into(),
+            provider_kind: "test".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        };
+        let items = vec![
+            item("https://example.com/a"),
+            item("https://example.com/a#fragment"),
+            item("https://example.com/b"),
+            item("https://example.com/c"),
+            item("https://example.com/d"),
+            item("https://example.com/e"),
+        ];
+
+        let packed = pack_web_candidates_for_model(&items, &BTreeSet::new(), 4);
+
+        assert_eq!(packed.len(), 4);
+        assert_eq!(
+            packed
+                .iter()
+                .map(|candidate| candidate.canonical_url.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "https://example.com/a",
+                "https://example.com/b",
+                "https://example.com/c",
+                "https://example.com/d",
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_candidates_skip_previously_seen_urls_before_applying_the_batch_limit() {
+        let item = |url: &str| crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: url.to_string(),
+            canonical_url: url.to_string(),
+            title: format!("title {url}"),
+            domain: "example.com".into(),
+            snippet: format!("snippet {url}"),
+            fetched_excerpt: None,
+            provider_id: "test".into(),
+            provider_kind: "test".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        };
+        let items =
+            ["a", "b", "c", "d", "e"].map(|suffix| item(&format!("https://example.com/{suffix}")));
+        let known = ["a", "b", "c", "d"]
+            .map(|suffix| format!("https://example.com/{suffix}"))
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+
+        let packed = pack_web_candidates_for_model(&items, &known, 4);
+
+        assert_eq!(packed.len(), 1);
+        assert_eq!(packed[0].canonical_url, "https://example.com/e");
     }
 
     #[tokio::test]

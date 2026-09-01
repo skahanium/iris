@@ -2,7 +2,7 @@
 
 > **文档状态**：现行
 > **文档类型**：验收规范
-> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
+> **事实基线**：2026-09-01，审计起点 `e30f47d1`
 
 ## 1. 验收原则
 
@@ -31,12 +31,15 @@
 | 普通外部事实    | 默认 WebPreferred，可搜索也可诚实降级                            |
 | 差搜索结果      | 模型读取结果后调整关键词、时间、地域或来源方向                   |
 | 无新增结果      | 两轮无进展后停止工具并基于已有材料综合，不默认红色失败           |
+| 有限并行        | 同轮最多两个独立发现调用；依赖动作必须在观察返回后执行           |
+| 候选与正文      | 搜索片段不占 evidence；选中 URL 抓取正文后才能引用               |
 | 本地多跳        | 搜索命中后多次读取相关笔记、提纲或链接，保持权限和范围           |
 | 本地 + Web      | 两类工具共享总预算，本地正文不泄漏到 Web query                   |
 | 严格当前事实    | 明确 WebRequired，证据不足时不伪造精确数字、日期或状态           |
 | 来源协议        | 高位 ledger ID、每 Run 独立 `W1`、foreign/retired 来源均正确处理 |
 | 普通澄清        | assistant 自然追问并完成，下一 Run 通过会话承接                  |
 | 无工具 Provider | Direct 或明确能力降级，不伪造工具续接                            |
+| Provider 恢复   | 无输出时同路由重试一次后才切换；已有动作后禁止跨路由暗接         |
 | 文档修改        | 多轮读取、一次冻结确认、确定性执行和限定只读验证                 |
 | 取消与恢复      | 不重复 Provider/副作用，终态和 UI 只消费同 Run 持久化事实        |
 
@@ -84,6 +87,10 @@
 ## 7. 回归设计要求
 
 - 搜索自适应测试至少提供一轮明显无关结果，并允许多种合理的第二查询。
+- 轨迹测试只检查行动、观察、状态变化、验证反馈和退出原因，不读取或要求模型私有思维链。
+- 同轮两个独立发现方向允许执行；第三个返回 deferred。依赖候选 URL 的抓取不得与发现调用在模型未观察结果时连发。
+- Web 搜索候选最多 4/次、8/Run；候选不能获得 `Wn`，选中 URL 的正文抓取必须至少发生一次。
+- Web 候选与最终 evidence 是两个容量面；压力报告不得用单一 8/9 阶梯冒充两者，分别以 4/8 候选回归和 12/13 evidence 硬边界验收。
 - 本地多跳测试按资源 identity 和最终答案要点验收，不固定唯一工具顺序。
 - 来源测试预置大量历史证据，使当前 Run 的 ledger ID 与 `Wn` 不相等。
 - 同一会话连续运行多次，每个 Run 都能使用自己的 `W1`，且不能读取前一 Run 来源。
@@ -106,7 +113,9 @@
 - 八项硬边界各重复五次：总工具预算使用实际 12 local + 6 network + 6 external-read 的组合，而不是未知合成工具的保守 6 次回退；第 25 次请求不执行，最终综合仍被允许。
 - OpenAI-compatible 和 Anthropic Messages mock 分别覆盖工具调用与 tool-result 续接。没有以模型名称改变 core；chat-only 仍是明确能力降级。
 
-本轮未连接真实 Provider，也未运行 `agent:eval:live`。因此真实 Provider 的质量、延迟、成本和对 INC-HR-005 的生产级结论仍处于“未评测”，不能从上述 24/24 推导出来。
+2026-09-01 的 LOOP 回正进一步增加了：两调用发现批次、`deferred_for_feedback`、Web 候选/正文分层、正文抓取观察深度、同 Provider 空响应重试后切换、脱敏路由诊断，以及最近失败 Run 的连续性投影。命名回归只证明这些机械合同。
+
+真实门禁已拆成三条命令：`agent:eval:contract` 是完整确定性合同；`agent:eval:live` 每条批准路由只跑 6 个 Run；live 报告以随机 `profileId` 绑定单次批准，并以不暴露 Provider、模型、端点或凭证的稳定 `routeCommitment` 绑定实际路由。只有受约束 Rust live 执行路径能在六个 Run 完成后生成认证旁证；配置目录中权限受限、不会写入报告的本机评测密钥将 session 与报告精确字节绑定。`agent:eval` 读取一次不可变字节快照，以 SHA-256 将 Node 读取、Rust 认证/严格校验和最终 JSON 判定锁定在同一内容上，再要求两份 `routeCommitment` 不同的 live 结果与逐场景人工评分；合计 12 Run 全部通过才原子生成六维产品报告。复制或修改报告、调用通用文件签名器、或在校验期间替换文件均不能获得通过。2026-09-01 已执行 MiniMax 诊断校准，最后一轮为 5/6 完成、4/6 合同通过；MiMo 和人工评分尚未完成。因此真实质量状态是“实测未通过”，不能从 contract 或协议 double 推导放行结论。
 
 以下能力仍必须保持“已知缺陷”或“部分实现”：
 
@@ -133,4 +142,17 @@ npm run format:check
 git diff --check
 ```
 
-代码阶段由该阶段实施计划列出精确 Rust/Vitest/eval 子集；提交前再执行受影响语言的 format、lint、typecheck 和必要全量门禁。真实 Provider 测试必须另行授权。
+代码阶段由该阶段实施计划列出精确 Rust/Vitest/eval 子集；提交前再执行受影响语言的 format、lint、typecheck 和必要全量门禁。真实 Provider 测试不得绕过逐路由批准与成本确认。
+
+当前真实校准已获用户授权，但仍必须逐次通过匿名 profile 与成本 checkpoint；授权不等于测试通过。MiniMax 诊断已消耗本轮校准预算并留下失败证据，剩余路由不得在没有新预算边界的情况下继续调用。
+
+```bash
+npm run agent:eval:smoke
+npm run agent:eval:contract
+npm run agent:eval:live -- preflight --models <model>
+npm run agent:eval:live -- pilot --session <session> --approve <profile> \
+  --confirm-cost one-6-case-interaction-matrix-pilot --models <model>
+
+IRIS_AGENT_EVAL_LIVE_RESULTS="<result-a>:<result-b>" \
+IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
+```

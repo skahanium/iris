@@ -64,6 +64,32 @@ fn catalog_owns_one_stable_budget_class_for_every_budgeted_tool_kind() {
 }
 
 #[test]
+fn discovery_calls_are_catalog_metadata_not_domain_routing() {
+    for tool_name in [
+        "search_hybrid",
+        "search_semantic",
+        "search_keyword",
+        "list_vault",
+        "web_search",
+    ] {
+        assert!(
+            catalog_find(tool_name)
+                .expect("discovery tool in catalog")
+                .is_discovery(),
+            "{tool_name}"
+        );
+    }
+    for tool_name in ["read_note", "get_regulation", "system_time_now"] {
+        assert!(
+            !catalog_find(tool_name)
+                .expect("exact tool in catalog")
+                .is_discovery(),
+            "{tool_name}"
+        );
+    }
+}
+
+#[test]
 fn catalog_has_all_dispatchable_tools() {
     let catalog_disp = catalog_dispatchable_names();
     for name in DISPATCHABLE_TOOL_NAMES {

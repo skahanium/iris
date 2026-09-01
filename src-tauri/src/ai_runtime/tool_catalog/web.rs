@@ -7,7 +7,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         ToolCatalogEntry {
             name: "web_search",
             description:
-                "网络证据代理 WebEvidenceBroker：检索实时外部来源、读取明确 URL，并返回可追溯证据；无需确认，直接调用。结果应与本地检索证据交叉引用、相互印证。",
+                "网络检索与读取：不带 urls 时返回本次 Run 的候选网页片段；结果不足时可调整 query。选中候选后，在后续调用的 urls 中传入这些候选 URL 读取正文，只有正文读取结果可作为最终引用证据。无需确认。",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -15,7 +15,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                     "urls": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "用户明确要求深读的公开 HTTPS URL"
+                        "description": "本次 Run 搜索结果中选中的 URL，或用户消息中明确给出的公开 HTTPS URL；用于读取正文"
                     }
                 },
                 "required": ["query"]

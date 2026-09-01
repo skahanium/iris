@@ -19,6 +19,7 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 const MAX_REPEAT_CALLS: u32 = 2;
+const MAX_DISCOVERY_CALLS_PER_MODEL_TURN: u32 = 2;
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
 /// Internal control-flow signal: a complete immutable change set was persisted
 /// and the Run must wait for its single user confirmation.
@@ -409,6 +410,21 @@ impl AgentToolLoop {
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<HashSet<_>>();
+        let loop_state_position = messages
+            .iter()
+            .rposition(|message| matches!(message.role, MessageRole::User))
+            .unwrap_or(messages.len());
+        messages.insert(
+            loop_state_position,
+            initial_loop_budget_instruction(
+                self.max_model_turns,
+                self.max_tool_calls,
+                self.max_local_tool_calls,
+                self.max_network_tool_calls,
+                self.max_external_read_tool_calls,
+                self.max_runtime_tool_calls,
+            ),
+        );
         let mut model_turns = 0;
         let mut tool_calls = 0;
         let mut prompt_tokens = 0_u32;
@@ -736,6 +752,7 @@ impl AgentToolLoop {
             observer.on_tools_starting()?;
             messages.push(assistant_tool_message(&response));
             let mut round_made_progress = false;
+            let mut discovery_calls_this_turn = 0_u32;
             for call in &response.tool_calls {
                 ensure_run_not_cancelled(run_id)?;
                 let valid_arguments = valid_call_arguments(call);
@@ -745,6 +762,10 @@ impl AgentToolLoop {
                     rejected_result(call, "tool_not_in_run_surface")
                 } else if !valid_arguments && !executor_owns_invalid_arguments {
                     rejected_result(call, "tool_arguments_invalid")
+                } else if is_discovery_call(call)
+                    && discovery_calls_this_turn >= MAX_DISCOVERY_CALLS_PER_MODEL_TURN
+                {
+                    deferred_result(call)
                 } else {
                     let fingerprint = tool_fingerprint(call);
                     if successful_fingerprints.contains(&fingerprint) {
@@ -768,6 +789,10 @@ impl AgentToolLoop {
                             if *used >= self.tool_call_limit(class) {
                                 rejected_result(call, "tool_category_budget_exhausted")
                             } else {
+                                if is_discovery_call(call) {
+                                    discovery_calls_this_turn =
+                                        discovery_calls_this_turn.saturating_add(1);
+                                }
                                 *used += 1;
                                 tool_calls += 1;
                                 if let Some(usage) = usage.as_deref_mut() {
@@ -782,15 +807,24 @@ impl AgentToolLoop {
                                 }
                                 if result.success {
                                     successful_fingerprints.insert(fingerprint);
-                                    round_made_progress |=
-                                        register_safe_progress(&mut observed_progress, &result);
                                 }
+                                round_made_progress |=
+                                    register_safe_progress(&mut observed_progress, &result);
                                 result
                             }
                         }
                     }
                 };
-                let (message, truncated) = tool_result_message(call, &result);
+                let class = catalog_tool_budget_class(&call.function.name)
+                    .unwrap_or(ToolBudgetClass::ExternalRead);
+                let class_used = tool_calls_by_class.get(&class).copied().unwrap_or_default();
+                let (message, truncated) = tool_result_message(
+                    call,
+                    &result,
+                    self.max_model_turns.saturating_sub(model_turns),
+                    self.max_tool_calls.saturating_sub(tool_calls),
+                    self.tool_call_limit(class).saturating_sub(class_used),
+                );
                 if truncated {
                     if let Some(telemetry) = telemetry {
                         telemetry.record_truncation(
@@ -834,10 +868,66 @@ impl AgentToolLoop {
 }
 
 fn register_safe_progress(progress: &mut HashSet<String>, result: &ToolCallResult) -> bool {
-    safe_progress_identities(&result.output)
-        .into_iter()
-        .map(|identity| format!("{}:{identity}", result.tool_name))
-        .any(|identity| progress.insert(identity))
+    let resource_progress = result.success
+        && safe_progress_identities(&result.output)
+            .into_iter()
+            .map(|identity| format!("{}:{identity}", result.tool_name))
+            .any(|identity| progress.insert(identity));
+    let error_progress = (!result.success)
+        .then_some(result.error.as_deref())
+        .flatten()
+        .filter(|error| !error.trim().is_empty())
+        .is_some_and(|error| {
+            progress.insert(format!(
+                "{}:error:{}",
+                result.tool_name,
+                safe_tool_error_category(error)
+            ))
+        });
+    resource_progress || error_progress
+}
+
+fn safe_tool_error_category(error: &str) -> &'static str {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        "timeout"
+    } else if lower.contains("unauthorized") || lower.contains("credential") {
+        "unauthorized"
+    } else if lower.contains("forbidden") || lower.contains("permission") {
+        "forbidden"
+    } else if lower.contains("not_found") || lower.contains("not found") {
+        "not_found"
+    } else if lower.contains("rate") || lower.contains("quota") {
+        "rate_limited"
+    } else if lower.contains("invalid") || lower.contains("malformed") {
+        "invalid_response"
+    } else if lower.contains("unavailable") || lower.contains("connection") {
+        "unavailable"
+    } else if lower.contains("cancel") {
+        "cancelled"
+    } else {
+        "other"
+    }
+}
+
+fn initial_loop_budget_instruction(
+    max_model_turns: u32,
+    max_tool_calls: u32,
+    max_local_tool_calls: u32,
+    max_network_tool_calls: u32,
+    max_external_read_tool_calls: u32,
+    max_runtime_tool_calls: u32,
+) -> LlmMessage {
+    LlmMessage {
+        role: MessageRole::System,
+        content: format!(
+            "This Run uses one bounded observation-action loop. Budgets are maxima, not targets: modelTurns={max_model_turns}, totalTools={max_tool_calls}, localReads={max_local_tool_calls}, network={max_network_tool_calls}, externalReads={max_external_read_tool_calls}, runtime={max_runtime_tool_calls}. Choose only actions that can add information, inspect each returned observation before dependent actions, and finish as soon as the user goal is adequately supported. Do not reveal private reasoning."
+        )
+        .into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }
 }
 
 fn safe_progress_identities(output: &serde_json::Value) -> Vec<String> {
@@ -848,6 +938,8 @@ fn safe_progress_identities(output: &serde_json::Value) -> Vec<String> {
         "resource_ids",
         "canonicalUrl",
         "canonical_url",
+        "canonicalUrls",
+        "canonical_urls",
         "contentHash",
         "content_hash",
         "revision",
@@ -1107,11 +1199,22 @@ fn assistant_tool_message(response: &GatewayResponse) -> LlmMessage {
     }
 }
 
-fn tool_result_message(call: &ToolCall, result: &ToolCallResult) -> (LlmMessage, bool) {
+fn tool_result_message(
+    call: &ToolCall,
+    result: &ToolCallResult,
+    remaining_model_turns: u32,
+    remaining_tool_calls: u32,
+    remaining_category_calls: u32,
+) -> (LlmMessage, bool) {
     let payload = serde_json::json!({
         "success": result.success,
         "output": result.output,
         "error": result.error,
+        "loopObservation": {
+            "remainingModelTurns": remaining_model_turns,
+            "remainingToolCalls": remaining_tool_calls,
+            "remainingCategoryCalls": remaining_category_calls,
+        },
     });
     let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| {
         "{\"success\":false,\"error\":\"tool_result_serialization_failed\"}".into()
@@ -1180,6 +1283,37 @@ fn tool_fingerprint(call: &ToolCall) -> String {
         .and_then(|value| canonical_json(&value))
         .unwrap_or_else(|| call.function.arguments.clone());
     format!("{}:{arguments}", call.function.name)
+}
+
+fn is_discovery_call(call: &ToolCall) -> bool {
+    let Some(entry) = crate::ai_runtime::tool_catalog::catalog_find(&call.function.name) else {
+        return false;
+    };
+    if !entry.is_discovery() {
+        return false;
+    }
+    if call.function.name != "web_search" {
+        return true;
+    }
+    serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+        .ok()
+        .and_then(|arguments| arguments.get("urls").cloned())
+        .and_then(|urls| urls.as_array().cloned())
+        .is_none_or(|urls| urls.is_empty())
+}
+
+fn deferred_result(call: &ToolCall) -> ToolCallResult {
+    ToolCallResult {
+        tool_name: call.function.name.clone(),
+        success: true,
+        output: serde_json::json!({
+            "status": "deferred_for_feedback",
+            "reason": "discovery_batch_limit",
+        }),
+        duration_ms: 0,
+        tokens_used: None,
+        error: None,
+    }
 }
 
 fn canonical_json(value: &serde_json::Value) -> Option<String> {

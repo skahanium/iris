@@ -360,6 +360,66 @@ async fn network_category_cap_rejects_the_second_dispatch_without_calling_execut
 }
 
 #[tokio::test]
+async fn one_model_turn_executes_only_two_independent_discovery_calls() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_calls_response(vec![
+                tool_call_with_arguments(
+                    "discover-1",
+                    "web_search",
+                    serde_json::json!({ "query": "first direction" }),
+                ),
+                tool_call_with_arguments(
+                    "discover-2",
+                    "web_search",
+                    serde_json::json!({ "query": "second direction" }),
+                ),
+                tool_call_with_arguments(
+                    "discover-3",
+                    "web_search",
+                    serde_json::json!({ "query": "dependent direction" }),
+                ),
+            ]),
+            scripted_final_response("bounded synthesis"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-bounded-discovery-batch",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("deferred discovery leaves a synthesis turn");
+
+    assert_eq!(outcome.content, "bounded synthesis");
+    assert_eq!(outcome.tool_calls, 2);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+    let second_turn = provider
+        .second_turn_messages
+        .lock()
+        .expect("second turn messages");
+    assert!(second_turn.iter().any(|message| {
+        message.tool_call_id.as_deref() == Some("discover-3")
+            && message
+                .content
+                .text_content()
+                .contains("deferred_for_feedback")
+    }));
+}
+
+#[tokio::test]
 async fn frozen_category_caps_reject_the_first_call_beyond_each_boundary() {
     for (name, exposed_tool, allowed_dispatches) in [
         (
@@ -420,10 +480,15 @@ async fn frozen_category_caps_reject_the_first_call_beyond_each_boundary() {
             .expect("a rejected boundary call must leave room for synthesis");
 
         assert_eq!(outcome.content, "bounded synthesis", "{name}");
+        let expected_dispatches = if matches!(name, "search_keyword" | "web_search") {
+            allowed_dispatches.min(2)
+        } else {
+            allowed_dispatches
+        };
         assert_eq!(
             executor.calls.load(Ordering::SeqCst),
-            allowed_dispatches,
-            "{name} must reject its first call beyond the frozen category cap"
+            expected_dispatches,
+            "{name} must respect both its per-turn action batch and frozen category cap"
         );
     }
 }
@@ -2210,21 +2275,31 @@ async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
 }
 
 #[tokio::test]
-async fn web_required_rejects_a_final_answer_without_registered_evidence() {
+async fn web_required_without_a_tool_surface_finishes_with_a_bounded_limitation() {
     let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
-            content: Some("unverified answer".into()),
-            tool_calls: Vec::new(),
-            usage: Default::default(),
-            finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
-        }])),
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: Some("unverified answer".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("still unverified".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
     };
     let mut observer = NoopObserver;
-    let error = standard_tool_loop()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &RequiredWebExecutor,
@@ -2234,8 +2309,8 @@ async fn web_required_rejects_a_final_answer_without_registered_evidence() {
             &mut observer,
         )
         .await
-        .expect_err("web-required must not silently finalize");
-    assert_eq!(error.to_string(), "agent_run_web_evidence_required");
+        .expect("a mismatched required-Web surface should degrade without showing a draft");
+    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
 }
 
 #[tokio::test]

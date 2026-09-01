@@ -2,7 +2,7 @@
 
 > **文档状态**：现行
 > **文档类型**：目标合同矩阵
-> **事实基线**：2026-08-27，审计提交 `6c5dbd40`
+> **事实基线**：2026-09-01，审计起点 `e30f47d1`
 
 本矩阵按任务、上下文、新鲜度、效果和风险决定工具边界，不按电影、天气等领域建立执行状态机。
 
@@ -13,7 +13,7 @@
 | Chat           | Answer + Conversation + Offline + Direct + ReadOnly                  | 无                               | 自然正文                                   | 直接说明或自然追问               |
 | Local Research | Answer + ImplicitVault/ExplicitScope + Offline + ToolLoop + ReadOnly | runtime + local                  | 使用当前 Run 的 L/M 来源；无材料时诚实说明 | 自然追问范围，不联网替代         |
 | WebPreferred   | Answer + Conversation/None + WebPreferred + ToolLoop + ReadOnly      | runtime + Web；按需 local        | 有证据则展示来源，无证据可披露知识限制     | 强制综合或能力降级               |
-| WebRequired    | Answer + scope + WebRequired + ToolLoop + ReadOnly                   | runtime + Web；显式授权 external | 当前 Run 证据为完成前置条件                | 证据不足时明确失败               |
+| WebRequired    | Answer + scope + WebRequired + ToolLoop + ReadOnly                   | runtime + Web；显式授权 external | 当前 Run 正文证据为事实结论前置条件        | 证据不足时返回明确限制说明       |
 | External Read  | Answer + ExplicitScope + Offline/Web\* + ToolLoop + ReadOnly         | 精确冻结的 external binding      | E 来源属于当前 Run                         | 缺授权时不调用                   |
 | Draft          | Draft + scope + Offline/Web\* + Direct/ToolLoop + ReadOnly           | 按材料需求开放只读工具           | 返回草稿/预览，不修改 Markdown             | 自然追问目标或风格               |
 | Apply          | Apply + ExplicitScope + Offline/Web\* + Durable + BoundedWrite       | 确认前只读 + 变更计划            | 冻结变更集、确认、执行、限定验证           | 目标不明时自然追问；变更必须确认 |
@@ -54,15 +54,17 @@ Web 开关关闭时不能外发；对于 WebPreferred 可直接诚实降级，�
 
 `cost_class` 只用于预算和输出策略，不授予 capability。
 
+发现型调用还受每模型回合 2 次上限；第三个独立发现调用返回 `deferred_for_feedback`。Web 发现最多返回 4 个候选、每 Run 保存 8 个候选；候选片段不消耗 12 条最终 evidence 容量，模型选择并抓取正文后才获得 `Wn`。
+
 ## 5. 回答合同
 
-| 回答类型      | 正文               | 来源                      | 失败条件                                  |
-| ------------- | ------------------ | ------------------------- | ----------------------------------------- |
-| 普通回答      | 自然文本           | 可选来源组/受控引用       | 无可见正文或持久化失败                    |
-| WebPreferred  | 自然文本并披露时效 | 有则绑定当前 Run          | 权限/系统故障；无证据本身不必失败         |
-| WebRequired   | 严格但仍自然       | 必须有当前 Run 可用证据   | 缺证据、来源越权、严格协议无效            |
-| CitationCheck | 结构化覆盖结果     | 必须逐项绑定              | 引用不存在、跨 Run 或覆盖不足             |
-| Apply         | 变更摘要和执行结果 | 计划 hash、目标和结果事实 | 未确认、hash 漂移；已执行前缀必须明确报告 |
+| 回答类型      | 正文               | 来源                      | 失败条件                                     |
+| ------------- | ------------------ | ------------------------- | -------------------------------------------- |
+| 普通回答      | 自然文本           | 可选来源组/受控引用       | 无可见正文或持久化失败                       |
+| WebPreferred  | 自然文本并披露时效 | 有则绑定当前 Run          | 权限/系统故障；无证据本身不必失败            |
+| WebRequired   | 严格但仍自然       | 必须有当前 Run 正文证据   | 无证据时丢弃草稿并给限制说明；系统损坏才失败 |
+| CitationCheck | 结构化覆盖结果     | 必须逐项绑定              | 引用不存在、跨 Run 或覆盖不足                |
+| Apply         | 变更摘要和执行结果 | 计划 hash、目标和结果事实 | 未确认、hash 漂移；已执行前缀必须明确报告    |
 
 普通回答不得因为模型没有调用保留的结构化终局工具而失败。
 
