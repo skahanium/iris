@@ -25,30 +25,30 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["full"] }
-rusqlite = { version = "0.33", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 minisign-verify = "0.2.5"
-aes-gcm = "0.10"
-rand = "0.8"
-argon2 = "0.5"
+aes-gcm = "0.11"
+rand = "0.10"
+argon2 = "0.6"
 zeroize = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 notify = "8"
-notify-debouncer-full = "0.6"
+notify-debouncer-full = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "system-proxy", "socks"] }
-rmcp = { version = "2.2.0", default-features = false, features = ["client", "reqwest", "transport-async-rw", "transport-child-process", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "3.1.4", default-features = false, features = ["client", "reqwest", "transport-async-rw", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 http = "1"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 # 安全抓取直接使用 HTTP/1 + rustls 隧道，固定 CONNECT/SOCKS 的目标 IP；
 # 下列版本已存在于锁文件（MIT OR Apache-2.0），不引入代理库。
 bytes = "=1.12.1"
-http-body-util = "=0.1.3"
-hyper = { version = "=1.10.1", features = ["client", "http1"] }
+http-body-util = "=0.1.5"
+hyper = { version = "=1.11.1", features = ["client", "http1"] }
 hyper-util = { version = "=0.1.20", features = ["tokio"] }
 tokio-rustls = "=0.26.4"
 rustls-platform-verifier = "=0.7.0"
@@ -59,18 +59,18 @@ sse-stream = "0.2.4"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 walkdir = "2"
-fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
+fastembed = { version = "6", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
 scraper = "0.27"
 # RSS/Atom/JSON Feed 解析（MIT）：避免自写多格式解析器；sanitize feature 在解析
 # 时清理 HTML 字段。精确版本锁定，避免预 1.0 转换行为漂移。
 feed-rs = { version = "=2.4.0", features = ["sanitize"] }
 # OPML 大纲解析（MIT）：feed-rs 已传递引入 0.41，升级为直接依赖以读取
 # outline 属性；替代方案为手写属性扫描（易错）或新增第三方案 XML crate。
-quick-xml = "=0.41.0"
+quick-xml = "=0.42.0"
 # HTML → Markdown（Apache-2.0）：避免自写 HTML 转换器。精确版本锁定，
 # 预 1.0 行为可能变化；不再引入第三个 sanitizer crate（复用 feed-rs 与前端 DOMPurify）。
 htmd = "=0.5.5"
-toml = "0.8"
+toml = "1.1"
 # sqlite-vec is the default bounded semantic-search backend on desktop. Keep the
 # stable version exact because its pre-1.0 FFI and vec0 behavior may change.
 sqlite-vec = { version = "=0.1.9", default-features = false, optional = true }
@@ -90,11 +90,11 @@ windows = { version = "0.62", features = [
 windows-registry = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-system-configuration = "0.7"
+system-configuration = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 tauri = { version = "2", features = ["test"] }
 
 [[bench]]
