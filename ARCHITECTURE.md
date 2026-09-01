@@ -55,7 +55,7 @@ normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `as
 
 有任一只读工具时，模型进入唯一 `AgentToolLoop`。Standard 预算为 8 次模型、24 次总工具，并受 local 12、network 6、external-read 6、runtime 4 分类上限约束。每个模型回合最多执行 2 个 catalog 标记的发现调用；超出的独立发现动作返回 `deferred_for_feedback`，不消耗额度。每次工具批次结束后必须把有界观察返回模型，Host 不自动规划后续搜索。进展只由新资源、正文深度、内容 hash、revision、首次错误类别或终局修复等机械事实计算。
 
-新 Normal Run 的普通回答（包括要求本轮 Web 证据的普通事实）以自然正文完成；Run Engine 仍核验当前 Run evidence，并从账本投影受控来源组，但不向模型暴露内部 `submit_final_answer`。只有高风险当前事实以及含非空历史 `FreshFactPolicy` 的兼容 Run 使用既有结构化终局。普通地点、范围、偏好等缺参由模型在未调用工具前以一条无来源的自然问题结束当前 Run；下一条用户消息创建新 Run 并从会话历史承接。`AwaitingInput` 与 `submit_input` 仅保留旧 Run 读取/恢复兼容，不是新普通对话的路径。
+新 Normal Run 的普通回答（包括要求本轮 Web 证据的普通事实）以自然正文完成；Run Engine 仍核验当前 Run evidence，并只从最终正文实际引用且验证通过的账本记录投影受控来源区。高风险当前事实、`CurrentRunExternal` 以及含非空历史 `FreshFactPolicy` 的兼容 Run 使用既有结构化终局，使最终采用的来源集合可机械收窄。普通地点、范围、偏好等缺参由模型在未调用工具前以一条无来源的自然问题结束当前 Run；下一条用户消息创建新 Run 并从会话历史承接。`AwaitingInput` 与 `submit_input` 仅保留旧 Run 读取/恢复兼容，不是新普通对话的路径。
 
 `agent_run_events` 是追加式、安全的过程回放日志，而不是可据以重建全部 Run 的执行日志：事件不包含工具参数或原始输出，只保存稳定 capability、调用 ID、受限摘要、状态和安全错误码。`assistant_run_get` 的回放仅恢复安全快照与过程展示；Direct 与 ToolLoop 不支持进程级续跑，进程中断后不会从事件重新执行模型或工具。只有 Durable Run 才具有暂停与检查点语义：新计划冻结至多 6 个有序操作和 6 个目标，一次确认后按无正文游标逐项重验和执行；重启只恢复未执行后缀，hash 漂移保留已完成前缀并停止后缀。确认后若 Provider 可用，最多以目标限定的 `read_note` 做 2 次模型/4 次本地只读核对；不可用时保留 Host 的执行事实报告，绝不重放写入或开放新工具。
 
@@ -71,9 +71,13 @@ normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `as
 
 模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。无 URL 的发现调用每次最多返回 4 个有界候选、每 Run 最多保存 8 个；候选只标记为 `search_snippet`，不写 evidence ledger。模型可从当前 Run 候选或用户显式 URL 中选择目标再次调用同一 `web_search`，只有抓取到 `fetched_body` 的选中页面才登记为可引用 evidence。未选候选和失败抓取不能生成 `Wn`。
 
+MCP fetch 的成功语义由 `WebEvidenceBroker` 独占：它只拆 transport 信封和 `content[].text` 中可完整解析的一层 JSON 载荷，并要求请求 URL 与返回条目 canonicalize 后一致且正文不是错误信封、空文本、标题重复或搜索结果包装。当前候选来源优先，失败后只在 Intake 已冻结的 `web.fetch` 有序候选内切换；search 健康以可用 HTTPS 候选计，fetch 健康以合格 `fetched_body` 计。`run_tool_loop` 不能把 snippet 升级为 evidence。
+
+要求 `CurrentRunWeb`、`CurrentRunExternal` 或结构化严格终局的 Run 在 `bind_validated_content` 前密封模型正文；来源/终局 repair 仍使用同一 ToolLoop 的一次修复额度。通过后只发布最终正文一次，失败则发布无 citation map、无 source summary 的限制说明。`AnswerReset` 不由新的严格 Run 产生，只保留旧事件回放兼容；Direct 与非严格 ToolLoop 继续实时流式。
+
 Feed 与 AI 网页抓取的 URL 读取使用同一逐跳安全网门：每跳重新校验 HTTPS、解析并拒绝任一私网地址；直连固定到已验证地址，HTTP CONNECT/SOCKS5 也只发送固定 IP 目标，同时 TLS SNI、证书校验与 Host 保持原域名。它消费唯一的 `follow_system_proxy` 设置；PAC、HTTPS-to-proxy 或认证代理稳定失败且不会回退直连。
 
-通用 MCP 只开放另一条独立的 `external.read` 边界：`readOnlyHint=true` 只是服务端声明，不是 Iris 对第三方实现的证明；管理中心还会审查名称和递归输入 Schema，并要求用户对精确 provider/tool/schema 显式确认信任后才创建白名单 binding。Composer 必须为每个 normal-domain Run 显式选择 binding，Accept 事务会冻结用户信任位、binding hash、provider hash、transport/config、Schema、参数映射与输出策略。模型不能直接消费 discovery，也不能自行增权；classified、local-only、Skills 和隐式关键词均不能获得 `external.read`。运行中只执行冻结配置，并用 live provider hash/enablement 作撤销检查。输出仅接受最多 8,000 字符的文本或 JSON，证据摘录最多 2,000 字符；事件、审计和 checkpoint 不保存参数或原始输出。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现其声明。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
+通用 MCP 只开放另一条独立的 `external.read` 边界：`readOnlyHint=true` 只是服务端声明，不是 Iris 对第三方实现的证明；管理中心还会审查名称和递归输入 Schema，并要求用户对精确 provider/tool/schema 显式确认信任后才创建白名单 binding。Composer 必须为每个 normal-domain Run 显式选择 binding，Accept 事务会冻结用户信任位、binding hash、provider hash、transport/config、Schema、参数映射与输出策略。模型不能直接消费 discovery，也不能自行增权；classified、local-only、Skills 和隐式关键词均不能获得 `external.read`。运行中只执行冻结配置，并用 live provider hash/enablement 作撤销检查。成功输出向模型返回正文和账本来源引用 `E{id}`，最终结构化提交只能引用本 Run 实际采用的 `E{id}`；输出正文仍仅接受最多 8,000 字符的文本或 JSON，证据摘录最多 2,000 字符。事件、审计和 checkpoint 不保存参数或原始输出。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现其声明。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
 
 ## 当前事实领域只读能力
 

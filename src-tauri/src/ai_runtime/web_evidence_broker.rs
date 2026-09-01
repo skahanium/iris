@@ -82,6 +82,8 @@ pub struct WebEvidenceProviderUsage {
     pub provider_id: String,
     pub provider_kind: String,
     pub successful_search_requests: u32,
+    #[serde(default)]
+    pub successful_page_fetches: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -180,15 +182,20 @@ async fn collect_web_evidence_with_queries(
     // not silently discarded by the evidence packet cap.
     items.sort_by_key(|item| !allowed_fetch_urls.contains(&item.canonical_url));
     items.truncate(input.max_search_results);
-    let (items, successful_page_fetches) = enrich_with_page_fetches(
+    let (items, successful_fetch_providers) = enrich_with_page_fetches(
         db,
         items,
         input.max_fetches,
         &allowed_fetch_urls,
-        input.provider_snapshots.first(),
+        &input.provider_snapshots,
+        input.provider_selection_frozen,
     )
     .await?;
-    usage.successful_page_fetches = successful_page_fetches;
+    usage.successful_page_fetches =
+        u32::try_from(successful_fetch_providers.len()).unwrap_or(u32::MAX);
+    for (provider_id, provider_kind) in successful_fetch_providers {
+        record_successful_fetch_usage(&mut usage, &provider_id, &provider_kind);
+    }
     Ok(WebEvidenceBrokerOutput { items, usage })
 }
 
@@ -619,10 +626,12 @@ async fn collect_mcp_search_provider_fetch(
     .await;
     let probe = match probe_result {
         Ok(probe) => {
-            match probe.diagnostic.application_failure {
-                None => record_provider_success(provider_id),
-                Some(failure) if failure.is_transient() => record_provider_failure(provider_id),
-                Some(_) => {}
+            if probe.diagnostic.failure_reason.is_none()
+                && probe.diagnostic.usable_https_row_count > 0
+            {
+                record_provider_success(provider_id);
+            } else {
+                record_provider_failure(provider_id);
             }
             probe
         }
@@ -725,14 +734,21 @@ async fn call_mcp_search_provider(
         }
     };
     let diagnostic = diagnose_mcp_search_result(&call.provider_id, &call.result);
+    let successful_search =
+        diagnostic.failure_reason.is_none() && diagnostic.usable_https_row_count > 0;
+    let health_failure_code = diagnostic.failure_reason.as_deref().map(|reason| {
+        if reason.starts_with("mcp_search_parse_empty:") {
+            "mcp_search_parse_empty"
+        } else {
+            reason
+        }
+    });
     observe_mcp_search_provider_call(
         db,
         &provider.profile_id,
-        diagnostic.application_failure.is_none(),
+        successful_search,
         started.elapsed(),
-        diagnostic
-            .application_failure
-            .map(McpApplicationFailureKind::failure_code),
+        health_failure_code,
         record_health,
     );
     Ok(McpSearchProviderProbe {
@@ -1451,6 +1467,28 @@ fn record_successful_search_usage(
         provider_id: fetch.provider_id.clone(),
         provider_kind: fetch.provider_kind.clone(),
         successful_search_requests: 1,
+        successful_page_fetches: 0,
+    });
+}
+
+fn record_successful_fetch_usage(
+    usage: &mut WebEvidenceUsage,
+    provider_id: &str,
+    provider_kind: &str,
+) {
+    if let Some(provider) = usage
+        .providers
+        .iter_mut()
+        .find(|provider| provider.provider_id == provider_id)
+    {
+        provider.successful_page_fetches = provider.successful_page_fetches.saturating_add(1);
+        return;
+    }
+    usage.providers.push(WebEvidenceProviderUsage {
+        provider_id: provider_id.to_string(),
+        provider_kind: provider_kind.to_string(),
+        successful_search_requests: 0,
+        successful_page_fetches: 1,
     });
 }
 
@@ -1568,7 +1606,7 @@ fn normalize_evidence_items(items: Vec<WebEvidenceItem>) -> Vec<WebEvidenceItem>
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut out = Vec::new();
     for item in items {
-        let key = item.canonical_url.trim().to_lowercase();
+        let key = item.canonical_url.trim().to_string();
         if let Some(existing_index) = seen.get(&key).copied() {
             let existing: &mut WebEvidenceItem = &mut out[existing_index];
             if existing.snippet.trim() != item.snippet.trim()
@@ -1607,16 +1645,26 @@ struct PageProviderFetch {
 
 fn fetch_provider_candidates(
     db: &Database,
-    provider_snapshot: Option<
-        &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
-    >,
+    origin_provider_id: Option<&str>,
+    provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+    provider_selection_frozen: bool,
 ) -> Vec<FetchProviderCandidate> {
-    if let Some(snapshot) = provider_snapshot {
-        return snapshot
-            .web_fetch_mapping_json
-            .as_ref()
-            .map(|_| vec![FetchProviderCandidate::Mcp(snapshot.id.clone())])
-            .unwrap_or_default();
+    if provider_selection_frozen {
+        let mut candidates = Vec::new();
+        if let Some(origin_provider_id) = origin_provider_id {
+            if provider_snapshots.iter().any(|snapshot| {
+                snapshot.id == origin_provider_id && snapshot.web_fetch_mapping_json.is_some()
+            }) {
+                candidates.push(FetchProviderCandidate::Mcp(origin_provider_id.to_string()));
+            }
+        }
+        for snapshot in provider_snapshots {
+            let candidate = FetchProviderCandidate::Mcp(snapshot.id.clone());
+            if snapshot.web_fetch_mapping_json.is_some() && !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+        return candidates;
     }
     let mut candidates = Vec::new();
     for provider in crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(db)
@@ -1636,12 +1684,11 @@ async fn enrich_with_page_fetches(
     items: Vec<WebEvidenceItem>,
     max_fetches: usize,
     allowed_fetch_urls: &std::collections::BTreeSet<String>,
-    provider_snapshot: Option<
-        &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
-    >,
-) -> AppResult<(Vec<WebEvidenceItem>, u32)> {
+    provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+    provider_selection_frozen: bool,
+) -> AppResult<(Vec<WebEvidenceItem>, Vec<(String, String)>)> {
     if max_fetches == 0 {
-        return Ok((items, 0));
+        return Ok((items, Vec::new()));
     }
 
     let mut enriched = items;
@@ -1653,34 +1700,53 @@ async fn enrich_with_page_fetches(
             item.failure_reason.is_none() && is_allowed_page_fetch(item, allowed_fetch_urls)
         })
         .take(max_fetches)
-        .map(|(index, item)| (index, item.url.clone()))
+        .map(|(index, item)| (index, item.url.clone(), item.provider_id.clone()))
         .collect::<Vec<_>>();
-    let fetches = stream::iter(candidates.into_iter().map(|(index, url)| async move {
-        let remaining = fetch_deadline.saturating_duration_since(Instant::now());
-        let result = if remaining.is_zero() {
-            None
-        } else {
-            tokio::time::timeout(
-                remaining,
-                fetch_url_with_providers(db, &url, provider_snapshot),
-            )
-            .await
-            .ok()
-            .and_then(Result::ok)
-        };
-        (index, result)
-    }))
+    let fetches = stream::iter(candidates.into_iter().map(
+        |(index, url, origin_provider_id)| async move {
+            let remaining = fetch_deadline.saturating_duration_since(Instant::now());
+            let result = if remaining.is_zero() {
+                Err(AppError::msg("agent_run_web_provider_timeout"))
+            } else {
+                match tokio::time::timeout(
+                    remaining,
+                    fetch_url_with_providers(
+                        db,
+                        &url,
+                        Some(&origin_provider_id),
+                        provider_snapshots,
+                        provider_selection_frozen,
+                    ),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(AppError::msg("agent_run_web_provider_timeout")),
+                }
+            };
+            (index, result)
+        },
+    ))
     .buffer_unordered(MAX_CONCURRENT_PAGE_FETCHES)
     .collect::<Vec<_>>()
     .await;
-    let mut successful_page_fetches = 0_u32;
-    for (index, page) in fetches {
-        if let Some(page) = page {
-            apply_page_provider_fetch(&mut enriched[index], page);
-            successful_page_fetches = successful_page_fetches.saturating_add(1);
+    let mut successful_fetch_providers = Vec::new();
+    for (index, result) in fetches {
+        match result {
+            Ok(page) => {
+                successful_fetch_providers
+                    .push((page.provider_id.clone(), page.provider_kind.clone()));
+                apply_page_provider_fetch(&mut enriched[index], page);
+            }
+            Err(error) => {
+                enriched[index].failure_reason = Some(format!("web_fetch_failed:{error}"));
+                enriched[index].retrieval_reason = "web.fetch".into();
+                enriched[index].extraction_method = "none".into();
+                enriched[index].fetched_excerpt = None;
+            }
         }
     }
-    Ok((enriched, successful_page_fetches))
+    Ok((enriched, successful_fetch_providers))
 }
 
 fn is_allowed_page_fetch(
@@ -1693,15 +1759,23 @@ fn is_allowed_page_fetch(
 async fn fetch_url_with_providers(
     db: &Database,
     url: &str,
-    provider_snapshot: Option<
-        &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
-    >,
+    origin_provider_id: Option<&str>,
+    provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+    provider_selection_frozen: bool,
 ) -> AppResult<PageProviderFetch> {
     let mut failures = Vec::new();
-    for candidate in fetch_provider_candidates(db, provider_snapshot) {
+    for candidate in fetch_provider_candidates(
+        db,
+        origin_provider_id,
+        provider_snapshots,
+        provider_selection_frozen,
+    ) {
         let result = match candidate {
             FetchProviderCandidate::Mcp(provider_id) => {
-                collect_mcp_page_fetch(db, url, &provider_id, provider_snapshot).await
+                let expected_snapshot = provider_snapshots
+                    .iter()
+                    .find(|snapshot| snapshot.id == provider_id);
+                collect_mcp_page_fetch(db, url, &provider_id, expected_snapshot).await
             }
             FetchProviderCandidate::Native => collect_native_page_fetch(db, url).await,
         };
@@ -1827,9 +1901,10 @@ async fn collect_mcp_page_fetch(
             return Err(error);
         }
     };
-    let failure_kind = mcp_result_is_error(&call.result)
-        .then(|| classify_mcp_application_failure(&mcp_search_result_body(&call.result)));
     let result = mcp_page_fetch_result(provider_id, url, &call.result);
+    let failure_kind = result.is_err().then(|| {
+        mcp_fetch_failure_kind(&call.result).unwrap_or(McpApplicationFailureKind::ProviderFailed)
+    });
     let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
         db,
         provider_id,
@@ -1837,10 +1912,10 @@ async fn collect_mcp_page_fetch(
         started.elapsed().as_millis() as u64,
         failure_kind.map(McpApplicationFailureKind::failure_code),
     );
-    match failure_kind {
-        None => record_provider_success(provider_id),
-        Some(kind) if kind.is_transient() => record_provider_failure(provider_id),
-        Some(_) => {}
+    match (result.is_ok(), failure_kind) {
+        (true, _) => record_provider_success(provider_id),
+        (false, Some(kind)) if kind.is_transient() => record_provider_failure(provider_id),
+        _ => {}
     }
     result
 }
@@ -1860,34 +1935,250 @@ fn mcp_page_fetch_result(
     url: &str,
     result: &serde_json::Value,
 ) -> AppResult<PageProviderFetch> {
-    if mcp_result_is_error(result) {
-        return Err(AppError::msg(
-            classify_mcp_application_failure(&mcp_search_result_body(result)).failure_code(),
-        ));
+    let payload = mcp_fetch_payload(result)?;
+    if let Some(failure) = mcp_fetch_application_failure(payload) {
+        return Err(AppError::msg(failure.failure_code()));
     }
-    let title = result
-        .get("title")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(url)
-        .to_string();
-    let text = result
-        .get("text")
-        .or_else(|| result.get("body"))
-        .or_else(|| result.get("content"))
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| mcp_search_result_body(result));
+    let (title, text, extraction_method) = decode_mcp_fetch_body(url, payload)?;
     Ok(PageProviderFetch {
         title,
         text,
         provider_id: provider_id.into(),
         provider_kind: "mcp".into(),
-        extraction_method: "mcp_fetch".into(),
+        extraction_method,
     })
+}
+
+/// Decode exactly the MCP envelope and, when present, one JSON value carried by
+/// `content[].text`. Article text is never scanned for error keywords.
+fn mcp_fetch_payload(result: &serde_json::Value) -> AppResult<&serde_json::Value> {
+    if let Some(failure) = mcp_fetch_application_failure(result) {
+        return Err(AppError::msg(failure.failure_code()));
+    }
+    Ok(result)
+}
+
+fn mcp_fetch_application_failure(payload: &serde_json::Value) -> Option<McpApplicationFailureKind> {
+    let object = payload.as_object()?;
+    let status = object
+        .get("status")
+        .or_else(|| object.get("statusCode"))
+        .or_else(|| object.get("status_code"))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|status| status.parse::<u64>().ok()))
+        });
+    let failed = object.get("isError").and_then(serde_json::Value::as_bool) == Some(true)
+        || object.get("success").and_then(serde_json::Value::as_bool) == Some(false)
+        || object.get("error").is_some_and(mcp_error_value_present)
+        || status.is_some_and(|status| status >= 400);
+    if !failed {
+        return None;
+    }
+    if status == Some(429) {
+        return Some(McpApplicationFailureKind::RateLimited);
+    }
+    Some(classify_mcp_application_failure(
+        &serde_json::to_string(payload).unwrap_or_default(),
+    ))
+}
+
+fn mcp_error_value_present(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::String(value) => !value.trim().is_empty(),
+        serde_json::Value::Array(value) => !value.is_empty(),
+        serde_json::Value::Object(value) => !value.is_empty(),
+        serde_json::Value::Number(value) => value.as_f64() != Some(0.0),
+    }
+}
+
+fn mcp_fetch_failure_kind(result: &serde_json::Value) -> Option<McpApplicationFailureKind> {
+    if let Some(failure) = mcp_fetch_failure_in_value(result) {
+        return Some(failure);
+    }
+    result
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+        .filter_map(|text| serde_json::from_str::<serde_json::Value>(text.trim()).ok())
+        .find_map(|payload| mcp_fetch_failure_in_value(&payload))
+}
+
+fn mcp_fetch_failure_in_value(payload: &serde_json::Value) -> Option<McpApplicationFailureKind> {
+    mcp_fetch_application_failure(payload).or_else(|| {
+        fetch_result_entries(payload)
+            .and_then(|entries| entries.iter().find_map(mcp_fetch_application_failure))
+    })
+}
+
+fn decode_mcp_fetch_body(
+    requested_url: &str,
+    result: &serde_json::Value,
+) -> AppResult<(String, String, String)> {
+    if let Some(decoded) = decode_fetch_body_from_value(requested_url, result)? {
+        return Ok(decoded);
+    }
+
+    if let Some(content) = result.get("content").and_then(serde_json::Value::as_array) {
+        for item in content {
+            let Some(text) = item.get("text").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<serde_json::Value>(trimmed) {
+                Ok(payload) => {
+                    if let Some(failure) = mcp_fetch_application_failure(&payload) {
+                        return Err(AppError::msg(failure.failure_code()));
+                    }
+                    if let Some(decoded) = decode_fetch_body_from_value(requested_url, &payload)? {
+                        return Ok(decoded);
+                    }
+                }
+                Err(_) => {
+                    let title = result
+                        .get("title")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or(requested_url);
+                    if usable_fetch_body(trimmed, title, requested_url) {
+                        return Ok((
+                            title.trim().to_string(),
+                            trimmed.to_string(),
+                            "mcp_fetch_text".into(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Err(AppError::msg("agent_run_web_fetch_body_unusable"))
+}
+
+fn decode_fetch_body_from_value(
+    requested_url: &str,
+    value: &serde_json::Value,
+) -> AppResult<Option<(String, String, String)>> {
+    if let Some(failure) = mcp_fetch_failure_in_value(value) {
+        return Err(AppError::msg(failure.failure_code()));
+    }
+
+    if let Some(entries) = fetch_result_entries(value) {
+        let requested = canonicalize_url(requested_url);
+        let mut saw_url = false;
+        let mut saw_matching_url = false;
+        for entry in entries {
+            let Some(entry) = entry.as_object() else {
+                continue;
+            };
+            let entry_url = entry
+                .get("url")
+                .or_else(|| entry.get("source_url"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|url| !url.is_empty());
+            if let Some(entry_url) = entry_url {
+                saw_url = true;
+                if canonicalize_url(entry_url) != requested {
+                    continue;
+                }
+                saw_matching_url = true;
+            }
+            if let Some(decoded) = decode_fetch_body_object(requested_url, entry, false) {
+                return Ok(Some(decoded));
+            }
+        }
+        if saw_url && !saw_matching_url {
+            return Err(AppError::msg("agent_run_web_fetch_url_mismatch"));
+        }
+        return Ok(None);
+    }
+
+    Ok(value
+        .as_object()
+        .and_then(|object| decode_fetch_body_object(requested_url, object, true)))
+}
+
+fn fetch_result_entries(value: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
+    value
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| {
+            value
+                .get("data")
+                .and_then(|data| data.get("results"))
+                .and_then(serde_json::Value::as_array)
+        })
+        .or_else(|| value.get("data").and_then(serde_json::Value::as_array))
+}
+
+fn decode_fetch_body_object(
+    requested_url: &str,
+    object: &serde_json::Map<String, serde_json::Value>,
+    allow_content: bool,
+) -> Option<(String, String, String)> {
+    let response_url = object
+        .get("url")
+        .or_else(|| object.get("source_url"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty());
+    if response_url.is_some_and(|url| canonicalize_url(url) != canonicalize_url(requested_url)) {
+        return None;
+    }
+    let title = object
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(requested_url);
+    let body_fields = [
+        ("raw_content", "mcp_fetch_raw_content"),
+        ("markdown", "mcp_fetch_markdown"),
+        ("body", "mcp_fetch_body"),
+        ("text", "mcp_fetch_text"),
+        ("content", "mcp_fetch_content"),
+    ];
+    for (field, method) in body_fields {
+        if field == "content" && !allow_content {
+            continue;
+        }
+        let Some(text) = object
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        else {
+            continue;
+        };
+        if usable_fetch_body(text, title, requested_url) {
+            return Some((title.to_string(), text.to_string(), method.into()));
+        }
+    }
+    None
+}
+
+fn usable_fetch_body(text: &str, title: &str, requested_url: &str) -> bool {
+    let trimmed = text.trim();
+    let substantive_lines = trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| *line != title.trim())
+        .filter(|line| canonicalize_url(line) != canonicalize_url(requested_url))
+        .collect::<Vec<_>>();
+    !trimmed.is_empty()
+        && trimmed != title.trim()
+        && canonicalize_url(trimmed) != canonicalize_url(requested_url)
+        && !substantive_lines.is_empty()
+        && parse_search_result_rows(trimmed).is_empty()
 }
 
 fn apply_page_provider_fetch(item: &mut WebEvidenceItem, page: PageProviderFetch) {
@@ -2003,14 +2294,20 @@ pub(crate) fn domain_from_url(url: &str) -> Option<String> {
 }
 
 fn canonicalize_url(url: &str) -> String {
-    let mut trimmed = url.trim().to_lowercase();
-    if let Some((before_fragment, _)) = trimmed.split_once('#') {
-        trimmed = before_fragment.to_string();
+    let trimmed = url.trim();
+    let Ok(mut normalized) = reqwest::Url::parse(trimmed) else {
+        return trimmed
+            .split_once('#')
+            .map_or_else(|| trimmed.to_string(), |(before, _)| before.to_string());
+    };
+    normalized.set_fragment(None);
+    if matches!(
+        (normalized.scheme(), normalized.port()),
+        ("https", Some(443)) | ("http", Some(80))
+    ) {
+        let _ = normalized.set_port(None);
     }
-    while trimmed.ends_with('/') {
-        trimmed.pop();
-    }
-    trimmed
+    normalized.to_string()
 }
 
 fn result_hash(parts: &[&str]) -> String {
@@ -2089,6 +2386,41 @@ mod tests {
             failure_reason: None,
             conflict_group: None,
             conflict_note: None,
+        }
+    }
+
+    fn contract_mcp_transport(mode: &str) -> String {
+        if cfg!(windows) {
+            serde_json::json!({
+                "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                "args": [
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    format!(
+                        "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+                        env!("CARGO_MANIFEST_DIR")
+                    ),
+                    mode,
+                    "1"
+                ]
+            })
+            .to_string()
+        } else {
+            serde_json::json!({
+                "command": "/bin/sh",
+                "args": [
+                    format!(
+                        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+                        env!("CARGO_MANIFEST_DIR")
+                    ),
+                    mode,
+                    "1"
+                ]
+            })
+            .to_string()
         }
     }
 
@@ -2215,23 +2547,171 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broker_keeps_search_snippet_usable_when_page_fetch_fails() {
+    async fn broker_returns_page_fetch_failure_as_an_actionable_observation() {
         let db = Database::open_in_memory().unwrap();
-        let (items, successful_page_fetches) = enrich_with_page_fetches(
+        let (items, successful_fetch_providers) = enrich_with_page_fetches(
             &db,
             vec![item("https://localhost/a"), item("https://localhost/b")],
             1,
             &std::collections::BTreeSet::from(["https://localhost/a".to_string()]),
-            None,
+            &[],
+            false,
         )
         .await
         .unwrap();
 
         assert_eq!(items.len(), 2);
-        assert_eq!(successful_page_fetches, 0);
-        assert!(items[0].failure_reason.is_none());
+        assert!(successful_fetch_providers.is_empty());
+        assert!(items[0]
+            .failure_reason
+            .as_deref()
+            .is_some_and(|reason| reason.starts_with("web_fetch_failed:")));
+        assert_eq!(items[0].retrieval_reason, "web.fetch");
+        assert!(items[0].fetched_excerpt.is_none());
         assert!(!items[0].snippet.is_empty());
         assert!(items[1].failure_reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn nested_429_fetch_fails_over_within_the_frozen_route() {
+        let db = Database::open_in_memory().unwrap();
+        for (id, mode) in [
+            ("fetch-primary", "fetch-rate-limit"),
+            ("fetch-backup", "search-fetch"),
+        ] {
+            crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+                &db,
+                &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                    id: id.into(),
+                    name: id.into(),
+                    kind: "mcp".into(),
+                    enabled: true,
+                    transport_kind: "stdio".into(),
+                    transport_config_json: contract_mcp_transport(mode),
+                    credential_refs_json: "{}".into(),
+                    web_search_mapping_json: Some(
+                        r#"{"tool":"search","queryArg":"query","maxResultsArg":"max_results"}"#
+                            .into(),
+                    ),
+                    web_fetch_mapping_json: Some(r#"{"tool":"fetch","urlArg":"url"}"#.into()),
+                },
+            )
+            .unwrap();
+        }
+        let available =
+            crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(&db)
+                .unwrap();
+        let snapshots = ["fetch-primary", "fetch-backup"]
+            .into_iter()
+            .map(|id| {
+                available
+                    .iter()
+                    .find(|snapshot| snapshot.id == id)
+                    .cloned()
+                    .expect("frozen provider snapshot")
+            })
+            .collect::<Vec<_>>();
+
+        let output = collect_initial_run_web_evidence_with_usage(
+            &db,
+            WebEvidenceBrokerInput {
+                query: "contract".into(),
+                urls: vec!["https://source.invalid/contract".into()],
+                enabled: true,
+                max_search_results: 4,
+                max_fetches: 1,
+                provider_snapshots: snapshots,
+                provider_selection_frozen: true,
+            },
+        )
+        .await
+        .expect("backup fetch succeeds");
+
+        assert_eq!(output.usage.successful_page_fetches, 1);
+        assert!(output.items.iter().any(|item| {
+            item.provider_id == "fetch-backup"
+                && item
+                    .fetched_excerpt
+                    .as_deref()
+                    .is_some_and(|body| body.contains("fetch-result"))
+        }));
+        assert!(output.usage.providers.iter().any(|provider| {
+            provider.provider_id == "fetch-backup" && provider.successful_page_fetches == 1
+        }));
+        let primary_health = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
+            &db,
+            "fetch-primary",
+        )
+        .unwrap()
+        .expect("primary health");
+        assert_eq!(
+            primary_health.last_failure_code.as_deref(),
+            Some("mcp_provider_rate_limited")
+        );
+        let backup_health = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
+            &db,
+            "fetch-backup",
+        )
+        .unwrap()
+        .expect("backup health");
+        assert!(backup_health.success_count >= 1);
+    }
+
+    #[tokio::test]
+    async fn search_without_usable_https_candidates_is_recorded_as_failed_health() {
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "search-empty-health".into(),
+                name: "search-empty-health".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: contract_mcp_transport("search-empty"),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(
+                    r#"{"tool":"search","queryArg":"query","maxResultsArg":"max_results"}"#.into(),
+                ),
+                web_fetch_mapping_json: None,
+            },
+        )
+        .unwrap();
+        let snapshot =
+            crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(&db)
+                .unwrap()
+                .into_iter()
+                .find(|provider| provider.id == "search-empty-health")
+                .expect("frozen search provider");
+
+        let output = collect_initial_run_web_evidence_with_usage(
+            &db,
+            WebEvidenceBrokerInput {
+                query: "contract".into(),
+                urls: Vec::new(),
+                enabled: true,
+                max_search_results: 4,
+                max_fetches: 0,
+                provider_snapshots: vec![snapshot],
+                provider_selection_frozen: true,
+            },
+        )
+        .await
+        .expect("unusable search remains an actionable broker observation");
+
+        assert_eq!(output.usage.successful_search_requests.mcp, 0);
+        let health = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
+            &db,
+            "search-empty-health",
+        )
+        .unwrap()
+        .expect("search health");
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 1);
+        assert_eq!(
+            health.last_failure_code.as_deref(),
+            Some("mcp_search_parse_empty")
+        );
     }
 
     #[test]
@@ -2872,13 +3352,47 @@ mod tests {
         )
         .unwrap();
 
-        let candidates = fetch_provider_candidates(&db, None);
+        let candidates = fetch_provider_candidates(&db, None, &[], false);
 
         assert_eq!(
             candidates,
             vec![
                 FetchProviderCandidate::Mcp("mcp-fetch".into()),
                 FetchProviderCandidate::Native,
+            ]
+        );
+    }
+
+    #[test]
+    fn frozen_fetch_candidates_prefer_origin_then_keep_frozen_order() {
+        let snapshot = |id: &str, has_fetch: bool| {
+            crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
+                id: id.into(),
+                kind: "mcp".into(),
+                transport_kind: "stdio".into(),
+                provider_config_hash: format!("hash-{id}"),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: has_fetch.then(|| r#"{"tool":"fetch"}"#.into()),
+            }
+        };
+        let frozen = vec![
+            snapshot("primary", true),
+            snapshot("origin", true),
+            snapshot("search-only", false),
+        ];
+
+        let candidates = fetch_provider_candidates(
+            &Database::open_in_memory().unwrap(),
+            Some("origin"),
+            &frozen,
+            true,
+        );
+
+        assert_eq!(
+            candidates,
+            vec![
+                FetchProviderCandidate::Mcp("origin".into()),
+                FetchProviderCandidate::Mcp("primary".into()),
             ]
         );
     }
@@ -2899,7 +3413,7 @@ mod tests {
         assert_eq!(fetch.provider_kind, "mcp");
         assert_eq!(fetch.title, "Fetched title");
         assert_eq!(fetch.text, "Fetched body");
-        assert_eq!(fetch.extraction_method, "mcp_fetch");
+        assert_eq!(fetch.extraction_method, "mcp_fetch_text");
     }
 
     #[test]
@@ -2920,6 +3434,146 @@ mod tests {
 
         assert_eq!(error, "agent_run_web_provider_auth_failed");
         assert!(!error.contains("Invalid API key"));
+    }
+
+    #[test]
+    fn mcp_page_fetch_rejects_nested_rate_limit_error_envelope() {
+        let error = mcp_page_fetch_result(
+            "mcp-fetch",
+            "https://example.com/a",
+            &serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": r#"{"error":"Extract failed","status":429,"message":"rate limited"}"#
+                }]
+            }),
+        )
+        .expect_err("an MCP application error must never become fetched body")
+        .to_string();
+
+        assert_eq!(error, "mcp_provider_rate_limited");
+        assert!(!error.contains("Extract failed"));
+    }
+
+    #[test]
+    fn mcp_page_fetch_rejects_rate_limited_result_entry_even_with_body() {
+        let result = serde_json::json!({
+            "results": [{
+                "url": "https://example.com/a",
+                "status": 429,
+                "error": "rate limited",
+                "raw_content": "this fallback error body must never become evidence"
+            }]
+        });
+        let error = mcp_page_fetch_result("mcp-fetch", "https://example.com/a", &result)
+            .expect_err("an errored result entry must never become fetched body")
+            .to_string();
+
+        assert_eq!(error, "mcp_provider_rate_limited");
+        assert_eq!(
+            mcp_fetch_failure_kind(&result),
+            Some(McpApplicationFailureKind::RateLimited)
+        );
+    }
+
+    #[test]
+    fn mcp_fetch_error_detection_ignores_empty_flags_and_article_words() {
+        let fetch = mcp_page_fetch_result(
+            "mcp-fetch",
+            "https://example.com/a",
+            &serde_json::json!({
+                "error": "",
+                "success": true,
+                "url": "https://example.com/a",
+                "title": "可靠性文章",
+                "text": "正文讨论 error handling，但这只是文章内容，不是 MCP 错误信封。"
+            }),
+        )
+        .expect("article words must not become an application failure");
+
+        assert!(fetch.text.contains("error handling"));
+    }
+
+    #[test]
+    fn mcp_page_fetch_extracts_matching_nested_raw_content() {
+        let fetch = mcp_page_fetch_result(
+            "mcp-fetch",
+            "https://example.com/a#section",
+            &serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": r#"{"results":[{"url":"https://example.com/a","title":"Fetched title","raw_content":"完整的网页正文，而不是搜索结果摘要。"}]}"#
+                }]
+            }),
+        )
+        .expect("matching nested raw_content");
+
+        assert_eq!(fetch.title, "Fetched title");
+        assert_eq!(fetch.text, "完整的网页正文，而不是搜索结果摘要。");
+        assert_eq!(fetch.extraction_method, "mcp_fetch_raw_content");
+    }
+
+    #[test]
+    fn mcp_page_fetch_rejects_nested_body_for_a_different_url() {
+        let error = mcp_page_fetch_result(
+            "mcp-fetch",
+            "https://example.com/requested",
+            &serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": r#"{"results":[{"url":"https://example.com/other","raw_content":"另一页面的完整正文。"}]}"#
+                }]
+            }),
+        )
+        .expect_err("a body from another URL must not be accepted")
+        .to_string();
+
+        assert_eq!(error, "agent_run_web_fetch_url_mismatch");
+    }
+
+    #[test]
+    fn mcp_page_fetch_preserves_case_sensitive_path_and_query_for_url_ownership() {
+        let error = mcp_page_fetch_result(
+            "mcp-fetch",
+            "HTTPS://Example.COM/Article/ABC?sig=XyZ#section",
+            &serde_json::json!({
+                "results": [{
+                    "url": "https://example.com/article/abc?sig=xyz",
+                    "raw_content": "正文来自另一个大小写敏感资源。"
+                }]
+            }),
+        )
+        .expect_err("path and query case changes must not match the requested resource")
+        .to_string();
+
+        assert_eq!(error, "agent_run_web_fetch_url_mismatch");
+        assert_eq!(
+            canonicalize_url("HTTPS://Example.COM/Article/ABC?sig=XyZ#section"),
+            "https://example.com/Article/ABC?sig=XyZ"
+        );
+    }
+
+    #[test]
+    fn mcp_page_fetch_rejects_title_only_and_search_result_wrappers() {
+        for result in [
+            serde_json::json!({
+                "title": "Only a title",
+                "url": "https://example.com/a",
+                "text": "Only a title\nhttps://example.com/a"
+            }),
+            serde_json::json!({
+                "results": [{
+                    "title": "Search result",
+                    "url": "https://example.com/a",
+                    "content": "short search snippet"
+                }]
+            }),
+        ] {
+            let error = mcp_page_fetch_result("mcp-fetch", "https://example.com/a", &result)
+                .expect_err("search metadata is not fetched body")
+                .to_string();
+            assert_eq!(error, "agent_run_web_fetch_body_unusable");
+        }
     }
 
     #[test]

@@ -84,6 +84,7 @@ struct McpFailoverEvent {
 fn mcp_failover_events(
     snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     winner_provider_id: &str,
+    capability: &str,
 ) -> Vec<McpFailoverEvent> {
     let Some(winner_index) = snapshots
         .iter()
@@ -98,7 +99,10 @@ fn mcp_failover_events(
         .map(|(index, pair)| McpFailoverEvent {
             from_provider_id: pair[0].id.clone(),
             provider_id: pair[1].id.clone(),
-            model_id: mcp_mapping_tool_name(pair[1].web_search_mapping_json.as_deref()),
+            model_id: mcp_mapping_tool_name(match capability {
+                "web.fetch" => pair[1].web_fetch_mapping_json.as_deref(),
+                _ => pair[1].web_search_mapping_json.as_deref(),
+            }),
             reason_code: "mcp_provider_failed".into(),
             attempt: (index + 2) as u32,
         })
@@ -603,7 +607,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 Ok(Ok(output)) => {
                     if output.items.iter().any(|item| item.conflict_group.is_some()) {
                         WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
-                    } else if web_output_has_usable_evidence(&output) {
+                    } else if web_output_has_usable_result(&output, discovery_only) {
                         break output;
                     } else {
                         classify_web_evidence_output_failure(&output)
@@ -1470,6 +1474,7 @@ impl NormalRunToolExecutor<'_> {
                                             started.elapsed(),
                                         ),
                                         Ok(evidence) => {
+                                            let source_ref = format!("E{}", evidence.evidence_id);
                                             self.local_external_evidence_ids
                                                 .lock()
                                                 .map_err(|_| {
@@ -1489,7 +1494,10 @@ impl NormalRunToolExecutor<'_> {
                                             ToolCallResult {
                                                 tool_name: call.function.name.clone(),
                                                 success: true,
-                                                output: serde_json::Value::String(output),
+                                                output: serde_json::json!({
+                                                    "content": output,
+                                                    "sourceRef": source_ref,
+                                                }),
                                                 duration_ms: bounded_duration_ms(started.elapsed()),
                                                 tokens_used: None,
                                                 error: None,
@@ -1999,6 +2007,21 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         })
     }
 
+    fn final_submission_is_valid(
+        &self,
+        submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
+    ) -> bool {
+        AgentEvidenceRepository::provenance_policy(
+            &self.state.db,
+            &self.accepted.run_id,
+            self.requires_web_evidence() || self.requires_external_evidence(),
+        )
+        .is_ok_and(|policy| {
+            crate::ai_runtime::provenance::validate_final_answer_submission(submission, &policy)
+                .is_ok()
+        })
+    }
+
     fn emit_deferred_web_degradation_if_needed(
         &self,
         db: &Database,
@@ -2434,12 +2457,47 @@ impl NormalRunToolExecutor<'_> {
         if self.subagent_depth > 0 {
             return Ok(());
         }
-        let Some(winner) = usage.providers.iter().find_map(|provider| {
+        let search_winner = usage.providers.iter().find_map(|provider| {
             (provider.successful_search_requests > 0).then_some(provider.provider_id.as_str())
-        }) else {
-            return Ok(());
-        };
-        for event in mcp_failover_events(provider_snapshots, winner) {
+        });
+        if let Some(winner) = search_winner {
+            self.emit_mcp_failover_events_for_capability(provider_snapshots, winner, "web.search")?;
+        }
+
+        let fetch_origin = search_winner.or_else(|| {
+            provider_snapshots
+                .first()
+                .map(|snapshot| snapshot.id.as_str())
+        });
+        let mut fetch_snapshots = provider_snapshots.to_vec();
+        if let Some(fetch_origin) = fetch_origin {
+            if let Some(index) = fetch_snapshots
+                .iter()
+                .position(|snapshot| snapshot.id == fetch_origin)
+            {
+                let origin = fetch_snapshots.remove(index);
+                fetch_snapshots.insert(0, origin);
+            }
+        }
+        if let Some(fetch_winner) = usage.providers.iter().find_map(|provider| {
+            (provider.successful_page_fetches > 0).then_some(provider.provider_id.as_str())
+        }) {
+            self.emit_mcp_failover_events_for_capability(
+                &fetch_snapshots,
+                fetch_winner,
+                "web.fetch",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn emit_mcp_failover_events_for_capability(
+        &self,
+        provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+        winner: &str,
+        capability: &str,
+    ) -> AppResult<()> {
+        for event in mcp_failover_events(provider_snapshots, winner, capability) {
             let snapshot = AgentRunRepository::get_for_session(
                 &self.state.db,
                 &self.accepted.session.session_key,
@@ -2453,7 +2511,7 @@ impl NormalRunToolExecutor<'_> {
                     state_version: snapshot.run.state_version,
                     event_type: RunEventType::ProviderSwitched,
                     payload: RunEventPayload::ProviderSwitched {
-                        capability: "web.search".into(),
+                        capability: capability.into(),
                         from_provider_id: event.from_provider_id,
                         provider_id: event.provider_id,
                         // MCP web mappings name tools rather than models.
@@ -3253,8 +3311,7 @@ fn bounded_page_evidence(
         .fetched_excerpt
         .as_deref()
         .filter(|excerpt| !excerpt.trim().is_empty())
-        .unwrap_or(item.snippet.as_str())
-        .trim();
+        .map(str::trim)?;
     if excerpt.is_empty() {
         return None;
     }
@@ -3403,14 +3460,19 @@ fn classify_web_evidence_output_failure(
     classify_web_failure(&AppError::msg(reasons.join("; ")))
 }
 
-fn web_output_has_usable_evidence(
+fn web_output_has_usable_result(
     output: &crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput,
+    discovery_only: bool,
 ) -> bool {
     output.items.iter().any(|item| {
         item.failure_reason.is_none()
             && item.url.starts_with("https://")
             && item.canonical_url.starts_with("https://")
-            && bounded_page_evidence(item).is_some()
+            && if discovery_only {
+                !item.snippet.trim().is_empty()
+            } else {
+                bounded_page_evidence(item).is_some()
+            }
     })
 }
 
@@ -3428,12 +3490,12 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        append_model_tool_completed_with_report, append_model_tool_started,
+        append_model_tool_completed_with_report, append_model_tool_started, bounded_page_evidence,
         corroborated_source_threshold_met, emit_deferred_web_degradation,
         expected_post_content_hashes, mcp_failover_events, normalize_fetch_url,
         pack_web_candidates_for_model, remember_candidate_urls, validate_current_run_fetch_urls,
-        web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
-        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
+        web_output_has_usable_result, web_search_result_limit, DeferredWebDegradationInput,
+        McpFailoverEvent, NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -4045,8 +4107,18 @@ mod tests {
         assert!(result.success, "external result: {result:?}");
         assert!(result
             .output
-            .as_str()
+            .get("content")
+            .and_then(serde_json::Value::as_str)
             .is_some_and(|output| output.contains(provider_output)));
+        assert!(result
+            .output
+            .get("sourceRef")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|source_ref| {
+                source_ref
+                    .strip_prefix('E')
+                    .is_some_and(|id| id.parse::<i64>().is_ok_and(|id| id > 0))
+            }));
 
         let (
             evidence_count,
@@ -4131,7 +4203,7 @@ mod tests {
         assert!(!evidence_hash.trim().is_empty());
         assert_eq!(run_evidence_count, 1);
         assert_eq!(audit_arguments, "shape=object, keys=1");
-        assert_eq!(audit_result, "shape=string");
+        assert_eq!(audit_result, "shape=object, keys=2");
         assert!(!event_payloads.contains(private_query));
         assert!(!event_payloads.contains(provider_output));
         assert!(!event_payloads.contains(private_call_id));
@@ -5035,7 +5107,7 @@ mod tests {
                 transport_kind: "https".into(),
                 provider_config_hash: "config-a".into(),
                 web_search_mapping_json: Some(r#"{"tool":"primary_search"}"#.into()),
-                web_fetch_mapping_json: None,
+                web_fetch_mapping_json: Some(r#"{"tool":"primary_fetch"}"#.into()),
             },
             crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
                 id: "backup".into(),
@@ -5043,11 +5115,11 @@ mod tests {
                 transport_kind: "https".into(),
                 provider_config_hash: "config-b".into(),
                 web_search_mapping_json: Some(r#"{"tool":"backup_search"}"#.into()),
-                web_fetch_mapping_json: None,
+                web_fetch_mapping_json: Some(r#"{"tool":"backup_fetch"}"#.into()),
             },
         ];
 
-        let events = mcp_failover_events(&snapshots, "backup");
+        let events = mcp_failover_events(&snapshots, "backup", "web.search");
 
         assert!(matches!(
             events.as_slice(),
@@ -5058,7 +5130,12 @@ mod tests {
                     && reason_code == "mcp_provider_failed"
                     && *attempt == 2
         ));
-        assert!(mcp_failover_events(&snapshots, "primary").is_empty());
+        assert!(mcp_failover_events(&snapshots, "primary", "web.search").is_empty());
+        let fetch_events = mcp_failover_events(&snapshots, "backup", "web.fetch");
+        assert!(matches!(
+            fetch_events.as_slice(),
+            [McpFailoverEvent { model_id, .. }] if model_id == "backup_fetch"
+        ));
     }
 
     #[test]
@@ -5524,6 +5601,39 @@ mod tests {
         assert_eq!(urls, ["https://example.com/chosen"]);
         assert!(state.evidence_ids.is_empty());
         assert_eq!(state.slots_in_use, 0);
+    }
+
+    #[test]
+    fn search_snippet_never_becomes_registered_page_evidence() {
+        let item = crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: "https://example.com/article".into(),
+            canonical_url: "https://example.com/article".into(),
+            title: "Article".into(),
+            domain: "example.com".into(),
+            snippet: "search snippet only".into(),
+            fetched_excerpt: None,
+            provider_id: "search-provider".into(),
+            provider_kind: "mcp".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        };
+        let output = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
+            items: vec![item.clone()],
+            usage: Default::default(),
+        };
+
+        assert!(bounded_page_evidence(&item).is_none());
+        assert!(web_output_has_usable_result(&output, true));
+        assert!(!web_output_has_usable_result(&output, false));
     }
 
     #[test]

@@ -36,7 +36,6 @@ use crate::ai_runtime::citation_linkify::{
 };
 use crate::ai_runtime::conversation_memory::ConversationMemory;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
-use crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, Effect, Effort, PresentationProcessKind, PresentationProcessStatus,
@@ -710,19 +709,15 @@ impl RunEngine {
                 true,
             )
         };
-        // An uncalibrated Web route uses a source-group disclosure. Its final
-        // model turn may stream, but model-authored `[Wn]` syntax must be
-        // removed before it reaches the user, including when a marker spans
-        // multiple provider chunks. Strict structured routes intentionally
-        // remain sealed until their terminal submission validates.
-        if executor.requires_web_evidence()
-            && !tools.iter().any(|tool| tool.name == FINAL_ANSWER_TOOL_NAME)
-        {
-            observer.enable_source_group_citation_filter();
-        }
         let finalization_required = tools.iter().any(|tool| {
             tool.name == crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME
         });
+        if executor.requires_web_evidence()
+            || executor.requires_external_evidence()
+            || finalization_required
+        {
+            observer.seal_visible_deltas_until_validated();
+        }
         let tool_loop =
             tool_loop_override.unwrap_or_else(|| AgentToolLoop::from_policy(&budget_policy));
         let outcome = if let Some(telemetry) = telemetry {
@@ -783,6 +778,7 @@ impl RunEngine {
         };
         let natural_clarification = outcome.final_submission.is_none()
             && crate::ai_runtime::agent_tool_loop::is_natural_clarification(&outcome.content);
+        let structured_final_submission = outcome.final_submission.is_some();
         if settle_cancelled_run_with_partial(
             db,
             session,
@@ -868,6 +864,7 @@ impl RunEngine {
             )?;
         }
         if !natural_clarification
+            && !is_evidence_limited_response(&content)
             && executor.requires_external_evidence()
             && !AgentEvidenceRepository::has_current_run_external_evidence(
                 db,
@@ -906,14 +903,77 @@ impl RunEngine {
                 }
             };
         }
-        let citation_evidence_ids = if executor.requires_web_evidence() {
-            executor.evidence_ids()
-        } else {
-            final_evidence_ids.clone()
-        };
         let mut citation_binding = None;
         let mut source_summary = None;
         let mut attribution = None;
+        let structured_evidence_ids = if !is_evidence_limited_response(&content) {
+            if let Some(submission) = outcome.final_submission.as_ref() {
+                let provenance = match validated_current_run_final_submission(
+                    db,
+                    run_id,
+                    submission,
+                    executor.requires_web_evidence() || executor.requires_external_evidence(),
+                ) {
+                    Ok(provenance) => provenance,
+                    Err(failure) => {
+                        return fail_finalization_with_sink(
+                            db,
+                            run_id,
+                            running_state_version,
+                            sink,
+                            failure,
+                        );
+                    }
+                };
+                let selected = match AgentEvidenceRepository::evidence_ids_for_validated_references(
+                    db,
+                    run_id,
+                    &provenance.accepted_references,
+                ) {
+                    Ok(selected) => selected,
+                    Err(error) => {
+                        return fail_finalization_with_sink(
+                            db,
+                            run_id,
+                            running_state_version,
+                            sink,
+                            RunFinalizationFailure::new(
+                                RunFinalizationStage::EvidenceValidation,
+                                SafeRunErrorCode::EvidenceInvalid,
+                                error.to_string(),
+                            ),
+                        );
+                    }
+                };
+                content = provenance.visible_content;
+                source_summary = Some(provenance.source_summary);
+                attribution = Some(provenance.attribution);
+                Some(selected)
+            } else if finalization_required {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::GroundedFinalizationUnavailable,
+                        "current-evidence run required a grounded final submission",
+                    ),
+                );
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let citation_evidence_ids = structured_evidence_ids.clone().unwrap_or_else(|| {
+            if executor.requires_web_evidence() {
+                executor.evidence_ids()
+            } else {
+                final_evidence_ids.clone()
+            }
+        });
         if executor.requires_web_evidence()
             && !natural_clarification
             && !is_evidence_limited_response(&content)
@@ -952,24 +1012,7 @@ impl RunEngine {
                         );
                     }
                 };
-            let submission = outcome.final_submission.as_ref();
-            let outcome = if let Some(submission) = submission {
-                let provenance =
-                    match validated_current_run_final_submission(db, run_id, submission, true) {
-                        Ok(provenance) => provenance,
-                        Err(failure) => {
-                            return fail_finalization_with_sink(
-                                db,
-                                run_id,
-                                running_state_version,
-                                sink,
-                                failure,
-                            );
-                        }
-                    };
-                content = provenance.visible_content;
-                source_summary = Some(provenance.source_summary);
-                attribution = Some(provenance.attribution);
+            let outcome = if structured_evidence_ids.is_some() {
                 match bind_strict_current_run_citations(&content, &citations) {
                     Ok(outcome) => Some(outcome),
                     Err(error) => {
@@ -986,18 +1029,6 @@ impl RunEngine {
                         );
                     }
                 }
-            } else if finalization_required {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    RunFinalizationFailure::new(
-                        RunFinalizationStage::EvidenceValidation,
-                        SafeRunErrorCode::GroundedFinalizationUnavailable,
-                        "current-fact run required a grounded final submission",
-                    ),
-                );
             } else if is_evidence_limited_response(&content) {
                 // The ToolLoop used its single repair slot and deliberately
                 // withheld an unsupported draft.  This is a normal assistant
@@ -1063,13 +1094,29 @@ impl RunEngine {
         }
         observer.bind_validated_content(&content);
         flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
+        let terminal_evidence_ids = if is_evidence_limited_response(&content) {
+            Vec::new()
+        } else if let Some(structured_evidence_ids) = structured_evidence_ids {
+            structured_evidence_ids
+        } else if executor.requires_web_evidence() && !structured_final_submission {
+            match citation_binding.as_ref() {
+                Some(binding) => AgentEvidenceRepository::current_run_web_evidence_ids_for_indices(
+                    db,
+                    run_id,
+                    &binding.referenced_indices,
+                )?,
+                None => final_evidence_ids,
+            }
+        } else {
+            final_evidence_ids
+        };
         finalize_and_emit_with_sink(
             db,
             session,
             run_id,
             running_state_version,
             content,
-            final_evidence_ids,
+            terminal_evidence_ids,
             citation_binding,
             source_summary.as_ref(),
             attribution.as_deref(),

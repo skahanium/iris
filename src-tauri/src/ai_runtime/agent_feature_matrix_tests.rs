@@ -119,15 +119,19 @@ fn interaction_integrity_matrix_exercises_all_eight_v3_cross_turn_boundaries() {
         "可见答复。"
     );
 
-    // 7. Source-group streams hide both partial and complete model [Wn] syntax.
-    assert_eq!(
-        super::citation_linkify::strip_model_authored_citation_markers_for_stream("结论 [W"),
-        "结论 "
-    );
-    assert_eq!(
-        super::citation_linkify::strip_model_authored_citation_markers_for_stream("结论 [W1]"),
-        "结论 "
-    );
+    // 7. A strict answer without a precise current-Run marker is rejected;
+    // it cannot fall back to a source-group disclosure.
+    let current_run_citations = [super::citation_linkify::WebCitationLink {
+        index: 1,
+        label: "[C1]".into(),
+        title: "当前来源".into(),
+        url: "https://example.test/current".into(),
+    }];
+    assert!(super::citation_linkify::bind_strict_current_run_citations(
+        "没有精确来源标记的结论。",
+        &current_run_citations,
+    )
+    .is_err());
 
     // 8. The profile is data after immutable safety/attribution/task layers;
     // it cannot turn an attribution violation into a valid answer.

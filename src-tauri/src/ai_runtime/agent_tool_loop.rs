@@ -224,6 +224,13 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         true
     }
 
+    /// Validate a reserved structured final submission against the exact
+    /// current-Run source policy before the loop exits. A `false` result uses
+    /// the same single no-tool repair slot as a missing terminal submission.
+    fn final_submission_is_valid(&self, _submission: &FinalAnswerSubmission) -> bool {
+        true
+    }
+
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
     /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
@@ -237,7 +244,7 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
 }
 
 pub(crate) const EVIDENCE_LIMITED_RESPONSE: &str =
-    "我无法将本轮已有资料可靠地对应到具体结论，因此不展示未经核实的答复。请调整问题或稍后重试。";
+    "本轮未取得足够的可核验来源正文来可靠支持具体结论，因此不展示未经核实的答复。你可以稍后重试，或提供可核验的来源。";
 
 /// Executes the only permitted shape of an Agent tool loop.
 #[derive(Debug, Clone, Copy)]
@@ -610,7 +617,25 @@ impl AgentToolLoop {
                     && !executor.has_external_evidence()
                     && !natural_clarification
                 {
-                    return Err(AppError::msg("agent_run_external_evidence_required"));
+                    if missing_evidence_repair_used || model_turns >= self.max_model_turns {
+                        return Ok(evidence_limited_outcome(
+                            model_turns,
+                            tool_calls,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        ));
+                    }
+                    missing_evidence_repair_used = true;
+                    messages.push(LlmMessage {
+                        role: MessageRole::Assistant,
+                        content: content.into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    });
+                    messages.push(missing_evidence_repair_instruction());
+                    continue;
                 }
                 if allowed_tools.contains(FINAL_ANSWER_TOOL_NAME) {
                     if final_submission_repair_used {
@@ -698,18 +723,49 @@ impl AgentToolLoop {
                 .iter()
                 .map(|tool| tool.name.as_str())
                 .collect::<HashSet<_>>();
-            if let Some(submission) = final_answer_submission(&response, &active_allowed_tools)? {
-                return Ok(AgentToolLoopOutcome {
-                    content: submission.visible_content(),
-                    finish_reason: response.finish_reason,
-                    final_submission: Some(submission),
-                    model_turns,
-                    tool_calls,
-                    prompt_tokens,
-                    completion_tokens,
-                    total_tokens,
-                });
+            let final_submission = final_answer_submission(&response, &active_allowed_tools);
+            if let Ok(Some(submission)) = final_submission.as_ref() {
+                if executor.final_submission_is_valid(submission) {
+                    return Ok(AgentToolLoopOutcome {
+                        content: submission.visible_content(),
+                        finish_reason: response.finish_reason,
+                        final_submission: Some(submission.clone()),
+                        model_turns,
+                        tool_calls,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                    });
+                }
             }
+            let single_final_call = response.tool_calls.len() == 1
+                && response.tool_calls[0].function.name == FINAL_ANSWER_TOOL_NAME;
+            if single_final_call {
+                if final_submission_repair_used || model_turns >= self.max_model_turns {
+                    return Ok(evidence_limited_outcome(
+                        model_turns,
+                        tool_calls,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                    ));
+                }
+                final_submission_repair_used = true;
+                synthesis_required = true;
+                messages.push(assistant_tool_message(&response));
+                let call = &response.tool_calls[0];
+                let result = rejected_result(call, "final_submission_validation_failed");
+                let (message, _) = tool_result_message(
+                    call,
+                    &result,
+                    self.max_model_turns.saturating_sub(model_turns),
+                    self.max_tool_calls.saturating_sub(tool_calls),
+                    self.tool_call_limit(ToolBudgetClass::ExternalRead),
+                );
+                messages.push(message);
+                continue;
+            }
+            final_submission?;
 
             let confirmation_calls = response
                 .tool_calls

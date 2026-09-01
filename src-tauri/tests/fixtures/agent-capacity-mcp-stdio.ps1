@@ -72,7 +72,7 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                 inputSchema = @{ type = "object"; properties = @{}; additionalProperties = $false }
             }
         }
-        elseif ($Mode -eq "search-fetch") {
+        elseif ($Mode -eq "search-fetch" -or $Mode -eq "fetch-rate-limit") {
             $tools += @{
                 name = "fetch"
                 annotations = @{ readOnlyHint = $true }
@@ -90,8 +90,14 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
 
     if ($line.Contains('"method":"tools/call"')) {
         if ($line.Contains('"name":"fetch"')) {
+            if ($Mode -eq "fetch-rate-limit") {
+                Write-McpResponse $id @{ content = @(@{ type = "text"; text = '{"error":"Extract failed","status":429}' }); isError = $false }
+                continue
+            }
             $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: 2026-08-18T07:00:00Z"
-            Write-McpResponse $id @{ content = @(@{ type = "text"; text = "fetch-result $claims" }); isError = $false }
+            $arguments = ($line | ConvertFrom-Json).params.arguments
+            $payload = @{ url = [string]$arguments.url; raw_content = "fetch-result $claims" } | ConvertTo-Json -Compress
+            Write-McpResponse $id @{ content = @(@{ type = "text"; text = $payload }); isError = $false }
         }
         elseif ($line.Contains('"name":"domain"')) {
             Write-McpResponse $id @{

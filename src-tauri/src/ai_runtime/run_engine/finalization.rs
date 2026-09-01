@@ -349,49 +349,40 @@ pub(super) fn emit_run_terminal(
             }
         }
     };
-    let citation_map =
+    let cites = if evidence_ids.is_empty() {
+        Vec::new()
+    } else if let Some(binding) = citation_binding.as_ref() {
         match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
-            Ok(cites) if !cites.is_empty() => {
-                crate::ai_runtime::citation_linkify::web_citation_map_json(
-                    &cites,
-                    citation_binding.as_ref(),
-                    effective_source_summary.as_ref(),
-                    attribution,
-                )
+            Ok(mut cites) => {
+                cites.retain(|cite| binding.referenced_indices.contains(&cite.index));
+                cites
             }
-            Ok(_) => match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
-                Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(
-                    &cites,
-                    citation_binding.as_ref(),
-                    effective_source_summary.as_ref(),
-                    attribution,
-                ),
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "web citation map skipped after evidence lookup failure"
-                    );
-                    crate::ai_runtime::citation_linkify::web_citation_map_json(
-                        &[],
-                        citation_binding.as_ref(),
-                        effective_source_summary.as_ref(),
-                        attribution,
-                    )
-                }
-            },
             Err(error) => {
                 tracing::warn!(
                     error = %error,
                     "current Run citation map skipped after evidence lookup failure"
                 );
-                crate::ai_runtime::citation_linkify::web_citation_map_json(
-                    &[],
-                    citation_binding.as_ref(),
-                    effective_source_summary.as_ref(),
-                    attribution,
-                )
+                Vec::new()
             }
-        };
+        }
+    } else {
+        match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
+            Ok(cites) => cites,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "web citation map skipped after evidence lookup failure"
+                );
+                Vec::new()
+            }
+        }
+    };
+    let citation_map = crate::ai_runtime::citation_linkify::web_citation_map_json(
+        &cites,
+        citation_binding.as_ref(),
+        effective_source_summary.as_ref(),
+        attribution,
+    );
     if let Err(error) = AgentRunRepository::finalize(
         db,
         FinalizeRunInput {
@@ -602,7 +593,7 @@ pub(super) fn settle_cancelled_run_with_partial(
         return Ok(false);
     }
     let mut partial = observer.interrupt_visible_content();
-    if partial.trim().is_empty() {
+    if partial.trim().is_empty() && !observer.withholds_unvalidated_content() {
         if let Some(fallback) = fallback_content {
             partial = fallback.to_string();
         }
@@ -660,21 +651,114 @@ mod apply_notice_tests {
     use std::collections::HashSet;
 
     use super::{
-        apply_required_web_degradation_notice, classify_tool_loop_failure, safe_failure_message,
-        validate_web_urls_against_allowed, validated_final_model_answer,
+        apply_required_web_degradation_notice, classify_tool_loop_failure, emit_run_terminal,
+        safe_failure_message, validate_web_urls_against_allowed, validated_final_model_answer,
         validated_final_model_answer_with_telemetry,
     };
-    use crate::ai_runtime::run_contract::AssistantSessionRef;
-    use crate::ai_runtime::run_contract::SafeRunErrorCode;
+    use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+    use crate::ai_runtime::run_contract::{
+        AssistantRunStartRequest, AssistantSessionRef, AssistantTurnDraft, RunEventPayload,
+        RunEventType, RunState, SafeRunErrorCode, SecurityDomain,
+    };
+    use crate::ai_runtime::run_engine::observer::NoopRunEventSink;
+    use crate::ai_runtime::run_intake::RunIntake;
     use crate::error::AppError;
     use crate::storage::db::Database;
 
     fn dummy_session() -> AssistantSessionRef {
-        use crate::ai_runtime::run_contract::SecurityDomain;
         AssistantSessionRef {
             domain: SecurityDomain::Normal,
             session_key: "test".to_string(),
         }
+    }
+
+    #[test]
+    fn evidence_limitation_terminal_has_no_citations_or_source_summary() {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(
+            &db,
+            AssistantRunStartRequest {
+                client_request_id: "evidence-limitation-terminal".into(),
+                session: None,
+                turn: AssistantTurnDraft {
+                    message: "请核实当前事实".into(),
+                    content_parts: None,
+                    explicit_references: Vec::new(),
+                    retrieval_scope: Default::default(),
+                    display_mentions: Vec::new(),
+                },
+                explicit_action: None,
+                web_enabled: true,
+                model_override: None,
+                external_tool_grants: Vec::new(),
+                security_domain: SecurityDomain::Normal,
+                classified_context_ref: None,
+            },
+        )
+        .expect("accepted");
+        let preparing = AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: 0,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Preparing,
+                    stage: "正在准备".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("preparing");
+        let running = AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing.state_version(),
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "正在调用模型和工具".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running");
+
+        emit_run_terminal(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            running.state_version(),
+            crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE.into(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            &NoopRunEventSink,
+        )
+        .expect("limitation completes");
+
+        let citation_map: serde_json::Value = db
+            .with_read_conn(|connection| {
+                let raw = connection.query_row(
+                    "SELECT citation_map_json FROM session_messages
+                     WHERE session_id = 1 AND role = 'assistant'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )?;
+                serde_json::from_str(&raw).map_err(Into::into)
+            })
+            .expect("citation map");
+        assert_eq!(citation_map["web"], serde_json::json!([]));
+        assert!(citation_map.get("sourceSummary").is_none());
+        let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert!(matches!(
+            replay.events.last().map(|event| event.payload()),
+            Some(RunEventPayload::Completed { source_summary, .. }) if source_summary.is_empty()
+        ));
     }
 
     #[test]

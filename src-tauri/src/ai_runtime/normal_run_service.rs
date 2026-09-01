@@ -54,14 +54,15 @@ fn plan_tool_surface(
 ///
 /// Current-Run evidence and structured terminalization are deliberately
 /// orthogonal: ordinary WebRequired work still requires evidence, but it may
-/// complete with natural prose plus the controlled source group.  The only
-/// new-envelope strict case currently represented by the contract is an
-/// elevated-stakes current-fact request.
+/// complete with natural prose plus exact Run-local markers. Elevated-stakes
+/// current facts and explicitly granted external evidence use the reserved
+/// terminal submission so the final source set can be mechanically reduced to
+/// references the model actually used.
 fn requires_structured_finalization(context: &crate::ai_runtime::run_context::RunContext) -> bool {
     matches!(
         context.envelope.web_reason,
         WebDecisionReason::HighStakesCurrentFact
-    )
+    ) || context.envelope.verification_requirement == VerificationRequirement::CurrentRunExternal
 }
 
 /// Execute one already-accepted normal-domain Run through the production

@@ -3282,10 +3282,20 @@ async fn serve_live_pilot_mcp_request(
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
             let text = if tool_name == "fetch" {
-                format!(
-                    "Fetched body from the selected source. {}",
-                    live_pilot_mcp_evidence_text()
-                )
+                let requested_url = request
+                    .pointer("/params/arguments/url")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let claims = selected_live_pilot_web_fact_claims()
+                    .map_err(|_| "live MCP claims unavailable".to_string())?
+                    .join(" ");
+                serde_json::json!({
+                    "url": requested_url,
+                    "raw_content": format!(
+                        "This fetched contract document independently confirms the controlled evaluation facts: {claims}."
+                    )
+                })
+                .to_string()
             } else {
                 live_pilot_mcp_evidence_text()
             };

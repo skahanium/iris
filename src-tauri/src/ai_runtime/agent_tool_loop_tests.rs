@@ -827,6 +827,7 @@ struct OversizedWebResultExecutor;
 struct RequiredWebExecutor;
 struct RequiredExternalExecutor;
 struct SourceBindingExecutor;
+struct FinalSubmissionValidationExecutor;
 struct EmptyWebEvidenceExecutor;
 struct RecoverableWebExecutor {
     registered: AtomicBool,
@@ -903,6 +904,26 @@ impl ToolLoopExecutor for SourceBindingExecutor {
 
     fn natural_source_binding_is_valid(&self, content: &str) -> bool {
         content.contains("[W1]")
+    }
+}
+
+impl ToolLoopExecutor for FinalSubmissionValidationExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("structured final repair has no business tool surface") })
+    }
+
+    fn final_submission_is_valid(
+        &self,
+        submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
+    ) -> bool {
+        submission.blocks.iter().all(|block| {
+            !block.sources.is_empty() && block.sources.iter().all(|source| source == "W1")
+        })
     }
 }
 
@@ -1641,6 +1662,91 @@ async fn internal_final_answer_submission_bypasses_executor_history_and_tool_bud
         .lock()
         .expect("second turn messages lock")
         .is_empty());
+}
+
+#[tokio::test]
+async fn invalid_structured_source_binding_gets_one_no_tool_repair_turn() {
+    let response = |source: &str| super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: vec![final_answer_tool_call(serde_json::json!({
+            "blocks": [{ "markdown": "已核实结论。", "sources": [source] }]
+        }))],
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([response("W8"), response("W1")])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &FinalSubmissionValidationExecutor,
+            "run-final-source-repair",
+            Vec::new(),
+            vec![final_answer_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("second structured submission is valid");
+
+    assert_eq!(outcome.content, "已核实结论。");
+    assert!(outcome.final_submission.is_some());
+    assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("repair transcript")
+        .iter()
+        .any(|message| {
+            message
+                .content
+                .text_content()
+                .contains("final_submission_validation_failed")
+        }));
+}
+
+#[tokio::test]
+async fn repeated_invalid_structured_source_binding_finishes_with_limitation() {
+    let invalid = || super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: vec![final_answer_tool_call(serde_json::json!({
+            "blocks": [{ "markdown": "未获支持结论。", "sources": ["W8"] }]
+        }))],
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([invalid(), invalid()])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &FinalSubmissionValidationExecutor,
+            "run-final-source-limitation",
+            Vec::new(),
+            vec![final_answer_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("invalid structured submission degrades safely");
+
+    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert!(outcome.final_submission.is_none());
+    assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -2411,21 +2517,22 @@ async fn web_required_accepts_a_natural_clarification_before_any_tool_dispatch()
 }
 
 #[tokio::test]
-async fn external_required_rejects_a_final_answer_without_registered_evidence() {
+async fn external_required_repairs_then_limits_an_answer_without_registered_evidence() {
+    let unverified = || super::model_gateway::GatewayResponse {
+        content: Some("unverified external answer".into()),
+        tool_calls: Vec::new(),
+        usage: Default::default(),
+        finish_reason: "stop".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
     let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
-            content: Some("unverified external answer".into()),
-            tool_calls: Vec::new(),
-            usage: Default::default(),
-            finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
-        }])),
+        responses: Mutex::new(VecDeque::from([unverified(), unverified()])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
     };
     let mut observer = NoopObserver;
-    let error = standard_tool_loop()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &RequiredExternalExecutor,
@@ -2435,8 +2542,9 @@ async fn external_required_rejects_a_final_answer_without_registered_evidence() 
             &mut observer,
         )
         .await
-        .expect_err("external-required must not silently finalize");
-    assert_eq!(error.to_string(), "agent_run_external_evidence_required");
+        .expect("external-required degrades to a safe limitation");
+    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

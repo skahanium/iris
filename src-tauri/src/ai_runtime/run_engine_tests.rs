@@ -25,7 +25,8 @@ use super::run_engine::{
 };
 use super::run_intake::RunIntake;
 use crate::ai_runtime::agent_evidence_repository::{
-    AgentEvidenceRepository, LocalEvidenceInput, MaterialRole, WebEvidenceInput,
+    AgentEvidenceRepository, ExternalToolEvidenceInput, LocalEvidenceInput, MaterialRole,
+    WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
@@ -306,6 +307,10 @@ struct StrictWebEvidenceExecutor {
     evidence_ids: Vec<i64>,
 }
 
+struct StrictExternalEvidenceExecutor {
+    evidence_ids: Vec<i64>,
+}
+
 struct UnusedToolLoopExecutor;
 
 impl ToolLoopProvider for MetaAnalysisStreamingProvider {
@@ -495,6 +500,36 @@ impl ToolLoopExecutor for StrictWebEvidenceExecutor {
     }
 
     fn requires_web_evidence(&self) -> bool {
+        true
+    }
+}
+
+impl ToolLoopExecutor for StrictExternalEvidenceExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { Err(AppError::msg("unused_strict_external_executor")) })
+    }
+
+    fn evidence_ids(&self) -> Vec<i64> {
+        self.evidence_ids.clone()
+    }
+
+    fn requires_external_evidence(&self) -> bool {
+        true
+    }
+
+    fn has_external_evidence(&self) -> bool {
+        true
+    }
+
+    fn final_submission_is_valid(
+        &self,
+        _submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
+    ) -> bool {
         true
     }
 }
@@ -2509,111 +2544,6 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
 }
 
 #[test]
-fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
-    let db = Database::open_in_memory().expect("database");
-    let accepted = RunIntake::start(&db, request()).expect("accepted");
-    let preparing = AgentRunRepository::append_event(
-        &db,
-        AppendRunEventInput {
-            run_id: accepted.run_id.clone(),
-            state_version: 0,
-            event_type: RunEventType::StageChanged,
-            payload: RunEventPayload::StageChanged {
-                state: RunState::Preparing,
-                stage: "正在准备工具执行".to_string(),
-                stage_code: None,
-            },
-        },
-    )
-    .expect("preparing");
-    let running = AgentRunRepository::append_event(
-        &db,
-        AppendRunEventInput {
-            run_id: accepted.run_id.clone(),
-            state_version: event_state_version(&preparing),
-            event_type: RunEventType::StageChanged,
-            payload: RunEventPayload::StageChanged {
-                state: RunState::Running,
-                stage: "正在调用模型和工具".to_string(),
-                stage_code: None,
-            },
-        },
-    )
-    .expect("running");
-    let sink = RecordingSink::default();
-    let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
-        &db,
-        &accepted.run_id,
-        event_state_version(&running),
-        &sink,
-        true,
-    );
-    observer.enable_source_group_citation_filter();
-    observer.on_tools_finished().expect("unlock final answer");
-
-    for (index, token) in [
-        "结论：根据你提",
-        "供的信息，先给出结论。\n",
-        "本轮 web 证据显示已发布 [W1]。\n",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        observer
-            .observe(
-                &StreamEvent {
-                    request_id: accepted.run_id.clone(),
-                    event_type: StreamEventType::Token,
-                    data: StreamEventData::Token {
-                        token: token.to_string(),
-                        replace_visible: false,
-                    },
-                    surface: StreamSurface::VisibleAnswerSanitized,
-                    classified: false,
-                },
-                index as u32,
-            )
-            .expect("stream final token");
-    }
-    observer.bind_validated_content(
-        "结论：根据可用的信息，先给出结论。\n查到的网页资料显示已发布 。\n",
-    );
-    observer.flush().expect("flush validated stream");
-
-    let presentation = sink
-        .presentation_events
-        .lock()
-        .expect("presentation lock")
-        .clone();
-    let deltas = presentation
-        .iter()
-        .filter(|event| event["kind"] == "answer_delta")
-        .collect::<Vec<_>>();
-    assert_eq!(
-        deltas.len(),
-        2,
-        "source-group answer must stream incrementally"
-    );
-    assert!(deltas
-        .iter()
-        .all(|event| !event["delta"].as_str().unwrap_or_default().contains("[W")));
-    assert!(deltas.iter().all(|event| {
-        let delta = event["delta"].as_str().unwrap_or_default();
-        !delta.contains("你提供") && !delta.contains("本轮")
-    }));
-    assert!(presentation
-        .iter()
-        .all(|event| event["kind"] != "answer_reset"));
-    assert_eq!(
-        deltas
-            .iter()
-            .filter_map(|event| event["delta"].as_str())
-            .collect::<String>(),
-        "结论：根据可用的信息，先给出结论。\n查到的网页资料显示已发布 。\n"
-    );
-}
-
-#[test]
 fn tool_loop_observer_defers_generating_stage_until_after_later_tool_rounds() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
@@ -3568,6 +3498,110 @@ async fn tool_loop_appends_one_recovery_turn_after_a_title_only_answer() {
         .lock()
         .expect("scripted responses")
         .is_empty());
+}
+
+#[tokio::test]
+async fn strict_external_submission_persists_only_the_referenced_evidence() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, standard_tool_loop_request()).expect("accepted");
+    let register_external = |suffix: &str| {
+        AgentEvidenceRepository::register_external_tool(
+            &db,
+            ExternalToolEvidenceInput {
+                session_id: 1,
+                run_id: accepted.run_id.clone(),
+                message_seq_first: 1,
+                title: format!("external_{suffix}"),
+                provider_id: "readonly-provider".into(),
+                provider_config_hash: "provider-hash".into(),
+                binding_id: format!("binding-{suffix}"),
+                raw_result_hash: format!("result-{suffix}"),
+                retrieved_at: "2026-09-01T00:00:00Z".into(),
+                bounded_excerpt: format!("external result {suffix}"),
+                url: None,
+                normalized_url: None,
+                domain: None,
+            },
+        )
+        .expect("external evidence")
+    };
+    let selected = register_external("selected");
+    let unused = register_external("unused");
+    let provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![ToolCall::new(
+                    "external-final",
+                    crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME,
+                    serde_json::json!({
+                        "blocks": [{
+                            "markdown": "已核实所选外部记录。",
+                            "sources": [format!("E{}", selected.evidence_id)]
+                        }]
+                    })
+                    .to_string(),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "核实外部记录".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![crate::ai_runtime::final_answer_submission::tool_spec()],
+        &[],
+        None,
+        &provider,
+        &StrictExternalEvidenceExecutor {
+            evidence_ids: vec![selected.evidence_id, unused.evidence_id],
+        },
+        &sink,
+    )
+    .await
+    .expect("strict external finalization");
+
+    let (evidence_refs, citation_map): (String, String) = db
+        .with_read_conn(|connection| {
+            connection
+                .query_row(
+                    "SELECT evidence_refs_json, citation_map_json
+                     FROM session_messages
+                     WHERE session_id = 1 AND role = 'assistant'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(Into::into)
+        })
+        .expect("persisted strict external answer");
+    assert_eq!(
+        serde_json::from_str::<Vec<i64>>(&evidence_refs).expect("evidence refs"),
+        vec![selected.evidence_id]
+    );
+    let citation_map: serde_json::Value =
+        serde_json::from_str(&citation_map).expect("citation map");
+    assert!(citation_map["sourceSummary"]
+        .as_array()
+        .is_some_and(|entries| entries
+            .iter()
+            .any(|entry| { entry["category"] == "external_tool" && entry["count"] == 1 })));
+    assert_eq!(
+        citation_map["attribution"][0]["sources"],
+        serde_json::json!([format!("E{}", selected.evidence_id)])
+    );
 }
 
 #[tokio::test]

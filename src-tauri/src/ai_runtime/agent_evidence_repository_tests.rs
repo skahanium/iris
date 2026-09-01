@@ -349,6 +349,42 @@ fn web_provenance_ordinals_restart_at_w1_for_each_run_with_high_ledger_ids() {
 }
 
 #[test]
+fn referenced_web_ordinals_resolve_to_only_their_run_ledger_ids() {
+    let (db, session_id, _) = setup_run();
+    let first = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "First",
+        "https://example.test/first",
+    );
+    let second = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "Second",
+        "https://example.test/second",
+    );
+    let third = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "Third",
+        "https://example.test/third",
+    );
+
+    let selected = AgentEvidenceRepository::current_run_web_evidence_ids_for_indices(
+        &db,
+        "evidence-run",
+        &[3, 1, 3],
+    )
+    .expect("referenced evidence ids");
+
+    assert_eq!(selected, vec![first.evidence_id, third.evidence_id]);
+    assert!(!selected.contains(&second.evidence_id));
+}
+
+#[test]
 fn hr1_same_session_runs_keep_w1_bound_to_their_own_evidence() {
     let (db, session_id, session_key) = setup_run();
     let first = register_web_evidence(

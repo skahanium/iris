@@ -155,7 +155,8 @@ fn install_headless_contract_mcp_with_mode(state: &AppState, mode: &str) {
             .to_string(),
             credential_refs_json: "{}".into(),
             web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.into()),
-            web_fetch_mapping_json: None,
+            web_fetch_mapping_json: matches!(mode, "search-fetch" | "fetch-rate-limit")
+                .then(|| r#"{"tool":"fetch","urlArg":"url"}"#.into()),
         },
     )
     .expect("headless MCP registry setup");
@@ -181,13 +182,21 @@ fn install_test_routing(state: &AppState, base_url: &str, model_name: &str) {
 }
 
 fn tool_call_sse(tool_name: &str, arguments: serde_json::Value) -> String {
+    tool_call_sse_with_id("domain-operation-call", tool_name, arguments)
+}
+
+fn tool_call_sse_with_id(
+    tool_call_id: &str,
+    tool_name: &str,
+    arguments: serde_json::Value,
+) -> String {
     let arguments = serde_json::to_string(&arguments).expect("serialize tool arguments");
     let payload = serde_json::json!({
         "choices": [{
             "delta": {
                 "tool_calls": [{
                     "index": 0,
-                    "id": "domain-operation-call",
+                    "id": tool_call_id,
                     "type": "function",
                     "function": { "name": tool_name, "arguments": arguments }
                 }]
@@ -624,7 +633,7 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
 async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_terminalization() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
-    install_headless_contract_mcp(&state);
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let sink = RecordingSink::default();
     let mut research_request = web_tool_loop_request();
     research_request.turn.message =
@@ -645,6 +654,9 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-fetch-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\",\\\"urls\\\":[\\\"https://source.invalid/contract\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
@@ -706,24 +718,56 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
         .expect("completed run");
-    let web_evidence_count = state
+    let (web_evidence_count, extraction_method, bounded_excerpt) = state
         .db
         .with_read_conn(|conn| {
             conn.query_row(
-                "SELECT COUNT(*) FROM session_evidence WHERE origin_run_id = ?1 AND source_type = 'web'",
+                "SELECT COUNT(*), MIN(extraction_method), MIN(bounded_excerpt)
+                 FROM session_evidence
+                 WHERE origin_run_id = ?1 AND source_type = 'web'",
                 [&accepted.run_id],
-                |row| row.get::<_, i64>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .map_err(Into::into)
         })
         .expect("evidence ledger query");
+    let last_tool_observation = |call_index: usize| {
+        let content = calls[call_index].body["messages"]
+            .as_array()
+            .expect("model messages")
+            .iter()
+            .rev()
+            .find(|message| message["role"] == "tool")
+            .and_then(|message| message["content"].as_str())
+            .expect("tool observation");
+        serde_json::from_str::<serde_json::Value>(content).expect("tool observation JSON")
+    };
+    let discovery = last_tool_observation(1);
+    let fetched = last_tool_observation(2);
 
-    assert_eq!(calls.len(), 2, "LLM must complete a real tool continuation");
+    assert_eq!(calls.len(), 3, "LLM must search, fetch, and synthesize");
     assert_eq!(response.run.state, RunState::Completed);
+    assert_eq!(discovery["output"]["evidenceIds"], serde_json::json!([]));
+    assert_eq!(discovery["output"]["requiresFetchForCitation"], true);
+    assert_eq!(discovery["output"]["observationDepth"], "search_snippet");
     assert!(
-        web_evidence_count >= 1,
-        "web result must enter the evidence ledger"
+        fetched["output"]["evidenceIds"]
+            .as_array()
+            .is_some_and(|ids| ids.len() == 1),
+        "only the selected fetched body becomes evidence"
     );
+    assert_eq!(fetched["output"]["requiresFetchForCitation"], false);
+    assert_eq!(fetched["output"]["observationDepth"], "fetched_body");
+    assert_eq!(web_evidence_count, 1);
+    assert_eq!(extraction_method, "mcp_fetch_raw_content");
+    assert!(bounded_excerpt.contains("fetch-result"));
+    assert!(!bounded_excerpt.contains("snippet: deterministic"));
     assert!(response
         .events
         .iter()
@@ -1015,11 +1059,20 @@ async fn legacy_current_fact_run_is_terminalized_without_provider_replay() {
 async fn ordinary_research_reply_repairs_missing_run_local_citation_before_completion() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
-    install_headless_contract_mcp(&state);
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse(&tool_call_sse(
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "ordinary-research-search",
             "web_search",
             serde_json::json!({"query":"近期科技股下跌 原因"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "ordinary-research-fetch",
+            "web_search",
+            serde_json::json!({
+                "query":"近期科技股下跌 原因",
+                "urls":["https://source.invalid/contract"]
+            }),
         )),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。\"}}]}\n\ndata: [DONE]\n\n",
@@ -1052,12 +1105,13 @@ async fn ordinary_research_reply_repairs_missing_run_local_citation_before_compl
     assert_eq!(
         response.run.state,
         RunState::Completed,
-        "a normal sourced answer must not require a structured finalization tool; events={:?}",
+        "a normal sourced answer must not require a structured finalization tool; events={:?}; model_requests={}",
         response
             .events
             .iter()
             .map(AssistantRunEvent::payload)
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        llm.request_count()
     );
     assert_eq!(
         NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
@@ -1071,8 +1125,8 @@ async fn ordinary_research_reply_repairs_missing_run_local_citation_before_compl
     let calls = llm.finish().await.expect("LLM completion");
     assert_eq!(
         calls.len(),
-        3,
-        "the real loop repairs the source binding once"
+        4,
+        "the real loop searches, fetches, and repairs the source binding once"
     );
     let tool_names = calls[0].body["tools"]
         .as_array()
@@ -1107,7 +1161,8 @@ async fn high_stakes_current_fact_keeps_structured_finalization_tool() {
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
     let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse(&tool_call_sse(
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "high-stakes-search",
             "web_search",
             serde_json::json!({"query":"当前法律建议"}),
         )),
@@ -1198,11 +1253,23 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
             Ok(())
         })
         .expect("advance evidence ledger sequence");
-    install_headless_contract_mcp(&state);
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse(&tool_call_sse(
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "news-search",
             "web_search",
             serde_json::json!({"query":"最新 synthetic 新闻"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "news-fetch",
+            "web_search",
+            serde_json::json!({
+                "query":"最新 synthetic 新闻",
+                "urls":[
+                    "https://source.invalid/contract",
+                    "https://source-2.invalid/2"
+                ]
+            }),
         )),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。\"}}]}\n\ndata: [DONE]\n\n",
@@ -1232,6 +1299,18 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
     );
     let accepted =
         RunIntake::start_with_sink(&state.db, request, &sink).expect("accept news fallback Run");
+    assert_eq!(
+        AgentRunRepository::budget_policy_for_session(
+            &state.db,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("news Run budget")
+        .expect("persisted news Run budget")
+        .max_model_turns,
+        8,
+        "a tool-enabled current-fact Run must keep the Standard loop budget"
+    );
     assert!(
         crate::ai_runtime::mcp_external_tools::load_run_snapshots(&state.db, &accepted.run_id)
             .expect("load news fallback snapshots")
@@ -1241,10 +1320,20 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
 
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
 
-    let calls = llm.finish().await.expect("LLM completion");
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("news fallback snapshot")
         .expect("news fallback Run");
+    assert_eq!(
+        llm.request_count(),
+        4,
+        "news Run must search, fetch, draft, and repair; events={:?}",
+        response
+            .events
+            .iter()
+            .map(AssistantRunEvent::payload)
+            .collect::<Vec<_>>()
+    );
+    let calls = llm.finish().await.expect("LLM completion");
     assert_eq!(response.run.state, RunState::Completed);
     let names = calls[0].body["tools"]
         .as_array()
@@ -1258,7 +1347,7 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
         "HR-3 的严格联网任务也必须从通用循环暴露 Web 工具"
     );
     assert!(!names.contains(&"submit_final_answer"));
-    assert_eq!(calls.len(), 3);
+    assert_eq!(calls.len(), 4);
     let current_evidence =
         crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_registered(
             &state.db,
@@ -1297,11 +1386,23 @@ async fn recent_movie_research_uses_generic_web_evidence_without_city_or_domain_
             Ok(())
         })
         .expect("advance evidence ledger sequence");
-    install_headless_contract_mcp(&state);
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse(&tool_call_sse(
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "movie-search",
             "web_search",
             serde_json::json!({"query":"近期有什么好看的电影上映"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "movie-fetch",
+            "web_search",
+            serde_json::json!({
+                "query":"近期有什么好看的电影上映",
+                "urls":[
+                    "https://source.invalid/contract",
+                    "https://source-2.invalid/2"
+                ]
+            }),
         )),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。\"}}]}\n\ndata: [DONE]\n\n",
@@ -1350,11 +1451,11 @@ async fn recent_movie_research_uses_generic_web_evidence_without_city_or_domain_
         AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
             .expect("movie research evidence");
     assert!(evidence.iter().all(|item| item.evidence_id > 2000));
-    assert_eq!(llm.finish().await.expect("LLM completion").len(), 3);
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 4);
 }
 
 #[tokio::test]
-async fn strict_current_fact_rejects_an_out_of_run_w8_without_persisting_an_answer() {
+async fn strict_current_fact_repairs_out_of_run_w8_then_completes_with_limitation() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
@@ -1368,6 +1469,15 @@ async fn strict_current_fact_rejects_an_out_of_run_w8_without_persisting_an_answ
             serde_json::json!({
                 "blocks": [{
                     "markdown": "这段内容引用了不属于当前 Run 的来源。",
+                    "sources": ["W8"]
+                }]
+            }),
+        )),
+        HttpResponseScript::sse(&tool_call_sse(
+            "submit_final_answer",
+            serde_json::json!({
+                "blocks": [{
+                    "markdown": "修复后仍引用了不属于当前 Run 的来源。",
                     "sources": ["W8"]
                 }]
             }),
@@ -1394,22 +1504,26 @@ async fn strict_current_fact_rejects_an_out_of_run_w8_without_persisting_an_answ
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("invalid-source snapshot")
         .expect("invalid-source Run");
-    assert_eq!(response.run.state, RunState::Failed);
+    assert_eq!(response.run.state, RunState::Completed);
     assert!(matches!(
         response.events.last().map(AssistantRunEvent::payload),
-        Some(RunEventPayload::Failed {
-            code: super::run_contract::SafeRunErrorCode::FinalizationProtocolInvalid,
+        Some(RunEventPayload::Completed {
+            source_summary,
             ..
-        })
+        }) if source_summary.is_empty()
     ));
-    let assistant_count =
+    let assistant_messages =
         NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
             .expect("session messages")
             .into_iter()
             .filter(|message| message.role == "assistant")
-            .count();
-    assert_eq!(assistant_count, 0);
-    assert_eq!(llm.finish().await.expect("LLM completion").len(), 2);
+            .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 1);
+    assert_eq!(
+        assistant_messages[0].content,
+        super::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+    );
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 3);
 }
 
 #[tokio::test]

@@ -138,6 +138,10 @@ pub(crate) struct ValidatedFinalAnswerSubmission {
     pub(crate) visible_content: String,
     pub(crate) source_summary: SourceSummary,
     pub(crate) attribution: Vec<BlockAttribution>,
+    /// Already-validated protocol references and their authoritative origins.
+    /// Downstream persistence may map these to ledger rows but must not parse
+    /// or authorize the source syntax a second time.
+    pub(crate) accepted_references: BTreeMap<String, InformationOrigin>,
 }
 
 /// Non-sensitive block/source projection persisted with citation metadata.
@@ -230,6 +234,7 @@ pub(crate) fn validate_final_answer_submission(
         visible_content: visible_blocks.join("\n\n"),
         source_summary: SourceSummary::from_references(&accepted_references),
         attribution,
+        accepted_references,
     })
 }
 

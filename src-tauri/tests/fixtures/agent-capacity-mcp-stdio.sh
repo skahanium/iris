@@ -34,7 +34,7 @@ while IFS= read -r line; do
       id=$(json_id "$line")
       if [ "$mode" = "domain-dto" ]; then
         printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}},{"name":"domain","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{},"additionalProperties":false}}]}}\n' "$id"
-      elif [ "$mode" = "search-fetch" ]; then
+      elif [ "$mode" = "search-fetch" ] || [ "$mode" = "fetch-rate-limit" ]; then
         printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}},{"name":"fetch","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":false}}]}}\n' "$id"
       else
         printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}}]}}\n' "$id"
@@ -44,13 +44,19 @@ while IFS= read -r line; do
       id=$(json_id "$line")
       case "$line" in
         *'"name":"fetch"'*)
+          if [ "$mode" = "fetch-rate-limit" ]; then
+            printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"error\\\":\\\"Extract failed\\\",\\\"status\\\":429}\"}],\"isError\":false}}"
+            continue
+          fi
           claims=''
+          requested_url=${line#*\"url\":\"}
+          requested_url=${requested_url%%\"*}
           ordinal=1
           while [ "$ordinal" -le 48 ]; do
             claims="$claims fact-web-$ordinal=value-$ordinal"
             ordinal=$((ordinal + 1))
           done
-          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"fetch-result$claims date: 2026-08-18T07:00:00Z\"}],\"isError\":false}}"
+          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"url\\\":\\\"$requested_url\\\",\\\"raw_content\\\":\\\"fetch-result$claims date: 2026-08-18T07:00:00Z\\\"}\"}],\"isError\":false}}"
           ;;
         *'"name":"domain"'*)
           printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"result":{"content":[{"type":"text","text":"domain-result"}],"structuredContent":{"records":[{"location":"上海","condition":"晴","temperature":"26","units":"C","observationTime":"'"$fixture_timestamp"'","issueTime":"'"$fixture_timestamp"'","title":"Synthetic title","publisher":"Synthetic Publisher","publishedAt":"'"$fixture_timestamp"'","topic":"synthetic","instrument":"AAPL","assetKind":"equity","currency":"USD","asOf":"'"$fixture_timestamp"'","delay":"0","value":"123.45","region":"上海","channel":"Synthetic Channel","date":"'"$fixture_date"'","checkedAt":"'"$fixture_timestamp"'","competition":"Synthetic League","participants":["A","B"],"startTime":"'"$fixture_timestamp"'","status":"scheduled","score":"1-0","sourceUrl":"https://source.invalid/domain","sourceTitle":"Synthetic Domain","observedAt":"'"$fixture_timestamp"'","evidenceId":"provider-supplied-id"}]},"isError":false}}'

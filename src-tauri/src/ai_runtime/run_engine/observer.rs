@@ -200,10 +200,12 @@ fn presentation_payload_for_durable_event(
             Some(RunPresentationPayload::ProcessStarted {
                 item_id: format!("provider-switch:{}", event.seq()),
                 item_kind: PresentationProcessKind::Stage,
-                label: if capability == "model.respond" {
-                    "主模型不可用，已切换到备用模型".to_string()
-                } else {
-                    "服务不可用，已切换到备用服务".to_string()
+                label: match capability.as_str() {
+                    "model.respond" => "已切换到备用模型".to_string(),
+                    "web.search" | "web.fetch" => {
+                        "联网检索服务暂不可用，正在尝试另一服务".to_string()
+                    }
+                    _ => "服务不可用，已切换到备用服务".to_string(),
                 },
             })
         }
@@ -222,8 +224,7 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     transient_content: String,
     presentation_content: String,
     defer_visible_deltas: bool,
-    source_group_citation_filter: bool,
-    visible_answer_admitted: bool,
+    seal_until_validated: bool,
     emitted_generating_answer_stage: bool,
     reasoning_summaries: BTreeMap<String, String>,
     persisted_reasoning_summaries: BTreeMap<String, String>,
@@ -259,8 +260,7 @@ impl<'a> AgentRunStreamObserver<'a> {
             transient_content: String::new(),
             presentation_content: String::new(),
             defer_visible_deltas,
-            source_group_citation_filter: false,
-            visible_answer_admitted: false,
+            seal_until_validated: false,
             emitted_generating_answer_stage: false,
             reasoning_summaries: BTreeMap::new(),
             persisted_reasoning_summaries: BTreeMap::new(),
@@ -291,11 +291,11 @@ impl<'a> AgentRunStreamObserver<'a> {
 }
 
 impl AgentRunStreamObserver<'_> {
-    /// Keep model-authored precise citation syntax out of an uncalibrated
-    /// source-group stream before any AnswerDelta reaches the UI.
-    pub(crate) fn enable_source_group_citation_filter(&mut self) {
-        self.source_group_citation_filter = true;
-        self.visible_answer_admitted = false;
+    /// Keep every provisional model token private until finalization binds the
+    /// exact validated body. Tool-round callbacks may not unlock this seal.
+    pub(crate) fn seal_visible_deltas_until_validated(&mut self) {
+        self.seal_until_validated = true;
+        self.defer_visible_deltas = true;
     }
 
     /// Replace provisional provider tokens with the fully validated final body.
@@ -314,7 +314,16 @@ impl AgentRunStreamObserver<'_> {
         if !self.presentation_content.is_empty() {
             return self.presentation_content.clone();
         }
+        if self.seal_until_validated {
+            return String::new();
+        }
         self.transient_content.clone()
+    }
+
+    /// Whether provisional content is intentionally withheld by a strict
+    /// finalization contract and therefore must not be persisted on cancel.
+    pub(crate) fn withholds_unvalidated_content(&self) -> bool {
+        self.seal_until_validated && self.presentation_content.is_empty()
     }
 
     /// Whether this model attempt has already produced user-visible tokens.
@@ -325,7 +334,9 @@ impl AgentRunStreamObserver<'_> {
 
     /// Allow a later final turn to emit AnswerDelta after tool rounds stayed private.
     pub(crate) fn clear_deferred_visible_deltas(&mut self) {
-        self.defer_visible_deltas = false;
+        if !self.seal_until_validated {
+            self.defer_visible_deltas = false;
+        }
     }
 
     /// Hide provisional tokens again when another tool round begins.
@@ -346,7 +357,6 @@ impl AgentRunStreamObserver<'_> {
         self.presentation_content.clear();
         self.transient_content.clear();
         self.pending_delta.clear();
-        self.visible_answer_admitted = false;
     }
 
     /// Whether the live "正在生成答复" stage was already emitted for this Run.
@@ -382,24 +392,9 @@ impl AgentRunStreamObserver<'_> {
         if self.defer_visible_deltas || self.transient_content.is_empty() {
             return Ok(());
         }
-        let visible = if self.source_group_citation_filter {
-            crate::ai_runtime::text_support::normalize_source_group_visible_text_for_stream(
-                &crate::ai_runtime::citation_linkify::strip_model_authored_citation_markers_for_stream(
-                    &self.transient_content,
-                ),
-            )
-        } else {
-            crate::ai_runtime::text_support::normalize_model_visible_text_for_stream(
-                &self.transient_content,
-            )
-        };
-        if self.source_group_citation_filter
-            && !self.visible_answer_admitted
-            && !crate::ai_runtime::text_support::has_complete_visible_answer_unit(&visible)
-        {
-            return Ok(());
-        }
-        self.visible_answer_admitted = true;
+        let visible = crate::ai_runtime::text_support::normalize_model_visible_text_for_stream(
+            &self.transient_content,
+        );
         if visible == self.presentation_content {
             return Ok(());
         }
@@ -867,6 +862,37 @@ mod presentation_clock_tests {
             assert!(presentation_payload_for_durable_event(&event).is_none());
         }
     }
+
+    #[test]
+    fn provider_switch_copy_distinguishes_model_and_web_tools() {
+        for (capability, expected) in [
+            ("model.respond", "已切换到备用模型"),
+            ("web.search", "联网检索服务暂不可用，正在尝试另一服务"),
+            ("web.fetch", "联网检索服务暂不可用，正在尝试另一服务"),
+        ] {
+            let event = crate::ai_runtime::run_contract::AssistantRunEvent::new(
+                "provider-switch-copy",
+                3,
+                2,
+                RunEventType::ProviderSwitched,
+                "2026-09-01T08:00:00Z",
+                RunEventPayload::ProviderSwitched {
+                    capability: capability.into(),
+                    from_provider_id: "primary".into(),
+                    provider_id: "backup".into(),
+                    model_id: "model-or-tool".into(),
+                    reason_code: "provider_failed".into(),
+                    attempt: 2,
+                },
+            )
+            .expect("provider switch event");
+            let payload = presentation_payload_for_durable_event(&event).expect("presentation");
+            assert!(matches!(
+                payload,
+                RunPresentationPayload::ProcessStarted { label, .. } if label == expected
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -897,5 +923,143 @@ mod presentation_chunk_tests {
     fn empty_presentation_delta_returns_empty_chunk() {
         let mut remaining = String::new();
         assert_eq!(take_safe_presentation_delta_chunk(&mut remaining), "");
+    }
+}
+
+#[cfg(test)]
+mod strict_publish_tests {
+    use std::sync::Mutex;
+
+    use super::{AgentRunStreamObserver, RunEventSink};
+    use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+    use crate::ai_runtime::model_gateway::{
+        StreamEvent, StreamEventData, StreamEventObserver, StreamEventType, StreamSurface,
+    };
+    use crate::ai_runtime::run_contract::{
+        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, RunEventPayload,
+        RunEventType, RunPresentationPayload, RunState, SecurityDomain,
+    };
+    use crate::ai_runtime::run_intake::RunIntake;
+    use crate::error::AppResult;
+    use crate::storage::db::Database;
+
+    #[derive(Default)]
+    struct PresentationSink {
+        events: Mutex<Vec<RunPresentationPayload>>,
+    }
+
+    impl RunEventSink for PresentationSink {
+        fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
+            Ok(())
+        }
+
+        fn emit_presentation(
+            &self,
+            _run_id: &str,
+            payload: RunPresentationPayload,
+        ) -> AppResult<()> {
+            self.events
+                .lock()
+                .expect("presentation events")
+                .push(payload);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn strict_path_publishes_only_the_validated_answer_without_reset() {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(
+            &db,
+            AssistantRunStartRequest {
+                client_request_id: "strict-publish".into(),
+                session: None,
+                turn: AssistantTurnDraft {
+                    message: "请联网核实".into(),
+                    content_parts: None,
+                    explicit_references: Vec::new(),
+                    retrieval_scope: Default::default(),
+                    display_mentions: Vec::new(),
+                },
+                explicit_action: None,
+                web_enabled: true,
+                model_override: None,
+                external_tool_grants: Vec::new(),
+                security_domain: SecurityDomain::Normal,
+                classified_context_ref: None,
+            },
+        )
+        .expect("accepted");
+        let preparing = AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: 0,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Preparing,
+                    stage: "正在准备工具执行".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("preparing");
+        let running = AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing.state_version(),
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "正在调用模型和工具".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running");
+        let sink = PresentationSink::default();
+        let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
+            &db,
+            &accepted.run_id,
+            running.state_version(),
+            &sink,
+            true,
+        );
+        observer.seal_visible_deltas_until_validated();
+        observer.on_tools_finished().expect("tools finished");
+        observer
+            .observe(
+                &StreamEvent {
+                    request_id: accepted.run_id.clone(),
+                    event_type: StreamEventType::Token,
+                    data: StreamEventData::Token {
+                        token: "未经验证的完整草稿。".into(),
+                        replace_visible: false,
+                    },
+                    surface: StreamSurface::VisibleAnswerSanitized,
+                    classified: false,
+                },
+                0,
+            )
+            .expect("draft token");
+        assert!(sink.events.lock().expect("events").is_empty());
+        assert!(observer.interrupt_visible_content().is_empty());
+        assert!(observer.withholds_unvalidated_content());
+
+        observer.bind_validated_content("验证通过后的唯一答复。");
+        observer.flush().expect("validated flush");
+        let events = sink.events.lock().expect("events");
+        assert!(events
+            .iter()
+            .all(|event| !matches!(event, RunPresentationPayload::AnswerReset)));
+        let visible = events
+            .iter()
+            .filter_map(|event| match event {
+                RunPresentationPayload::AnswerDelta { delta } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(visible, "验证通过后的唯一答复。");
     }
 }
