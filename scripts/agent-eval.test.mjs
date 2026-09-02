@@ -261,6 +261,49 @@ test("live campaign CLI requires two distinct approved routes and one pooled cos
   );
 });
 
+test("live canary CLI requires two distinct approved routes and the four-run checkpoint", () => {
+  const run = (...args) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(workspaceRoot, "scripts/agent-eval.mjs"),
+        "live",
+        "canary",
+        ...args,
+      ],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          IRIS_AGENT_EVAL_SOURCE_DB: path.join(
+            workspaceRoot,
+            "target/agent-eval/definitely-missing.db",
+          ),
+        },
+        encoding: "utf8",
+      },
+    );
+  const session = `session-${"a".repeat(64)}`;
+  const routeA = `profile-${"b".repeat(32)}`;
+  const routeB = `profile-${"c".repeat(32)}`;
+
+  assert.match(
+    run("--session", session, "--approve", `${routeA},${routeB}`).stderr,
+    /agent_eval_live_canary_requires_user_cost_checkpoint/,
+  );
+  assert.match(
+    run(
+      "--session",
+      session,
+      "--approve",
+      `${routeA},${routeB}`,
+      "--confirm-cost",
+      "two-route-4-run-canary",
+    ).stderr,
+    /agent_eval_live_custom_roots_required/,
+  );
+});
+
 test("product gate refuses to claim quality without an explicit live result", () => {
   const output = path.join(
     workspaceRoot,

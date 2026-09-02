@@ -6,8 +6,8 @@ use std::sync::Mutex;
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
-    is_natural_clarification, AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor,
-    ToolLoopProvider, EVIDENCE_LIMITED_RESPONSE,
+    is_natural_clarification, AgentModelTurnBudget, AgentToolLoop, RequiredWebBootstrapObservation,
+    ToolLoopExecutor, ToolLoopProvider, EVIDENCE_LIMITED_RESPONSE,
 };
 use super::model_gateway::{StreamEventObserver, StreamSurface};
 use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
@@ -15,6 +15,7 @@ use crate::ai_runtime::{
     FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec,
 };
 use crate::error::{AppError, AppResult};
+use crate::storage::db::Database;
 
 fn standard_tool_loop() -> AgentToolLoop {
     AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
@@ -246,6 +247,195 @@ async fn unexposed_tool_call_is_rejected_without_reaching_executor() {
         0,
         "an unexposed tool call must never reach the executor"
     );
+    assert!(
+        provider
+            .second_turn_messages
+            .lock()
+            .expect("repair transcript")
+            .iter()
+            .all(|message| message.tool_calls.as_ref().is_none_or(Vec::is_empty)),
+        "a rejected proposal is Host validation feedback, not an assistant/tool transcript"
+    );
+}
+
+#[tokio::test]
+async fn mixed_tool_proposals_only_persist_dispatched_calls_in_the_tool_transcript() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_calls_response(vec![
+                tool_call_with_arguments("valid", "system_time_now", serde_json::json!({})),
+                tool_call_with_arguments("invalid", "not_exposed", serde_json::json!({})),
+            ]),
+            scripted_final_response("final answer"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-mixed-proposals",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("the dispatched call can complete while the invalid one is fed back safely");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+    let repair = provider
+        .second_turn_messages
+        .lock()
+        .expect("repair transcript");
+    let assistant = repair
+        .iter()
+        .find(|message| message.tool_calls.is_some())
+        .expect("one canonical assistant tool turn");
+    assert_eq!(assistant.tool_calls.as_ref().expect("tool calls").len(), 1);
+    assert_eq!(
+        assistant.tool_calls.as_ref().expect("tool calls")[0].id,
+        "valid"
+    );
+    assert!(repair.iter().any(|message| {
+        matches!(message.role, MessageRole::System)
+            && message
+                .content
+                .text_content()
+                .contains("not_exposed:rejected_before_dispatch")
+    }));
+}
+
+#[tokio::test]
+async fn required_web_run_receives_host_observation_before_a_model_can_skip_tools() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([scripted_final_response(
+            "已根据本轮正文整理。",
+        )])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = BootstrapWebExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-required-web-bootstrap",
+            vec![LlmMessage {
+                role: MessageRole::User,
+                content: "近期有什么变化？".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            }],
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a Host bootstrap supplies the required observation before the answer turn");
+
+    assert_eq!(outcome.content, "已根据本轮正文整理。");
+    assert_eq!(outcome.tool_calls, 2);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn long_conversation_model_compaction_consumes_one_hidden_turn_and_never_streams_it() {
+    let db = Database::open_in_memory().expect("database");
+    let session =
+        super::normal_session_repository::NormalSessionRepository::create(&db).expect("session");
+    db.with_conn(|conn| {
+        for seq in 1..=27_i64 {
+            conn.execute(
+                "INSERT INTO session_messages
+                 (session_id, seq, role, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    session.session_id,
+                    seq,
+                    if seq % 2 == 0 { "assistant" } else { "user" },
+                    format!("message-{seq}"),
+                    format!("2026-09-03T00:00:{seq:02}Z"),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("seed history");
+    super::conversation_memory::ConversationMemory::refresh_for_session(
+        &db,
+        session.session_id,
+        Default::default(),
+    )
+    .expect("deterministic summary");
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_final_response(
+                r#"{"goal_summary":"current goal","preference_summary":"latest correction","decision_summary":"confirmed","open_threads_summary":"next"}"#,
+            ),
+            scripted_final_response("正常答复"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = MemoryCompactingExecutor {
+        db,
+        session_id: session.session_id,
+    };
+    let mut observer = NoopObserver;
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "memory-compaction-run",
+            vec![LlmMessage {
+                role: MessageRole::User,
+                content: "继续当前任务".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            }],
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect("normal answer after compaction");
+
+    assert_eq!(outcome.content, "正常答复");
+    assert_eq!(outcome.model_turns, 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("messages")
+        .iter()
+        .all(|message| !message.content.text_content().contains("current goal")));
+    let memory = super::conversation_memory::ConversationMemory::latest_for_session(
+        &executor.db,
+        session.session_id,
+    )
+    .expect("memory")
+    .expect("summary");
+    assert!(memory.goal_summary.starts_with("[模型压缩]"));
 }
 
 #[tokio::test]
@@ -411,12 +601,15 @@ async fn one_model_turn_executes_only_two_independent_discovery_calls() {
         .lock()
         .expect("second turn messages");
     assert!(second_turn.iter().any(|message| {
-        message.tool_call_id.as_deref() == Some("discover-3")
+        matches!(message.role, MessageRole::System)
             && message
                 .content
                 .text_content()
-                .contains("deferred_for_feedback")
+                .contains("web_search:deferred_for_feedback")
     }));
+    assert!(second_turn
+        .iter()
+        .all(|message| message.tool_call_id.as_deref() != Some("discover-3")));
 }
 
 #[tokio::test]
@@ -831,6 +1024,80 @@ struct FinalSubmissionValidationExecutor;
 struct EmptyWebEvidenceExecutor;
 struct RecoverableWebExecutor {
     registered: AtomicBool,
+}
+
+struct BootstrapWebExecutor {
+    calls: AtomicU32,
+}
+
+struct MemoryCompactingExecutor {
+    db: Database,
+    session_id: i64,
+}
+
+impl ToolLoopExecutor for MemoryCompactingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("the compaction test has no tools") })
+    }
+
+    fn conversation_memory_compaction_request(
+        &self,
+    ) -> AppResult<Option<super::conversation_memory::ConversationMemoryCompactionRequest>> {
+        super::conversation_memory::ConversationMemory::pending_model_compaction(
+            &self.db,
+            self.session_id,
+        )
+    }
+
+    fn apply_conversation_memory_compaction(
+        &self,
+        request: &super::conversation_memory::ConversationMemoryCompactionRequest,
+        output: Option<&str>,
+    ) -> AppResult<()> {
+        super::conversation_memory::ConversationMemory::apply_model_compaction(
+            &self.db, request, output,
+        )
+    }
+}
+
+impl ToolLoopExecutor for BootstrapWebExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("the test supplies the Host bootstrap directly") })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+
+    fn has_web_evidence(&self) -> bool {
+        self.calls.load(Ordering::SeqCst) == 2
+    }
+
+    fn bootstrap_required_web_observation<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _remaining_tool_calls: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<Option<RequiredWebBootstrapObservation>>> + Send + 'a>>
+    {
+        self.calls.store(2, Ordering::SeqCst);
+        Box::pin(async {
+            Ok(Some(RequiredWebBootstrapObservation {
+                tool_calls: 2,
+                network_tool_calls: 2,
+                observation: "Host Web observation: searched original request and fetched two selected bodies.".into(),
+            }))
+        })
+    }
 }
 
 impl ToolLoopExecutor for RequiredWebExecutor {

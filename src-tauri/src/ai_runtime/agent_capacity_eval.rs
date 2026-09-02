@@ -3640,6 +3640,7 @@ pub(crate) async fn exercise_approved_live_hydration_with_local_transports(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LiveCostConfirmation {
     InteractionMatrixPilot,
+    TwoRouteCanary,
     TwoRouteCampaign,
 }
 
@@ -3983,15 +3984,15 @@ pub(crate) fn live_trace_result_from_pilot(
         route_commitment: result.route_commitment.clone(),
         route_label,
         campaign_id,
-        status: if completed_case_count == LIVE_PILOT_CASE_COUNT
-            && mechanical_passed == LIVE_PILOT_CASE_COUNT
+        status: if completed_case_count == result.required_case_count
+            && mechanical_passed == result.required_case_count
         {
             "live_trace_executed"
         } else {
             "live_trace_failed"
         },
         case_count,
-        required_case_count: LIVE_PILOT_CASE_COUNT,
+        required_case_count: result.required_case_count,
         completed_case_count,
         mechanical_passed,
         mechanical_failed: case_count.saturating_sub(mechanical_passed),
@@ -4014,7 +4015,7 @@ pub(crate) fn live_review_packet_from_pilot(
     campaign_id: String,
     route_label: &'static str,
 ) -> Result<LiveReviewPacket, EvalContractError> {
-    let scenarios = select_live_pilot_scenarios()?;
+    let scenarios = live_review_scenarios(result.required_case_count)?;
     let cases = result
         .cases
         .iter()
@@ -4070,6 +4071,15 @@ pub(crate) fn live_review_packet_from_pilot(
 }
 
 #[cfg(test)]
+fn live_review_scenarios(required_case_count: u32) -> Result<Vec<CoreScenario>, EvalContractError> {
+    match required_case_count {
+        LIVE_PILOT_CASE_COUNT => select_live_pilot_scenarios(),
+        2 => select_live_canary_scenarios(),
+        _ => Err(EvalContractError::new("live_review_case_contract_invalid")),
+    }
+}
+
+#[cfg(test)]
 fn bounded_live_review_text(value: &str, maximum_chars: usize) -> String {
     value.chars().take(maximum_chars).collect()
 }
@@ -4108,6 +4118,35 @@ impl LivePilotResult {
             case.telemetry.tool_calls = tool_calls;
         }
     }
+
+    pub(crate) fn retain_canary_cases_for_test(&mut self) {
+        self.cases
+            .retain(|case| matches!(case.summary.case_id, 26 | 28));
+        self.required_case_count = 2;
+        self.case_count = self.cases.len().min(u32::MAX as usize) as u32;
+        self.completed_case_count = self
+            .cases
+            .iter()
+            .filter(|case| {
+                case.summary.runtime_evidence.terminal_state == EvaluationTerminalState::Completed
+            })
+            .count()
+            .min(u32::MAX as usize) as u32;
+        self.passed = self
+            .cases
+            .iter()
+            .filter(|case| case.summary.overall_pass)
+            .count()
+            .min(u32::MAX as usize) as u32;
+        self.failed = self.case_count.saturating_sub(self.passed);
+        self.status = live_pilot_result_status(
+            true,
+            self.completed_case_count,
+            self.completed_case_count,
+            self.passed,
+            self.case_count,
+        );
+    }
 }
 
 /// Validate and consume the approval/cost gates before copying route metadata
@@ -4122,7 +4161,11 @@ pub(crate) fn prepare_approved_live_pilot(
 ) -> Result<PreparedLivePilot, EvalContractError> {
     if !matches!(
         cost_confirmation,
-        Some(LiveCostConfirmation::InteractionMatrixPilot | LiveCostConfirmation::TwoRouteCampaign)
+        Some(
+            LiveCostConfirmation::InteractionMatrixPilot
+                | LiveCostConfirmation::TwoRouteCanary
+                | LiveCostConfirmation::TwoRouteCampaign
+        )
     ) {
         return Err(EvalContractError::new("live_cost_confirmation_required"));
     }
@@ -4683,6 +4726,27 @@ pub(crate) async fn run_live_trace_campaign_with_prepared(
     routes: [&PreparedLivePilot; 2],
 ) -> Result<[LivePilotResult; 2], EvalContractError> {
     let scenarios = select_live_pilot_scenarios()?;
+    run_live_trace_with_prepared(routes, scenarios, 48, 36).await
+}
+
+/// Run the two-route, four-Run canary before the larger calibration campaign.
+/// The canary exercises the required Web path on both prepared routes without
+/// consuming the campaign's twelve-Run budget.
+#[cfg(test)]
+pub(crate) async fn run_live_trace_canary_with_prepared(
+    routes: [&PreparedLivePilot; 2],
+) -> Result<[LivePilotResult; 2], EvalContractError> {
+    let scenarios = select_live_canary_scenarios()?;
+    run_live_trace_with_prepared(routes, scenarios, 16, 12).await
+}
+
+#[cfg(test)]
+async fn run_live_trace_with_prepared(
+    routes: [&PreparedLivePilot; 2],
+    scenarios: Vec<CoreScenario>,
+    max_model_turns: u32,
+    max_web_tool_calls: u32,
+) -> Result<[LivePilotResult; 2], EvalContractError> {
     let mut executed: [Vec<(u8, ExecutedCoreCase)>; 2] = [Vec::new(), Vec::new()];
     let mut sessions = [None, None];
     let mut used_model_turns = 0_u32;
@@ -4696,6 +4760,8 @@ pub(crate) async fn run_live_trace_campaign_with_prepared(
             used_model_turns,
             used_web_tool_calls,
             &schedule[index + 1..],
+            max_model_turns,
+            max_web_tool_calls,
         ) else {
             executed[*route_index].push((
                 1,
@@ -4725,8 +4791,8 @@ pub(crate) async fn run_live_trace_campaign_with_prepared(
     // reports so the caller can persist and attest the failure before its
     // strict gate rejects the budget ledger.
     Ok([
-        live_pilot_result_from_executed(routes[0], executed[0].as_slice()),
-        live_pilot_result_from_executed(routes[1], executed[1].as_slice()),
+        live_pilot_result_from_executed(routes[0], executed[0].as_slice(), scenarios.len()),
+        live_pilot_result_from_executed(routes[1], executed[1].as_slice(), scenarios.len()),
     ])
 }
 
@@ -4735,6 +4801,8 @@ fn live_campaign_cap_for_next(
     used_model_turns: u32,
     used_web_tool_calls: u32,
     future: &[(usize, &CoreScenario)],
+    max_model_turns: u32,
+    max_web_tool_calls: u32,
 ) -> Option<LiveCampaignRunCap> {
     let reserved_model_turns = future.iter().fold(0_u32, |total, (_, scenario)| {
         total.saturating_add(if scenario.case_id() == 1 { 1 } else { 3 })
@@ -4742,10 +4810,10 @@ fn live_campaign_cap_for_next(
     let reserved_web_tools = future.iter().fold(0_u32, |total, (_, scenario)| {
         total.saturating_add(if scenario.case_id() == 1 { 0 } else { 2 })
     });
-    let remaining_models = 48_u32
+    let remaining_models = max_model_turns
         .checked_sub(used_model_turns)?
         .checked_sub(reserved_model_turns)?;
-    let remaining_tools = 36_u32
+    let remaining_tools = max_web_tool_calls
         .checked_sub(used_web_tool_calls)?
         .checked_sub(reserved_web_tools)?;
     let minimum_models = 1;
@@ -4763,6 +4831,7 @@ fn live_campaign_cap_for_next(
 fn live_pilot_result_from_executed(
     prepared: &PreparedLivePilot,
     executed: &[(u8, ExecutedCoreCase)],
+    required_case_count: usize,
 ) -> LivePilotResult {
     let cases = executed
         .iter()
@@ -4811,7 +4880,7 @@ fn live_pilot_result_from_executed(
         profile_id: prepared.profile_id.clone(),
         route_commitment: prepared.route_commitment.clone(),
         capability_fingerprint: prepared.capabilities.clone(),
-        required_case_count: LIVE_PILOT_CASE_COUNT,
+        required_case_count: required_case_count.min(u32::MAX as usize) as u32,
         completed_case_count,
         case_count,
         passed,
@@ -5090,8 +5159,8 @@ fn validate_serialized_live_trace_result_v3(
     let completed_case_count = live_pilot_bounded_u64(root.get("completedCaseCount"), 6)?;
     let mechanical_passed = live_pilot_bounded_u64(root.get("mechanicalPassed"), 6)?;
     let mechanical_failed = live_pilot_bounded_u64(root.get("mechanicalFailed"), 6)?;
-    if case_count != 6
-        || required_case_count != 6
+    let expected_scenarios = live_review_scenarios(case_count as u32)?;
+    if required_case_count != case_count
         || completed_case_count > case_count
         || mechanical_passed.saturating_add(mechanical_failed) != case_count
     {
@@ -5105,10 +5174,10 @@ fn validate_serialized_live_trace_result_v3(
         .get("cases")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?;
-    if cases.len() != 6 {
+    if cases.len() != case_count as usize {
         return Err(EvalContractError::new("live_pilot_count_inconsistent"));
     }
-    let expected = select_live_pilot_scenarios()?
+    let expected = expected_scenarios
         .into_iter()
         .map(|scenario| scenario.case_id())
         .collect::<HashSet<_>>();
@@ -5135,7 +5204,7 @@ fn validate_serialized_live_trace_result_v3(
         return Err(EvalContractError::new("live_pilot_count_inconsistent"));
     }
     if root.get("status").and_then(serde_json::Value::as_str) == Some("live_trace_executed")
-        && (completed_case_count != 6 || mechanical_passed != 6)
+        && (completed_case_count != case_count || mechanical_passed != case_count)
     {
         return Err(EvalContractError::new("live_pilot_count_inconsistent"));
     }
@@ -5194,21 +5263,23 @@ fn validate_live_trace_campaign_budget(
             "observedWebToolCalls",
         ],
     )?;
-    let maximums = [
-        ("maxRuns", 12_u64),
-        ("maxModelTurns", 48_u64),
-        ("maxWebToolCalls", 36_u64),
-    ];
-    for (key, expected) in maximums {
-        if live_pilot_bounded_u64(budget.get(key), expected)? != expected {
-            return Err(EvalContractError::new("live_pilot_value_invalid"));
-        }
+    let max_runs = live_pilot_bounded_u64(budget.get("maxRuns"), 12)?;
+    let max_model_turns = live_pilot_bounded_u64(budget.get("maxModelTurns"), 48)?;
+    let max_web_tool_calls = live_pilot_bounded_u64(budget.get("maxWebToolCalls"), 36)?;
+    if !matches!(
+        (max_runs, max_model_turns, max_web_tool_calls),
+        (4, 16, 12) | (12, 48, 36)
+    ) {
+        return Err(EvalContractError::new("live_pilot_value_invalid"));
     }
     let observed_runs = live_pilot_bounded_u64(budget.get("observedRuns"), u64::MAX)?;
     let observed_model_turns = live_pilot_bounded_u64(budget.get("observedModelTurns"), u64::MAX)?;
     let observed_web_tool_calls =
         live_pilot_bounded_u64(budget.get("observedWebToolCalls"), u64::MAX)?;
-    if observed_runs > 12 || observed_model_turns > 48 || observed_web_tool_calls > 36 {
+    if observed_runs > max_runs
+        || observed_model_turns > max_model_turns
+        || observed_web_tool_calls > max_web_tool_calls
+    {
         return Err(EvalContractError::new("live_pilot_call_budget_invalid"));
     }
     Ok((observed_runs, observed_model_turns, observed_web_tool_calls))
@@ -5524,11 +5595,11 @@ fn validate_live_review_packet(
             .is_none_or(|suffix| {
                 suffix.len() != 64 || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
             })
-        || packet.cases.len() != LIVE_PILOT_CASE_COUNT as usize
     {
         return Err(EvalContractError::new("live_review_packet_invalid"));
     }
-    let scenarios = select_live_pilot_scenarios()?;
+    let scenarios = live_review_scenarios(packet.cases.len() as u32)
+        .map_err(|_| EvalContractError::new("live_review_packet_invalid"))?;
     let mut observed = HashSet::new();
     for case in &packet.cases {
         let Some(scenario) = scenarios
@@ -5569,19 +5640,25 @@ fn live_trace_packet_path(
     output: &std::path::Path,
     session_id: &str,
 ) -> Result<(String, std::path::PathBuf), EvalContractError> {
-    let route = ["a", "b"]
-        .into_iter()
-        .find(|route| {
-            output.file_name().and_then(std::ffi::OsStr::to_str)
-                == Some(format!("live-pilot-{session_id}-route-{route}.json").as_str())
+    let (route, packet_prefix) = [
+        ("live-pilot", "live-review"),
+        ("live-canary", "live-canary-review"),
+    ]
+    .into_iter()
+    .find_map(|(output_prefix, packet_prefix)| {
+        ["a", "b"].into_iter().find_map(|route| {
+            (output.file_name().and_then(std::ffi::OsStr::to_str)
+                == Some(format!("{output_prefix}-{session_id}-route-{route}.json").as_str()))
+            .then_some((route, packet_prefix))
         })
-        .ok_or_else(|| EvalContractError::new("live_attestation_execution_invalid"))?;
+    })
+    .ok_or_else(|| EvalContractError::new("live_attestation_execution_invalid"))?;
     let parent = output
         .parent()
         .ok_or_else(|| EvalContractError::new("live_attestation_execution_invalid"))?;
     Ok((
         route.to_string(),
-        parent.join(format!("live-review-{session_id}-route-{route}.json")),
+        parent.join(format!("{packet_prefix}-{session_id}-route-{route}.json")),
     ))
 }
 
@@ -6941,6 +7018,22 @@ pub(crate) fn select_live_pilot_scenarios() -> Result<Vec<CoreScenario>, EvalCon
         .collect::<Vec<_>>();
     if selected.len() != CASE_IDS.len() || selected.iter().map(CoreScenario::case_id).ne(CASE_IDS) {
         return Err(EvalContractError::new("live_pilot_case_contract_invalid"));
+    }
+    Ok(selected)
+}
+
+/// Select the small Web-required slice used by the two-route canary. These
+/// are generic current-fact scenarios; their purpose is protocol calibration,
+/// not a domain-specific product route.
+#[cfg(test)]
+pub(crate) fn select_live_canary_scenarios() -> Result<Vec<CoreScenario>, EvalContractError> {
+    const CASE_IDS: [u32; 2] = [26, 28];
+    let selected = generate_core_scenarios()?
+        .into_iter()
+        .filter(|scenario| CASE_IDS.contains(&scenario.case_id()))
+        .collect::<Vec<_>>();
+    if selected.len() != CASE_IDS.len() || selected.iter().map(CoreScenario::case_id).ne(CASE_IDS) {
+        return Err(EvalContractError::new("live_canary_case_contract_invalid"));
     }
     Ok(selected)
 }

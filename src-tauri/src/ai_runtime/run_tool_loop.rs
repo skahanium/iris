@@ -23,7 +23,8 @@ use crate::ai_runtime::agent_run_repository::{
     DurableApplyCheckpointStage,
 };
 use crate::ai_runtime::agent_tool_loop::{
-    AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
+    AgentToolLoop, RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
+    MAX_WEB_TOOL_RESULT_CHARS,
 };
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
@@ -40,7 +41,7 @@ use crate::ai_runtime::tool_execution_pipeline::{
     ToolExecutionGate,
 };
 use crate::ai_runtime::tool_executor::ToolRegistry;
-use crate::ai_runtime::{LlmMessage, MessageRole, ToolCallResult};
+use crate::ai_runtime::{FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult};
 use crate::ai_types::WebSourceRank;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -49,6 +50,7 @@ use sha2::{Digest, Sha256};
 
 const WEB_SEARCH_TOOL_NAME: &str = "web_search";
 const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
+const HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX: &str = "host-bootstrap-web-";
 const MAX_WEB_EVIDENCE_PER_RUN: usize = 12;
 const MAX_WEB_CANDIDATES_PER_RUN: usize = 8;
 const MAX_WEB_CANDIDATES_PER_DISCOVERY: usize = 4;
@@ -167,6 +169,14 @@ struct RunWebEvidenceState {
     has_official_source: bool,
     slots_in_use: usize,
     max_evidence: usize,
+    unverified_leads: Vec<UnverifiedWebLead>,
+}
+
+#[derive(Debug, Clone)]
+struct UnverifiedWebLead {
+    title: String,
+    domain: String,
+    url: String,
 }
 
 impl Default for RunWebEvidenceState {
@@ -178,6 +188,7 @@ impl Default for RunWebEvidenceState {
             has_official_source: false,
             slots_in_use: 0,
             max_evidence: MAX_WEB_EVIDENCE_PER_RUN,
+            unverified_leads: Vec::new(),
         }
     }
 }
@@ -481,6 +492,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         tool_name: &str,
         args: &serde_json::Value,
         state_version: u64,
+        user_authored_bootstrap: bool,
     ) -> AppResult<ToolCallResult> {
         let discovery_only = tool_name == WEB_SEARCH_TOOL_NAME;
         let query = if discovery_only {
@@ -493,18 +505,21 @@ impl<'a> NormalRunToolExecutor<'a> {
             self.context.user_message.clone()
         };
         if discovery_only {
-            let automatic_local_materials = self
-                .context
-                .materials
-                .iter()
-                .filter(|material| {
-                    matches!(
-                        material.origin,
-                        crate::ai_runtime::context_materials::ContextMaterialOrigin::LocalRetrieval { .. }
-                    )
-                })
-                .map(|material| material.content.clone())
-                .collect::<Vec<_>>();
+            let automatic_local_materials = if user_authored_bootstrap {
+                Vec::new()
+            } else {
+                self.context
+                        .materials
+                        .iter()
+                        .filter(|material| {
+                            matches!(
+                                material.origin,
+                                crate::ai_runtime::context_materials::ContextMaterialOrigin::LocalRetrieval { .. }
+                            )
+                        })
+                        .map(|material| material.content.clone())
+                        .collect::<Vec<_>>()
+            };
             let query_contains_automatic_local_material = record_web_query_taint_witness(
                 &self.state.db,
                 &self.accepted.run_id,
@@ -692,6 +707,16 @@ impl<'a> NormalRunToolExecutor<'a> {
                     .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
                 let (new_resources, duplicate_resources) =
                     remember_candidate_urls(&mut state, proposed_urls)?;
+                state.unverified_leads = candidates
+                    .iter()
+                    .filter(|item| state.candidate_urls.contains(&item.canonical_url))
+                    .take(MAX_WEB_CANDIDATES_PER_DISCOVERY)
+                    .map(|item| UnverifiedWebLead {
+                        title: item.title.clone(),
+                        domain: item.domain.clone(),
+                        url: item.canonical_url.clone(),
+                    })
+                    .collect();
                 (
                     new_resources,
                     duplicate_resources.saturating_add(previously_seen_count),
@@ -1626,6 +1651,107 @@ fn safe_external_tool_failure(error: &AppError) -> &'static str {
 }
 
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
+    fn conversation_memory_compaction_request(
+        &self,
+    ) -> AppResult<
+        Option<crate::ai_runtime::conversation_memory::ConversationMemoryCompactionRequest>,
+    > {
+        let Some(session) =
+            crate::ai_runtime::normal_session_repository::NormalSessionRepository::get(
+                &self.state.db,
+                &self.accepted.session.session_key,
+            )?
+        else {
+            return Ok(None);
+        };
+        crate::ai_runtime::conversation_memory::ConversationMemory::pending_model_compaction(
+            &self.state.db,
+            session.session_id,
+        )
+    }
+
+    fn apply_conversation_memory_compaction(
+        &self,
+        request: &crate::ai_runtime::conversation_memory::ConversationMemoryCompactionRequest,
+        output: Option<&str>,
+    ) -> AppResult<()> {
+        crate::ai_runtime::conversation_memory::ConversationMemory::apply_model_compaction(
+            &self.state.db,
+            request,
+            output,
+        )
+    }
+
+    fn bootstrap_required_web_observation<'a>(
+        &'a self,
+        run_id: &'a str,
+        remaining_tool_calls: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<Option<RequiredWebBootstrapObservation>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            if !self.requires_web_evidence()
+                || remaining_tool_calls < 2
+                || !self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == WEB_SEARCH_TOOL_NAME)
+                || !self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == WEB_FETCH_TOOL_NAME)
+            {
+                return Ok(None);
+            }
+
+            let search_call = ToolCall {
+                id: "host-bootstrap-web-search".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: WEB_SEARCH_TOOL_NAME.into(),
+                    arguments: serde_json::json!({ "query": self.context.user_message })
+                        .to_string(),
+                },
+            };
+            let search = self.execute(run_id, &search_call, 1).await?;
+            let urls = search
+                .output
+                .get("canonicalUrls")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .take(2)
+                .collect::<Vec<_>>();
+            let fetch = if urls.is_empty() {
+                None
+            } else {
+                let fetch_call = ToolCall {
+                    id: "host-bootstrap-web-fetch".into(),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: WEB_FETCH_TOOL_NAME.into(),
+                        arguments: serde_json::json!({ "urls": urls }).to_string(),
+                    },
+                };
+                Some(self.execute(run_id, &fetch_call, 2).await?)
+            };
+            let tool_calls = if fetch.is_some() { 2 } else { 1 };
+            let observation = serde_json::json!({
+                "kind": "host_web_bootstrap",
+                "search": search.output,
+                "fetch": fetch.as_ref().map(|result| &result.output),
+                "note": "Host executed this required search and selected-body fetch before this answer turn. Treat fetched bodies as current-Run observations; failed URLs are not evidence."
+            })
+            .to_string();
+            Ok(Some(RequiredWebBootstrapObservation {
+                tool_calls,
+                network_tool_calls: tool_calls,
+                observation: truncate_web_field(&observation, MAX_WEB_TOOL_RESULT_CHARS),
+            }))
+        })
+    }
+
     fn execute<'a>(
         &'a self,
         run_id: &'a str,
@@ -1769,8 +1895,13 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 call.function.name.as_str(),
                 WEB_SEARCH_TOOL_NAME | WEB_FETCH_TOOL_NAME
             ) {
-                self.execute_web_tool(&call.function.name, &args, state_version)
-                    .await?
+                self.execute_web_tool(
+                    &call.function.name,
+                    &args,
+                    state_version,
+                    call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX),
+                )
+                .await?
             } else {
                 self.dispatch_non_web_tool(&call.function.name, &args, None)
                     .await
@@ -2063,6 +2194,26 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             )
             .is_ok()
         })
+    }
+
+    fn evidence_limited_response(&self) -> String {
+        let leads = self
+            .run_web_evidence
+            .lock()
+            .map(|state| state.unverified_leads.clone())
+            .unwrap_or_default();
+        if leads.is_empty() {
+            return "本轮未取得足够的可核验来源正文来可靠支持具体结论；联网检索也没有取得可用候选。你可以稍后通过“重试”再次执行本轮。".into();
+        }
+        let items = leads
+            .into_iter()
+            .take(MAX_WEB_CANDIDATES_PER_DISCOVERY)
+            .map(|lead| format!("- {}（{}）\n  {}", lead.title, lead.domain, lead.url))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "本轮未取得足够的可核验来源正文来可靠支持具体结论。以下是未核实线索；它们不能作为具体结论的依据。你可以通过“重试”再次抓取，或选择其中一个链接继续核验。\n\n{items}"
+        )
     }
 
     fn final_submission_is_valid(

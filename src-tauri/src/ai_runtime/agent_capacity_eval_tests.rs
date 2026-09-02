@@ -27,7 +27,7 @@ use super::agent_capacity_eval::{
     run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
     run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
     run_security_track, runtime_capability_to_eval_tool_name, select_core_scenarios,
-    select_live_pilot_scenarios, selected_live_pilot_web_fact_claims,
+    select_live_canary_scenarios, select_live_pilot_scenarios, selected_live_pilot_web_fact_claims,
     serialize_agent_capacity_report, serialize_evaluation_summary, serialize_live_preflight_report,
     spawn_live_pilot_dynamic_llm_protocol_double, spawn_llm_protocol_double,
     summarize_web_query_boundary, validate_serialized_evaluation_summary,
@@ -58,6 +58,18 @@ fn controlled_live_fact_oracle_rejects_a_model_placeholder_without_source_bindin
             None,
         ),
         "a model echo of the evaluator placeholder is not evidence unless the controlled source contains that claim"
+    );
+}
+
+#[test]
+fn two_route_canary_uses_two_generic_web_required_scenarios_per_route() {
+    let scenarios = select_live_canary_scenarios().expect("canary scenarios");
+    assert_eq!(
+        scenarios
+            .iter()
+            .map(super::agent_capacity_eval::CoreScenario::case_id)
+            .collect::<Vec<_>>(),
+        vec![26, 28]
     );
 }
 
@@ -458,6 +470,79 @@ async fn live_v3_review_packet_is_hash_bound_before_the_trace_is_attested() {
     std::fs::remove_file(&output).expect("remove failed report");
     std::fs::remove_file(format!("{}.attestation.json", output.display()))
         .expect("remove failed attestation");
+}
+
+#[tokio::test]
+async fn two_route_canary_shape_writes_review_and_trace_artifacts_before_validation() {
+    let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous local evaluation session");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let approval =
+        approve_live_profile(&mut session, Some(&profile_id), 80_000).expect("local approval");
+    let mut result = run_approved_live_pilot_with_local_doubles(
+        &mut session,
+        Some(approval.token()),
+        Some(LiveCostConfirmation::TwoRouteCanary),
+        80_001,
+        &LivePilotCallProbe::default(),
+    )
+    .await
+    .expect("local result");
+    result.retain_canary_cases_for_test();
+
+    let session_id = session.report().session_id().to_string();
+    let campaign_id =
+        super::agent_capacity_eval::random_live_token("campaign-", 32).expect("campaign identity");
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let target = workspace.join("target/agent-eval");
+    let packet_path = target.join(format!("live-canary-review-{session_id}-route-a.json"));
+    let output = target.join(format!("live-canary-{session_id}-route-a.json"));
+    let packet = super::agent_capacity_eval::live_review_packet_from_pilot(
+        &result,
+        campaign_id.clone(),
+        "Route A",
+    )
+    .expect("canary packet");
+    let packet_hash = super::agent_capacity_eval::write_live_review_packet(&packet_path, &packet)
+        .expect("canary packet persisted");
+    let trace = super::agent_capacity_eval::live_trace_result_from_pilot(
+        &result,
+        "Route A",
+        campaign_id,
+        packet_hash,
+        super::agent_capacity_eval::LiveCampaignBudget {
+            max_runs: 4,
+            max_model_turns: 16,
+            max_web_tool_calls: 12,
+            observed_runs: 4,
+            observed_model_turns: result
+                .cases
+                .iter()
+                .map(|case| case.telemetry.model_turns)
+                .sum(),
+            observed_web_tool_calls: result
+                .cases
+                .iter()
+                .map(|case| case.telemetry.tool_calls)
+                .sum(),
+        },
+    );
+    let config_root = tempfile::tempdir().expect("private attestation root");
+    super::agent_capacity_eval::write_attested_live_trace_result(
+        &output,
+        &trace,
+        &session_id,
+        config_root.path(),
+    )
+    .expect("canary trace persisted before validation");
+    let serialized = std::fs::read_to_string(&output).expect("trace read");
+    validate_serialized_live_pilot_result(&serialized).expect("canary trace validates");
+    std::fs::remove_file(&packet_path).expect("remove canary packet");
+    std::fs::remove_file(&output).expect("remove canary trace");
+    std::fs::remove_file(format!("{}.attestation.json", output.display()))
+        .expect("remove canary attestation");
 }
 
 #[test]
@@ -5085,9 +5170,23 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
 
 #[tokio::test]
 async fn live_campaign_command_entrypoint_runs_two_explicit_routes_when_requested() {
-    if std::env::var("IRIS_AGENT_EVAL_LIVE_ACTION").as_deref() != Ok("campaign") {
+    let action = std::env::var("IRIS_AGENT_EVAL_LIVE_ACTION");
+    let is_canary = action.as_deref() == Ok("canary");
+    if !is_canary && action.as_deref() != Ok("campaign") {
         return;
     }
+    let expected_confirmation = if is_canary {
+        "two-route-4-run-canary"
+    } else {
+        "two-route-12-run-campaign"
+    };
+    let expected_runs = if is_canary { 4 } else { 12 };
+    let expected_model_turns = if is_canary { 16 } else { 48 };
+    let expected_web_tool_calls = if is_canary { 12 } else { 36 };
+    // The standalone evaluation subprocess does not traverse the desktop
+    // bootstrap that normally installs a rustls provider. Explicitly select
+    // the crate's pinned ring provider before any real HTTPS client exists.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let source = std::env::var_os("IRIS_AGENT_EVAL_SOURCE_DB")
         .map(std::path::PathBuf::from)
         .expect("live_campaign_source_required");
@@ -5108,8 +5207,13 @@ async fn live_campaign_command_entrypoint_runs_two_explicit_routes_when_requeste
     );
     assert_eq!(
         std::env::var("IRIS_AGENT_EVAL_COST_CONFIRMATION").as_deref(),
-        Ok("two-route-12-run-campaign"),
+        Ok(expected_confirmation),
         "live_campaign_cost_confirmation_required"
+    );
+    assert_eq!(
+        std::env::var("IRIS_AGENT_EVAL_LIVE_RUN_COUNT").as_deref(),
+        Ok(expected_runs.to_string().as_str()),
+        "live_campaign_run_count_required"
     );
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -5147,7 +5251,11 @@ async fn live_campaign_command_entrypoint_runs_two_explicit_routes_when_requeste
     let first_prepared = super::agent_capacity_eval::prepare_approved_live_pilot(
         &mut first,
         Some(first_approval.token()),
-        Some(LiveCostConfirmation::TwoRouteCampaign),
+        Some(if is_canary {
+            LiveCostConfirmation::TwoRouteCanary
+        } else {
+            LiveCostConfirmation::TwoRouteCampaign
+        }),
         now,
         &LivePilotCallProbe::default(),
     )
@@ -5155,18 +5263,30 @@ async fn live_campaign_command_entrypoint_runs_two_explicit_routes_when_requeste
     let second_prepared = super::agent_capacity_eval::prepare_approved_live_pilot(
         &mut second,
         Some(second_approval.token()),
-        Some(LiveCostConfirmation::TwoRouteCampaign),
+        Some(if is_canary {
+            LiveCostConfirmation::TwoRouteCanary
+        } else {
+            LiveCostConfirmation::TwoRouteCampaign
+        }),
         now,
         &LivePilotCallProbe::default(),
     )
     .expect("second prepared route");
-    let [first_result, second_result] =
+    let [first_result, second_result] = if is_canary {
+        super::agent_capacity_eval::run_live_trace_canary_with_prepared([
+            &first_prepared,
+            &second_prepared,
+        ])
+        .await
+        .expect("bounded live canary")
+    } else {
         super::agent_capacity_eval::run_live_trace_campaign_with_prepared([
             &first_prepared,
             &second_prepared,
         ])
         .await
-        .expect("bounded live campaign");
+        .expect("bounded live campaign")
+    };
     let campaign_id =
         super::agent_capacity_eval::random_live_token("campaign-", 32).expect("campaign identity");
     let total_model_turns = first_result
@@ -5182,16 +5302,26 @@ async fn live_campaign_command_entrypoint_runs_two_explicit_routes_when_requeste
         .map(|case| case.telemetry.tool_calls)
         .sum();
     let budget = super::agent_capacity_eval::LiveCampaignBudget {
-        max_runs: 12,
-        max_model_turns: 48,
-        max_web_tool_calls: 36,
-        observed_runs: 12,
+        max_runs: expected_runs,
+        max_model_turns: expected_model_turns,
+        max_web_tool_calls: expected_web_tool_calls,
+        observed_runs: expected_runs,
         observed_model_turns: total_model_turns,
         observed_web_tool_calls: total_web_tool_calls,
     };
     let target = workspace.join("target/agent-eval");
-    let first_packet_path = target.join(format!("live-review-{session_id}-route-a.json"));
-    let second_packet_path = target.join(format!("live-review-{session_id}-route-b.json"));
+    let packet_prefix = if is_canary {
+        "live-canary-review"
+    } else {
+        "live-review"
+    };
+    let output_prefix = if is_canary {
+        "live-canary"
+    } else {
+        "live-pilot"
+    };
+    let first_packet_path = target.join(format!("{packet_prefix}-{session_id}-route-a.json"));
+    let second_packet_path = target.join(format!("{packet_prefix}-{session_id}-route-b.json"));
     let first_packet = super::agent_capacity_eval::live_review_packet_from_pilot(
         &first_result,
         campaign_id.clone(),
@@ -5224,8 +5354,8 @@ async fn live_campaign_command_entrypoint_runs_two_explicit_routes_when_requeste
         second_packet_hash,
         budget,
     );
-    let first_output = target.join(format!("live-pilot-{session_id}-route-a.json"));
-    let second_output = target.join(format!("live-pilot-{session_id}-route-b.json"));
+    let first_output = target.join(format!("{output_prefix}-{session_id}-route-a.json"));
+    let second_output = target.join(format!("{output_prefix}-{session_id}-route-b.json"));
     let first_write = super::agent_capacity_eval::write_attested_live_trace_result(
         &first_output,
         &first_trace,

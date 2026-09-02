@@ -29,6 +29,10 @@ const CHILD_PROVIDER_SCOPE_SEPARATOR: &str = "::child-provider-scope::";
 /// output. Twelve compact evidence excerpts need materially more room than a
 /// normal tool response, but the budget remains bounded per tool turn.
 pub(crate) const MAX_WEB_TOOL_RESULT_CHARS: usize = 32_000;
+/// Conversation compaction is auxiliary work inside the current Run. Keep its
+/// completion envelope small so it cannot consume the answer turn's output
+/// allowance.
+const MAX_MEMORY_COMPACTION_OUTPUT_TOKENS: u32 = 1_024;
 
 pub(crate) fn scoped_child_provider_run_id(parent_run_id: &str, child_id: &str) -> String {
     format!("{parent_run_id}{CHILD_PROVIDER_SCOPE_SEPARATOR}{child_id}")
@@ -130,6 +134,16 @@ pub(crate) struct AgentToolLoopUsage {
     pub(crate) total_tokens: u32,
 }
 
+/// A Host-executed minimum observation for a WebRequired Run. It deliberately
+/// carries only the compact, model-visible observation and counted dispatches;
+/// it is never encoded as an assistant tool call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequiredWebBootstrapObservation {
+    pub(crate) tool_calls: u32,
+    pub(crate) network_tool_calls: u32,
+    pub(crate) observation: String,
+}
+
 /// Per-model-turn limits that the provider must forward into `GatewayRequest`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AgentModelTurnBudget {
@@ -159,6 +173,21 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
         budget: AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>>;
+
+    /// Record the first concrete tool dispatch for this provider continuation.
+    /// A model merely proposing a call does not make a cross-provider retry
+    /// unsafe: the Host may still reject or defer that proposal before any
+    /// external action or canonical tool transcript exists.
+    fn on_tool_call_dispatched(&self, _run_id: &str) -> AppResult<()> {
+        Ok(())
+    }
+
+    /// Discard a response that proposed only invalid or deferred actions.
+    /// Implementations with provider-private continuations must not retain a
+    /// continuation that has no matching assistant/tool exchange.
+    fn on_tool_proposals_not_dispatched(&self, _run_id: &str) -> AppResult<()> {
+        Ok(())
+    }
 }
 
 /// Run-bound side of a tool loop.
@@ -170,6 +199,39 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         call: &'a ToolCall,
         step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>>;
+
+    /// Perform the bounded initial observation required by a CurrentRunWeb
+    /// contract. Default executors do not own a Web implementation.
+    fn bootstrap_required_web_observation<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _remaining_tool_calls: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<Option<RequiredWebBootstrapObservation>>> + Send + 'a>>
+    {
+        Box::pin(async { Ok(None) })
+    }
+
+    /// Request one bounded no-tool compression turn for the durable
+    /// conversation summary. The default keeps non-normal executors free of
+    /// session-memory concerns.
+    fn conversation_memory_compaction_request(
+        &self,
+    ) -> AppResult<
+        Option<crate::ai_runtime::conversation_memory::ConversationMemoryCompactionRequest>,
+    > {
+        Ok(None)
+    }
+
+    /// Apply the model compression output, or its deterministic fallback.
+    /// Failure here is intentionally non-fatal: compaction must never block
+    /// the active user Run.
+    fn apply_conversation_memory_compaction(
+        &self,
+        _request: &crate::ai_runtime::conversation_memory::ConversationMemoryCompactionRequest,
+        _output: Option<&str>,
+    ) -> AppResult<()> {
+        Ok(())
+    }
 
     /// Persist one complete confirmation-bound change set. The default rejects
     /// the request so test/read-only executors cannot accidentally gain write
@@ -241,8 +303,16 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     ) -> AppResult<bool> {
         Ok(false)
     }
+
+    /// Safe Host-authored fallback when a strict evidence contract cannot be
+    /// completed. It is never model prose and therefore never gets cited.
+    fn evidence_limited_response(&self) -> String {
+        EVIDENCE_LIMITED_RESPONSE.to_string()
+    }
 }
 
+pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIX: &str =
+    "本轮未取得足够的可核验来源正文来可靠支持具体结论";
 pub(crate) const EVIDENCE_LIMITED_RESPONSE: &str =
     "本轮未取得足够的可核验来源正文来可靠支持具体结论，因此不展示未经核实的答复。你可以稍后重试，或提供可核验的来源。";
 
@@ -432,7 +502,7 @@ impl AgentToolLoop {
                 self.max_runtime_tool_calls,
             ),
         );
-        let mut model_turns = 0;
+        let mut model_turns = 0_u32;
         let mut tool_calls = 0;
         let mut prompt_tokens = 0_u32;
         let mut completion_tokens = 0_u32;
@@ -462,6 +532,131 @@ impl AgentToolLoop {
             .collect::<Vec<_>>();
         let requires_factual_completion =
             executor.requires_web_evidence() || executor.requires_external_evidence();
+
+        if model_turns.saturating_add(1) < self.max_model_turns {
+            if let Some(compaction) = executor.conversation_memory_compaction_request()? {
+                let compaction_messages = vec![
+                    LlmMessage {
+                        role: MessageRole::System,
+                        content: "You are compressing durable conversation memory. Return only the requested JSON; do not answer the user or call tools.".into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    },
+                    LlmMessage {
+                        role: MessageRole::User,
+                        content: compaction.prompt().to_string().into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    },
+                ];
+                let compaction_budget = AgentModelTurnBudget {
+                    max_prompt_tokens: self.turn_budget.max_prompt_tokens,
+                    max_completion_tokens: self
+                        .turn_budget
+                        .max_completion_tokens
+                        .map(|limit| limit.min(MAX_MEMORY_COMPACTION_OUTPUT_TOKENS)),
+                    max_turn_output_tokens: self
+                        .turn_budget
+                        .max_turn_output_tokens
+                        .map(|limit| limit.min(MAX_MEMORY_COMPACTION_OUTPUT_TOKENS)),
+                };
+                enforce_prompt_budget(&compaction_messages, &[], compaction_budget)?;
+                let mut silent_observer = SilentStreamObserver;
+                model_turns = model_turns.saturating_add(1);
+                if let Some(usage) = usage.as_deref_mut() {
+                    usage.model_turns = model_turns;
+                }
+                let started = std::time::Instant::now();
+                let result = provider
+                    .answer_turn(
+                        provider_run_id,
+                        &compaction_messages,
+                        &[],
+                        compaction_budget,
+                        &mut silent_observer,
+                    )
+                    .await;
+                let output = result
+                    .as_ref()
+                    .ok()
+                    .filter(|response| response.tool_calls.is_empty())
+                    .and_then(|response| response.content.as_deref());
+                if let Err(error) =
+                    executor.apply_conversation_memory_compaction(&compaction, output)
+                {
+                    tracing::warn!(
+                        run_id,
+                        reason = "conversation_memory_compaction_persist_failed",
+                        error = %error,
+                        "conversation memory compaction was skipped"
+                    );
+                }
+                if let Ok(response) = result {
+                    let (turn_prompt, turn_completion, turn_total) =
+                        resolved_turn_usage(&response, &compaction_messages, &[]);
+                    prompt_tokens = prompt_tokens.saturating_add(turn_prompt);
+                    completion_tokens = completion_tokens.saturating_add(turn_completion);
+                    total_tokens = total_tokens.saturating_add(turn_total);
+                    if let Some(usage) = usage.as_deref_mut() {
+                        usage.prompt_tokens = prompt_tokens;
+                        usage.completion_tokens = completion_tokens;
+                        usage.total_tokens = total_tokens;
+                    }
+                    if let Some(telemetry) = telemetry {
+                        telemetry.record_model_turn(&response, started);
+                    }
+                }
+            }
+        }
+
+        if executor.requires_web_evidence() {
+            let remaining = self.max_tool_calls.saturating_sub(tool_calls);
+            if let Some(bootstrap) = executor
+                .bootstrap_required_web_observation(run_id, remaining)
+                .await?
+            {
+                let network_used = tool_calls_by_class
+                    .get(&ToolBudgetClass::Network)
+                    .copied()
+                    .unwrap_or_default();
+                if bootstrap.tool_calls > remaining
+                    || bootstrap.network_tool_calls > bootstrap.tool_calls
+                    || network_used.saturating_add(bootstrap.network_tool_calls)
+                        > self.tool_call_limit(ToolBudgetClass::Network)
+                {
+                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+                }
+                tool_calls = tool_calls.saturating_add(bootstrap.tool_calls);
+                *tool_calls_by_class
+                    .entry(ToolBudgetClass::Network)
+                    .or_default() = network_used.saturating_add(bootstrap.network_tool_calls);
+                if let Some(usage) = usage.as_deref_mut() {
+                    usage.tool_calls = tool_calls;
+                }
+                if let Some(telemetry) = telemetry {
+                    for _ in 0..bootstrap.tool_calls {
+                        telemetry.record_executed_tool_call();
+                    }
+                }
+                web_search_attempted_without_evidence = true;
+                let position = messages
+                    .iter()
+                    .rposition(|message| matches!(message.role, MessageRole::User))
+                    .unwrap_or(messages.len());
+                messages.insert(
+                    position,
+                    LlmMessage {
+                        role: MessageRole::System,
+                        content: bootstrap.observation.into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    },
+                );
+            }
+        }
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
@@ -595,6 +790,7 @@ impl AgentToolLoop {
                         || model_turns >= self.max_model_turns
                     {
                         return Ok(evidence_limited_outcome(
+                            executor.evidence_limited_response(),
                             model_turns,
                             tool_calls,
                             prompt_tokens,
@@ -619,6 +815,7 @@ impl AgentToolLoop {
                 {
                     if missing_evidence_repair_used || model_turns >= self.max_model_turns {
                         return Ok(evidence_limited_outcome(
+                            executor.evidence_limited_response(),
                             model_turns,
                             tool_calls,
                             prompt_tokens,
@@ -688,6 +885,7 @@ impl AgentToolLoop {
                 {
                     if source_binding_repair_used || model_turns >= self.max_model_turns {
                         return Ok(evidence_limited_outcome(
+                            executor.evidence_limited_response(),
                             model_turns,
                             tool_calls,
                             prompt_tokens,
@@ -743,6 +941,7 @@ impl AgentToolLoop {
             if single_final_call {
                 if final_submission_repair_used || model_turns >= self.max_model_turns {
                     return Ok(evidence_limited_outcome(
+                        executor.evidence_limited_response(),
                         model_turns,
                         tool_calls,
                         prompt_tokens,
@@ -805,11 +1004,42 @@ impl AgentToolLoop {
                 return Err(AppError::msg(CONFIRMATION_PENDING_ERROR));
             }
 
-            observer.on_tools_starting()?;
-            messages.push(assistant_tool_message(&response));
-            let mut round_made_progress = false;
             let mut discovery_calls_this_turn = 0_u32;
-            for call in &response.tool_calls {
+            let proposal_dispositions = plan_tool_proposals(
+                &response.tool_calls,
+                &active_allowed_tools,
+                discovery_calls_this_turn,
+                tool_calls,
+                &tool_calls_by_class,
+                &successful_fingerprints,
+                &fingerprints,
+                self,
+            );
+            if proposal_dispositions
+                .iter()
+                .all(|(_, disposition)| *disposition != ToolCallDisposition::Dispatched)
+            {
+                provider.on_tool_proposals_not_dispatched(provider_run_id)?;
+                messages.push(tool_proposal_feedback_instruction(&proposal_dispositions));
+                continue;
+            }
+
+            let mut dispatched_response = response.clone();
+            dispatched_response.tool_calls = proposal_dispositions
+                .iter()
+                .filter_map(|(call, disposition)| {
+                    (*disposition == ToolCallDisposition::Dispatched).then_some((*call).clone())
+                })
+                .collect();
+            let non_dispatched = proposal_dispositions
+                .iter()
+                .filter(|(_, disposition)| *disposition != ToolCallDisposition::Dispatched)
+                .copied()
+                .collect::<Vec<_>>();
+            observer.on_tools_starting()?;
+            messages.push(assistant_tool_message(&dispatched_response));
+            let mut round_made_progress = false;
+            for call in &dispatched_response.tool_calls {
                 ensure_run_not_cancelled(run_id)?;
                 let valid_arguments = valid_call_arguments(call);
                 let executor_owns_invalid_arguments =
@@ -857,6 +1087,7 @@ impl AgentToolLoop {
                                 if let Some(telemetry) = telemetry {
                                     telemetry.record_executed_tool_call();
                                 }
+                                provider.on_tool_call_dispatched(provider_run_id)?;
                                 let result = executor.execute(run_id, call, tool_calls).await?;
                                 if matches!(
                                     call.function.name.as_str(),
@@ -893,6 +1124,9 @@ impl AgentToolLoop {
                 }
                 messages.push(message);
             }
+            if !non_dispatched.is_empty() {
+                messages.push(tool_proposal_feedback_instruction(&non_dispatched));
+            }
             observer.on_tools_finished()?;
             if round_made_progress {
                 no_progress_rounds = 0;
@@ -923,6 +1157,109 @@ impl AgentToolLoop {
         } else {
             "agent_run_tool_loop_limit"
         }))
+    }
+}
+
+/// The Host's pre-dispatch classification is deliberately narrow. It does not
+/// replace executor authorization; it only prevents a completely rejected or
+/// deferred model proposal from becoming a fake provider-bound tool turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolCallDisposition {
+    Rejected,
+    Deferred,
+    Dispatched,
+}
+
+struct SilentStreamObserver;
+
+impl StreamEventObserver for SilentStreamObserver {
+    fn observe(
+        &mut self,
+        _event: &crate::ai_runtime::model_gateway::StreamEvent,
+        _token_index: u32,
+    ) -> AppResult<()> {
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_tool_proposals<'a>(
+    calls: &'a [ToolCall],
+    active_allowed_tools: &HashSet<&str>,
+    discovery_calls_this_turn: u32,
+    tool_calls: u32,
+    tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
+    successful_fingerprints: &HashSet<String>,
+    fingerprints: &HashMap<String, u32>,
+    loop_policy: &AgentToolLoop,
+) -> Vec<(&'a ToolCall, ToolCallDisposition)> {
+    let mut planned_discovery = discovery_calls_this_turn;
+    let mut planned_total = tool_calls;
+    let mut planned_by_class = tool_calls_by_class.clone();
+    let mut planned_fingerprints = fingerprints.clone();
+    calls
+        .iter()
+        .map(|call| {
+            let executor_owns_invalid_arguments =
+                call.function.name == "spawn_subagent" && valid_call_identity(call);
+            if !active_allowed_tools.contains(call.function.name.as_str())
+                || (!valid_call_arguments(call) && !executor_owns_invalid_arguments)
+                || planned_total >= loop_policy.max_tool_calls
+            {
+                return (call, ToolCallDisposition::Rejected);
+            }
+            let fingerprint = tool_fingerprint(call);
+            if successful_fingerprints.contains(&fingerprint) {
+                return (call, ToolCallDisposition::Rejected);
+            }
+            if is_discovery_call(call) && planned_discovery >= MAX_DISCOVERY_CALLS_PER_MODEL_TURN {
+                return (call, ToolCallDisposition::Deferred);
+            }
+            let count = planned_fingerprints.entry(fingerprint).or_insert(0);
+            *count = count.saturating_add(1);
+            if *count > MAX_REPEAT_CALLS {
+                return (call, ToolCallDisposition::Rejected);
+            }
+            let class = catalog_tool_budget_class(&call.function.name)
+                .unwrap_or(ToolBudgetClass::ExternalRead);
+            let used = planned_by_class.entry(class).or_default();
+            if *used >= loop_policy.tool_call_limit(class) {
+                return (call, ToolCallDisposition::Rejected);
+            }
+            if is_discovery_call(call) {
+                planned_discovery = planned_discovery.saturating_add(1);
+            }
+            planned_total = planned_total.saturating_add(1);
+            *used = used.saturating_add(1);
+            (call, ToolCallDisposition::Dispatched)
+        })
+        .collect()
+}
+
+fn tool_proposal_feedback_instruction(
+    proposals: &[(&ToolCall, ToolCallDisposition)],
+) -> LlmMessage {
+    let feedback = proposals
+        .iter()
+        .map(|(call, disposition)| {
+            let reason = match disposition {
+                ToolCallDisposition::Rejected => "rejected_before_dispatch",
+                ToolCallDisposition::Deferred => "deferred_for_feedback",
+                ToolCallDisposition::Dispatched => "dispatched",
+            };
+            format!("{}:{reason}", call.function.name)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    LlmMessage {
+        role: MessageRole::System,
+        content: format!(
+            "The previous tool proposal was not dispatched by the Host ({feedback}). It created no tool result and no external action. Correct the request using the exposed surface or answer from existing observations; do not claim that it ran."
+        )
+        .into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
     }
 }
 
@@ -1082,6 +1419,7 @@ fn source_binding_repair_instruction() -> LlmMessage {
 }
 
 fn evidence_limited_outcome(
+    content: String,
     model_turns: u32,
     tool_calls: u32,
     prompt_tokens: u32,
@@ -1089,7 +1427,7 @@ fn evidence_limited_outcome(
     total_tokens: u32,
 ) -> AgentToolLoopOutcome {
     AgentToolLoopOutcome {
-        content: EVIDENCE_LIMITED_RESPONSE.to_string(),
+        content,
         finish_reason: "evidence_limited".to_string(),
         final_submission: None,
         model_turns,
@@ -1101,7 +1439,9 @@ fn evidence_limited_outcome(
 }
 
 pub(crate) fn is_evidence_limited_response(content: &str) -> bool {
-    content.trim() == EVIDENCE_LIMITED_RESPONSE
+    content
+        .trim_start()
+        .starts_with(EVIDENCE_LIMITED_RESPONSE_PREFIX)
 }
 
 fn enforce_prompt_budget(

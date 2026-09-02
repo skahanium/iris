@@ -485,12 +485,6 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                     AppError::run(SafeRunErrorCode::ContinuationLockFailed)
                                 })?
                                 .insert(provider_state_key.to_string(), selected_index);
-                            self.tool_bound_runs
-                                .lock()
-                                .map_err(|_| {
-                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
-                                })?
-                                .insert(provider_state_key.to_string());
                         }
                         return Ok(response);
                     }
@@ -623,5 +617,29 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                 }
             }
         })
+    }
+
+    fn on_tool_call_dispatched(&self, run_id: &str) -> AppResult<()> {
+        self.tool_bound_runs
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .insert(run_id.to_string());
+        Ok(())
+    }
+
+    fn on_tool_proposals_not_dispatched(&self, run_id: &str) -> AppResult<()> {
+        self.continuations
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .remove(run_id);
+        self.selected_indices
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .remove(run_id);
+        self.tool_bound_runs
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .remove(run_id);
+        Ok(())
     }
 }

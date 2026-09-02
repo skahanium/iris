@@ -2457,61 +2457,37 @@ async fn discover_provider_tools_with_config_hash_and_observation(
 fn observe_provider_discovery_result(
     db: &Database,
     provider_id: &str,
-    elapsed: Duration,
+    _elapsed: Duration,
     result: &AppResult<McpStdioDiscovery>,
     record_observation: bool,
 ) -> AppResult<()> {
     if !record_observation {
         return Ok(());
     }
-    match result {
-        Ok(discovery) => {
-            let tool_schema_hash = {
-                let tools = discovery
-                    .tools
-                    .iter()
-                    .map(|tool| {
-                        serde_json::json!({
-                            "name": tool.name,
-                            "inputSchema": tool.input_schema,
-                            "outputSchema": tool.output_schema,
-                        })
+    if let Ok(discovery) = result {
+        let tool_schema_hash = {
+            let tools = discovery
+                .tools
+                .iter()
+                .map(|tool| {
+                    serde_json::json!({
+                        "name": tool.name,
+                        "inputSchema": tool.input_schema,
+                        "outputSchema": tool.output_schema,
                     })
-                    .collect::<Vec<_>>();
-                let digest = sha2::Sha256::digest(serde_json::to_string(&tools)?.as_bytes());
-                hex::encode(&digest[..12])
-            };
-            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_discovery(
-                db,
-                provider_id,
-                &discovery.protocol_version,
-                &discovery.server_name,
-                discovery.server_version.as_deref(),
-                &tool_schema_hash,
-            );
-            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
-                db,
-                provider_id,
-                true,
-                elapsed.as_millis() as u64,
-                None,
-            );
-        }
-        Err(error) => {
-            let code = error
-                .to_string()
-                .split(':')
-                .next()
-                .unwrap_or("unavailable")
-                .to_string();
-            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
-                db,
-                provider_id,
-                false,
-                elapsed.as_millis() as u64,
-                Some(&code),
-            );
-        }
+                })
+                .collect::<Vec<_>>();
+            let digest = sha2::Sha256::digest(serde_json::to_string(&tools)?.as_bytes());
+            hex::encode(&digest[..12])
+        };
+        let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_discovery(
+            db,
+            provider_id,
+            &discovery.protocol_version,
+            &discovery.server_name,
+            discovery.server_version.as_deref(),
+            &tool_schema_hash,
+        );
     }
     Ok(())
 }
@@ -3460,7 +3436,8 @@ mod tests {
         assert!(
             crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
                 &db,
-                "diagnostic-provider"
+                "diagnostic-provider",
+                "web.search"
             )
             .unwrap()
             .is_none()

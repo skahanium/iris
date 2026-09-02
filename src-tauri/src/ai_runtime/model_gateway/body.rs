@@ -364,6 +364,14 @@ fn build_openai_responses_body_inner(request: &GatewayRequest) -> serde_json::Va
 
 fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) {
     let reasoning = effective_reasoning_request(request);
+    // ProviderSpecificStatic currently denotes the MiMo-compatible protocol.
+    // Its documented custom-tool turns require thinking to be disabled, while
+    // ordinary chats retain the user's configured reasoning preference.
+    let provider_specific_tool_turn =
+        reasoning.adapter == ReasoningAdapter::ProviderSpecificStatic && !request.tools.is_empty();
+    if provider_specific_tool_turn {
+        body["thinking"] = serde_json::json!({ "type": "disabled" });
+    }
     // MiniMax exposes a stable private channel through `reasoning_split`.
     // Only M3 accepts `thinking.type`; M2.x always thinks and ignores the
     // disable switch, so no unsupported control is sent for that family.
@@ -397,7 +405,9 @@ fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) 
         }
         ReasoningAdapter::QwenChatTemplate => {}
         ReasoningAdapter::ProviderSpecificStatic => {
-            body["thinking"] = serde_json::json!({ "type": "enabled" })
+            if !provider_specific_tool_turn {
+                body["thinking"] = serde_json::json!({ "type": "enabled" });
+            }
         }
         ReasoningAdapter::OpenAiResponses => {}
         ReasoningAdapter::GeminiThinkingConfig => {
@@ -426,7 +436,9 @@ fn reasoning_tool_continuation_adapter(request: &GatewayRequest) -> ReasoningAda
         && request.provider.endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
         && matches!(
             reasoning.adapter,
-            ReasoningAdapter::DeepSeekReasoningContent | ReasoningAdapter::MiniMaxReasoningDetails
+            ReasoningAdapter::DeepSeekReasoningContent
+                | ReasoningAdapter::MiniMaxReasoningDetails
+                | ReasoningAdapter::ProviderSpecificStatic
         )
     {
         reasoning.adapter

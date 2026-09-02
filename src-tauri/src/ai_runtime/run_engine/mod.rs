@@ -812,7 +812,7 @@ impl RunEngine {
         // finish-reason/integrity recovery path a second time.
         let evidence_limited = is_evidence_limited_response(&outcome.content);
         let mut content = if evidence_limited {
-            EVIDENCE_LIMITED_RESPONSE.to_string()
+            outcome.content.clone()
         } else {
             match validated_final_model_answer_with_telemetry(
                 &outcome.content,

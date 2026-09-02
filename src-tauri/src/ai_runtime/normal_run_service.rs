@@ -778,6 +778,6 @@ fn dispatch_failure_code(error: &AppError) -> SafeRunErrorCode {
     if error.to_string() == "agent_run_no_capable_model" {
         SafeRunErrorCode::NoCapableModel
     } else {
-        SafeRunErrorCode::ProviderUnavailable
+        SafeRunErrorCode::from_app_error(error)
     }
 }

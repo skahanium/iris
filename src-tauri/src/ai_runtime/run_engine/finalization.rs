@@ -562,18 +562,23 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
 /// Map transport diagnostics to a small safe public vocabulary. The raw provider
 /// error is deliberately neither persisted into the Run event nor shown to the user.
 pub(super) fn classify_provider_failure(error: &AppError) -> SafeRunErrorCode {
-    let message = error.to_string().to_ascii_lowercase();
-    if message.contains("agent_run_event_delivery_failed") {
-        SafeRunErrorCode::EventDeliveryFailed
-    } else if message.contains("first_response_timeout")
-        || message.contains("stream_idle_timeout")
-        || message.contains("timed out")
-        || message.contains("timeout")
-        || message.contains("deadline")
-    {
-        SafeRunErrorCode::ProviderTimeout
-    } else {
-        SafeRunErrorCode::ProviderUnavailable
+    match error {
+        AppError::Run(code) => *code,
+        AppError::Provider {
+            kind: crate::error::ProviderErrorKind::Timeout,
+            ..
+        } => SafeRunErrorCode::ProviderTimeout,
+        AppError::Provider { .. } | AppError::Http(_) => SafeRunErrorCode::ProviderUnavailable,
+        AppError::Message(message) if message == "agent_run_event_delivery_failed" => {
+            SafeRunErrorCode::EventDeliveryFailed
+        }
+        AppError::Message(message)
+            if message.contains("first_response_timeout")
+                || message.contains("stream_idle_timeout") =>
+        {
+            SafeRunErrorCode::ProviderTimeout
+        }
+        _ => SafeRunErrorCode::PersistenceFailed,
     }
 }
 
@@ -651,8 +656,9 @@ mod apply_notice_tests {
     use std::collections::HashSet;
 
     use super::{
-        apply_required_web_degradation_notice, classify_tool_loop_failure, emit_run_terminal,
-        safe_failure_message, validate_web_urls_against_allowed, validated_final_model_answer,
+        apply_required_web_degradation_notice, classify_provider_failure,
+        classify_tool_loop_failure, emit_run_terminal, safe_failure_message,
+        validate_web_urls_against_allowed, validated_final_model_answer,
         validated_final_model_answer_with_telemetry,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
@@ -662,7 +668,7 @@ mod apply_notice_tests {
     };
     use crate::ai_runtime::run_engine::observer::NoopRunEventSink;
     use crate::ai_runtime::run_intake::RunIntake;
-    use crate::error::AppError;
+    use crate::error::{AppError, ProviderErrorKind};
     use crate::storage::db::Database;
 
     fn dummy_session() -> AssistantSessionRef {
@@ -832,6 +838,21 @@ mod apply_notice_tests {
         assert_ne!(
             safe_failure_message(code),
             safe_failure_message(SafeRunErrorCode::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn only_structured_provider_failures_use_provider_copy() {
+        assert_eq!(
+            classify_provider_failure(&AppError::provider(
+                ProviderErrorKind::TemporarilyUnavailable,
+                "upstream overloaded",
+            )),
+            SafeRunErrorCode::ProviderUnavailable
+        );
+        assert_eq!(
+            classify_provider_failure(&AppError::msg("internal_run_projection_failed")),
+            SafeRunErrorCode::PersistenceFailed
         );
     }
 

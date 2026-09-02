@@ -67,6 +67,7 @@ const allowedControlKeys = new Set([
   "IRIS_AGENT_EVAL_SESSION",
   "IRIS_AGENT_EVAL_APPROVED_PROFILE",
   "IRIS_AGENT_EVAL_COST_CONFIRMATION",
+  "IRIS_AGENT_EVAL_LIVE_RUN_COUNT",
   "IRIS_AGENT_EVAL_CREDENTIAL_PROBE",
   "IRIS_AGENT_EVAL_DIRECT_HTTPS",
   "IRIS_AGENT_EVAL_MODEL_ALLOWLIST",
@@ -303,7 +304,12 @@ function runLive() {
       process.exit(2);
     }
   };
-  if (action === "campaign") {
+  if (action === "campaign" || action === "canary") {
+    const isCanary = action === "canary";
+    const runCount = isCanary ? 4 : 12;
+    const confirmation = isCanary
+      ? "two-route-4-run-canary"
+      : "two-route-12-run-campaign";
     const session = argumentValue("--session");
     const approvedProfiles = argumentValue("--approve");
     const costConfirmation = argumentValue("--confirm-cost");
@@ -321,17 +327,27 @@ function runLive() {
       console.error("agent_eval_live_requires_two_distinct_approved_profiles");
       process.exit(2);
     }
-    if (costConfirmation !== "two-route-12-run-campaign") {
-      console.error("agent_eval_live_campaign_requires_user_cost_checkpoint");
+    if (costConfirmation !== confirmation) {
+      console.error(
+        isCanary
+          ? "agent_eval_live_canary_requires_user_cost_checkpoint"
+          : "agent_eval_live_campaign_requires_user_cost_checkpoint",
+      );
       process.exit(2);
     }
     const resolvedPaths = resolvePathsOrExit();
     const outputDirectory = path.join(workspaceRoot, "target", "agent-eval");
     const outputs = ["a", "b"].map((route) =>
-      path.join(outputDirectory, `live-pilot-${session}-route-${route}.json`),
+      path.join(
+        outputDirectory,
+        `${isCanary ? "live-canary" : "live-pilot"}-${session}-route-${route}.json`,
+      ),
     );
     const packets = ["a", "b"].map((route) =>
-      path.join(outputDirectory, `live-review-${session}-route-${route}.json`),
+      path.join(
+        outputDirectory,
+        `${isCanary ? "live-canary-review" : "live-review"}-${session}-route-${route}.json`,
+      ),
     );
     for (const output of [...outputs, ...packets]) {
       if (existsSync(output) || existsSync(`${output}.attestation.json`)) {
@@ -342,11 +358,12 @@ function runLive() {
     const result = runCargoEntrypoint(
       "ai_runtime::agent_capacity_eval_tests::live_campaign_command_entrypoint_runs_two_explicit_routes_when_requested",
       {
-        IRIS_AGENT_EVAL_LIVE_ACTION: "campaign",
+        IRIS_AGENT_EVAL_LIVE_ACTION: action,
         IRIS_AGENT_EVAL_SOURCE_DB: resolvedPaths.sourceDatabase,
         IRIS_AGENT_EVAL_SESSION: session,
         IRIS_AGENT_EVAL_APPROVED_PROFILE: approvedProfiles,
         IRIS_AGENT_EVAL_COST_CONFIRMATION: costConfirmation,
+        IRIS_AGENT_EVAL_LIVE_RUN_COUNT: String(runCount),
         ...(modelAllowlist
           ? { IRIS_AGENT_EVAL_MODEL_ALLOWLIST: modelAllowlist }
           : {}),
@@ -355,12 +372,20 @@ function runLive() {
         buildLivePilotChildEnvironment(source, controls, resolvedPaths),
     );
     if (result.error) {
-      console.error("agent_eval_live_campaign_runner_failed");
+      console.error(
+        isCanary
+          ? "agent_eval_live_canary_runner_failed"
+          : "agent_eval_live_campaign_runner_failed",
+      );
       process.exit(1);
     }
     for (const output of outputs) {
       if (!existsSync(output)) {
-        console.error("agent_eval_live_campaign_summary_missing");
+        console.error(
+          isCanary
+            ? "agent_eval_live_canary_summary_missing"
+            : "agent_eval_live_campaign_summary_missing",
+        );
         process.exit(result.status ?? 1);
       }
       console.log(`agent_eval_summary=${path.relative(workspaceRoot, output)}`);
@@ -786,7 +811,7 @@ function main() {
   }
   if (mode !== "smoke" && mode !== "full") {
     console.error(
-      "usage: node scripts/agent-eval.mjs <smoke|full|gate|live preflight [--models model-a,model-b]|live campaign --session session-id --approve profile-a,profile-b --confirm-cost two-route-12-run-campaign [--models model-a,model-b]>",
+      "usage: node scripts/agent-eval.mjs <smoke|full|gate|live preflight [--models model-a,model-b]|live canary --session session-id --approve profile-a,profile-b --confirm-cost two-route-4-run-canary [--models model-a,model-b]|live campaign --session session-id --approve profile-a,profile-b --confirm-cost two-route-12-run-campaign [--models model-a,model-b]>",
     );
     process.exit(2);
   }

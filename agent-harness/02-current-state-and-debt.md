@@ -2,7 +2,7 @@
 
 > **文档状态**：现行
 > **文档类型**：当前事实审计
-> **事实基线**：2026-09-01，审计起点 `e30f47d1`
+> **事实基线**：2026-09-03，审计起点 `e30f47d1`
 
 > 本轮施工事实以 2026-09-01 工作树补充；未提交代码不得被当作已部署能力。
 
@@ -27,6 +27,7 @@
 10. INC-HR-006 回正后，生产仍暴露出五个相互关联的执行缺口：模型以 `urls-only` 调用重载 `web_search` 会被必填 `query` 拒绝；Broker 曾用同一 `max_search_results` 同时截断搜索候选和显式抓取 URL，导致关闭 fetch 内部发现时也把待读 URL 截成 0；普通时效事实被官方/双域名门槛过度阻断；现代限制回答在历史加载时会重新挂回整 Run 来源；确定性 full 报告未核对汇总计数，36/48 也可能以成功退出。该组问题记为 INC-HR-007。
 11. 旧 live v2 评测把 `404`/fixture 文本当作公开事实 oracle，并将每条路由平均切为 24 模型轮次/18 Web 调用；失败报告又可能在落盘前被拒绝。它既不能证明真实语义质量，也无法解释两条路由在同一总预算内的差异。该组问题记为 INC-HR-008。
 12. 2026-09-02 首次 v3 Campaign 又暴露了两个评测器出口缺陷：遥测把模型提出但未执行的 tool call 记为 Web 业务调用，误触发 `campaign_budget_exhausted`；顶层提前返回使两份 v3 报告未落盘。真实额度不重跑；该事故只用于本地回归，修复后须由下一次单独授权的 Campaign 重新校准。
+13. INC-HR-009 的生产复现说明“工具已授权”仍不等于“工具实际发生”：`WebRequired` 能被模型直接答复绕过；未派发的工具提议曾写入 canonical assistant/tool transcript 并锁定 Provider；fetch 的 8 秒整批预算与 20 秒单后端超时互相矛盾，且 search 成功会掩盖同 Provider fetch 连续失败；旧会话摘要仍是每字段 220 字的关键词摘录。它们共同造成无正文限制、错误的备用模型提示和长对话纠正丢失。
 
 这些不是搜索服务、某个模型或电影领域的单点问题。它们说明控制面、上下文投影、来源合同和验收报告没有同步收敛。
 
@@ -37,9 +38,13 @@
 - 历史摘要已保留显式目标、偏好、更正、完成与待办的可验证字段；1/20/50/100 轮压力正在替换固定文本样例。当前确定性结果只代表编排/安全/上下文合同，不代表真实模型回答质量。
 - `DomainExecutor` 与范文事实字符串门正在移除；通用材料投影保留来源隔离但不选择领域算法。
 - `AgentToolLoop` 每个模型回合至多执行 2 个独立发现调用，超出部分以 `deferred_for_feedback` 返回且不计失败；每批结果回到模型后才能继续依赖动作。
+- `CurrentRunWeb` 现在先在同一 executor、权限、网络预算、审计和 evidence ledger 内完成一次 Host 最低观察：原用户问题搜索，最多两个不同候选正文抓取。观察作为 system data 进入首个模型回合，不伪造 assistant tool-call；模型仍可在同一循环内改写查询、换源或停止。
+- 工具提议在 Host 预检后才成为执行：只有实际 `dispatched` 的调用消耗预算、写审计、进入 assistant/tool transcript 并绑定同 Provider 续轮；纯 rejected/deferred 提议只形成受控反馈，后续模型失败仍可按现有规则切换。
 - Web 发现每次最多返回 4 个候选、每 Run 最多保留 8 个；候选只含有界片段且不写 evidence。模型以当前 Run 候选 URL 发起精确读取、正文抓取成功后才登记为可引用来源。
 - 模型工具面已拆成 `web_search { query }` 与 `web_fetch { urls }` 两个单一职责动作；抓取传入 Broker 的搜索结果额度固定为 0，Broker 仍保留由独立 `max_fetches` 约束的显式 URL，不能在模型未观察结果时暗中重新发现。两者共享现有授权、network 预算、Broker 和冻结 Provider 顺序。普通时效事实以一份合格正文和精确引用为最低门槛；高风险、CitationCheck 或显式交叉核实才要求官方来源或两个独立域名。
 - MCP fetch 现在独立解析 transport 信封与一层 JSON 应用载荷；错误信封、URL 不匹配、空正文、标题/搜索包装均不登记 evidence。抓取按当前候选来源优先、再按冻结 `web.fetch` 顺序切换；全部失败时以可行动的 fetch 失败观察返回模型。
+- fetch 单候选限 5 秒、整批限 18 秒、外层工具调用限 20 秒；冻结 MCP 路由后仍有既有 native safe fetch 兜底。migration 073 只重建可再生的 `web_evidence_provider_health`，将 `web.search` 与 `web.fetch` 统计分开；runtime discovery 状态不再由业务成功/失败覆盖。
+- 会话仍只用既有四个 `conversation_summaries` 字段。摘要覆盖范围前移后，ToolLoop 最多执行一次无工具模型压缩（计入同一 8 次模型预算；字段最多 500 字、合计最多 1,500 字）；无效输出或 Provider 失败回退确定性提取，绝不阻断当前答复。
 - `CurrentRunWeb`、`CurrentRunExternal` 与结构化严格终局在验证绑定前密封正文；修复成功只发布一份最终正文，修复失败只发布无来源的“本轮未取得足够可核验来源正文”限制说明。`AnswerReset` 只保留历史事件兼容。
 - Provider 首次空响应、无可见输出的瞬态错误或畸形响应会在原路由重试一次，再切换具备同工具面的候选；一旦已有可见正文、工具调用或 continuation 就不跨 Provider 暗接。
 - 最近失败 Run 现在只向下一轮投影请求、终态、错误类别、模型/工具是否开始、尝试与切换计数等脱敏事实，不把失败草稿和旧来源当作证据。
@@ -49,6 +54,6 @@
 ## 不做的事
 
 - 不以领域 operation、MiniMax 名称、电影/天气关键词或城市表修补核心。
-- 不添加表、迁移、Provider、IPC 字段或第二套 Agent 状态机。
+- 不添加表、Provider、IPC 字段或第二套 Agent 状态机；migration 073 仅重建既有、可再生的 Provider 健康统计。
 - 不把确定性 mock、搜索成功、标题片段或来源存在夸大为逐句 NLI 事实验证或真实 Provider 质量。
 - 不自动重放历史失败 Run；事实查询与写入都必须以新的用户 Run 重新授权。

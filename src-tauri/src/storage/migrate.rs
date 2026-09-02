@@ -191,6 +191,10 @@ const MIGRATION_072_UP: &str =
     include_str!("../../migrations/072_agent_domain_capability_mappings.sql");
 const MIGRATION_072_DOWN: &str =
     include_str!("../../migrations/072_agent_domain_capability_mappings.down.sql");
+const MIGRATION_073_UP: &str =
+    include_str!("../../migrations/073_web_evidence_provider_health_capability.sql");
+const MIGRATION_073_DOWN: &str =
+    include_str!("../../migrations/073_web_evidence_provider_health_capability.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -714,6 +718,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_072_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "073_web_evidence_provider_health_capability",
+        MIGRATION_073_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -725,6 +735,11 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(
+        conn,
+        "073_web_evidence_provider_health_capability",
+        MIGRATION_073_DOWN,
+    );
     rollback_migration(
         conn,
         "072_agent_domain_capability_mappings",

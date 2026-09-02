@@ -2,7 +2,7 @@
 
 > **文档状态**：现行
 > **文档类型**：目标合同
-> **事实基线**：2026-09-01，审计起点 `e30f47d1`
+> **事实基线**：2026-09-03，审计起点 `e30f47d1`
 
 ## 1. 唯一多轮循环
 
@@ -49,6 +49,8 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 每个模型轮次都会看到同一种简洁循环状态：当前目标和最新纠正、必要历史与有界摘要、授权工具、已获得观察、上一轮机械反馈，以及模型/工具/分类剩余额度。预算是上限而非目标；Harness 不要求输出思维链或完整计划对象。
 
+`WebRequired` 另有一个最小、确定性的起步观察：Host 在首个回答回合前用用户原文执行一次搜索，并抓取最多两个不同候选 URL。它完全复用本循环的 executor、授权、预算、审计、Broker 与 evidence ledger，结果以 Host Observation 注入上下文；它不伪造 assistant 工具调用，也不关闭后续 Web 工具面。`WebPreferred` 和 Direct 没有该动作。
+
 ## 4. 有界行动批次
 
 - 一个模型回合最多执行 2 个彼此独立的发现型调用，例如两个不同 Web 查询或两种本地检索方向。
@@ -56,6 +58,7 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 - 依赖上一结果才能确定参数的动作必须等待该批观察返回；Host 不替模型自动追加搜索。
 - 同轮超出的发现调用返回成功状态 `deferred_for_feedback`，不消耗工具额度、不记为失败，模型可在看到当前观察后重新决定。
 - 每批结束必回到模型；不存在后台持续研究、固定反思模型或无限 LOOP。
+- 模型的工具提议不是执行事实。Host 先标记 `rejected`、`deferred` 或 `dispatched`：只有 dispatched 调用进入 canonical assistant/tool transcript、消耗预算、写审计并绑定 Provider 续轮；前两类只回传机械反馈，不能阻止无可见动作的 Provider failover。
 
 ## 5. 重复、进展与收束
 
@@ -87,6 +90,7 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 - `web_fetch` 只接受当前 Run 候选或用户明确提供的 HTTPS URL。只有抓取到 URL 匹配的实质正文才登记 evidence 并获得 `Wn`；搜索片段绝不能在 `run_tool_loop` 中被升级为证据。
 - 一批 URL 部分成功时，观察同时返回成功正文、失败 URL、剩余证据要求和预算，让模型选择换源、补充抓取或基于已取得正文完成；单个抓取失败不直接把整轮降级为限制回答。
 - 搜索过但未选中的候选、抓取失败的页面和历史 Run URL 均不能支持最终结论。
+- fetch 路由按当前来源优先、冻结 MCP 候选顺序和 native safe fetch 兜底依次尝试；单候选最多 5 秒、整批最多 18 秒、外层调用最多 20 秒。search 与 fetch 的健康度按 capability 分账，业务失败不改写 discovery 状态。
 - 本地工具保持 `search_hybrid`、`search_semantic`、`search_keyword`、`read_note`、`get_outline`、`get_backlinks` 等正交能力。
 - Web 和本地结果进入同一 evidence ledger，但保持不同权限、内容泄漏和来源展示策略。
 - 模型可以在同一 Run 中交替使用本地和 Web 工具；Web query 只能来自用户公开子句和可信 runtime，不能包含自动检索笔记正文。
@@ -115,6 +119,7 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 - 模型成功但正文、工具调用均为空，按无效响应处理，不能完成 Run。
 - 首次模型调用尚无可见正文、工具调用或 continuation 时，瞬态/无效响应先在原 Provider 重试一次；仍失败再切换具备相同冻结工具面的候选。
 - 已有可见输出、工具调用、continuation 或副作用后禁止隐式跨 Provider 续接。
+- Gateway 只在协议适配层处理 Provider 私有续轮字段：MiniMax 保持 `reasoning_details`，MiMo 的 custom-tool 回合关闭 thinking 并原样续接其返回的 `reasoning_content`；核心循环不按模型名分支。
 - 现有 `provider_route_summary_json` 只追加有界诊断：Provider/模型 ID、尝试次数、协议阶段、错误类别、空响应、是否已有输出/工具，以及重试/切换/终止决定；不记录请求、响应或凭证正文。
 - 下一用户 Run 可读取上一轮请求、终态、安全错误、模型/工具是否开始、重试与切换计数；这些运行事实只解释本地失败，不构成外部事实来源。
 

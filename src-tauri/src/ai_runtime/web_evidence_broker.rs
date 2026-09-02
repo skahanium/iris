@@ -19,7 +19,12 @@ const WEB_PACKET_EXCERPT_MAX_CHARS: usize = 4_000;
 #[cfg(test)]
 const MERGED_FETCH_MAX_CHARS: usize = 12_000;
 const WEB_CONTEXT_TRUNCATION_MARKER: &str = "\n...（网页正文已按上下文预算截断）";
-const WEB_FETCH_TURN_BUDGET: Duration = Duration::from_secs(8);
+/// A fetch batch may use up to 18 seconds, but no individual backend receives
+/// more than five. This leaves time for the next frozen candidate and the
+/// built-in safe transport instead of letting one MCP process consume the
+/// entire outer tool deadline.
+const WEB_FETCH_TURN_BUDGET: Duration = Duration::from_secs(18);
+const WEB_FETCH_PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CONCURRENT_PAGE_FETCHES: usize = 3;
 
 fn truncate_web_context_text(text: &str, max_chars: usize) -> String {
@@ -780,6 +785,7 @@ fn observe_mcp_search_provider_call(
     let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
         db,
         provider_id,
+        "web.search",
         success,
         elapsed.as_millis() as u64,
         failure_code,
@@ -1670,6 +1676,11 @@ fn fetch_provider_candidates(
                 candidates.push(candidate);
             }
         }
+        // Native readability is an existing deterministic transport within the
+        // already-authorized Web capability. It is not a dynamically selected
+        // provider and therefore remains available after the frozen MCP route
+        // has exhausted its ordered candidates.
+        candidates.push(FetchProviderCandidate::Native);
         return candidates;
     }
     let mut candidates = Vec::new();
@@ -1681,7 +1692,6 @@ fn fetch_provider_candidates(
         }
     }
     candidates.push(FetchProviderCandidate::Native);
-    candidates.truncate(2);
     candidates
 }
 
@@ -1781,9 +1791,19 @@ async fn fetch_url_with_providers(
                 let expected_snapshot = provider_snapshots
                     .iter()
                     .find(|snapshot| snapshot.id == provider_id);
-                collect_mcp_page_fetch(db, url, &provider_id, expected_snapshot).await
+                tokio::time::timeout(
+                    WEB_FETCH_PROVIDER_TIMEOUT,
+                    collect_mcp_page_fetch(db, url, &provider_id, expected_snapshot),
+                )
+                .await
+                .unwrap_or_else(|_| Err(AppError::msg("agent_run_web_provider_timeout")))
             }
-            FetchProviderCandidate::Native => collect_native_page_fetch(db, url).await,
+            FetchProviderCandidate::Native => tokio::time::timeout(
+                WEB_FETCH_PROVIDER_TIMEOUT,
+                collect_native_page_fetch(db, url),
+            )
+            .await
+            .unwrap_or_else(|_| Err(AppError::msg("agent_run_web_provider_timeout"))),
         };
         match result {
             Ok(fetch) => return Ok(fetch),
@@ -1877,7 +1897,7 @@ async fn collect_mcp_page_fetch(
         &provider,
         build_mcp_fetch_arguments(&mapping_json, url, FETCH_EXCERPT_MAX_CHARS),
         crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
-            request_timeout: std::time::Duration::from_secs(20),
+            request_timeout: WEB_FETCH_PROVIDER_TIMEOUT,
             max_stdout_line_bytes: 128 * 1024,
             max_stderr_bytes: 4 * 1024,
             cwd: None,
@@ -1897,6 +1917,7 @@ async fn collect_mcp_page_fetch(
             let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
                 db,
                 provider_id,
+                "web.fetch",
                 false,
                 started.elapsed().as_millis() as u64,
                 Some(failure_code),
@@ -1914,6 +1935,7 @@ async fn collect_mcp_page_fetch(
     let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
         db,
         provider_id,
+        "web.fetch",
         result.is_ok(),
         started.elapsed().as_millis() as u64,
         failure_kind.map(McpApplicationFailureKind::failure_code),
@@ -2647,6 +2669,7 @@ mod tests {
         let primary_health = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
             &db,
             "fetch-primary",
+            "web.fetch",
         )
         .unwrap()
         .expect("primary health");
@@ -2657,6 +2680,7 @@ mod tests {
         let backup_health = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
             &db,
             "fetch-backup",
+            "web.fetch",
         )
         .unwrap()
         .expect("backup health");
@@ -2709,6 +2733,7 @@ mod tests {
         let health = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
             &db,
             "search-empty-health",
+            "web.search",
         )
         .unwrap()
         .expect("search health");
@@ -2821,6 +2846,38 @@ mod tests {
     }
 
     #[test]
+    fn frozen_fetch_route_keeps_native_transport_as_the_final_safe_fallback() {
+        let db = Database::open_in_memory().expect("database");
+        let snapshots = vec![
+            crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
+                id: "primary".into(),
+                kind: "mcp".into(),
+                transport_kind: "stdio".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: Some(r#"{"tool":"fetch"}"#.into()),
+                provider_config_hash: "primary-hash".into(),
+            },
+            crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
+                id: "backup".into(),
+                kind: "mcp".into(),
+                transport_kind: "stdio".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: Some(r#"{"tool":"fetch"}"#.into()),
+                provider_config_hash: "backup-hash".into(),
+            },
+        ];
+
+        assert_eq!(
+            fetch_provider_candidates(&db, Some("primary"), &snapshots, true),
+            vec![
+                FetchProviderCandidate::Mcp("primary".into()),
+                FetchProviderCandidate::Mcp("backup".into()),
+                FetchProviderCandidate::Native,
+            ]
+        );
+    }
+
+    #[test]
     fn diagnostic_search_smoke_observation_does_not_persist_provider_health() {
         let db = Database::open_in_memory().unwrap();
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
@@ -2859,7 +2916,8 @@ mod tests {
         assert!(
             crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
                 &db,
-                "diagnostic-provider"
+                "diagnostic-provider",
+                "web.search"
             )
             .unwrap()
             .is_none()
@@ -3399,6 +3457,7 @@ mod tests {
             vec![
                 FetchProviderCandidate::Mcp("origin".into()),
                 FetchProviderCandidate::Mcp("primary".into()),
+                FetchProviderCandidate::Native,
             ]
         );
     }
