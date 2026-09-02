@@ -213,6 +213,54 @@ test("live pilot CLI requires session, profile and exact one-run cost confirmati
   );
 });
 
+test("live campaign CLI requires two distinct approved routes and one pooled cost confirmation", () => {
+  const run = (...args) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(workspaceRoot, "scripts/agent-eval.mjs"),
+        "live",
+        "campaign",
+        ...args,
+      ],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          IRIS_AGENT_EVAL_SOURCE_DB: path.join(
+            workspaceRoot,
+            "target/agent-eval/definitely-missing.db",
+          ),
+        },
+        encoding: "utf8",
+      },
+    );
+  const session = `session-${"a".repeat(64)}`;
+  const routeA = `profile-${"b".repeat(32)}`;
+  const routeB = `profile-${"c".repeat(32)}`;
+
+  assert.match(run().stderr, /agent_eval_live_requires_current_session/);
+  assert.match(
+    run("--session", session, "--approve", routeA).stderr,
+    /agent_eval_live_requires_two_distinct_approved_profiles/,
+  );
+  assert.match(
+    run("--session", session, "--approve", `${routeA},${routeB}`).stderr,
+    /agent_eval_live_campaign_requires_user_cost_checkpoint/,
+  );
+  assert.match(
+    run(
+      "--session",
+      session,
+      "--approve",
+      `${routeA},${routeB}`,
+      "--confirm-cost",
+      "two-route-12-run-campaign",
+    ).stderr,
+    /agent_eval_live_custom_roots_required/,
+  );
+});
+
 test("product gate refuses to claim quality without an explicit live result", () => {
   const output = path.join(
     workspaceRoot,
@@ -249,7 +297,7 @@ test("product gate refuses to claim quality without an explicit live result", ()
   }
 });
 
-test("product quality requires two six-run live routes and complete human review", () => {
+test("product quality rejects legacy v2 live reports even when their counters look complete", () => {
   const report = (profileId, routeCommitment) => ({
     schemaVersion: "agent-live-pilot-v2",
     profileId,
@@ -305,73 +353,114 @@ test("product quality requires two six-run live routes and complete human review
     })),
   );
 
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        reports,
+        { schemaVersion: "agent-live-review-v1", status: "approved", items },
+        reportNames,
+      ),
+    /agent_eval_live_quality_gate_failed/,
+  );
+});
+
+test("product quality accepts only v3 trace reports that are bound to human review packets", () => {
+  const report = (routeCommitment, routeLabel, packetHash) => ({
+    schemaVersion: "agent-live-pilot-v3",
+    routeCommitment,
+    routeLabel,
+    campaignId:
+      "campaign-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    status: "live_trace_executed",
+    caseCount: 6,
+    requiredCaseCount: 6,
+    completedCaseCount: 6,
+    mechanicalPassed: 6,
+    mechanicalFailed: 0,
+    reviewPacketSha256: packetHash,
+    campaignBudget: {
+      maxRuns: 12,
+      maxModelTurns: 48,
+      maxWebToolCalls: 36,
+      observedRuns: 12,
+      observedModelTurns: 32,
+      observedWebToolCalls: 20,
+    },
+    cases: [1, 26, 28, 30, 32, 34].map((caseId) => ({
+      caseId,
+      repetition: 1,
+      semanticStatus: "pending_human_review",
+      mechanical: {
+        terminal: "pass",
+        authorization: "pass",
+        searchFetchTrace: caseId === 1 ? "not_applicable" : "pass",
+        runLocalSources: caseId === 1 ? "not_applicable" : "pass",
+        citationBinding: caseId === 1 ? "not_applicable" : "pass",
+        safety: "pass",
+        continuity: caseId === 1 ? "not_applicable" : "pass",
+      },
+      telemetry: {
+        modelTurns: caseId === 1 ? 1 : 3,
+        toolCalls: caseId === 1 ? 0 : 2,
+      },
+    })),
+  });
+  const hashA = "a".repeat(64);
+  const hashB = "b".repeat(64);
+  const reports = [
+    report(`route-${"1".repeat(64)}`, "Route A", hashA),
+    report(`route-${"2".repeat(64)}`, "Route B", hashB),
+  ];
+  const reportNames = [
+    "live-pilot-campaign-a.json",
+    "live-pilot-campaign-b.json",
+  ];
+  const items = reports.flatMap((value, reportIndex) =>
+    value.cases.map(({ caseId }) => ({
+      report: reportNames[reportIndex],
+      caseId,
+      reviewPacketSha256: value.reviewPacketSha256,
+      intentFollowing: 4.5,
+      factualSources: 4.5,
+      relevanceCompleteness: 4,
+      correctionContinuity: 4.5,
+      directFailure: false,
+    })),
+  );
+
   assert.deepEqual(
     validateProductQualityArtifacts(
       reports,
-      { schemaVersion: "agent-live-review-v1", status: "approved", items },
+      { schemaVersion: "agent-live-review-v2", status: "approved", items },
       reportNames,
     ),
     { totalRuns: 12, averageScore: 4.375 },
   );
-  assert.throws(
-    () =>
-      validateProductQualityArtifacts(
-        [reports[0]],
-        { schemaVersion: "agent-live-review-v1", status: "approved", items },
-        [reportNames[0]],
-      ),
-    /agent_eval_two_live_routes_required/,
-  );
-  assert.throws(
-    () =>
-      validateProductQualityArtifacts(
-        [
-          reports[0],
-          { ...reports[1], routeCommitment: reports[0].routeCommitment },
-        ],
-        { schemaVersion: "agent-live-review-v1", status: "approved", items },
-        reportNames,
-      ),
-    /agent_eval_live_routes_must_be_distinct/,
-  );
-  const hollow = structuredClone(reports);
-  hollow[0].cases = hollow[0].cases.map(({ caseId }) => ({ caseId }));
-  assert.throws(
-    () =>
-      validateProductQualityArtifacts(
-        hollow,
-        { schemaVersion: "agent-live-review-v1", status: "approved", items },
-        reportNames,
-      ),
-    /agent_eval_live_case_identity_invalid/,
-  );
-  const weak = structuredClone(items);
-  weak[0].factualSources = 3.5;
+  const mismatchedPacket = structuredClone(items);
+  mismatchedPacket[0].reviewPacketSha256 = hashB;
   assert.throws(
     () =>
       validateProductQualityArtifacts(
         reports,
         {
-          schemaVersion: "agent-live-review-v1",
+          schemaVersion: "agent-live-review-v2",
           status: "approved",
-          items: weak,
+          items: mismatchedPacket,
         },
         reportNames,
       ),
-    /agent_eval_live_review_score_invalid/,
+    /agent_eval_live_review_packet_mismatch/,
   );
-  const overBudget = structuredClone(reports);
-  for (const item of overBudget[0].cases) {
-    item.telemetry.modelTurns = 8;
-  }
+  const mismatchedBudget = structuredClone(reports);
+  mismatchedBudget[1].campaignBudget.observedWebToolCalls = 19;
   assert.throws(
     () =>
       validateProductQualityArtifacts(
-        overBudget,
-        { schemaVersion: "agent-live-review-v1", status: "approved", items },
+        mismatchedBudget,
+        { schemaVersion: "agent-live-review-v2", status: "approved", items },
         reportNames,
       ),
-    /agent_eval_live_call_budget_invalid/,
+    /agent_eval_live_campaign_budget_inconsistent/,
   );
 });
 

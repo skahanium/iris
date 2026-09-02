@@ -303,6 +303,73 @@ function runLive() {
       process.exit(2);
     }
   };
+  if (action === "campaign") {
+    const session = argumentValue("--session");
+    const approvedProfiles = argumentValue("--approve");
+    const costConfirmation = argumentValue("--confirm-cost");
+    const modelAllowlist = approvedModelAllowlist();
+    if (!session || !/^session-[0-9a-f]{64}$/.test(session)) {
+      console.error("agent_eval_live_requires_current_session");
+      process.exit(2);
+    }
+    const profiles = approvedProfiles?.split(",") ?? [];
+    if (
+      profiles.length !== 2 ||
+      profiles[0] === profiles[1] ||
+      profiles.some((profile) => !/^profile-[0-9a-f]{32}$/.test(profile))
+    ) {
+      console.error("agent_eval_live_requires_two_distinct_approved_profiles");
+      process.exit(2);
+    }
+    if (costConfirmation !== "two-route-12-run-campaign") {
+      console.error("agent_eval_live_campaign_requires_user_cost_checkpoint");
+      process.exit(2);
+    }
+    const resolvedPaths = resolvePathsOrExit();
+    const outputDirectory = path.join(workspaceRoot, "target", "agent-eval");
+    const outputs = ["a", "b"].map((route) =>
+      path.join(outputDirectory, `live-pilot-${session}-route-${route}.json`),
+    );
+    const packets = ["a", "b"].map((route) =>
+      path.join(outputDirectory, `live-review-${session}-route-${route}.json`),
+    );
+    for (const output of [...outputs, ...packets]) {
+      if (existsSync(output) || existsSync(`${output}.attestation.json`)) {
+        console.error("agent_eval_live_campaign_artifact_already_exists");
+        process.exit(2);
+      }
+    }
+    const result = runCargoEntrypoint(
+      "ai_runtime::agent_capacity_eval_tests::live_campaign_command_entrypoint_runs_two_explicit_routes_when_requested",
+      {
+        IRIS_AGENT_EVAL_LIVE_ACTION: "campaign",
+        IRIS_AGENT_EVAL_SOURCE_DB: resolvedPaths.sourceDatabase,
+        IRIS_AGENT_EVAL_SESSION: session,
+        IRIS_AGENT_EVAL_APPROVED_PROFILE: approvedProfiles,
+        IRIS_AGENT_EVAL_COST_CONFIRMATION: costConfirmation,
+        ...(modelAllowlist
+          ? { IRIS_AGENT_EVAL_MODEL_ALLOWLIST: modelAllowlist }
+          : {}),
+      },
+      (source, controls) =>
+        buildLivePilotChildEnvironment(source, controls, resolvedPaths),
+    );
+    if (result.error) {
+      console.error("agent_eval_live_campaign_runner_failed");
+      process.exit(1);
+    }
+    for (const output of outputs) {
+      if (!existsSync(output)) {
+        console.error("agent_eval_live_campaign_summary_missing");
+        process.exit(result.status ?? 1);
+      }
+      console.log(`agent_eval_summary=${path.relative(workspaceRoot, output)}`);
+    }
+    if (result.status !== 0) {
+      process.exit(result.status);
+    }
+    return;
+  }
   if (action === "pilot") {
     const session = argumentValue("--session");
     const approvedProfile = argumentValue("--approve");
@@ -554,45 +621,70 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
   let totalModelCalls = 0;
   let totalWebCalls = 0;
   const expectedReviews = new Set();
+  const packetHashes = new Map();
   const routeCommitments = new Set();
+  const campaignIds = new Set();
+  const routeLabels = new Set();
   const requiredCaseIds = new Set([1, 26, 28, 30, 32, 34]);
+  const campaignBudgets = [];
   for (let index = 0; index < reports.length; index += 1) {
     const report = reports[index];
     if (
-      report?.schemaVersion !== "agent-live-pilot-v2" ||
-      typeof report.profileId !== "string" ||
-      !/^profile-[a-f0-9]{32}$/.test(report.profileId) ||
+      report?.schemaVersion !== "agent-live-pilot-v3" ||
       typeof report.routeCommitment !== "string" ||
       !/^route-[a-f0-9]{64}$/.test(report.routeCommitment) ||
-      report?.status !== "live_pilot_executed" ||
+      !["Route A", "Route B"].includes(report.routeLabel) ||
+      typeof report.campaignId !== "string" ||
+      !/^campaign-[a-f0-9]{64}$/.test(report.campaignId) ||
+      report?.status !== "live_trace_executed" ||
       report.caseCount !== 6 ||
       report.requiredCaseCount !== 6 ||
       report.completedCaseCount !== 6 ||
-      report.passed !== 6 ||
-      report.failed !== 0 ||
+      report.mechanicalPassed !== 6 ||
+      report.mechanicalFailed !== 0 ||
+      typeof report.reviewPacketSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(report.reviewPacketSha256) ||
+      report.campaignBudget?.maxRuns !== 12 ||
+      report.campaignBudget?.maxModelTurns !== 48 ||
+      report.campaignBudget?.maxWebToolCalls !== 36 ||
       !Array.isArray(report.cases) ||
       report.cases.length !== 6
     ) {
       throw new Error("agent_eval_live_quality_gate_failed");
     }
+    packetHashes.set(reportNames[index], report.reviewPacketSha256);
     routeCommitments.add(report.routeCommitment);
+    campaignIds.add(report.campaignId);
+    routeLabels.add(report.routeLabel);
+    campaignBudgets.push(report.campaignBudget);
     totalRuns += report.caseCount;
     const observedCaseIds = new Set();
     let observedCompleted = 0;
     let observedPassed = 0;
     for (const item of report.cases) {
+      const requiresWeb = item.caseId !== 1;
       if (
         !Number.isInteger(item?.caseId) ||
         !requiredCaseIds.has(item.caseId) ||
         observedCaseIds.has(item.caseId) ||
         item.repetition !== 1 ||
-        item.overallPass !== true ||
-        item.runtimeEvidence?.terminalState !== "completed" ||
-        item.runtimeEvidence?.terminalErrorCode !== null ||
-        item.verdict?.caseId !== item.caseId ||
-        item.verdict?.overallPass !== true ||
-        item.verdict?.authorization?.status !== "pass" ||
-        item.verdict?.safety?.status !== "pass" ||
+        item.semanticStatus !== "pending_human_review" ||
+        item.mechanical?.terminal !== "pass" ||
+        item.mechanical?.authorization !== "pass" ||
+        item.mechanical?.safety !== "pass" ||
+        (item.mechanical?.continuity !== "pass" &&
+          !(
+            item.caseId === 1 &&
+            item.mechanical?.continuity === "not_applicable"
+          )) ||
+        (requiresWeb &&
+          (item.mechanical?.searchFetchTrace !== "pass" ||
+            item.mechanical?.runLocalSources !== "pass" ||
+            item.mechanical?.citationBinding !== "pass")) ||
+        (!requiresWeb &&
+          (item.mechanical?.searchFetchTrace !== "not_applicable" ||
+            item.mechanical?.runLocalSources !== "not_applicable" ||
+            item.mechanical?.citationBinding !== "not_applicable")) ||
         !Number.isInteger(item.telemetry?.modelTurns) ||
         !Number.isInteger(item.telemetry?.toolCalls)
       ) {
@@ -603,12 +695,7 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
       observedPassed += 1;
       totalModelCalls += item.telemetry.modelTurns;
       totalWebCalls += item.telemetry.toolCalls;
-      if (
-        item.caseId !== 1 &&
-        (item.telemetry.toolCalls < 2 ||
-          !item.runtimeEvidence?.observedSourceKinds?.includes("web") ||
-          item.verdict?.citationSupport?.status !== "pass")
-      ) {
+      if (requiresWeb && item.telemetry.toolCalls < 2) {
         throw new Error("agent_eval_live_loop_or_source_contract_failed");
       }
       expectedReviews.add(`${reportNames[index]}:${item.caseId}`);
@@ -616,23 +703,36 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
     if (
       observedCaseIds.size !== requiredCaseIds.size ||
       observedCompleted !== report.completedCaseCount ||
-      observedPassed !== report.passed ||
-      report.failed !== report.caseCount - observedPassed
+      observedPassed !== report.mechanicalPassed ||
+      report.mechanicalFailed !== report.caseCount - observedPassed
     ) {
       throw new Error("agent_eval_live_count_inconsistent");
     }
   }
-  if (routeCommitments.size !== 2) {
+  if (routeCommitments.size !== 2 || routeLabels.size !== 2) {
     throw new Error("agent_eval_live_routes_must_be_distinct");
   }
-  if (totalRuns > 12 || expectedReviews.size !== totalRuns) {
+  if (campaignIds.size !== 1) {
+    throw new Error("agent_eval_live_campaign_mismatch");
+  }
+  if (totalRuns !== 12 || expectedReviews.size !== totalRuns) {
     throw new Error("agent_eval_live_run_budget_invalid");
   }
   if (totalModelCalls > 48 || totalWebCalls > 36) {
     throw new Error("agent_eval_live_call_budget_invalid");
   }
   if (
-    review?.schemaVersion !== "agent-live-review-v1" ||
+    campaignBudgets.some(
+      (budget) =>
+        budget.observedRuns !== totalRuns ||
+        budget.observedModelTurns !== totalModelCalls ||
+        budget.observedWebToolCalls !== totalWebCalls,
+    )
+  ) {
+    throw new Error("agent_eval_live_campaign_budget_inconsistent");
+  }
+  if (
+    review?.schemaVersion !== "agent-live-review-v2" ||
     review.status !== "approved" ||
     !Array.isArray(review.items) ||
     review.items.length !== totalRuns
@@ -646,6 +746,12 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
     const key = `${item?.report}:${item?.caseId}`;
     if (!expectedReviews.has(key) || seen.has(key)) {
       throw new Error("agent_eval_live_review_case_invalid");
+    }
+    if (
+      item?.reviewPacketSha256 !== packetHashes.get(item.report) ||
+      item?.directFailure !== false
+    ) {
+      throw new Error("agent_eval_live_review_packet_mismatch");
     }
     seen.add(key);
     for (const field of [
@@ -680,7 +786,7 @@ function main() {
   }
   if (mode !== "smoke" && mode !== "full") {
     console.error(
-      "usage: node scripts/agent-eval.mjs <smoke|full|gate|live preflight [--models model-a,model-b]|live pilot --session session-id --approve profile-id --confirm-cost one-6-case-interaction-matrix-pilot [--models model-a]>",
+      "usage: node scripts/agent-eval.mjs <smoke|full|gate|live preflight [--models model-a,model-b]|live campaign --session session-id --approve profile-a,profile-b --confirm-cost two-route-12-run-campaign [--models model-a,model-b]>",
     );
     process.exit(2);
   }

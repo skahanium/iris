@@ -103,17 +103,15 @@ binding 都匹配；即便两个配置具有相同 capability fingerprint，替�
 消费，旧会话不能重放。
 
 用户必须同时提供当前 session、该 session 下的匿名 profile，并逐次确认
-`one-6-case-interaction-matrix-pilot` 成本 checkpoint。随后才会签发短时效、同会话绑定、一次性
+`two-route-12-run-campaign` 成本 checkpoint。随后才会签发短时效、同会话绑定、一次性
 的随机 approval token；所有门禁完成后，选中的非密钥路由与 MCP 元数据才复制
 到 `tempfile` 管理的独立 `AppState`。每条批准路由固定执行 6 个 normal headless Run，
 两条独立路由合计不超过 12 Run。确定性对端继续复用 synthetic oracle；真实网络对端改用
-公开核验任务和对应的 live oracle，二者绝不共享伪造网页事实。只有一条路由的 6 Run 全部
-完成、每题封闭 verdict 均通过，且没有归因、内部协议、权限或来源边界违规，结果才标记
-`live_pilot_executed`。
+公开核验任务，二者绝不共享伪造网页事实。真实轨迹满足终态、授权、search→fetch、
+Run-local 来源、引用绑定、安全、连续性与预算后才标记 `live_trace_executed`；它只表示
+可以进入人工语义审阅，不表示事实正确或产品质量通过。
 
-`agent:eval` 还要求两份稳定匿名 `routeCommitment` 不同的 live 结果和一份逐场景人工评分文件；随机 `profileId` 和文件名不同都不能冒充路由不同。进入评分前，Rust 严格验证器会重新检查固定六场景集合、逐项 runtime/verdict/telemetry 和顶层派生计数。人工量表为意图遵循、事实与
-来源、相关性与完整性、纠正与连续性四项；单项至少 4/5、总平均至少 4.2。contract、两条
-live 路由和人工复核全部通过后，脚本才原子生成 `target/agent-eval/product-gate.json`。
+`agent:eval` 还要求两份不同匿名 `routeCommitment`、同一 Campaign 的 v3 轨迹和一份逐场景人工评分文件；随机 `profileId` 和文件名不同都不能冒充路由不同。进入评分前，Rust 严格验证器会重新检查固定六场景集合、逐项机械轨迹/telemetry、全局 12/48/36 预算与报告—审阅包哈希绑定。人工量表为意图遵循、事实与来源、相关性与完整性、纠正与连续性四项；单项至少 4/5、总平均至少 4.2。contract、两条 live 路由和人工复核全部通过后，脚本才原子生成 `target/agent-eval/product-gate.json`。
 若评测器自身在某个案例的准备或取分阶段出错，该案例会以闭集
 `agent_run_evaluation_inconclusive` 记录为失败，剩余案例仍会继续并写出完整报告；
 原始错误不进入结果文件，标准错误流只输出固定 reason code 供本地诊断。
@@ -311,9 +309,9 @@ npm run agent:eval:smoke
 npm run agent:eval:contract
 npm run rag:eval
 npm run agent:eval:live -- preflight --models <model>
-npm run agent:eval:live -- pilot --session session-<64hex> \
-  --approve profile-<32hex> --confirm-cost one-6-case-interaction-matrix-pilot \
-  --models <model>
+npm run agent:eval:live -- campaign --session session-<64hex> \
+  --approve profile-<32hex>,profile-<32hex> --confirm-cost two-route-12-run-campaign \
+  --models <model-a>,<model-b>
 IRIS_AGENT_EVAL_LIVE_RESULTS="<result-a>:<result-b>" \
 IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
 ```
@@ -326,8 +324,7 @@ IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
 `docs/eval/results/v1.2.15-agent-capacity.json`。`agent:eval:live -- preflight`
 只生成被 Git 忽略的 `target/agent-eval/live-preflight.json`；它不是 live
 测试结果，也不会绕过后续批准与费用 checkpoint。Pilot 的严格白名单结果写入
-同目录的 `live-pilot-session-<64hex>.json`，不会包含 prompt、answer、route
-或凭据。真实执行即使因状态、预算或质量不通过，也必须先写入并签名失败报告；最终产品验证仍以非零拒绝该报告。
+同目录的 `live-pilot-session-<64hex>-route-a|b.json`，不会包含内部路由、凭据或隐藏推理；固定公开 prompt、最终可见回答和有限来源摘录只在与报告哈希绑定的本地审阅包中出现。真实执行即使因状态、预算或质量不通过，也必须先写入并签名失败报告；最终产品验证仍以非零拒绝该报告。
 
 PR CI 的 macOS ARM64 quality job 执行 smoke、前端/Rust 依赖审计和完整通用测试；
 tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` 版本化基线。
@@ -350,4 +347,4 @@ tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` �
 记录。每份 live 报告还必须携带由受约束 Rust live 执行路径生成、本机私有评测密钥绑定 session 与精确报告字节的认证旁证；最终门用同一 SHA-256 快照完成认证、严格校验和 JSON 判定，禁止复制后改写报告或在校验期间替换文件。只有 MiniMax-M3 与 MiMo v2.5 都完成获批的试运行，且所有 hard
 admission 与人格门槛均通过后，才可以将对应路由加入严格结构化终局校准表。
 
-INC-HR-007 的 MiniMax、MiMo 两条真实路由各执行了 6 Run：MiniMax 未达到执行通过态且旧 writer 丢失了失败报告，MiMo 触发 `live_pilot_call_budget_invalid`；两条路由均未进入人工评分。writer 已回正为真实失败也持久化并签名，但本轮 12 Run 预算已经耗尽，任何文档不得将本轮写成真实质量通过。
+INC-HR-008 撤回旧 live v2 的质量结论：它将 404/fixture 误作公开事实 oracle，并按每路由 24/18 而非全局 48/36 处理预算。v3 只将真实回答标记为待人工审阅，输出带有限来源摘录的签名审阅包；新的双路 Campaign 尚未执行，任何文档不得将确定性演练或旧结果写成真实质量通过。

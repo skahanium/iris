@@ -74,7 +74,7 @@ pub(crate) async fn execute_normal_run(
     app_handle: Option<AppHandle>,
     sink: &impl RunEventSink,
 ) {
-    execute_normal_run_internal(state, accepted, vault, app_handle, sink, None).await;
+    execute_normal_run_internal(state, accepted, vault, app_handle, sink, None, None).await;
 }
 
 /// Verify one completed confirmed change set through the normal Provider route,
@@ -184,7 +184,30 @@ pub(crate) async fn execute_normal_run_with_eval_telemetry(
     sink: &impl RunEventSink,
     telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
 ) {
-    execute_normal_run_internal(state, accepted, vault, None, sink, Some(telemetry)).await;
+    execute_normal_run_internal(state, accepted, vault, None, sink, Some(telemetry), None).await;
+}
+
+/// Evaluation-only variant that lowers an accepted Run's in-memory limits for
+/// one externally metered campaign. It never changes the persisted policy.
+#[cfg(test)]
+pub(crate) async fn execute_normal_run_with_eval_telemetry_cap(
+    state: Arc<AppState>,
+    accepted: AssistantRunAccepted,
+    vault: Option<PathBuf>,
+    sink: &impl RunEventSink,
+    telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+    cap: crate::ai_runtime::agent_capacity_eval::LiveCampaignRunCap,
+) {
+    execute_normal_run_internal(
+        state,
+        accepted,
+        vault,
+        None,
+        sink,
+        Some(telemetry),
+        Some(cap),
+    )
+    .await;
 }
 
 async fn execute_normal_run_internal(
@@ -194,6 +217,8 @@ async fn execute_normal_run_internal(
     app_handle: Option<AppHandle>,
     sink: &impl RunEventSink,
     telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+    #[cfg(test)] evaluation_cap: Option<crate::ai_runtime::agent_capacity_eval::LiveCampaignRunCap>,
+    #[cfg(not(test))] _evaluation_cap: Option<()>,
 ) {
     let db = Arc::clone(&state.db);
     let current_state = RunIntake::get(&db, &accepted.session, &accepted.run_id)
@@ -245,6 +270,18 @@ async fn execute_normal_run_internal(
             );
             return;
         }
+    };
+    #[cfg(test)]
+    let budget_policy = {
+        let mut budget_policy = budget_policy;
+        if let Some(cap) = evaluation_cap {
+            budget_policy.max_model_turns = budget_policy.max_model_turns.min(cap.max_model_turns);
+            budget_policy.max_tool_calls = budget_policy.max_tool_calls.min(cap.max_tool_calls);
+            budget_policy.max_network_tool_calls = budget_policy
+                .max_network_tool_calls
+                .min(cap.max_network_tool_calls);
+        }
+        budget_policy
     };
     let authorized_capabilities = match crate::ai_runtime::agent_run_repository::AgentRunRepository::persist_authorization_snapshot(
         &db,

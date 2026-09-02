@@ -854,6 +854,9 @@ impl AgentToolLoop {
                                 if let Some(usage) = usage.as_deref_mut() {
                                     usage.tool_calls = tool_calls;
                                 }
+                                if let Some(telemetry) = telemetry {
+                                    telemetry.record_executed_tool_call();
+                                }
                                 let result = executor.execute(run_id, call, tool_calls).await?;
                                 if matches!(
                                     call.function.name.as_str(),

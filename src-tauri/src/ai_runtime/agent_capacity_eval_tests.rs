@@ -18,12 +18,12 @@ use super::agent_capacity_eval::{
     generate_pressure_staircases, live_pilot_dynamic_request_shape, live_pilot_evidence_oracle,
     live_pilot_prompt, live_pilot_result_status,
     live_pilot_source_binding_satisfies_citation_requirement,
-    live_pilot_visible_answer_violates_attribution_boundary, live_public_local_fact_source_support,
-    live_public_web_fact_source_support, measure_case_quality, no_answer_external_terminal_failure,
-    normalize_observed_eval_tool_name, observed_eval_tool_class, pairwise_live_capability_matrix,
-    permission_denial_category, preflight_live_profiles, prepare_approved_live_pilot,
-    restore_and_consume_live_preflight_session, run_approved_live_pilot,
-    run_approved_live_pilot_with_infrastructure_failure,
+    live_pilot_visible_answer_violates_attribution_boundary, measure_case_quality,
+    no_answer_external_terminal_failure, normalize_observed_eval_tool_name,
+    observed_eval_tool_class, pairwise_live_capability_matrix, permission_denial_category,
+    preflight_live_profiles, prepare_approved_live_pilot,
+    restore_and_consume_live_preflight_campaign, restore_and_consume_live_preflight_session,
+    run_approved_live_pilot, run_approved_live_pilot_with_infrastructure_failure,
     run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
     run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
     run_security_track, runtime_capability_to_eval_tool_name, select_core_scenarios,
@@ -284,18 +284,180 @@ fn live_public_web_oracle_uses_the_continuous_product_conversation() {
     let prompt = live_pilot_prompt(&scenario);
     assert!(prompt.contains("正在热映"));
     assert!(!prompt.contains("synthetic 产品今天的公开状态"));
-    assert!(live_public_web_fact_source_support(
-        "已联网核实的当前热映影片。",
-        "页面正文包含当前上映范围与日期。",
-    ));
-    assert!(!live_public_web_fact_source_support(
-        "我暂时不能回答。",
-        "页面正文包含当前上映范围与日期。",
-    ));
-    assert!(!live_public_web_fact_source_support(
-        "本轮未取得足够网页正文，无法回答。",
-        "页面正文包含当前上映范围与日期。",
-    ));
+    assert!(prompt.contains("联网核实"));
+}
+
+#[test]
+fn live_v3_trace_report_is_semantic_review_pending_not_a_404_fact_oracle() {
+    let cases = [1, 26, 28, 30, 32, 34]
+        .into_iter()
+        .map(|case_id| {
+            serde_json::json!({
+                "caseId": case_id,
+                "repetition": 1,
+                "semanticStatus": "pending_human_review",
+                "mechanical": {
+                    "terminal": "pass",
+                    "authorization": "pass",
+                    "searchFetchTrace": if case_id == 1 { "not_applicable" } else { "pass" },
+                    "runLocalSources": if case_id == 1 { "not_applicable" } else { "pass" },
+                    "citationBinding": if case_id == 1 { "not_applicable" } else { "pass" },
+                    "safety": "pass",
+                    "continuity": "pass",
+                },
+                "telemetry": {
+                    "modelTurns": if case_id == 1 { 1 } else { 3 },
+                    "toolCalls": if case_id == 1 { 0 } else { 2 },
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    let report = serde_json::json!({
+        "schemaVersion": "agent-live-pilot-v3",
+        "routeCommitment": format!("route-{}", "1".repeat(64)),
+        "routeLabel": "Route A",
+        "campaignId": format!("campaign-{}", "a".repeat(64)),
+        "status": "live_trace_executed",
+        "caseCount": 6,
+        "requiredCaseCount": 6,
+        "completedCaseCount": 6,
+        "mechanicalPassed": 6,
+        "mechanicalFailed": 0,
+        "reviewPacketSha256": "b".repeat(64),
+        "campaignBudget": {
+            "maxRuns": 12,
+            "maxModelTurns": 48,
+            "maxWebToolCalls": 36,
+            "observedRuns": 12,
+            "observedModelTurns": 24,
+            "observedWebToolCalls": 12,
+        },
+        "cases": cases,
+    });
+
+    validate_serialized_live_pilot_result(&report.to_string())
+        .expect("v3 trace reports are mechanically validated without a synthetic fact oracle");
+}
+
+#[tokio::test]
+async fn live_v3_review_packet_is_hash_bound_before_the_trace_is_attested() {
+    let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous local evaluation session");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let approval =
+        approve_live_profile(&mut session, Some(&profile_id), 70_000).expect("local approval");
+    let result = run_approved_live_pilot_with_local_doubles(
+        &mut session,
+        Some(approval.token()),
+        Some(LiveCostConfirmation::InteractionMatrixPilot),
+        70_001,
+        &LivePilotCallProbe::default(),
+    )
+    .await
+    .expect("local closed evaluation result");
+    let session_id = session.report().session_id().to_string();
+    let campaign_id =
+        super::agent_capacity_eval::random_live_token("campaign-", 32).expect("campaign identity");
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let target = workspace.join("target/agent-eval");
+    let packet_path = target.join(format!("live-review-{session_id}-route-a.json"));
+    let output = target.join(format!("live-pilot-{session_id}-route-a.json"));
+    let packet = super::agent_capacity_eval::live_review_packet_from_pilot(
+        &result,
+        campaign_id.clone(),
+        "Route A",
+    )
+    .expect("bounded review packet");
+    let packet_hash = super::agent_capacity_eval::write_live_review_packet(&packet_path, &packet)
+        .expect("packet written before trace validation");
+    let observed_model_turns = result
+        .cases
+        .iter()
+        .map(|case| case.telemetry.model_turns)
+        .sum();
+    let observed_web_tool_calls = result
+        .cases
+        .iter()
+        .map(|case| case.telemetry.tool_calls)
+        .sum();
+    let trace = super::agent_capacity_eval::live_trace_result_from_pilot(
+        &result,
+        "Route A",
+        campaign_id,
+        packet_hash,
+        super::agent_capacity_eval::LiveCampaignBudget {
+            max_runs: 12,
+            max_model_turns: 48,
+            max_web_tool_calls: 36,
+            observed_runs: 12,
+            observed_model_turns,
+            observed_web_tool_calls,
+        },
+    );
+    let config_root = tempfile::tempdir().expect("private attestation root");
+    super::agent_capacity_eval::write_attested_live_trace_result(
+        &output,
+        &trace,
+        &session_id,
+        config_root.path(),
+    )
+    .expect("trace is signed only after its packet exists");
+    let report = std::fs::read(&output).expect("attested trace report");
+    let report_hash = {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(&report))
+    };
+    verify_attested_live_pilot_result(&output, &report, &report_hash, config_root.path())
+        .expect("matching packet and trace attest together");
+    std::fs::write(&packet_path, "{}\n").expect("tamper review packet");
+    verify_attested_live_pilot_result(&output, &report, &report_hash, config_root.path())
+        .expect_err("a changed review packet invalidates the trace attestation");
+    std::fs::remove_file(&packet_path).expect("remove packet");
+    std::fs::remove_file(&output).expect("remove report");
+    std::fs::remove_file(format!("{}.attestation.json", output.display()))
+        .expect("remove attestation");
+
+    let packet_hash = super::agent_capacity_eval::write_live_review_packet(&packet_path, &packet)
+        .expect("restore packet for failed trace");
+    let mut invalid_trace = trace.clone();
+    invalid_trace.set_observed_web_tool_calls_for_test(37);
+    assert_eq!(
+        super::agent_capacity_eval::write_attested_live_trace_result(
+            &output,
+            &invalid_trace,
+            &session_id,
+            config_root.path(),
+        )
+        .expect_err("over-budget trace remains a strict failure")
+        .reason_code(),
+        "live_pilot_call_budget_invalid"
+    );
+    assert!(
+        output.exists(),
+        "failed trace report is persisted before rejection"
+    );
+    assert!(
+        std::path::Path::new(&format!("{}.attestation.json", output.display())).exists(),
+        "failed trace remains attested"
+    );
+    let persisted = std::fs::read(&output).expect("failed report bytes");
+    let persisted_hash = {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(&persisted))
+    };
+    verify_attested_live_pilot_result(&output, &persisted, &persisted_hash, config_root.path())
+        .expect("failed trace and matching packet remain auditable");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&persisted).expect("failed trace JSON")
+            ["reviewPacketSha256"],
+        packet_hash
+    );
+    std::fs::remove_file(&packet_path).expect("remove failed packet");
+    std::fs::remove_file(&output).expect("remove failed report");
+    std::fs::remove_file(format!("{}.attestation.json", output.display()))
+        .expect("remove failed attestation");
 }
 
 #[test]
@@ -386,21 +548,6 @@ fn live_pilot_rejects_user_attribution_and_internal_protocol_leaks_in_visible_an
     ));
 }
 
-#[test]
-fn live_public_local_oracle_uses_a_natural_authorized_material_fact() {
-    assert!(live_public_local_fact_source_support(
-        "授权材料中的项目代号是 Iris Pilot。",
-        "项目代号：Iris Pilot。",
-    ));
-    assert!(!live_public_local_fact_source_support(
-        "授权材料没有说明项目代号。",
-        "项目代号：Iris Pilot。",
-    ));
-    assert!(!live_public_local_fact_source_support(
-        "授权材料中的项目代号是 Iris Pilot。",
-        "项目状态：进行中。",
-    ));
-}
 use super::mcp_host_runtime::{
     call_required_capability, probe_provider_stdio_tools, McpHostRuntimeOptions, McpStdioDiscovery,
     McpToolDefinition,
@@ -2210,6 +2357,7 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
         },
         23,
     );
+    telemetry.record_executed_tool_call();
     telemetry.record_truncation(TruncationOutcome::ToolResultTruncated);
     telemetry.record_budget(BudgetOutcome::OutputBudgetReached);
 
@@ -4373,7 +4521,10 @@ fn live_result_validation_command_entrypoint_rejects_tampered_artifacts() {
     let serialized = String::from_utf8(serialized).expect("live result text");
     validate_serialized_live_pilot_result(&serialized).expect("strict live result");
     let value: serde_json::Value = serde_json::from_str(&serialized).expect("live result JSON");
-    assert_eq!(value["status"], "live_pilot_executed");
+    assert!(
+        value["status"] == "live_pilot_executed" || value["status"] == "live_trace_executed",
+        "only a completed trace may enter the product-quality gate"
+    );
 }
 
 #[tokio::test]
@@ -4929,6 +5080,178 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
         result.status_code(),
         "live_pilot_executed",
         "live route completed but did not pass its closed product contract"
+    );
+}
+
+#[tokio::test]
+async fn live_campaign_command_entrypoint_runs_two_explicit_routes_when_requested() {
+    if std::env::var("IRIS_AGENT_EVAL_LIVE_ACTION").as_deref() != Ok("campaign") {
+        return;
+    }
+    let source = std::env::var_os("IRIS_AGENT_EVAL_SOURCE_DB")
+        .map(std::path::PathBuf::from)
+        .expect("live_campaign_source_required");
+    let data_root = std::env::var_os("IRIS_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("live_campaign_data_root_required");
+    let config_root = std::env::var_os("IRIS_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("live_campaign_config_root_required");
+    let session_id =
+        std::env::var("IRIS_AGENT_EVAL_SESSION").expect("live_campaign_session_required");
+    let approvals = std::env::var("IRIS_AGENT_EVAL_APPROVED_PROFILE")
+        .expect("live_campaign_profile_approval_required");
+    let profiles = approvals.split(',').collect::<Vec<_>>();
+    assert!(
+        profiles.len() == 2 && profiles[0] != profiles[1],
+        "live_campaign_two_distinct_profiles_required"
+    );
+    assert_eq!(
+        std::env::var("IRIS_AGENT_EVAL_COST_CONFIRMATION").as_deref(),
+        Ok("two-route-12-run-campaign"),
+        "live_campaign_cost_confirmation_required"
+    );
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let state_path = workspace
+        .join("target/agent-eval")
+        .join(format!("live-{session_id}.json"));
+    let candidates = filter_live_profile_candidates_by_model_allowlist(
+        discover_live_profile_candidates_from_database(&source)
+            .expect("read-only live profile discovery"),
+        std::env::var("IRIS_AGENT_EVAL_MODEL_ALLOWLIST")
+            .ok()
+            .as_deref(),
+    )
+    .expect("requested live model selection");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs();
+    let [mut first, mut second] = restore_and_consume_live_preflight_campaign(
+        &state_path,
+        &session_id,
+        [profiles[0], profiles[1]],
+        candidates,
+        now,
+        &source,
+        &data_root,
+        &config_root,
+    )
+    .expect("current live campaign session");
+    let first_approval =
+        approve_live_profile(&mut first, Some(profiles[0]), now).expect("first current approval");
+    let second_approval =
+        approve_live_profile(&mut second, Some(profiles[1]), now).expect("second current approval");
+    let first_prepared = super::agent_capacity_eval::prepare_approved_live_pilot(
+        &mut first,
+        Some(first_approval.token()),
+        Some(LiveCostConfirmation::TwoRouteCampaign),
+        now,
+        &LivePilotCallProbe::default(),
+    )
+    .expect("first prepared route");
+    let second_prepared = super::agent_capacity_eval::prepare_approved_live_pilot(
+        &mut second,
+        Some(second_approval.token()),
+        Some(LiveCostConfirmation::TwoRouteCampaign),
+        now,
+        &LivePilotCallProbe::default(),
+    )
+    .expect("second prepared route");
+    let [first_result, second_result] =
+        super::agent_capacity_eval::run_live_trace_campaign_with_prepared([
+            &first_prepared,
+            &second_prepared,
+        ])
+        .await
+        .expect("bounded live campaign");
+    let campaign_id =
+        super::agent_capacity_eval::random_live_token("campaign-", 32).expect("campaign identity");
+    let total_model_turns = first_result
+        .cases
+        .iter()
+        .chain(&second_result.cases)
+        .map(|case| case.telemetry.model_turns)
+        .sum();
+    let total_web_tool_calls = first_result
+        .cases
+        .iter()
+        .chain(&second_result.cases)
+        .map(|case| case.telemetry.tool_calls)
+        .sum();
+    let budget = super::agent_capacity_eval::LiveCampaignBudget {
+        max_runs: 12,
+        max_model_turns: 48,
+        max_web_tool_calls: 36,
+        observed_runs: 12,
+        observed_model_turns: total_model_turns,
+        observed_web_tool_calls: total_web_tool_calls,
+    };
+    let target = workspace.join("target/agent-eval");
+    let first_packet_path = target.join(format!("live-review-{session_id}-route-a.json"));
+    let second_packet_path = target.join(format!("live-review-{session_id}-route-b.json"));
+    let first_packet = super::agent_capacity_eval::live_review_packet_from_pilot(
+        &first_result,
+        campaign_id.clone(),
+        "Route A",
+    )
+    .expect("first review packet");
+    let second_packet = super::agent_capacity_eval::live_review_packet_from_pilot(
+        &second_result,
+        campaign_id.clone(),
+        "Route B",
+    )
+    .expect("second review packet");
+    let first_packet_hash =
+        super::agent_capacity_eval::write_live_review_packet(&first_packet_path, &first_packet)
+            .expect("first review packet persisted");
+    let second_packet_hash =
+        super::agent_capacity_eval::write_live_review_packet(&second_packet_path, &second_packet)
+            .expect("second review packet persisted");
+    let first_trace = super::agent_capacity_eval::live_trace_result_from_pilot(
+        &first_result,
+        "Route A",
+        campaign_id.clone(),
+        first_packet_hash,
+        budget.clone(),
+    );
+    let second_trace = super::agent_capacity_eval::live_trace_result_from_pilot(
+        &second_result,
+        "Route B",
+        campaign_id,
+        second_packet_hash,
+        budget,
+    );
+    let first_output = target.join(format!("live-pilot-{session_id}-route-a.json"));
+    let second_output = target.join(format!("live-pilot-{session_id}-route-b.json"));
+    let first_write = super::agent_capacity_eval::write_attested_live_trace_result(
+        &first_output,
+        &first_trace,
+        &session_id,
+        &config_root,
+    );
+    let second_write = super::agent_capacity_eval::write_attested_live_trace_result(
+        &second_output,
+        &second_trace,
+        &session_id,
+        &config_root,
+    );
+    eprintln!(
+        "live_campaign_reports first={} second={}",
+        first_output.display(),
+        second_output.display()
+    );
+    first_write.expect("first trace persisted before strict outcome");
+    second_write.expect("second trace persisted before strict outcome");
+    assert_eq!(
+        first_trace.status, "live_trace_executed",
+        "first live trace failed"
+    );
+    assert_eq!(
+        second_trace.status, "live_trace_executed",
+        "second live trace failed"
     );
 }
 

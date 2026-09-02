@@ -1648,30 +1648,6 @@ pub(crate) fn live_pilot_prompt(scenario: &CoreScenario) -> String {
     }
 }
 
-/// Check the fixed public fact used by live Web and hybrid pilot scenarios
-/// against both the visible answer and the bounded current-source excerpt.
-/// This remains intentionally narrow: exact synthetic facts belong only to
-/// the deterministic oracle.
-#[cfg(test)]
-pub(crate) fn live_public_web_fact_source_support(answer: &str, excerpt: &str) -> bool {
-    !answer.trim().is_empty()
-        && !excerpt.trim().is_empty()
-        && !answer.contains("本轮未取得足够")
-        && !answer.contains("无法将本轮已有资料")
-        && !answer.contains("无法回答")
-        && !answer.contains("不能回答")
-        && !answer.contains("无法核实")
-}
-
-/// Check the fixed local fact used by live local/hybrid scenarios against the
-/// transient authorized note. The value is natural language rather than a
-/// deterministic-fixture identifier, while the source remains exact-run
-/// evidence with its content hash checked by the caller.
-#[cfg(test)]
-pub(crate) fn live_public_local_fact_source_support(answer: &str, body: &str) -> bool {
-    answer.contains("Iris Pilot") && body.contains("Iris Pilot")
-}
-
 #[derive(Clone, Copy)]
 struct BaseQuestionPlan {
     group: EvidenceGroup,
@@ -2424,9 +2400,6 @@ impl EvaluationTelemetryTap {
     ) {
         if let Ok(mut state) = self.state.lock() {
             state.model_turns = state.model_turns.saturating_add(1);
-            state.tool_calls = state
-                .tool_calls
-                .saturating_add(response.tool_calls.len().min(u32::MAX as usize) as u32);
             state.prompt_tokens = state
                 .prompt_tokens
                 .saturating_add(u64::from(response.usage.prompt_tokens));
@@ -2455,6 +2428,15 @@ impl EvaluationTelemetryTap {
                     state.finish_other = state.finish_other.saturating_add(1);
                 }
             }
+        }
+    }
+
+    /// Record one Host-dispatched business tool action. Proposed, deferred, or
+    /// rejected model calls are intentionally excluded: Campaign budgets meter
+    /// real external work, not an untrusted response shape.
+    pub(crate) fn record_executed_tool_call(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.tool_calls = state.tool_calls.saturating_add(1);
         }
     }
 
@@ -3312,7 +3294,7 @@ impl LiveProfileApproval {
 }
 
 #[cfg(test)]
-fn random_live_token(prefix: &str, bytes: usize) -> Result<String, EvalContractError> {
+pub(crate) fn random_live_token(prefix: &str, bytes: usize) -> Result<String, EvalContractError> {
     use rand::RngCore;
 
     let mut random = vec![0_u8; bytes];
@@ -3658,6 +3640,7 @@ pub(crate) async fn exercise_approved_live_hydration_with_local_transports(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LiveCostConfirmation {
     InteractionMatrixPilot,
+    TwoRouteCampaign,
 }
 
 #[cfg(test)]
@@ -3700,9 +3683,9 @@ struct LivePilotTokenCounts {
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LivePilotTelemetry {
-    model_turns: u32,
-    tool_calls: u32,
+pub(crate) struct LivePilotTelemetry {
+    pub(crate) model_turns: u32,
+    pub(crate) tool_calls: u32,
     token_counts: Option<LivePilotTokenCounts>,
     first_visible_token_ms: Option<u64>,
     total_model_time_ms: u64,
@@ -3742,11 +3725,15 @@ impl From<&EvaluationTelemetrySummary> for LivePilotTelemetry {
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LivePilotCaseResult {
+pub(crate) struct LivePilotCaseResult {
     repetition: u8,
     #[serde(flatten)]
     summary: EvaluationCaseSummary,
-    telemetry: LivePilotTelemetry,
+    pub(crate) telemetry: LivePilotTelemetry,
+    #[serde(skip)]
+    review_data: Option<LiveReviewCaseData>,
+    #[serde(skip)]
+    continuity_observed: bool,
 }
 
 #[cfg(test)]
@@ -3763,7 +3750,328 @@ pub(crate) struct LivePilotResult {
     passed: u32,
     failed: u32,
     status: &'static str,
-    cases: Vec<LivePilotCaseResult>,
+    pub(crate) cases: Vec<LivePilotCaseResult>,
+}
+
+/// Real-route trace artifact.  Unlike v2, this type intentionally has no
+/// automatic fact-correctness field: a completed trace is only eligible for
+/// human semantic review after its packet is bound and attested.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LiveTraceResult {
+    schema_version: &'static str,
+    route_commitment: String,
+    route_label: &'static str,
+    campaign_id: String,
+    pub(crate) status: &'static str,
+    case_count: u32,
+    required_case_count: u32,
+    completed_case_count: u32,
+    mechanical_passed: u32,
+    mechanical_failed: u32,
+    review_packet_sha256: String,
+    campaign_budget: LiveCampaignBudget,
+    cases: Vec<LiveTraceCaseResult>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LiveCampaignBudget {
+    pub(crate) max_runs: u32,
+    pub(crate) max_model_turns: u32,
+    pub(crate) max_web_tool_calls: u32,
+    pub(crate) observed_runs: u32,
+    pub(crate) observed_model_turns: u32,
+    pub(crate) observed_web_tool_calls: u32,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LiveTraceCaseResult {
+    case_id: u32,
+    repetition: u8,
+    semantic_status: &'static str,
+    mechanical: LiveTraceMechanicalChecks,
+    telemetry: LiveTraceTelemetry,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LiveTraceMechanicalChecks {
+    terminal: &'static str,
+    authorization: &'static str,
+    search_fetch_trace: &'static str,
+    run_local_sources: &'static str,
+    citation_binding: &'static str,
+    safety: &'static str,
+    continuity: &'static str,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LiveTraceTelemetry {
+    model_turns: u32,
+    tool_calls: u32,
+}
+
+/// A test-only, only-decreasing cap injected by the real-evaluation campaign.
+/// Production Run policies remain persisted and unchanged.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LiveCampaignRunCap {
+    pub(crate) max_model_turns: u32,
+    pub(crate) max_tool_calls: u32,
+    pub(crate) max_network_tool_calls: u32,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LiveReviewPacket {
+    schema_version: String,
+    campaign_id: String,
+    route_label: String,
+    cases: Vec<LiveReviewPacketCase>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LiveReviewPacketCase {
+    case_id: u32,
+    prompt: String,
+    final_answer: String,
+    citations: Vec<LiveReviewCitation>,
+    search_fetch_observed: bool,
+    repair_observed: bool,
+    stop_reason: String,
+    model_turns: u32,
+    tool_calls: u32,
+}
+
+#[cfg(test)]
+pub(crate) fn live_trace_result_from_pilot(
+    result: &LivePilotResult,
+    route_label: &'static str,
+    campaign_id: String,
+    review_packet_sha256: String,
+    campaign_budget: LiveCampaignBudget,
+) -> LiveTraceResult {
+    let cases = result
+        .cases
+        .iter()
+        .map(|case| {
+            let is_web_case = case.summary.case_id != 1;
+            let terminal = if case.summary.runtime_evidence.terminal_state
+                == EvaluationTerminalState::Completed
+            {
+                "pass"
+            } else {
+                "fail"
+            };
+            let authorization =
+                if case.summary.verdict.authorization().status() == CheckStatus::Pass {
+                    "pass"
+                } else {
+                    "fail"
+                };
+            let safety = if case.summary.verdict.safety().status() == CheckStatus::Pass {
+                "pass"
+            } else {
+                "fail"
+            };
+            let web_trace_ok = case.telemetry.tool_calls >= 2
+                && case
+                    .summary
+                    .runtime_evidence
+                    .observed_source_kinds
+                    .contains(&SourceKind::Web);
+            let search_fetch_trace = if is_web_case {
+                if web_trace_ok {
+                    "pass"
+                } else {
+                    "fail"
+                }
+            } else {
+                "not_applicable"
+            };
+            let run_local_sources = if is_web_case {
+                if case
+                    .summary
+                    .runtime_evidence
+                    .observed_source_kinds
+                    .contains(&SourceKind::Web)
+                {
+                    "pass"
+                } else {
+                    "fail"
+                }
+            } else {
+                "not_applicable"
+            };
+            let citation_binding = if is_web_case {
+                if case.summary.verdict.citation_support().status() == CheckStatus::Pass {
+                    "pass"
+                } else {
+                    "fail"
+                }
+            } else {
+                "not_applicable"
+            };
+            // The first turn establishes a route-local session; only later
+            // turns can mechanically demonstrate that their predecessor's
+            // conversation state was carried forward.
+            let continuity = if case.continuity_observed {
+                "pass"
+            } else {
+                "not_applicable"
+            };
+            let mechanical = LiveTraceMechanicalChecks {
+                terminal,
+                authorization,
+                search_fetch_trace,
+                run_local_sources,
+                citation_binding,
+                safety,
+                continuity,
+            };
+            let mechanical_pass = [
+                mechanical.terminal,
+                mechanical.authorization,
+                mechanical.search_fetch_trace,
+                mechanical.run_local_sources,
+                mechanical.citation_binding,
+                mechanical.safety,
+                mechanical.continuity,
+            ]
+            .iter()
+            .all(|status| *status == "pass" || *status == "not_applicable");
+            LiveTraceCaseResult {
+                case_id: case.summary.case_id,
+                repetition: case.repetition,
+                semantic_status: if mechanical_pass {
+                    "pending_human_review"
+                } else {
+                    "not_reviewable"
+                },
+                mechanical,
+                telemetry: LiveTraceTelemetry {
+                    model_turns: case.telemetry.model_turns,
+                    tool_calls: case.telemetry.tool_calls,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    let completed_case_count = cases
+        .iter()
+        .filter(|case| case.mechanical.terminal == "pass")
+        .count()
+        .min(u32::MAX as usize) as u32;
+    let mechanical_passed = cases
+        .iter()
+        .filter(|case| case.semantic_status == "pending_human_review")
+        .count()
+        .min(u32::MAX as usize) as u32;
+    let case_count = cases.len().min(u32::MAX as usize) as u32;
+    LiveTraceResult {
+        schema_version: "agent-live-pilot-v3",
+        route_commitment: result.route_commitment.clone(),
+        route_label,
+        campaign_id,
+        status: if completed_case_count == LIVE_PILOT_CASE_COUNT
+            && mechanical_passed == LIVE_PILOT_CASE_COUNT
+        {
+            "live_trace_executed"
+        } else {
+            "live_trace_failed"
+        },
+        case_count,
+        required_case_count: LIVE_PILOT_CASE_COUNT,
+        completed_case_count,
+        mechanical_passed,
+        mechanical_failed: case_count.saturating_sub(mechanical_passed),
+        review_packet_sha256,
+        campaign_budget,
+        cases,
+    }
+}
+
+#[cfg(test)]
+impl LiveTraceResult {
+    pub(crate) fn set_observed_web_tool_calls_for_test(&mut self, value: u32) {
+        self.campaign_budget.observed_web_tool_calls = value;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn live_review_packet_from_pilot(
+    result: &LivePilotResult,
+    campaign_id: String,
+    route_label: &'static str,
+) -> Result<LiveReviewPacket, EvalContractError> {
+    let scenarios = select_live_pilot_scenarios()?;
+    let cases = result
+        .cases
+        .iter()
+        .map(|case| {
+            let prompt = scenarios
+                .iter()
+                .find(|scenario| scenario.case_id() == case.summary.case_id)
+                .map(live_pilot_prompt)
+                .ok_or_else(|| EvalContractError::new("live_pilot_case_set_invalid"))?;
+            let review = case.review_data.as_ref();
+            Ok(LiveReviewPacketCase {
+                case_id: case.summary.case_id,
+                prompt,
+                final_answer: review
+                    .map(|data| bounded_live_review_text(&data.answer, 16_000))
+                    .unwrap_or_default(),
+                citations: review
+                    .map(|data| {
+                        data.citations
+                            .iter()
+                            .map(|citation| LiveReviewCitation {
+                                label: citation.label.clone(),
+                                title: bounded_live_review_text(&citation.title, 512),
+                                url: citation.url.clone(),
+                                retrieved_at: citation.retrieved_at.clone(),
+                                excerpt: bounded_live_review_text(&citation.excerpt, 2_000),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                search_fetch_observed: case.telemetry.tool_calls >= 2,
+                // A long loop is not proof that a repair happened. The
+                // current runtime does not persist repair attempts separately,
+                // so keep this conservative until that observable exists.
+                repair_observed: false,
+                stop_reason: case
+                    .summary
+                    .runtime_evidence
+                    .terminal_error_code
+                    .unwrap_or("completed")
+                    .to_string(),
+                model_turns: case.telemetry.model_turns,
+                tool_calls: case.telemetry.tool_calls,
+            })
+        })
+        .collect::<Result<Vec<_>, EvalContractError>>()?;
+    Ok(LiveReviewPacket {
+        schema_version: "agent-live-review-packet-v1".to_string(),
+        campaign_id,
+        route_label: route_label.to_string(),
+        cases,
+    })
+}
+
+#[cfg(test)]
+fn bounded_live_review_text(value: &str, maximum_chars: usize) -> String {
+    value.chars().take(maximum_chars).collect()
 }
 
 #[cfg(test)]
@@ -3812,7 +4120,10 @@ pub(crate) fn prepare_approved_live_pilot(
     now_seconds: u64,
     probe: &LivePilotCallProbe,
 ) -> Result<PreparedLivePilot, EvalContractError> {
-    if cost_confirmation != Some(LiveCostConfirmation::InteractionMatrixPilot) {
+    if !matches!(
+        cost_confirmation,
+        Some(LiveCostConfirmation::InteractionMatrixPilot | LiveCostConfirmation::TwoRouteCampaign)
+    ) {
         return Err(EvalContractError::new("live_cost_confirmation_required"));
     }
     let approval_token = approval_token
@@ -3919,6 +4230,7 @@ async fn execute_live_pilot_case(
     evidence_oracle: LivePilotEvidenceOracle,
     repetition: u8,
     session: &mut Option<crate::ai_runtime::run_contract::AssistantSessionRef>,
+    campaign_cap: Option<LiveCampaignRunCap>,
 ) -> Result<ExecutedCoreCase, EvalContractError> {
     use crate::ai_runtime::normal_run_service::execute_normal_run_with_eval_telemetry;
     use crate::ai_runtime::run_contract::{
@@ -4005,6 +4317,7 @@ async fn execute_live_pilot_case(
         LivePilotEvidenceOracle::Synthetic => execution_scenario.prompt().to_string(),
         LivePilotEvidenceOracle::PublicWeb => live_pilot_prompt(&execution_scenario),
     };
+    let continuity_observed = session.is_some();
     let request = AssistantRunStartRequest {
         client_request_id: format!(
             "agent-live-pilot-{}-{}-r{}",
@@ -4042,15 +4355,27 @@ async fn execute_live_pilot_case(
             .set_test_streaming_client(direct_loopback_test_client());
     }
     let telemetry = EvaluationTelemetryTap::default();
-    execute_normal_run_with_eval_telemetry(
-        std::sync::Arc::clone(&prepared.state),
-        accepted.clone(),
-        Some(prepared.vault.clone()),
-        &sink,
-        &telemetry,
-    )
-    .await;
-    score_headless_run(
+    if let Some(cap) = campaign_cap {
+        crate::ai_runtime::normal_run_service::execute_normal_run_with_eval_telemetry_cap(
+            std::sync::Arc::clone(&prepared.state),
+            accepted.clone(),
+            Some(prepared.vault.clone()),
+            &sink,
+            &telemetry,
+            cap,
+        )
+        .await;
+    } else {
+        execute_normal_run_with_eval_telemetry(
+            std::sync::Arc::clone(&prepared.state),
+            accepted.clone(),
+            Some(prepared.vault.clone()),
+            &sink,
+            &telemetry,
+        )
+        .await;
+    }
+    let mut scored = score_headless_run(
         &prepared.state,
         &accepted,
         &sink,
@@ -4060,7 +4385,9 @@ async fn execute_live_pilot_case(
         None,
         Some(&local_body),
         evidence_oracle,
-    )
+    )?;
+    scored.continuity_observed = continuity_observed;
+    Ok(scored)
 }
 
 /// Keep evaluator routing markers inside the local protocol double. A real
@@ -4095,6 +4422,14 @@ enum LivePilotCaseExecutor {
 #[cfg(test)]
 fn inconclusive_live_pilot_case(
     scenario: &CoreScenario,
+) -> Result<ExecutedCoreCase, EvalContractError> {
+    inconclusive_live_pilot_case_with_error(scenario, "agent_run_evaluation_inconclusive")
+}
+
+#[cfg(test)]
+fn inconclusive_live_pilot_case_with_error(
+    scenario: &CoreScenario,
+    error_code: &'static str,
 ) -> Result<ExecutedCoreCase, EvalContractError> {
     let observation = AnswerObservation {
         case_id: scenario.manifest.id.clone(),
@@ -4131,7 +4466,7 @@ fn inconclusive_live_pilot_case(
             required_fact_ids,
             runtime_evidence: RuntimeEvidenceSummary {
                 terminal_state: EvaluationTerminalState::Failed,
-                terminal_error_code: Some("agent_run_evaluation_inconclusive"),
+                terminal_error_code: Some(error_code),
                 event_count: 0,
                 observed_source_kinds: Vec::new(),
                 tool_call_count: 0,
@@ -4175,6 +4510,8 @@ fn inconclusive_live_pilot_case(
         },
         answer_contains_fixture_injection: false,
         model_web_query_contains_local_material: false,
+        review_data: None,
+        continuity_observed: false,
     })
 }
 
@@ -4247,6 +4584,7 @@ async fn run_approved_live_pilot_with_executor(
                         live_pilot_evidence_oracle(isolated.test_loopback_transport),
                         repetition,
                         &mut isolated_session,
+                        None,
                     )
                     .await
                 }
@@ -4257,6 +4595,7 @@ async fn run_approved_live_pilot_with_executor(
                         live_pilot_evidence_oracle(prepared.test_loopback_transport),
                         repetition,
                         &mut live_session,
+                        None,
                     )
                     .await
                 }
@@ -4285,6 +4624,8 @@ async fn run_approved_live_pilot_with_executor(
             repetition: *repetition,
             summary: result.summary.clone(),
             telemetry: LivePilotTelemetry::from(&result.telemetry),
+            review_data: result.review_data.clone(),
+            continuity_observed: result.continuity_observed,
         })
         .collect::<Vec<_>>();
     let completed_case_count = cases
@@ -4332,6 +4673,152 @@ async fn run_approved_live_pilot_with_executor(
         status,
         cases,
     })
+}
+
+/// Execute two independently prepared routes as one interleaved, globally
+/// capped campaign. This remains evaluator-only: it applies an in-memory cap
+/// to each accepted Run and never changes the persisted budget policy.
+#[cfg(test)]
+pub(crate) async fn run_live_trace_campaign_with_prepared(
+    routes: [&PreparedLivePilot; 2],
+) -> Result<[LivePilotResult; 2], EvalContractError> {
+    let scenarios = select_live_pilot_scenarios()?;
+    let mut executed: [Vec<(u8, ExecutedCoreCase)>; 2] = [Vec::new(), Vec::new()];
+    let mut sessions = [None, None];
+    let mut used_model_turns = 0_u32;
+    let mut used_web_tool_calls = 0_u32;
+    let schedule = scenarios
+        .iter()
+        .flat_map(|scenario| [(0_usize, scenario), (1_usize, scenario)])
+        .collect::<Vec<_>>();
+    for (index, (route_index, scenario)) in schedule.iter().enumerate() {
+        let Some(cap) = live_campaign_cap_for_next(
+            used_model_turns,
+            used_web_tool_calls,
+            &schedule[index + 1..],
+        ) else {
+            executed[*route_index].push((
+                1,
+                inconclusive_live_pilot_case_with_error(scenario, "campaign_budget_exhausted")?,
+            ));
+            continue;
+        };
+        let result = execute_live_pilot_case(
+            routes[*route_index],
+            scenario,
+            LivePilotEvidenceOracle::PublicWeb,
+            1,
+            &mut sessions[*route_index],
+            Some(cap),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            inconclusive_live_pilot_case_with_error(scenario, "evaluation_inconclusive")
+                .expect("closed campaign evaluator result")
+        });
+        used_model_turns = used_model_turns.saturating_add(result.telemetry.model_turns);
+        used_web_tool_calls = used_web_tool_calls.saturating_add(result.telemetry.tool_calls);
+        executed[*route_index].push((1, result));
+    }
+    // A campaign-level overage is a failed, observable execution result, not
+    // an evaluator exception. Keep every completed Run in the two route
+    // reports so the caller can persist and attest the failure before its
+    // strict gate rejects the budget ledger.
+    Ok([
+        live_pilot_result_from_executed(routes[0], executed[0].as_slice()),
+        live_pilot_result_from_executed(routes[1], executed[1].as_slice()),
+    ])
+}
+
+#[cfg(test)]
+fn live_campaign_cap_for_next(
+    used_model_turns: u32,
+    used_web_tool_calls: u32,
+    future: &[(usize, &CoreScenario)],
+) -> Option<LiveCampaignRunCap> {
+    let reserved_model_turns = future.iter().fold(0_u32, |total, (_, scenario)| {
+        total.saturating_add(if scenario.case_id() == 1 { 1 } else { 3 })
+    });
+    let reserved_web_tools = future.iter().fold(0_u32, |total, (_, scenario)| {
+        total.saturating_add(if scenario.case_id() == 1 { 0 } else { 2 })
+    });
+    let remaining_models = 48_u32
+        .checked_sub(used_model_turns)?
+        .checked_sub(reserved_model_turns)?;
+    let remaining_tools = 36_u32
+        .checked_sub(used_web_tool_calls)?
+        .checked_sub(reserved_web_tools)?;
+    let minimum_models = 1;
+    let minimum_tools = 0;
+    (remaining_models >= minimum_models && remaining_tools >= minimum_tools).then_some(
+        LiveCampaignRunCap {
+            max_model_turns: remaining_models.min(8),
+            max_tool_calls: remaining_tools.min(24),
+            max_network_tool_calls: remaining_tools.min(6),
+        },
+    )
+}
+
+#[cfg(test)]
+fn live_pilot_result_from_executed(
+    prepared: &PreparedLivePilot,
+    executed: &[(u8, ExecutedCoreCase)],
+) -> LivePilotResult {
+    let cases = executed
+        .iter()
+        .map(|(repetition, result)| LivePilotCaseResult {
+            repetition: *repetition,
+            summary: result.summary.clone(),
+            telemetry: LivePilotTelemetry::from(&result.telemetry),
+            review_data: result.review_data.clone(),
+            continuity_observed: result.continuity_observed,
+        })
+        .collect::<Vec<_>>();
+    let completed_case_count = cases
+        .iter()
+        .filter(|case| {
+            case.summary.runtime_evidence.terminal_state == EvaluationTerminalState::Completed
+        })
+        .count()
+        .min(u32::MAX as usize) as u32;
+    let terminal_case_count = cases
+        .iter()
+        .filter(|case| {
+            matches!(
+                case.summary.runtime_evidence.terminal_state,
+                EvaluationTerminalState::Completed
+                    | EvaluationTerminalState::Failed
+                    | EvaluationTerminalState::Cancelled
+            )
+        })
+        .count()
+        .min(u32::MAX as usize) as u32;
+    let passed = cases
+        .iter()
+        .filter(|case| case.summary.overall_pass)
+        .count()
+        .min(u32::MAX as usize) as u32;
+    let case_count = cases.len().min(u32::MAX as usize) as u32;
+    let status = live_pilot_result_status(
+        true,
+        terminal_case_count,
+        completed_case_count,
+        passed,
+        case_count,
+    );
+    LivePilotResult {
+        schema_version: "agent-live-pilot-v2",
+        profile_id: prepared.profile_id.clone(),
+        route_commitment: prepared.route_commitment.clone(),
+        capability_fingerprint: prepared.capabilities.clone(),
+        required_case_count: LIVE_PILOT_CASE_COUNT,
+        completed_case_count,
+        case_count,
+        passed,
+        failed: case_count.saturating_sub(passed),
+        status,
+        cases,
+    }
 }
 
 /// A safe refusal is a valid completed evaluation outcome when its closed
@@ -4383,6 +4870,13 @@ pub(crate) fn validate_serialized_live_pilot_result(
     }
     let value: serde_json::Value = serde_json::from_str(serialized)
         .map_err(|_| EvalContractError::new("live_pilot_invalid"))?;
+    if value
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_str)
+        == Some("agent-live-pilot-v3")
+    {
+        return validate_serialized_live_trace_result_v3(&value);
+    }
     let root = live_pilot_exact_object(
         &value,
         &[
@@ -4557,6 +5051,234 @@ pub(crate) fn validate_serialized_live_pilot_result(
     Ok(())
 }
 
+/// Validate the real-route v3 report without turning a natural-language answer
+/// into a synthetic fact oracle.  The report proves only mechanically observable
+/// execution contracts; semantic quality remains pending the hash-bound review.
+#[cfg(test)]
+fn validate_serialized_live_trace_result_v3(
+    value: &serde_json::Value,
+) -> Result<(), EvalContractError> {
+    let root = live_pilot_exact_object(
+        value,
+        &[
+            "schemaVersion",
+            "routeCommitment",
+            "routeLabel",
+            "campaignId",
+            "status",
+            "caseCount",
+            "requiredCaseCount",
+            "completedCaseCount",
+            "mechanicalPassed",
+            "mechanicalFailed",
+            "reviewPacketSha256",
+            "campaignBudget",
+            "cases",
+        ],
+    )?;
+    live_pilot_exact_string(root.get("schemaVersion"), &["agent-live-pilot-v3"])?;
+    validate_live_trace_identifier(root.get("routeCommitment"), "route-", 64)?;
+    live_pilot_exact_string(root.get("routeLabel"), &["Route A", "Route B"])?;
+    validate_live_trace_identifier(root.get("campaignId"), "campaign-", 64)?;
+    live_pilot_exact_string(
+        root.get("status"),
+        &["live_trace_executed", "live_trace_failed"],
+    )?;
+    validate_live_trace_hash(root.get("reviewPacketSha256"))?;
+    let case_count = live_pilot_bounded_u64(root.get("caseCount"), 6)?;
+    let required_case_count = live_pilot_bounded_u64(root.get("requiredCaseCount"), 6)?;
+    let completed_case_count = live_pilot_bounded_u64(root.get("completedCaseCount"), 6)?;
+    let mechanical_passed = live_pilot_bounded_u64(root.get("mechanicalPassed"), 6)?;
+    let mechanical_failed = live_pilot_bounded_u64(root.get("mechanicalFailed"), 6)?;
+    if case_count != 6
+        || required_case_count != 6
+        || completed_case_count > case_count
+        || mechanical_passed.saturating_add(mechanical_failed) != case_count
+    {
+        return Err(EvalContractError::new("live_pilot_count_inconsistent"));
+    }
+    let campaign_budget = validate_live_trace_campaign_budget(
+        root.get("campaignBudget")
+            .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?,
+    )?;
+    let cases = root
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?;
+    if cases.len() != 6 {
+        return Err(EvalContractError::new("live_pilot_count_inconsistent"));
+    }
+    let expected = select_live_pilot_scenarios()?
+        .into_iter()
+        .map(|scenario| scenario.case_id())
+        .collect::<HashSet<_>>();
+    let mut seen = HashSet::new();
+    let mut observed_completed = 0_u64;
+    let mut observed_passed = 0_u64;
+    let mut observed_model_turns = 0_u64;
+    let mut observed_tool_calls = 0_u64;
+    for case in cases {
+        let (case_id, completed, passed, model_turns, tool_calls) =
+            validate_live_trace_case_v3(case)?;
+        if !expected.contains(&case_id) || !seen.insert(case_id) {
+            return Err(EvalContractError::new("live_pilot_case_set_invalid"));
+        }
+        observed_completed = observed_completed.saturating_add(u64::from(completed));
+        observed_passed = observed_passed.saturating_add(u64::from(passed));
+        observed_model_turns = observed_model_turns.saturating_add(model_turns);
+        observed_tool_calls = observed_tool_calls.saturating_add(tool_calls);
+    }
+    if seen != expected
+        || observed_completed != completed_case_count
+        || observed_passed != mechanical_passed
+    {
+        return Err(EvalContractError::new("live_pilot_count_inconsistent"));
+    }
+    if root.get("status").and_then(serde_json::Value::as_str) == Some("live_trace_executed")
+        && (completed_case_count != 6 || mechanical_passed != 6)
+    {
+        return Err(EvalContractError::new("live_pilot_count_inconsistent"));
+    }
+    if campaign_budget.0 < case_count
+        || campaign_budget.1 < observed_model_turns
+        || campaign_budget.2 < observed_tool_calls
+    {
+        return Err(EvalContractError::new("live_pilot_call_budget_invalid"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn validate_live_trace_identifier(
+    value: Option<&serde_json::Value>,
+    prefix: &str,
+    suffix_length: usize,
+) -> Result<(), EvalContractError> {
+    let value = value
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?;
+    let suffix = value
+        .strip_prefix(prefix)
+        .ok_or_else(|| EvalContractError::new("live_pilot_value_invalid"))?;
+    if suffix.len() == suffix_length && suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(EvalContractError::new("live_pilot_value_invalid"))
+    }
+}
+
+#[cfg(test)]
+fn validate_live_trace_hash(value: Option<&serde_json::Value>) -> Result<(), EvalContractError> {
+    let value = value
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?;
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(EvalContractError::new("live_pilot_value_invalid"))
+    }
+}
+
+#[cfg(test)]
+fn validate_live_trace_campaign_budget(
+    value: &serde_json::Value,
+) -> Result<(u64, u64, u64), EvalContractError> {
+    let budget = live_pilot_exact_object(
+        value,
+        &[
+            "maxRuns",
+            "maxModelTurns",
+            "maxWebToolCalls",
+            "observedRuns",
+            "observedModelTurns",
+            "observedWebToolCalls",
+        ],
+    )?;
+    let maximums = [
+        ("maxRuns", 12_u64),
+        ("maxModelTurns", 48_u64),
+        ("maxWebToolCalls", 36_u64),
+    ];
+    for (key, expected) in maximums {
+        if live_pilot_bounded_u64(budget.get(key), expected)? != expected {
+            return Err(EvalContractError::new("live_pilot_value_invalid"));
+        }
+    }
+    let observed_runs = live_pilot_bounded_u64(budget.get("observedRuns"), u64::MAX)?;
+    let observed_model_turns = live_pilot_bounded_u64(budget.get("observedModelTurns"), u64::MAX)?;
+    let observed_web_tool_calls =
+        live_pilot_bounded_u64(budget.get("observedWebToolCalls"), u64::MAX)?;
+    if observed_runs > 12 || observed_model_turns > 48 || observed_web_tool_calls > 36 {
+        return Err(EvalContractError::new("live_pilot_call_budget_invalid"));
+    }
+    Ok((observed_runs, observed_model_turns, observed_web_tool_calls))
+}
+
+#[cfg(test)]
+fn validate_live_trace_case_v3(
+    value: &serde_json::Value,
+) -> Result<(u32, bool, bool, u64, u64), EvalContractError> {
+    let case = live_pilot_exact_object(
+        value,
+        &[
+            "caseId",
+            "repetition",
+            "semanticStatus",
+            "mechanical",
+            "telemetry",
+        ],
+    )?;
+    let case_id = live_pilot_bounded_u64(case.get("caseId"), 48)?;
+    let case_id =
+        u32::try_from(case_id).map_err(|_| EvalContractError::new("live_pilot_value_invalid"))?;
+    if live_pilot_bounded_u64(case.get("repetition"), 1)? != 1 {
+        return Err(EvalContractError::new("live_pilot_value_invalid"));
+    }
+    live_pilot_exact_string(
+        case.get("semanticStatus"),
+        &["pending_human_review", "not_reviewable"],
+    )?;
+    let mechanical = live_pilot_exact_object(
+        case.get("mechanical")
+            .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?,
+        &[
+            "terminal",
+            "authorization",
+            "searchFetchTrace",
+            "runLocalSources",
+            "citationBinding",
+            "safety",
+            "continuity",
+        ],
+    )?;
+    for key in ["terminal", "authorization", "safety"] {
+        live_pilot_exact_string(mechanical.get(key), &["pass", "fail"])?;
+    }
+    live_pilot_exact_string(
+        mechanical.get("continuity"),
+        &["pass", "fail", "not_applicable"],
+    )?;
+    for key in ["searchFetchTrace", "runLocalSources", "citationBinding"] {
+        live_pilot_exact_string(mechanical.get(key), &["pass", "fail", "not_applicable"])?;
+    }
+    let telemetry = live_pilot_exact_object(
+        case.get("telemetry")
+            .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?,
+        &["modelTurns", "toolCalls"],
+    )?;
+    let model_turns = live_pilot_bounded_u64(telemetry.get("modelTurns"), 8)?;
+    let tool_calls = live_pilot_bounded_u64(telemetry.get("toolCalls"), 24)?;
+    let completed = mechanical
+        .get("terminal")
+        .and_then(serde_json::Value::as_str)
+        == Some("pass");
+    let passed = completed
+        && mechanical.values().all(|value| {
+            value.as_str() == Some("pass") || value.as_str() == Some("not_applicable")
+        });
+    Ok((case_id, completed, passed, model_turns, tool_calls))
+}
+
 #[cfg(test)]
 fn validate_live_pilot_case(
     value: &serde_json::Value,
@@ -4711,6 +5433,42 @@ pub(crate) fn write_live_pilot_result(
     output: &std::path::Path,
     result: &LivePilotResult,
 ) -> Result<(), EvalContractError> {
+    let serialized = serde_json::to_string_pretty(result)
+        .map_err(|_| EvalContractError::new("live_pilot_serialization_failed"))?;
+    write_live_evaluation_artifact(output, &serialized)
+}
+
+#[cfg(test)]
+fn write_live_evaluation_artifact(
+    output: &std::path::Path,
+    serialized: &str,
+) -> Result<(), EvalContractError> {
+    let parent = validate_live_evaluation_output_path(output)?;
+    if serialized.len() > 256 * 1024 {
+        return Err(EvalContractError::new("live_pilot_too_large"));
+    }
+    // Persist every genuinely executed result, including budget and quality
+    // failures, so strict validation cannot erase the diagnostic artifact.
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    use std::io::Write;
+    temporary
+        .write_all(serialized.as_bytes())
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    temporary
+        .persist_noclobber(output)
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn validate_live_evaluation_output_path(
+    output: &std::path::Path,
+) -> Result<std::path::PathBuf, EvalContractError> {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| EvalContractError::new("live_pilot_workspace_invalid"))?;
@@ -4733,26 +5491,108 @@ pub(crate) fn write_live_pilot_result(
             "live_pilot_output_not_ignored_target",
         ));
     }
+    Ok(parent.to_path_buf())
+}
+
+#[cfg(test)]
+pub(crate) fn write_live_review_packet(
+    output: &std::path::Path,
+    packet: &LiveReviewPacket,
+) -> Result<String, EvalContractError> {
+    use sha2::{Digest, Sha256};
+
+    validate_live_review_packet(packet, &packet.route_label, &packet.campaign_id)?;
+    let serialized = serde_json::to_string_pretty(packet)
+        .map_err(|_| EvalContractError::new("live_pilot_serialization_failed"))?;
+    write_live_evaluation_artifact(output, &serialized)?;
+    Ok(hex::encode(Sha256::digest(serialized.as_bytes())))
+}
+
+#[cfg(test)]
+fn validate_live_review_packet(
+    packet: &LiveReviewPacket,
+    expected_route_label: &str,
+    expected_campaign_id: &str,
+) -> Result<(), EvalContractError> {
+    if packet.schema_version != "agent-live-review-packet-v1"
+        || packet.route_label != expected_route_label
+        || packet.campaign_id != expected_campaign_id
+        || !matches!(packet.route_label.as_str(), "Route A" | "Route B")
+        || packet
+            .campaign_id
+            .strip_prefix("campaign-")
+            .is_none_or(|suffix| {
+                suffix.len() != 64 || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        || packet.cases.len() != LIVE_PILOT_CASE_COUNT as usize
+    {
+        return Err(EvalContractError::new("live_review_packet_invalid"));
+    }
+    let scenarios = select_live_pilot_scenarios()?;
+    let mut observed = HashSet::new();
+    for case in &packet.cases {
+        let Some(scenario) = scenarios
+            .iter()
+            .find(|scenario| scenario.case_id() == case.case_id)
+        else {
+            return Err(EvalContractError::new("live_review_packet_invalid"));
+        };
+        if !observed.insert(case.case_id)
+            || case.prompt != live_pilot_prompt(scenario)
+            || case.final_answer.chars().count() > 16_000
+            || case.stop_reason.len() > 160
+            || case.model_turns > 8
+            || case.tool_calls > 24
+        {
+            return Err(EvalContractError::new("live_review_packet_invalid"));
+        }
+        for citation in &case.citations {
+            if citation.label.len() > 32
+                || citation.title.chars().count() > 512
+                || citation.url.len() > 4_096
+                || !citation.url.starts_with("https://")
+                || citation
+                    .retrieved_at
+                    .as_deref()
+                    .is_some_and(|value| value.len() > 128)
+                || citation.excerpt.chars().count() > 2_000
+            {
+                return Err(EvalContractError::new("live_review_packet_invalid"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn live_trace_packet_path(
+    output: &std::path::Path,
+    session_id: &str,
+) -> Result<(String, std::path::PathBuf), EvalContractError> {
+    let route = ["a", "b"]
+        .into_iter()
+        .find(|route| {
+            output.file_name().and_then(std::ffi::OsStr::to_str)
+                == Some(format!("live-pilot-{session_id}-route-{route}.json").as_str())
+        })
+        .ok_or_else(|| EvalContractError::new("live_attestation_execution_invalid"))?;
+    let parent = output
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_attestation_execution_invalid"))?;
+    Ok((
+        route.to_string(),
+        parent.join(format!("live-review-{session_id}-route-{route}.json")),
+    ))
+}
+
+#[cfg(test)]
+fn write_live_trace_result(
+    output: &std::path::Path,
+    result: &LiveTraceResult,
+) -> Result<(), EvalContractError> {
     let serialized = serde_json::to_string_pretty(result)
         .map_err(|_| EvalContractError::new("live_pilot_serialization_failed"))?;
-    // `LivePilotResult` is an internal typed record. Persist every genuinely
-    // executed result, including budget and quality failures, so the strict
-    // product validator can reject it without erasing the evidence that
-    // explains the rejection.
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
-    use std::io::Write;
-    temporary
-        .write_all(serialized.as_bytes())
-        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
-    temporary
-        .persist_noclobber(output)
-        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
-    Ok(())
+    write_live_evaluation_artifact(output, &serialized)
 }
 
 #[cfg(test)]
@@ -4767,6 +5607,8 @@ struct LiveResultAttestation {
     schema_version: String,
     session_id: String,
     report_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_packet_sha256: Option<String>,
     nonce: String,
     tag: String,
 }
@@ -4868,6 +5710,17 @@ fn live_attestation_aad(session_id: &str, serialized: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(test)]
+fn live_trace_attestation_aad(
+    session_id: &str,
+    report: &[u8],
+    review_packet_sha256: &str,
+) -> Vec<u8> {
+    let mut aad = live_attestation_aad(session_id, report);
+    aad.extend_from_slice(review_packet_sha256.as_bytes());
+    aad
+}
+
+#[cfg(test)]
 pub(crate) fn write_attested_live_pilot_result(
     output: &std::path::Path,
     result: &LivePilotResult,
@@ -4909,6 +5762,7 @@ pub(crate) fn write_attested_live_pilot_result(
         schema_version: "agent-live-attestation-v2".to_string(),
         session_id: session_id.to_string(),
         report_sha256: hex::encode(Sha256::digest(&serialized)),
+        review_packet_sha256: None,
         nonce: hex::encode(nonce_bytes),
         tag: hex::encode(tag),
     };
@@ -4931,6 +5785,106 @@ pub(crate) fn write_attested_live_pilot_result(
         .persist_noclobber(attestation_path)
         .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
     Ok(())
+}
+
+/// Persist and attest one v3 trace after its review packet already exists.
+/// The encrypted tag binds both artifact hashes without placing any key,
+/// provider identity, hidden reasoning, or full page body in the packet.
+#[cfg(test)]
+pub(crate) fn write_attested_live_trace_result(
+    output: &std::path::Path,
+    result: &LiveTraceResult,
+    session_id: &str,
+    config_root: &std::path::Path,
+) -> Result<(), EvalContractError> {
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use aes_gcm::{Aes256Gcm, Nonce};
+    use rand::RngCore;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    if !matches!(result.status, "live_trace_executed" | "live_trace_failed") {
+        return Err(EvalContractError::new("live_attestation_execution_invalid"));
+    }
+    let _ = validate_live_evaluation_output_path(output)?;
+    let (route, packet_path) = live_trace_packet_path(output, session_id)?;
+    let packet_metadata = packet_path
+        .symlink_metadata()
+        .map_err(|_| EvalContractError::new("live_review_packet_missing"))?;
+    if !packet_metadata.file_type().is_file()
+        || packet_metadata.file_type().is_symlink()
+        || packet_metadata.len() > 256 * 1024
+    {
+        return Err(EvalContractError::new("live_review_packet_invalid"));
+    }
+    let packet_bytes = std::fs::read(&packet_path)
+        .map_err(|_| EvalContractError::new("live_review_packet_invalid"))?;
+    if hex::encode(Sha256::digest(&packet_bytes)) != result.review_packet_sha256 {
+        return Err(EvalContractError::new("live_review_packet_hash_mismatch"));
+    }
+    let packet: LiveReviewPacket = serde_json::from_slice(&packet_bytes)
+        .map_err(|_| EvalContractError::new("live_review_packet_invalid"))?;
+    let route_label = if route == "a" { "Route A" } else { "Route B" };
+    validate_live_review_packet(&packet, route_label, &result.campaign_id)?;
+    if result.route_label != route_label {
+        return Err(EvalContractError::new("live_attestation_execution_invalid"));
+    }
+    let report_for_validation = serde_json::to_string_pretty(result)
+        .map_err(|_| EvalContractError::new("live_pilot_serialization_failed"))?;
+    let strict_validation = validate_serialized_live_pilot_result(&report_for_validation);
+    write_live_trace_result(output, result)?;
+    let serialized = std::fs::read(output)
+        .map_err(|_| EvalContractError::new("live_attestation_report_invalid"))?;
+    let key = live_attestation_key(config_root, true)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_slice())
+        .map_err(|_| EvalContractError::new("live_attestation_key_invalid"))?;
+    let mut nonce_bytes = [0_u8; 12];
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut nonce_bytes)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    let tag = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce_bytes),
+            Payload {
+                msg: &[],
+                aad: &live_trace_attestation_aad(
+                    session_id,
+                    &serialized,
+                    &result.review_packet_sha256,
+                ),
+            },
+        )
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    let attestation = LiveResultAttestation {
+        schema_version: "agent-live-attestation-v3".to_string(),
+        session_id: session_id.to_string(),
+        report_sha256: hex::encode(Sha256::digest(&serialized)),
+        review_packet_sha256: Some(result.review_packet_sha256.clone()),
+        nonce: hex::encode(nonce_bytes),
+        tag: hex::encode(tag),
+    };
+    let serialized_attestation = serde_json::to_vec_pretty(&attestation)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    let attestation_path = live_attestation_path(output);
+    let parent = output
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_attestation_write_failed"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    temporary
+        .write_all(&serialized_attestation)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    temporary
+        .persist_noclobber(attestation_path)
+        .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
+    // The report and its packet are deliberately durable before strict
+    // acceptance is returned to the caller. A failed campaign is evidence,
+    // not an artifact that may be silently erased by its own validator.
+    strict_validation
 }
 
 #[cfg(test)]
@@ -4971,12 +5925,16 @@ pub(crate) fn verify_attested_live_pilot_result(
             .map_err(|_| EvalContractError::new("live_attestation_invalid"))?,
     )
     .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
-    let session_id = output
+    let output_stem = output
         .file_name()
         .and_then(std::ffi::OsStr::to_str)
         .and_then(|name| name.strip_prefix("live-pilot-"))
         .and_then(|name| name.strip_suffix(".json"))
         .ok_or_else(|| EvalContractError::new("live_attestation_session_invalid"))?;
+    let (session_id, route_suffix) = match output_stem.rsplit_once("-route-") {
+        Some((session, route)) if matches!(route, "a" | "b") => (session, Some(route)),
+        _ => (output_stem, None),
+    };
     let session_suffix = session_id
         .strip_prefix("session-")
         .filter(|value| {
@@ -4987,10 +5945,13 @@ pub(crate) fn verify_attested_live_pilot_result(
         })
         .ok_or_else(|| EvalContractError::new("live_attestation_session_invalid"))?;
     let _ = session_suffix;
-    if attestation.schema_version != "agent-live-attestation-v2"
-        || attestation.session_id != session_id
-        || attestation.report_sha256 != observed_sha256
-    {
+    let report_value: serde_json::Value = serde_json::from_slice(serialized)
+        .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+    let is_v3 = report_value
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_str)
+        == Some("agent-live-pilot-v3");
+    if attestation.session_id != session_id || attestation.report_sha256 != observed_sha256 {
         return Err(EvalContractError::new("live_attestation_invalid"));
     }
     let nonce = hex::decode(&attestation.nonce)
@@ -5003,12 +5964,66 @@ pub(crate) fn verify_attested_live_pilot_result(
     let key = live_attestation_key(config_root, false)?;
     let cipher = Aes256Gcm::new_from_slice(key.as_slice())
         .map_err(|_| EvalContractError::new("live_attestation_key_invalid"))?;
+    let aad = if is_v3 {
+        let route =
+            route_suffix.ok_or_else(|| EvalContractError::new("live_attestation_invalid"))?;
+        let packet_hash = attestation
+            .review_packet_sha256
+            .as_deref()
+            .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or_else(|| EvalContractError::new("live_attestation_invalid"))?;
+        if attestation.schema_version != "agent-live-attestation-v3"
+            || report_value
+                .get("reviewPacketSha256")
+                .and_then(serde_json::Value::as_str)
+                != Some(packet_hash)
+        {
+            return Err(EvalContractError::new("live_attestation_invalid"));
+        }
+        let packet = output
+            .parent()
+            .ok_or_else(|| EvalContractError::new("live_attestation_invalid"))?
+            .join(format!("live-review-{session_id}-route-{route}.json"));
+        let packet_metadata = packet
+            .symlink_metadata()
+            .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+        if !packet_metadata.file_type().is_file()
+            || packet_metadata.file_type().is_symlink()
+            || packet_metadata.len() > 256 * 1024
+        {
+            return Err(EvalContractError::new("live_attestation_invalid"));
+        }
+        let packet_bytes = std::fs::read(&packet)
+            .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+        if packet_bytes.len() > 256 * 1024
+            || hex::encode(Sha256::digest(&packet_bytes)) != packet_hash
+        {
+            return Err(EvalContractError::new("live_attestation_invalid"));
+        }
+        let packet_value: LiveReviewPacket = serde_json::from_slice(&packet_bytes)
+            .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+        let route_label = if route == "a" { "Route A" } else { "Route B" };
+        let campaign_id = report_value
+            .get("campaignId")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| EvalContractError::new("live_attestation_invalid"))?;
+        validate_live_review_packet(&packet_value, route_label, campaign_id)
+            .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
+        live_trace_attestation_aad(session_id, serialized, packet_hash)
+    } else {
+        if attestation.schema_version != "agent-live-attestation-v2"
+            || attestation.review_packet_sha256.is_some()
+        {
+            return Err(EvalContractError::new("live_attestation_invalid"));
+        }
+        live_attestation_aad(session_id, serialized)
+    };
     let plaintext = cipher
         .decrypt(
             Nonce::from_slice(&nonce),
             Payload {
                 msg: &tag,
-                aad: &live_attestation_aad(session_id, serialized),
+                aad: &aad,
             },
         )
         .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
@@ -5301,6 +6316,85 @@ pub(crate) fn restore_and_consume_live_preflight_session(
         },
         approvals: HashMap::new(),
     })
+}
+
+/// Consume two explicit profiles from one preflight state before either route
+/// is hydrated. The short-lived duplicate exists only inside this function so
+/// the existing strict state reader verifies each selected binding; it is
+/// removed on every exit and never survives into dispatch.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn restore_and_consume_live_preflight_campaign(
+    input: &std::path::Path,
+    expected_session_id: &str,
+    approved_profile_ids: [&str; 2],
+    candidates: Vec<LiveProfileCandidate>,
+    now_seconds: u64,
+    source_database: &std::path::Path,
+    data_root: &std::path::Path,
+    config_root: &std::path::Path,
+) -> Result<[LivePreflightSession; 2], EvalContractError> {
+    if approved_profile_ids[0] == approved_profile_ids[1] {
+        return Err(EvalContractError::new("live_campaign_routes_not_distinct"));
+    }
+    let parent = input
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_session_invalid"))?;
+    let copy = parent.join(format!(
+        ".campaign-{}-{}.json",
+        expected_session_id,
+        random_live_token("copy-", 8)?
+    ));
+    let bytes = std::fs::read(input).map_err(|_| EvalContractError::new("live_session_missing"))?;
+    if bytes.len() > 64 * 1024 {
+        return Err(EvalContractError::new("live_session_too_large"));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    use std::io::Write;
+    let write_result = (|| {
+        let mut file = options
+            .open(&copy)
+            .map_err(|_| EvalContractError::new("live_session_output_failed"))?;
+        file.write_all(&bytes)
+            .map_err(|_| EvalContractError::new("live_session_output_failed"))?;
+        file.sync_all()
+            .map_err(|_| EvalContractError::new("live_session_output_failed"))
+    })();
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&copy);
+        return Err(error);
+    }
+    let first = restore_and_consume_live_preflight_session(
+        input,
+        expected_session_id,
+        approved_profile_ids[0],
+        candidates.clone(),
+        now_seconds,
+        source_database,
+        data_root,
+        config_root,
+    );
+    let second = restore_and_consume_live_preflight_session(
+        &copy,
+        expected_session_id,
+        approved_profile_ids[1],
+        candidates,
+        now_seconds,
+        source_database,
+        data_root,
+        config_root,
+    );
+    let _ = std::fs::remove_file(&copy);
+    match (first, second) {
+        (Ok(first), Ok(second)) => Ok([first, second]),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+    }
 }
 
 #[cfg(test)]
@@ -5965,6 +7059,26 @@ pub(crate) struct ExecutedCoreCase {
     telemetry: EvaluationTelemetrySummary,
     answer_contains_fixture_injection: bool,
     model_web_query_contains_local_material: bool,
+    review_data: Option<LiveReviewCaseData>,
+    continuity_observed: bool,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LiveReviewCaseData {
+    answer: String,
+    citations: Vec<LiveReviewCitation>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LiveReviewCitation {
+    label: String,
+    title: String,
+    url: String,
+    retrieved_at: Option<String>,
+    excerpt: String,
 }
 
 #[cfg(test)]
@@ -6705,7 +7819,8 @@ fn score_headless_run(
         .db
         .with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT source_type, source_path, provider_id, normalized_url, content_hash, bounded_excerpt
+                "SELECT source_type, source_path, provider_id, normalized_url, content_hash, bounded_excerpt,
+                        title, url, retrieved_at
                  FROM session_evidence
                  WHERE origin_run_id = ?1
                  ORDER BY id",
@@ -6719,6 +7834,9 @@ fn score_headless_run(
                         row.get::<_, Option<String>>(3)?,
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()
@@ -6732,7 +7850,7 @@ fn score_headless_run(
     let sources = evidence_rows
         .iter()
         .filter_map(
-            |(source_type, source_path, provider_id, normalized_url, _, _)| {
+            |(source_type, source_path, provider_id, normalized_url, _, _, _, _, _)| {
                 let kind = match source_type.as_str() {
                     "local" if source_path.as_deref().is_some_and(|path| !path.is_empty()) => {
                         SourceKind::Local
@@ -6797,12 +7915,14 @@ fn score_headless_run(
                         return false;
                     };
                     let answer_supports_fact = match (evidence_oracle, kind) {
+                        // Real-Web calibration does not contain a synthetic
+                        // truth oracle. A visible, non-limitation answer is
+                        // eligible for mechanical source/citation checks; its
+                        // factual meaning is reviewed from the signed packet.
                         (LivePilotEvidenceOracle::PublicWeb, SourceKind::Web) => {
-                            final_answer.contains("404")
+                            !final_answer.trim().is_empty()
                         }
-                        (LivePilotEvidenceOracle::PublicWeb, SourceKind::Local) => {
-                            final_answer.contains("Iris Pilot")
-                        }
+                        (LivePilotEvidenceOracle::PublicWeb, SourceKind::Local) => false,
                         _ => final_answer.contains(&expected_claim),
                     };
                     if !answer_supports_fact {
@@ -6816,6 +7936,9 @@ fn score_headless_run(
                             normalized_url,
                             content_hash,
                             bounded_excerpt,
+                            _,
+                            _,
+                            _,
                         )| {
                             match kind {
                                 SourceKind::Local => {
@@ -6838,12 +7961,7 @@ fn score_headless_run(
                                                         None,
                                                     )
                                                 }
-                                                LivePilotEvidenceOracle::PublicWeb => {
-                                                    live_public_local_fact_source_support(
-                                                        &final_answer,
-                                                        body,
-                                                    )
-                                                }
+                                                LivePilotEvidenceOracle::PublicWeb => false,
                                             }
                                     })
                                 }
@@ -6862,10 +7980,7 @@ fn score_headless_run(
                                                     )
                                                 }
                                                 LivePilotEvidenceOracle::PublicWeb => {
-                                                    live_public_web_fact_source_support(
-                                                        &final_answer,
-                                                        excerpt,
-                                                    )
+                                                    !excerpt.trim().is_empty()
                                                 }
                                             }
                                     })
@@ -7175,6 +8290,47 @@ fn score_headless_run(
             .is_some_and(|marker| final_answer.contains(marker)),
         model_web_query_contains_local_material: model_web_query_contains_local_material
             .unwrap_or(false),
+        review_data: (evidence_oracle == LivePilotEvidenceOracle::PublicWeb).then(|| {
+            LiveReviewCaseData {
+                answer: final_answer,
+                citations: final_message
+                    .as_ref()
+                    .map(|message| {
+                        message
+                            .web_citations
+                            .iter()
+                            .map(|citation| LiveReviewCitation {
+                                label: format!("[W{}]", citation.index),
+                                title: citation.title.clone(),
+                                url: citation.url.clone(),
+                                retrieved_at: evidence_rows
+                                    .iter()
+                                    .find(|(source_type, _, _, normalized_url, _, _, _, url, _)| {
+                                        source_type == "web"
+                                            && (normalized_url.as_deref()
+                                                == Some(citation.url.as_str())
+                                                || url.as_deref() == Some(citation.url.as_str()))
+                                    })
+                                    .and_then(|(_, _, _, _, _, _, _, _, retrieved_at)| {
+                                        retrieved_at.clone()
+                                    }),
+                                excerpt: evidence_rows
+                                    .iter()
+                                    .find(|(source_type, _, _, normalized_url, _, _, _, url, _)| {
+                                        source_type == "web"
+                                            && (normalized_url.as_deref()
+                                                == Some(citation.url.as_str())
+                                                || url.as_deref() == Some(citation.url.as_str()))
+                                    })
+                                    .and_then(|(_, _, _, _, _, excerpt, _, _, _)| excerpt.clone())
+                                    .unwrap_or_default(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }
+        }),
+        continuity_observed: false,
     })
 }
 
