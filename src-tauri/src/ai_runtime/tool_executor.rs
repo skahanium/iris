@@ -114,6 +114,7 @@ impl ToolRegistry {
             "get_context_packets",
             "get_backlinks",
             "web_search",
+            "web_fetch",
             "spawn_subagent",
         ];
         tools
@@ -250,6 +251,7 @@ mod tests {
         assert!(names.contains(&"read_note"));
         assert!(names.contains(&"get_outline"));
         assert!(names.contains(&"web_search"));
+        assert!(names.contains(&"web_fetch"));
         assert!(!names.contains(&"search_hybrid"));
         assert!(!names.contains(&"search_keyword"));
         assert!(!names.contains(&"search_semantic"));

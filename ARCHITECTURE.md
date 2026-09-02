@@ -55,7 +55,7 @@ normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `as
 
 有任一只读工具时，模型进入唯一 `AgentToolLoop`。Standard 预算为 8 次模型、24 次总工具，并受 local 12、network 6、external-read 6、runtime 4 分类上限约束。每个模型回合最多执行 2 个 catalog 标记的发现调用；超出的独立发现动作返回 `deferred_for_feedback`，不消耗额度。每次工具批次结束后必须把有界观察返回模型，Host 不自动规划后续搜索。进展只由新资源、正文深度、内容 hash、revision、首次错误类别或终局修复等机械事实计算。
 
-新 Normal Run 的普通回答（包括要求本轮 Web 证据的普通事实）以自然正文完成；Run Engine 仍核验当前 Run evidence，并只从最终正文实际引用且验证通过的账本记录投影受控来源区。高风险当前事实、`CurrentRunExternal` 以及含非空历史 `FreshFactPolicy` 的兼容 Run 使用既有结构化终局，使最终采用的来源集合可机械收窄。普通地点、范围、偏好等缺参由模型在未调用工具前以一条无来源的自然问题结束当前 Run；下一条用户消息创建新 Run 并从会话历史承接。`AwaitingInput` 与 `submit_input` 仅保留旧 Run 读取/恢复兼容，不是新普通对话的路径。
+新 Normal Run 的普通回答（包括要求本轮 Web 证据的普通事实）以自然正文完成；Run Engine 仍核验当前 Run evidence，并只从最终正文实际引用且验证通过的账本记录投影受控来源区。普通时效事实取得一份与核心结论相关的当前 Run 网页正文并精确引用即可完成；高风险当前事实、CitationCheck、显式交叉核实、`CurrentRunExternal` 以及含非空历史 `FreshFactPolicy` 的兼容 Run 才要求官方来源或两个独立域名，并在需要时使用既有结构化终局。普通地点、范围、偏好等缺参由模型在未调用工具前以一条无来源的自然问题结束当前 Run；下一条用户消息创建新 Run 并从会话历史承接。`AwaitingInput` 与 `submit_input` 仅保留旧 Run 读取/恢复兼容，不是新普通对话的路径。
 
 `agent_run_events` 是追加式、安全的过程回放日志，而不是可据以重建全部 Run 的执行日志：事件不包含工具参数或原始输出，只保存稳定 capability、调用 ID、受限摘要、状态和安全错误码。`assistant_run_get` 的回放仅恢复安全快照与过程展示；Direct 与 ToolLoop 不支持进程级续跑，进程中断后不会从事件重新执行模型或工具。只有 Durable Run 才具有暂停与检查点语义：新计划冻结至多 6 个有序操作和 6 个目标，一次确认后按无正文游标逐项重验和执行；重启只恢复未执行后缀，hash 漂移保留已完成前缀并停止后缀。确认后若 Provider 可用，最多以目标限定的 `read_note` 做 2 次模型/4 次本地只读核对；不可用时保留 Host 的执行事实报告，绝不重放写入或开放新工具。
 
@@ -69,11 +69,13 @@ normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `as
 
 普通搜索和 AI 检索均在 Rust 侧执行。Run 仅按显式引用和获授权范围请求材料；显式材料在读取/送模前、工具读取在打开文件前、Markdown 提交在写盘前都会复核文档策略。检索结果通过证据 ID 与安全展示元数据进入账本，不将证据正文作为系统指令。
 
-模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。无 URL 的发现调用每次最多返回 4 个有界候选、每 Run 最多保存 8 个；候选只标记为 `search_snippet`，不写 evidence ledger。模型可从当前 Run 候选或用户显式 URL 中选择目标再次调用同一 `web_search`，只有抓取到 `fetched_body` 的选中页面才登记为可引用 evidence。未选候选和失败抓取不能生成 `Wn`。
+模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。模型可见面使用两个单一职责动作：`web_search { query }` 只发现候选，`web_fetch { urls }` 只读取当前 Run 候选或用户显式 URL；两者共享同一授权、network 预算、Broker 与冻结 Provider 顺序。搜索每次最多返回 4 个有界候选、每 Run 最多保存 8 个；候选只标记为 `search_snippet`，不写 evidence ledger。只有 `web_fetch` 得到 `fetched_body` 的选中页面才登记为可引用 evidence。未选候选和失败抓取不能生成 `Wn`。
 
 MCP fetch 的成功语义由 `WebEvidenceBroker` 独占：它只拆 transport 信封和 `content[].text` 中可完整解析的一层 JSON 载荷，并要求请求 URL 与返回条目 canonicalize 后一致且正文不是错误信封、空文本、标题重复或搜索结果包装。当前候选来源优先，失败后只在 Intake 已冻结的 `web.fetch` 有序候选内切换；search 健康以可用 HTTPS 候选计，fetch 健康以合格 `fetched_body` 计。`run_tool_loop` 不能把 snippet 升级为 evidence。
 
 要求 `CurrentRunWeb`、`CurrentRunExternal` 或结构化严格终局的 Run 在 `bind_validated_content` 前密封模型正文；来源/终局 repair 仍使用同一 ToolLoop 的一次修复额度。通过后只发布最终正文一次，失败则发布无 citation map、无 source summary 的限制说明。`AnswerReset` 不由新的严格 Run 产生，只保留旧事件回放兼容；Direct 与非严格 ToolLoop 继续实时流式。
+
+会话消息的 `evidence_refs_json` 是现代来源选择事实：显式空数组表示最终消息无来源，非空数组只允许投影这些当前 Run evidence；只有字段缺失的旧消息可以按历史 `SourceGroupFallback` 读取。数据库中同 Run 的其他候选或已登记 evidence 不会在重载时自动重新挂到现代消息。
 
 Feed 与 AI 网页抓取的 URL 读取使用同一逐跳安全网门：每跳重新校验 HTTPS、解析并拒绝任一私网地址；直连固定到已验证地址，HTTP CONNECT/SOCKS5 也只发送固定 IP 目标，同时 TLS SNI、证书校验与 Host 保持原域名。它消费唯一的 `follow_system_proxy` 设置；PAC、HTTPS-to-proxy 或认证代理稳定失败且不会回退直连。
 

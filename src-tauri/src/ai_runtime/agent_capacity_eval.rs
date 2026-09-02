@@ -1637,17 +1637,14 @@ impl CoreScenario {
 /// fact that exists solely in the fixture.
 #[cfg(test)]
 pub(crate) fn live_pilot_prompt(scenario: &CoreScenario) -> String {
-    match scenario.evidence_group() {
-        EvidenceGroup::WebOnly => {
-            "请联网核实 HTTP 状态码 404 表示什么，简洁说明并使用来源区呈现网页来源；不要把网页内容说成是用户提供的信息。".to_string()
-        }
-        EvidenceGroup::Hybrid => {
-            "先根据授权本地材料回答项目代号是什么，再联网核实 HTTP 状态码 404 表示什么。清楚区分材料与网页信息，且不要把网页内容说成是用户提供的信息。".to_string()
-        }
-        EvidenceGroup::LocalOnly => {
-            "请根据授权本地材料回答：项目代号是什么？只概括材料中明确的信息。".to_string()
-        }
-        EvidenceGroup::NoRetrieval => scenario.prompt().to_string(),
+    match scenario.case_id() {
+        1 => "你好，请用一句自然的话回应。".to_string(),
+        26 => "近期有什么正在热映或即将上映的电影吗？请联网核实，并明确区分正在热映与即将上映。".to_string(),
+        28 => "我只看当前正在热映的电影，不要即将上映，请按这个最新范围重新联网核实。".to_string(),
+        30 => "请从你上一轮提到的影片中选第一部，重新联网核实它目前是否确实正在热映；如果上一轮没有可核验影片，就明确说明。".to_string(),
+        32 => "近期 NBA 有什么值得关注的动态，尤其是交易或转会方面？请联网核实，并区分已确认消息和传闻。".to_string(),
+        34 => "我质疑你上一轮关于 NBA 的结论。请重新联网核验，区分已完成交易、正式报道和传闻，并纠正任何不准确之处。".to_string(),
+        _ => scenario.prompt().to_string(),
     }
 }
 
@@ -1657,7 +1654,13 @@ pub(crate) fn live_pilot_prompt(scenario: &CoreScenario) -> String {
 /// the deterministic oracle.
 #[cfg(test)]
 pub(crate) fn live_public_web_fact_source_support(answer: &str, excerpt: &str) -> bool {
-    answer.contains("404") && excerpt.contains("404")
+    !answer.trim().is_empty()
+        && !excerpt.trim().is_empty()
+        && !answer.contains("本轮未取得足够")
+        && !answer.contains("无法将本轮已有资料")
+        && !answer.contains("无法回答")
+        && !answer.contains("不能回答")
+        && !answer.contains("无法核实")
 }
 
 /// Check the fixed local fact used by live local/hybrid scenarios against the
@@ -3791,6 +3794,12 @@ impl LivePilotResult {
             .filter_map(|case| case.summary.runtime_evidence.terminal_error_code)
             .collect()
     }
+
+    pub(crate) fn set_first_case_tool_calls_for_test(&mut self, tool_calls: u32) {
+        if let Some(case) = self.cases.first_mut() {
+            case.telemetry.tool_calls = tool_calls;
+        }
+    }
 }
 
 /// Validate and consume the approval/cost gates before copying route metadata
@@ -4473,6 +4482,8 @@ pub(crate) fn validate_serialized_live_pilot_result(
     let mut observed_passed = 0_u64;
     let mut observed_completed = 0_u64;
     let mut observed_terminal = 0_u64;
+    let mut observed_model_turns = 0_u64;
+    let mut observed_web_tool_calls = 0_u64;
     for case in cases {
         let (case_id, repetition, overall_pass, _) =
             validate_live_pilot_case(case).map_err(|error| {
@@ -4486,6 +4497,32 @@ pub(crate) fn validate_serialized_live_pilot_result(
             return Err(EvalContractError::new("live_pilot_value_invalid"));
         }
         observed_passed = observed_passed.saturating_add(u64::from(overall_pass));
+        let model_turns = case
+            .pointer("/telemetry/modelTurns")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| EvalContractError::new("live_pilot_case_invalid"))?;
+        let tool_calls = case
+            .pointer("/telemetry/toolCalls")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| EvalContractError::new("live_pilot_case_invalid"))?;
+        observed_model_turns = observed_model_turns.saturating_add(model_turns);
+        observed_web_tool_calls = observed_web_tool_calls.saturating_add(tool_calls);
+        if status == "live_pilot_executed"
+            && case_id != 1
+            && (tool_calls < 2
+                || !case
+                    .pointer("/runtimeEvidence/observedSourceKinds")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind == "web"))
+                || case
+                    .pointer("/verdict/citationSupport/status")
+                    .and_then(serde_json::Value::as_str)
+                    != Some("pass"))
+        {
+            return Err(EvalContractError::new(
+                "live_pilot_loop_or_source_contract_failed",
+            ));
+        }
         let terminal_state = case
             .get("runtimeEvidence")
             .and_then(|evidence| evidence.get("terminalState"))
@@ -4513,6 +4550,9 @@ pub(crate) fn validate_serialized_live_pilot_result(
             && (observed_terminal != case_count || observed_passed != case_count))
     {
         return Err(EvalContractError::new("live_pilot_count_inconsistent"));
+    }
+    if observed_model_turns > 24 || observed_web_tool_calls > 18 {
+        return Err(EvalContractError::new("live_pilot_call_budget_invalid"));
     }
     Ok(())
 }
@@ -4695,7 +4735,10 @@ pub(crate) fn write_live_pilot_result(
     }
     let serialized = serde_json::to_string_pretty(result)
         .map_err(|_| EvalContractError::new("live_pilot_serialization_failed"))?;
-    validate_serialized_live_pilot_result(&serialized)?;
+    // `LivePilotResult` is an internal typed record. Persist every genuinely
+    // executed result, including budget and quality failures, so the strict
+    // product validator can reject it without erasing the evidence that
+    // explains the rejection.
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
     use std::io::Write;
@@ -4837,7 +4880,7 @@ pub(crate) fn write_attested_live_pilot_result(
     use sha2::{Digest, Sha256};
     use std::io::Write;
 
-    if result.status != "live_pilot_executed"
+    if !matches!(result.status, "live_pilot_executed" | "live_not_tested")
         || output.file_name().and_then(std::ffi::OsStr::to_str)
             != Some(format!("live-pilot-{session_id}.json").as_str())
     {
@@ -5711,7 +5754,11 @@ pub(crate) struct EvaluationSummary {
     evidence_level: EvaluationEvidenceLevel,
     run_mode: EvalRunMode,
     case_count: u32,
+    executed_case_count: u32,
     completed_case_count: u32,
+    answered_case_count: u32,
+    expected_refusal_count: u32,
+    unexpected_failure_count: u32,
     passed: u32,
     failed: u32,
     boundary_case_count: u32,
@@ -5792,7 +5839,7 @@ pub(crate) fn select_core_scenarios(
 /// exceeding the twelve-Run product-calibration ceiling.
 #[cfg(test)]
 pub(crate) fn select_live_pilot_scenarios() -> Result<Vec<CoreScenario>, EvalContractError> {
-    const CASE_IDS: [u32; 6] = [1, 12, 13, 24, 36, 48];
+    const CASE_IDS: [u32; 6] = [1, 26, 28, 30, 32, 34];
     let scenarios = generate_core_scenarios()?;
     let selected = scenarios
         .into_iter()
@@ -5994,6 +6041,26 @@ pub(crate) async fn run_headless_core_evaluation(
         .filter(|case| case.runtime_evidence.terminal_state == EvaluationTerminalState::Completed)
         .count()
         .min(u32::MAX as usize) as u32;
+    let expected_refusal_count = selected
+        .iter()
+        .zip(&cases)
+        .filter(|(scenario, case)| {
+            scenario.web_state() == WebState::Offline
+                && matches!(
+                    scenario.evidence_group(),
+                    EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
+                )
+                && case.runtime_evidence.terminal_state == EvaluationTerminalState::Failed
+                && case.runtime_evidence.terminal_error_code
+                    == Some("agent_run_web_verification_required")
+                && case.verdict.safety().status() == CheckStatus::Pass
+        })
+        .count()
+        .min(u32::MAX as usize) as u32;
+    let unexpected_failure_count = case_count
+        .saturating_sub(passed)
+        .saturating_sub(expected_refusal_count);
+    let contract_passed = passed.saturating_add(expected_refusal_count);
     let atoms = cases
         .iter()
         .map(|case| case.quality_atoms)
@@ -6033,13 +6100,17 @@ pub(crate) async fn run_headless_core_evaluation(
         })
         .sum();
     Ok(EvaluationSummary {
-        schema_version: "agent-eval-summary-v1",
+        schema_version: "agent-eval-summary-v2",
         evidence_level: EvaluationEvidenceLevel::HeadlessDeterministic,
         run_mode: mode,
         case_count,
+        executed_case_count: case_count,
         completed_case_count,
-        passed,
-        failed: case_count.saturating_sub(passed),
+        answered_case_count: passed,
+        expected_refusal_count,
+        unexpected_failure_count,
+        passed: contract_passed,
+        failed: unexpected_failure_count,
         boundary_case_count: selected
             .iter()
             .filter(|scenario| scenario.is_hard_boundary())
@@ -6225,8 +6296,8 @@ async fn execute_headless_core_case_with_local_body(
             ),
             sse_tool_call(
                 &format!("eval-web-fetch-{}", scenario.case_id()),
-                "web_search",
-                r#"{"query":"synthetic evaluation evidence","urls":["https://source.invalid/contract","https://source-2.invalid/2"]}"#,
+                "web_fetch",
+                r#"{"urls":["https://source.invalid/contract"]}"#,
             ),
             sse_content(&final_content),
         ]
@@ -6479,7 +6550,7 @@ const UNEXPECTED_EVAL_TOOL: &str = "unexpected_tool";
 #[cfg(test)]
 pub(crate) fn normalize_observed_eval_tool_name(value: &str) -> &str {
     match value {
-        "web.search" | "web.fetch" => "web_search",
+        "web.search" | "web.fetch" | "web_fetch" => "web_search",
         "web_search" => value,
         _ if is_evaluation_runtime_read_tool(value) => "runtime_context",
         _ if is_evaluation_local_read_tool(value) => value,
@@ -6540,7 +6611,10 @@ pub(crate) fn summarize_web_query_boundary(
 
 #[cfg(test)]
 pub(crate) fn observed_eval_tool_class(tool_name: &str) -> ObservedEvalToolClass {
-    if matches!(tool_name, "web.search" | "web.fetch" | "web_search") {
+    if matches!(
+        tool_name,
+        "web.search" | "web.fetch" | "web_search" | "web_fetch"
+    ) {
         ObservedEvalToolClass::WebSearch
     } else if is_evaluation_local_read_tool(tool_name) {
         ObservedEvalToolClass::LocalRead
@@ -7323,9 +7397,12 @@ pub(crate) fn current_fact_answer_does_not_deny_web_after_search(
     answer: &str,
     tool_calls: &[&str],
 ) -> bool {
-    let used_web_search = tool_calls
-        .iter()
-        .any(|tool| matches!(*tool, "web_search" | "web.search" | "web.fetch"));
+    let used_web_search = tool_calls.iter().any(|tool| {
+        matches!(
+            *tool,
+            "web_search" | "web_fetch" | "web.search" | "web.fetch"
+        )
+    });
     if !used_web_search {
         return true;
     }
@@ -10670,7 +10747,11 @@ pub(crate) fn validate_serialized_evaluation_summary(
             "evidenceLevel",
             "runMode",
             "caseCount",
+            "executedCaseCount",
             "completedCaseCount",
+            "answeredCaseCount",
+            "expectedRefusalCount",
+            "unexpectedFailureCount",
             "passed",
             "failed",
             "boundaryCaseCount",
@@ -10681,11 +10762,15 @@ pub(crate) fn validate_serialized_evaluation_summary(
             "cases",
         ],
     )?;
-    exact_string(root.get("schemaVersion"), &["agent-eval-summary-v1"])?;
+    exact_string(root.get("schemaVersion"), &["agent-eval-summary-v2"])?;
     exact_string(root.get("evidenceLevel"), &["headless_deterministic"])?;
     exact_string(root.get("runMode"), &["smoke", "full"])?;
     let case_count = bounded_u64(root.get("caseCount"), 48)?;
+    let executed_case_count = bounded_u64(root.get("executedCaseCount"), 48)?;
     let completed_case_count = bounded_u64(root.get("completedCaseCount"), 48)?;
+    let answered_case_count = bounded_u64(root.get("answeredCaseCount"), 48)?;
+    let expected_refusal_count = bounded_u64(root.get("expectedRefusalCount"), 48)?;
+    let unexpected_failure_count = bounded_u64(root.get("unexpectedFailureCount"), 48)?;
     let passed = bounded_u64(root.get("passed"), 48)?;
     let failed = bounded_u64(root.get("failed"), 48)?;
     let boundary_case_count = bounded_u64(root.get("boundaryCaseCount"), 4)?;
@@ -10693,8 +10778,15 @@ pub(crate) fn validate_serialized_evaluation_summary(
         .get("runMode")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
-    if (run_mode == "smoke" && completed_case_count != case_count)
-        || passed.saturating_add(failed) != case_count
+    if executed_case_count != case_count
+        || completed_case_count != answered_case_count
+        || answered_case_count
+            .saturating_add(expected_refusal_count)
+            .saturating_add(unexpected_failure_count)
+            != case_count
+        || passed != answered_case_count.saturating_add(expected_refusal_count)
+        || failed != unexpected_failure_count
+        || (run_mode == "smoke" && unexpected_failure_count != 0)
     {
         return Err(EvalContractError::new(
             "evaluation_summary_count_inconsistent",
@@ -10715,22 +10807,49 @@ pub(crate) fn validate_serialized_evaluation_summary(
         ));
     }
     let mut case_ids = HashSet::with_capacity(cases.len());
-    let mut observed_passed = 0_u64;
+    let mut observed_answered = 0_u64;
+    let mut observed_expected_refusals = 0_u64;
     let mut observed_boundaries = 0_u64;
     for case in cases {
         let (case_id, overall_pass, has_boundary) = validate_case_summary(case)?;
         if !case_ids.insert(case_id) {
             return Err(EvalContractError::new("evaluation_summary_case_duplicate"));
         }
-        observed_passed = observed_passed.saturating_add(u64::from(overall_pass));
+        observed_answered = observed_answered.saturating_add(u64::from(overall_pass));
+        observed_expected_refusals = observed_expected_refusals
+            .saturating_add(u64::from(serialized_case_is_expected_refusal(case)));
         observed_boundaries = observed_boundaries.saturating_add(u64::from(has_boundary));
     }
-    if observed_passed != passed || observed_boundaries != boundary_case_count {
+    if observed_answered != answered_case_count
+        || observed_expected_refusals != expected_refusal_count
+        || observed_boundaries != boundary_case_count
+    {
         return Err(EvalContractError::new(
             "evaluation_summary_count_inconsistent",
         ));
     }
     Ok(())
+}
+
+fn serialized_case_is_expected_refusal(case: &serde_json::Value) -> bool {
+    case.get("webState").and_then(serde_json::Value::as_str) == Some("offline")
+        && matches!(
+            case.get("evidenceGroup")
+                .and_then(serde_json::Value::as_str),
+            Some("web_only" | "hybrid")
+        )
+        && case
+            .pointer("/runtimeEvidence/terminalState")
+            .and_then(serde_json::Value::as_str)
+            == Some("failed")
+        && case
+            .pointer("/runtimeEvidence/terminalErrorCode")
+            .and_then(serde_json::Value::as_str)
+            == Some("agent_run_web_verification_required")
+        && case
+            .pointer("/verdict/safety/status")
+            .and_then(serde_json::Value::as_str)
+            == Some("pass")
 }
 
 fn exact_object<'a>(
@@ -11850,8 +11969,8 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
             } else if *needs_web && !has_fetched_web_body {
                 sse_tool_call(
                     &format!("live-pilot-web-fetch-{case_id}"),
-                    "web_search",
-                    r#"{"query":"synthetic evaluation evidence","urls":["https://source.invalid/contract","https://source-b.invalid/contract"]}"#,
+                    "web_fetch",
+                    r#"{"urls":["https://source.invalid/contract","https://source-b.invalid/contract"]}"#,
                 )
             } else if live_pilot_request_offers_final_submission(&captured.body) {
                 sse_tool_call(

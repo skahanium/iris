@@ -44,29 +44,31 @@ Web 开关关闭时不能外发；对于 WebPreferred 可直接诚实降级，�
 
 ## 4. 工具类别与 capability
 
-| 类别             | 典型 capability               | 典型工具                      | 特殊边界                                  |
-| ---------------- | ----------------------------- | ----------------------------- | ----------------------------------------- |
-| runtime          | `runtime.read`                | 时间、应用可信状态            | 小快照，不联网                            |
-| local            | `context.read` / `vault.read` | search/read/outline/backlinks | 每次读取复核文档权限                      |
-| network          | `web.search`                  | `web_search`                  | HTTPS、SSRF、query taint、current-Run URL |
-| external_read    | `external.read`               | 用户选定 MCP 工具             | binding/schema/provider hash 冻结         |
-| confirmed_change | `note.apply_patch`            | 插入、替换和后续变更集        | 必须确认和 hash 复核                      |
+| 类别             | 典型 capability               | 典型工具                      | 特殊边界                                    |
+| ---------------- | ----------------------------- | ----------------------------- | ------------------------------------------- |
+| runtime          | `runtime.read`                | 时间、应用可信状态            | 小快照，不联网                              |
+| local            | `context.read` / `vault.read` | search/read/outline/backlinks | 每次读取复核文档权限                        |
+| network          | `web.search`                  | `web_search`、`web_fetch`     | 搜索只产候选；抓取只读 current-Run/用户 URL |
+| external_read    | `external.read`               | 用户选定 MCP 工具             | binding/schema/provider hash 冻结           |
+| confirmed_change | `note.apply_patch`            | 插入、替换和后续变更集        | 必须确认和 hash 复核                        |
 
 `cost_class` 只用于预算和输出策略，不授予 capability。
 
-发现型调用还受每模型回合 2 次上限；第三个独立发现调用返回 `deferred_for_feedback`。Web 发现最多返回 4 个候选、每 Run 保存 8 个候选；候选片段不消耗 12 条最终 evidence 容量，模型选择并抓取正文后才获得 `Wn`。
+发现型调用还受每模型回合 2 次上限；第三个独立发现调用返回 `deferred_for_feedback`。`web_search { query }` 最多返回 4 个候选、每 Run 保存 8 个候选；候选片段不消耗 12 条最终 evidence 容量。模型用 `web_fetch { urls }` 选择当前候选或用户明确 URL，只有合格正文才获得 `Wn`。
 
 ## 5. 回答合同
 
 | 回答类型      | 正文               | 来源                      | 失败条件                                     |
 | ------------- | ------------------ | ------------------------- | -------------------------------------------- |
-| 普通回答      | 自然文本           | 可选来源组/受控引用       | 无可见正文或持久化失败                       |
+| 普通回答      | 自然文本           | 可选当前 Run 受控引用     | 无可见正文或持久化失败                       |
 | WebPreferred  | 自然文本并披露时效 | 有则绑定当前 Run          | 权限/系统故障；无证据本身不必失败            |
 | WebRequired   | 严格但仍自然       | 必须有当前 Run 正文证据   | 无证据时丢弃草稿并给限制说明；系统损坏才失败 |
 | CitationCheck | 结构化覆盖结果     | 必须逐项绑定              | 引用不存在、跨 Run 或覆盖不足                |
 | Apply         | 变更摘要和执行结果 | 计划 hash、目标和结果事实 | 未确认、hash 漂移；已执行前缀必须明确报告    |
 
 普通回答不得因为模型没有调用保留的结构化终局工具而失败。
+
+普通 `VolatileExternalFact` 取得一份相关正文并精确引用即可满足最低证据要求；`HighStakesCurrentFact`、CitationCheck 或用户明确要求交叉核实才要求官方来源或两个独立域名。现代消息的显式空 evidence 选择不得在历史重载时恢复为整 Run 来源。
 
 ## 6. 澄清与确认
 

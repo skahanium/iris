@@ -338,7 +338,7 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
         "system_time_now" | "app_context_read" | "capabilities_read" => {
             (vec![Atom::RuntimeContextRead], Risk::Low, true)
         }
-        "web_search" => (vec![Atom::WebSearch], Risk::Low, true),
+        "web_search" | "web_fetch" => (vec![Atom::WebSearch], Risk::Low, true),
         "insert_text_at_cursor" | "replace_selection" | "add_tags" => {
             (vec![Atom::VaultWritePatch], Risk::Medium, true)
         }
@@ -588,7 +588,7 @@ fn scope_summary(tool_name: &str, args: &serde_json::Value, skill_id: Option<&st
     if let Some(skill) = skill_id {
         return format!("skill={}", safe_fragment(skill));
     }
-    if tool_name == "web_search" {
+    if matches!(tool_name, "web_search" | "web_fetch") {
         return web_scope_summary(args);
     }
     for key in ["target_path", "path", "note_path"] {

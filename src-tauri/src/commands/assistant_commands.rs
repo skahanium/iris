@@ -206,18 +206,32 @@ pub async fn assistant_session_load(
                         .then_some(item.turn_id.as_deref())
                         .flatten()
                         .and_then(|turn_id| process_by_turn.get(turn_id));
+                    let evidence_refs = item.evidence_refs.clone();
                     let web_citations = historical_web_citations_for_run(
                         &state.db,
-                        process.map(|value| value.run_id.as_str()),
+                        item.run_id
+                            .as_deref()
+                            .or_else(|| process.map(|value| value.run_id.as_str())),
+                        evidence_refs.as_deref(),
                         item.web_citations,
                     );
                     let citation_binding = item.citation_binding.or_else(|| {
-                        (!web_citations.is_empty()).then_some(crate::ai_types::CitationBinding {
-                            mode: crate::ai_types::CitationBindingMode::SourceGroupFallback,
-                            referenced_indices: Vec::new(),
-                            fallback_reason: Some("legacy_binding_unavailable".to_string()),
-                        })
+                        (evidence_refs.is_none() && !web_citations.is_empty()).then_some(
+                            crate::ai_types::CitationBinding {
+                                mode: crate::ai_types::CitationBindingMode::SourceGroupFallback,
+                                referenced_indices: Vec::new(),
+                                fallback_reason: Some("legacy_binding_unavailable".to_string()),
+                            },
+                        )
                     });
+                    let source_summary = historical_source_summary_for_run(
+                        &state.db,
+                        item.run_id
+                            .as_deref()
+                            .or_else(|| process.map(|value| value.run_id.as_str())),
+                        evidence_refs.as_deref(),
+                        item.source_summary,
+                    );
                     AssistantSessionMessage {
                         seq: item.seq,
                         role: item.role,
@@ -240,7 +254,7 @@ pub async fn assistant_session_load(
                         display_mentions: item.display_mentions,
                         web_citations,
                         citation_binding,
-                        source_summary: item.source_summary,
+                        source_summary,
                         created_at: item.created_at,
                     }
                 })
@@ -260,11 +274,32 @@ pub async fn assistant_session_load(
 fn historical_web_citations_for_run(
     db: &crate::storage::db::Database,
     run_id: Option<&str>,
+    evidence_refs: Option<&[i64]>,
     persisted: Vec<crate::ai_types::WebCitationEntry>,
 ) -> Vec<crate::ai_types::WebCitationEntry> {
     let Some(run_id) = run_id else {
         return persisted;
     };
+    if let Some(evidence_refs) = evidence_refs {
+        return match crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_selected_current_run_web_citation_links(
+            db,
+            run_id,
+            evidence_refs,
+        ) {
+            Ok(selected) => selected
+                .into_iter()
+                .map(|citation| crate::ai_types::WebCitationEntry {
+                    index: citation.index,
+                    title: citation.title,
+                    url: citation.url,
+                })
+                .collect(),
+            // A modern message has an explicit evidence selection. If that
+            // selection cannot be resolved, showing no source is safer than
+            // reviving a stale persisted or whole-Run source group.
+            Err(_) => Vec::new(),
+        };
+    }
     match crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
         Ok(run_local) if !run_local.is_empty() => run_local
             .into_iter()
@@ -276,6 +311,26 @@ fn historical_web_citations_for_run(
             .collect(),
         Ok(_) | Err(_) => persisted,
     }
+}
+
+fn historical_source_summary_for_run(
+    db: &crate::storage::db::Database,
+    run_id: Option<&str>,
+    evidence_refs: Option<&[i64]>,
+    persisted: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
+) -> Vec<crate::ai_runtime::provenance::SourceSummaryEntry> {
+    let (Some(run_id), Some(evidence_refs)) = (run_id, evidence_refs) else {
+        return persisted;
+    };
+    crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::source_summary_for_current_run(
+        db,
+        run_id,
+        evidence_refs,
+    )
+    .map(|summary| summary.entries())
+    // Modern messages own an explicit selection. Never revive a persisted
+    // whole-Run summary when the selected rows cannot be resolved.
+    .unwrap_or_default()
 }
 
 /// Rename one conversation through its declared storage domain.
@@ -1100,10 +1155,14 @@ mod normal_run_desktop_adapter_tests {
     use super::assistant_run_start;
     use super::{
         assistant_run_control, dispatch_normal_run_service, evaluate_normal_run_policy,
-        execute_confirmed_change_with_sink,
+        execute_confirmed_change_with_sink, historical_source_summary_for_run,
+        historical_web_citations_for_run,
     };
     #[cfg(not(windows))]
     use crate::ai_runtime::agent_capacity_eval::{spawn_llm_protocol_double, HttpResponseScript};
+    use crate::ai_runtime::agent_evidence_repository::{
+        AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
+    };
     use crate::ai_runtime::agent_run_repository::{
         AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
         DurableApplyCheckpointStage,
@@ -1148,6 +1207,116 @@ mod normal_run_desktop_adapter_tests {
         fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn modern_explicit_empty_evidence_selection_never_rehydrates_run_sources() {
+        let db = crate::storage::db::Database::open_in_memory().expect("database");
+        let session =
+            crate::ai_runtime::normal_session_repository::NormalSessionRepository::create(&db)
+                .expect("session");
+        crate::ai_runtime::agent_run_repository::AgentRunRepository::accept(
+            &db,
+            crate::ai_runtime::agent_run_repository::AcceptRunInput {
+                session_id: session.session_id,
+                session_key: session.session_key,
+                client_request_id: "projection-client".into(),
+                run_id: "projection-run".into(),
+                turn_id: "projection-turn".into(),
+                message: "核实当前事实".into(),
+                content_parts: None,
+                explicit_references: Vec::new(),
+                context_scope: Default::default(),
+                display_mentions: Vec::new(),
+                explicit_action: None,
+                envelope: crate::ai_runtime::run_contract::ExecutionEnvelope {
+                    effect: Effect::Answer,
+                    context: crate::ai_runtime::run_contract::ContextMode::None,
+                    freshness: crate::ai_runtime::run_contract::Freshness::WebRequired,
+                    web_reason:
+                        crate::ai_runtime::run_contract::WebDecisionReason::VolatileExternalFact,
+                    verification_requirement:
+                        crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb,
+                    effort: crate::ai_runtime::run_contract::Effort::ToolLoop,
+                    security_domain: SecurityDomain::Normal,
+                    risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,
+                    modalities: Vec::new(),
+                    material_needs: Vec::new(),
+                    required_capabilities: vec![
+                        crate::ai_runtime::run_contract::CapabilityId::new("web.search"),
+                    ],
+                    explicit_constraints: Vec::new(),
+                    fresh_fact: Default::default(),
+                },
+            },
+        )
+        .expect("accepted run");
+        let registered = AgentEvidenceRepository::register_web(
+            &db,
+            WebEvidenceInput {
+                session_id: session.session_id,
+                run_id: "projection-run".into(),
+                message_seq_first: 1,
+                material_role: MaterialRole::Lookup,
+                title: "已抓取正文".into(),
+                url: "https://example.test/article".into(),
+                normalized_url: "https://example.test/article".into(),
+                domain: "example.test".into(),
+                retrieved_at: "2026-09-01T00:00:00Z".into(),
+                provider_id: "test-web".into(),
+                provider_kind: "mcp".into(),
+                raw_result_hash: "projection-body-hash".into(),
+                extraction_method: "mcp_fetch_raw_content".into(),
+                bounded_excerpt: "足够长的已抓取正文".into(),
+                retrieval_reason: Some("web_fetch".into()),
+                score: None,
+                source_rank: None,
+                conflict_group: None,
+                failure_reason: None,
+            },
+        )
+        .expect("web evidence");
+
+        assert!(
+            historical_web_citations_for_run(&db, Some("projection-run"), Some(&[]), vec![],)
+                .is_empty()
+        );
+        assert!(historical_source_summary_for_run(
+            &db,
+            Some("projection-run"),
+            Some(&[]),
+            vec![crate::ai_runtime::provenance::SourceSummaryEntry {
+                category: "web".into(),
+                count: 1,
+            }],
+        )
+        .is_empty());
+        assert_eq!(
+            historical_web_citations_for_run(
+                &db,
+                Some("projection-run"),
+                Some(&[registered.evidence_id]),
+                vec![],
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            historical_source_summary_for_run(
+                &db,
+                Some("projection-run"),
+                Some(&[registered.evidence_id]),
+                vec![],
+            ),
+            vec![crate::ai_runtime::provenance::SourceSummaryEntry {
+                category: "web".into(),
+                count: 1,
+            }]
+        );
+        assert_eq!(
+            historical_web_citations_for_run(&db, Some("projection-run"), None, vec![]).len(),
+            1
+        );
     }
 
     #[tokio::test]

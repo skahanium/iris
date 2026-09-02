@@ -179,9 +179,15 @@ async fn collect_web_evidence_with_queries(
     let mut items = normalize_evidence_items(collected);
     // Explicit URLs have already passed the current-Run provenance gate. Keep
     // them ahead of opportunistic search snippets so a requested deep read is
-    // not silently discarded by the evidence packet cap.
+    // not silently discarded by the discovery cap. `max_search_results`
+    // limits discovered candidates only; explicit fetch URLs are bounded by
+    // `max_fetches` and must survive when discovery is deliberately disabled.
     items.sort_by_key(|item| !allowed_fetch_urls.contains(&item.canonical_url));
-    items.truncate(input.max_search_results);
+    items.truncate(
+        input
+            .max_search_results
+            .saturating_add(allowed_fetch_urls.len()),
+    );
     let (items, successful_fetch_providers) = enrich_with_page_fetches(
         db,
         items,

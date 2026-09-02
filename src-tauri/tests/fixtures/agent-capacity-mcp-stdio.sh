@@ -56,7 +56,7 @@ while IFS= read -r line; do
             claims="$claims fact-web-$ordinal=value-$ordinal"
             ordinal=$((ordinal + 1))
           done
-          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"url\\\":\\\"$requested_url\\\",\\\"raw_content\\\":\\\"fetch-result$claims date: 2026-08-18T07:00:00Z\\\"}\"}],\"isError\":false}}"
+          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"url\\\":\\\"$requested_url\\\",\\\"raw_content\\\":\\\"fetch-result$claims date: $fixture_timestamp\\\"}\"}],\"isError\":false}}"
           ;;
         *'"name":"domain"'*)
           printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"result":{"content":[{"type":"text","text":"domain-result"}],"structuredContent":{"records":[{"location":"上海","condition":"晴","temperature":"26","units":"C","observationTime":"'"$fixture_timestamp"'","issueTime":"'"$fixture_timestamp"'","title":"Synthetic title","publisher":"Synthetic Publisher","publishedAt":"'"$fixture_timestamp"'","topic":"synthetic","instrument":"AAPL","assetKind":"equity","currency":"USD","asOf":"'"$fixture_timestamp"'","delay":"0","value":"123.45","region":"上海","channel":"Synthetic Channel","date":"'"$fixture_date"'","checkedAt":"'"$fixture_timestamp"'","competition":"Synthetic League","participants":["A","B"],"startTime":"'"$fixture_timestamp"'","status":"scheduled","score":"1-0","sourceUrl":"https://source.invalid/domain","sourceTitle":"Synthetic Domain","observedAt":"'"$fixture_timestamp"'","evidenceId":"provider-supplied-id"}]},"isError":false}}'
@@ -71,7 +71,7 @@ while IFS= read -r line; do
               claims="$claims fact-web-$ordinal=value-$ordinal"
               ordinal=$((ordinal + 1))
             done
-            claims="$claims date: 2026-08-18T07:00:00Z"
+            claims="$claims date: $fixture_timestamp"
             if [ "$result_count" -gt 1 ]; then
               results="[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\\n"
               index=2

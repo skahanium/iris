@@ -613,6 +613,57 @@ impl AgentEvidenceRepository {
         })
     }
 
+    /// Load only the evidence explicitly selected by a modern final message,
+    /// while retaining the current Run's W1..Wn ordinal projection.
+    pub(crate) fn list_selected_current_run_web_citation_links(
+        db: &Database,
+        run_id: &str,
+        evidence_ids: &[i64],
+    ) -> AppResult<Vec<crate::ai_runtime::citation_linkify::WebCitationLink>> {
+        if evidence_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let selected = evidence_ids.iter().copied().collect::<BTreeSet<_>>();
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id, evidence.title, evidence.url
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'web_search'
+                   AND evidence.source_type = 'web'
+                   AND evidence.retired_at IS NULL
+                   AND evidence.url LIKE 'https://%'
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let rows = statement
+                .query_map([run_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows
+                .into_iter()
+                .enumerate()
+                .filter_map(|(offset, (evidence_id, title, url))| {
+                    if !selected.contains(&evidence_id) {
+                        return None;
+                    }
+                    let index = i64::try_from(offset + 1).unwrap_or(i64::MAX);
+                    Some(crate::ai_runtime::citation_linkify::WebCitationLink {
+                        index,
+                        label: format!("[W{index}]"),
+                        title,
+                        url,
+                    })
+                })
+                .collect())
+        })
+    }
+
     /// Resolve Run-local `Wn` ordinals to the exact ledger rows used by the
     /// final answer. Returned ids retain Run registration order and never use
     /// the session-global citation index.

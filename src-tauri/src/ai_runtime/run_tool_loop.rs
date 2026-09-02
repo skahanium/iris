@@ -1,9 +1,10 @@
-//! Bounded model-driven Web evidence for normal-domain Runs.
+//! Bounded model-driven Web discovery and fetch for normal-domain Runs.
 //!
-//! This module owns the `web_search` tool path used by `NormalRunToolExecutor`: policy/audit
-//! gates, bounded evidence registration, and deferred `CapabilityDegraded` emission when an
-//! authorized Web search fails without usable evidence. Runs without `web.search` never enable
-//! the tool.
+//! This module owns the separate `web_search` and `web_fetch` paths used by
+//! `NormalRunToolExecutor`: policy/audit gates, candidate-to-body promotion,
+//! bounded evidence registration, and deferred `CapabilityDegraded` emission
+//! when an authorized Web operation fails without usable evidence. Runs
+//! without `web.search` never enable either tool.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -46,7 +47,8 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use sha2::{Digest, Sha256};
 
-const WEB_TOOL_NAME: &str = "web_search";
+const WEB_SEARCH_TOOL_NAME: &str = "web_search";
+const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 const MAX_WEB_EVIDENCE_PER_RUN: usize = 12;
 const MAX_WEB_CANDIDATES_PER_RUN: usize = 8;
 const MAX_WEB_CANDIDATES_PER_DISCOVERY: usize = 4;
@@ -474,56 +476,68 @@ impl<'a> NormalRunToolExecutor<'a> {
         self
     }
 
-    async fn execute_web_search(
+    async fn execute_web_tool(
         &self,
+        tool_name: &str,
         args: &serde_json::Value,
         state_version: u64,
     ) -> AppResult<ToolCallResult> {
-        let query = args
-            .get("query")
-            .and_then(serde_json::Value::as_str)
-            .filter(|query| !query.trim().is_empty())
-            .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
-        let automatic_local_materials = self
-            .context
-            .materials
-            .iter()
-            .filter(|material| {
-                matches!(
-                    material.origin,
-                    crate::ai_runtime::context_materials::ContextMaterialOrigin::LocalRetrieval { .. }
-                )
-            })
-            .map(|material| material.content.clone())
-            .collect::<Vec<_>>();
-        let query_contains_automatic_local_material = record_web_query_taint_witness(
-            &self.state.db,
-            &self.accepted.run_id,
-            u32::try_from(state_version).unwrap_or(u32::MAX),
-            query,
-            automatic_local_materials,
-        )?;
-        if query_contains_automatic_local_material {
-            self.set_web_failure(Some(WebFailure::with_reason(
-                SafeRunErrorCode::WebEvidenceInvalid,
-                false,
-                WebEvidenceFailureReason::LocalMaterialQueryBlocked,
-            )))?;
-            return Ok(failed_tool_call(
-                WEB_TOOL_NAME,
-                "web_query_local_material_blocked",
-            ));
+        let discovery_only = tool_name == WEB_SEARCH_TOOL_NAME;
+        let query = if discovery_only {
+            args.get("query")
+                .and_then(serde_json::Value::as_str)
+                .filter(|query| !query.trim().is_empty())
+                .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?
+                .to_string()
+        } else {
+            self.context.user_message.clone()
+        };
+        if discovery_only {
+            let automatic_local_materials = self
+                .context
+                .materials
+                .iter()
+                .filter(|material| {
+                    matches!(
+                        material.origin,
+                        crate::ai_runtime::context_materials::ContextMaterialOrigin::LocalRetrieval { .. }
+                    )
+                })
+                .map(|material| material.content.clone())
+                .collect::<Vec<_>>();
+            let query_contains_automatic_local_material = record_web_query_taint_witness(
+                &self.state.db,
+                &self.accepted.run_id,
+                u32::try_from(state_version).unwrap_or(u32::MAX),
+                &query,
+                automatic_local_materials,
+            )?;
+            if query_contains_automatic_local_material {
+                self.set_web_failure(Some(WebFailure::with_reason(
+                    SafeRunErrorCode::WebEvidenceInvalid,
+                    false,
+                    WebEvidenceFailureReason::LocalMaterialQueryBlocked,
+                )))?;
+                return Ok(failed_tool_call(
+                    tool_name,
+                    "web_query_local_material_blocked",
+                ));
+            }
         }
-        let requested_urls = args
-            .get("urls")
-            .and_then(serde_json::Value::as_array)
-            .map(|urls| {
-                urls.iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let requested_urls = if discovery_only {
+            Vec::new()
+        } else {
+            args.get("urls")
+                .and_then(serde_json::Value::as_array)
+                .map(|urls| {
+                    urls.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|urls| !urls.is_empty())
+                .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?
+        };
         let mut current_run_urls =
             AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?
                 .into_iter()
@@ -539,7 +553,9 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .cloned(),
         );
         let urls = validate_current_run_fetch_urls(&requested_urls, &current_run_urls)?;
-        let discovery_only = urls.is_empty();
+        if discovery_only && !urls.is_empty() {
+            return Err(AppError::msg("tool_arguments_invalid"));
+        }
         let max_fetches = urls.len();
         let evidence_reservation = if discovery_only {
             None
@@ -551,10 +567,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     SafeRunErrorCode::WebEvidenceInvalid,
                     false,
                 )))?;
-                return Ok(failed_tool_call(
-                    WEB_TOOL_NAME,
-                    "web_evidence_budget_exhausted",
-                ));
+                return Ok(failed_tool_call(tool_name, "web_evidence_budget_exhausted"));
             };
             Some(reservation)
         };
@@ -566,10 +579,10 @@ impl<'a> NormalRunToolExecutor<'a> {
         // governed exclusively by the generic network category budget.
         let provider_snapshots = self.ordered_web_provider_snapshots();
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
-            query: query.to_owned(),
+            query: query.clone(),
             urls: urls.clone(),
             enabled: self.has_capability("web.search"),
-            max_search_results: web_search_result_limit(remaining, 1),
+            max_search_results: web_result_limit(discovery_only, remaining, 1),
             max_fetches,
             provider_snapshots: provider_snapshots.clone(),
             provider_selection_frozen: true,
@@ -585,6 +598,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
                     self.set_web_failure(Some(failure))?;
                     return Ok(failed_web_tool_call(
+                        tool_name,
                         failure,
                         attempt_count,
                         call_started.elapsed(),
@@ -593,7 +607,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 }
                 let mut attempt_input = broker_input.clone();
                 attempt_input.max_search_results =
-                    web_search_result_limit(remaining, attempts_for_search);
+                    web_result_limit(discovery_only, remaining, attempts_for_search);
                 attempt_input.max_fetches = max_fetches;
                 let failure = match tokio::time::timeout(
                 remaining_time,
@@ -628,6 +642,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 }
                 self.set_web_failure(Some(failure))?;
                 return Ok(failed_web_tool_call(
+                    tool_name,
                     failure,
                     attempt_count,
                     call_started.elapsed(),
@@ -659,6 +674,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 let failure = classify_web_evidence_output_failure(&output);
                 self.set_web_failure(Some(failure))?;
                 return Ok(failed_web_tool_call(
+                    tool_name,
                     failure,
                     self.web_attempt_count(),
                     call_started.elapsed(),
@@ -703,7 +719,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .collect::<Vec<_>>();
             self.set_web_failure(None)?;
             return Ok(ToolCallResult {
-                tool_name: WEB_TOOL_NAME.to_string(),
+                tool_name: tool_name.to_string(),
                 success: true,
                 output: serde_json::json!({
                     "results": observations,
@@ -735,12 +751,13 @@ impl<'a> NormalRunToolExecutor<'a> {
             .cloned()
             .collect::<Vec<_>>();
         let packed_items =
-            match pack_web_evidence_for_model(query, &selected_items, remaining, &output.usage) {
+            match pack_web_evidence_for_model(&query, &selected_items, remaining, &output.usage) {
                 Ok(items) if !items.is_empty() => items,
                 Ok(_) | Err(_) => {
                     let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
                     self.set_web_failure(Some(failure))?;
                     return Ok(failed_web_tool_call(
+                        tool_name,
                         failure,
                         self.web_attempt_count(),
                         call_started.elapsed(),
@@ -761,6 +778,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             let failure = classify_web_evidence_output_failure(&output);
             self.set_web_failure(Some(failure))?;
             return Ok(failed_web_tool_call(
+                tool_name,
                 failure,
                 self.web_attempt_count(),
                 call_started.elapsed(),
@@ -776,8 +794,16 @@ impl<'a> NormalRunToolExecutor<'a> {
             .expect("selected URL fetch reserves evidence capacity")
             .commit(&evidence_ids)?;
         self.record_web_evidence_quality(&packed_items)?;
+        let failed_urls = failed_fetch_urls(&urls, &packed_items);
+        let remaining_evidence_requirement = if self.has_web_evidence() {
+            serde_json::Value::Null
+        } else if self.requires_corroborated_web_evidence() {
+            serde_json::json!("official_source_or_second_independent_domain")
+        } else {
+            serde_json::json!("one_fetched_body")
+        };
         let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
-            query,
+            &query,
             &packed_items,
             MAX_WEB_EXCERPT_CHARS,
         );
@@ -786,13 +812,15 @@ impl<'a> NormalRunToolExecutor<'a> {
             .map(|packet| packet.id.clone())
             .collect::<Vec<_>>();
         Ok(ToolCallResult {
-            tool_name: WEB_TOOL_NAME.to_string(),
+            tool_name: tool_name.to_string(),
             success: true,
             output: serde_json::json!({
                 "results": packets,
                 "resourceIds": resource_ids,
                 "evidenceIds": evidence_ids,
                 "count": evidence_ids.len(),
+                "failedUrls": failed_urls,
+                "remainingEvidenceRequirement": remaining_evidence_requirement,
                 "observationDepth": "fetched_body",
                 "requiresFetchForCitation": false,
                 "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
@@ -1261,6 +1289,21 @@ fn normalize_fetch_url(url: &str) -> String {
     normalized.to_string()
 }
 
+fn failed_fetch_urls(
+    requested_urls: &[String],
+    fetched_items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+) -> Vec<String> {
+    let fetched_urls = fetched_items
+        .iter()
+        .map(|item| normalize_fetch_url(&item.canonical_url))
+        .collect::<BTreeSet<_>>();
+    requested_urls
+        .iter()
+        .filter(|url| !fetched_urls.contains(*url))
+        .cloned()
+        .collect()
+}
+
 fn explicit_user_urls(message: &str) -> BTreeSet<String> {
     message
         .split_whitespace()
@@ -1275,6 +1318,14 @@ fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
         first_attempt.min(2)
     } else {
         first_attempt
+    }
+}
+
+fn web_result_limit(discovery_only: bool, remaining: usize, attempt_count: u32) -> usize {
+    if discovery_only {
+        web_search_result_limit(remaining, attempt_count)
+    } else {
+        0
     }
 }
 
@@ -1714,8 +1765,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 return Err(AppError::msg(CONFIRMATION_PENDING_ERROR));
             } else if !gate_outcome.decision.can_execute_now() {
                 failed_tool_call(&call.function.name, "tool_confirmation_required")
-            } else if call.function.name == WEB_TOOL_NAME {
-                self.execute_web_search(&args, state_version).await?
+            } else if matches!(
+                call.function.name.as_str(),
+                WEB_SEARCH_TOOL_NAME | WEB_FETCH_TOOL_NAME
+            ) {
+                self.execute_web_tool(&call.function.name, &args, state_version)
+                    .await?
             } else {
                 self.dispatch_non_web_tool(&call.function.name, &args, None)
                     .await
@@ -1746,7 +1801,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     result.success,
                 )?;
             }
-            if call.function.name == WEB_TOOL_NAME {
+            if matches!(
+                call.function.name.as_str(),
+                WEB_SEARCH_TOOL_NAME | WEB_FETCH_TOOL_NAME
+            ) {
                 let failure = self.web_failure();
                 tracing::info!(
                     run_id,
@@ -1944,7 +2002,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 
     fn has_web_evidence(&self) -> bool {
         // This vector is populated only after this executor's successful
-        // `web_search` call has persisted a Run-level evidence association.
+        // `web_fetch` call has persisted a Run-level evidence association.
         // It deliberately cannot be satisfied by session history or a prior
         // Run's citations.
         if self
@@ -2072,9 +2130,9 @@ impl NormalRunToolExecutor<'_> {
     }
 
     fn requires_corroborated_web_evidence(&self) -> bool {
-        matches!(
+        corroborated_web_evidence_required(
             self.context.envelope.web_reason,
-            WebDecisionReason::VolatileExternalFact | WebDecisionReason::HighStakesCurrentFact
+            &self.context.envelope.explicit_constraints,
         )
     }
 
@@ -2847,6 +2905,16 @@ fn failed_tool_call(tool_name: &str, code: &str) -> ToolCallResult {
     failed_tool_call_with_duration(tool_name, code, Duration::ZERO)
 }
 
+fn corroborated_web_evidence_required(
+    reason: WebDecisionReason,
+    constraints: &[crate::ai_runtime::run_contract::ExplicitConstraint],
+) -> bool {
+    reason == WebDecisionReason::HighStakesCurrentFact
+        || constraints
+            .iter()
+            .any(|constraint| constraint.kind == "corroborated_web_evidence")
+}
+
 fn failed_tool_call_with_duration(
     tool_name: &str,
     code: &str,
@@ -2863,16 +2931,17 @@ fn failed_tool_call_with_duration(
 }
 
 fn failed_web_tool_call(
+    tool_name: &str,
     failure: WebFailure,
     attempt_count: u32,
     duration: Duration,
     remaining_budget_ms: u64,
 ) -> ToolCallResult {
     ToolCallResult {
-        tool_name: WEB_TOOL_NAME.to_string(),
+        tool_name: tool_name.to_string(),
         success: false,
         output: serde_json::json!({
-            "capability": "web.search",
+            "capability": if tool_name == WEB_FETCH_TOOL_NAME { "web.fetch" } else { "web.search" },
             "error": failure.code.as_str(),
             "retryable": failure.retryable,
             "attemptCount": attempt_count,
@@ -3032,7 +3101,7 @@ fn register_model_web_evidence(
                 raw_result_hash: item.raw_result_hash,
                 extraction_method: item.extraction_method,
                 bounded_excerpt: item.excerpt,
-                retrieval_reason: Some(WEB_TOOL_NAME.to_string()),
+                retrieval_reason: Some(WEB_FETCH_TOOL_NAME.to_string()),
                 score: None,
                 source_rank: None,
                 conflict_group: item.conflict_group,
@@ -3491,11 +3560,12 @@ mod tests {
 
     use super::{
         append_model_tool_completed_with_report, append_model_tool_started, bounded_page_evidence,
-        corroborated_source_threshold_met, emit_deferred_web_degradation,
-        expected_post_content_hashes, mcp_failover_events, normalize_fetch_url,
-        pack_web_candidates_for_model, remember_candidate_urls, validate_current_run_fetch_urls,
-        web_output_has_usable_result, web_search_result_limit, DeferredWebDegradationInput,
-        McpFailoverEvent, NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
+        corroborated_source_threshold_met, corroborated_web_evidence_required,
+        emit_deferred_web_degradation, expected_post_content_hashes, failed_fetch_urls,
+        mcp_failover_events, normalize_fetch_url, pack_web_candidates_for_model,
+        remember_candidate_urls, validate_current_run_fetch_urls, web_output_has_usable_result,
+        web_result_limit, web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
+        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -3504,7 +3574,7 @@ mod tests {
     use crate::ai_runtime::run_contract::{
         AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, ContextMode,
         ExternalToolGrantRef, RunBudgetPolicy, RunEventPayload, RunEventType, RunState,
-        SafeRunErrorCode, SecurityDomain,
+        SafeRunErrorCode, SecurityDomain, WebDecisionReason,
     };
     use crate::ai_runtime::run_engine::{RunEngine, RunEventSink};
     use crate::ai_runtime::run_intake::RunIntake;
@@ -5139,12 +5209,15 @@ mod tests {
     }
 
     #[test]
-    fn strict_web_search_retries_an_oversize_provider_with_two_results() {
+    fn search_retries_with_fewer_candidates_while_fetch_never_runs_discovery() {
         assert_eq!(web_search_result_limit(12, 1), 8);
         assert_eq!(web_search_result_limit(12, 2), 2);
         assert_eq!(web_search_result_limit(4, 1), 4);
         assert_eq!(web_search_result_limit(1, 1), 1);
         assert_eq!(web_search_result_limit(1, 2), 1);
+        assert_eq!(web_result_limit(true, 12, 1), 8);
+        assert_eq!(web_result_limit(false, 12, 1), 0);
+        assert_eq!(web_result_limit(false, 12, 2), 0);
     }
 
     #[test]
@@ -5152,6 +5225,25 @@ mod tests {
         assert!(corroborated_source_threshold_met(true, 1));
         assert!(corroborated_source_threshold_met(false, 2));
         assert!(!corroborated_source_threshold_met(false, 1));
+    }
+
+    #[test]
+    fn ordinary_volatile_fact_accepts_one_body_but_high_risk_and_explicit_cross_check_do_not() {
+        assert!(!corroborated_web_evidence_required(
+            WebDecisionReason::VolatileExternalFact,
+            &[],
+        ));
+        assert!(corroborated_web_evidence_required(
+            WebDecisionReason::HighStakesCurrentFact,
+            &[],
+        ));
+        assert!(corroborated_web_evidence_required(
+            WebDecisionReason::ExplicitWebRequest,
+            &[crate::ai_runtime::run_contract::ExplicitConstraint {
+                kind: "corroborated_web_evidence".into(),
+                value: None,
+            }],
+        ));
     }
 
     #[test]
@@ -5513,7 +5605,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn internal_web_execution_allows_only_web_search() {
+    async fn internal_web_execution_keeps_the_frozen_search_and_fetch_surface_exact() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let vault = directory.path().join("vault");
         std::fs::create_dir_all(&vault).expect("vault directory");
@@ -5541,9 +5633,9 @@ mod tests {
             &sink,
             Vec::new(),
         )
-        .with_allowed_tool_names(&["web_search".to_string()]);
+        .with_allowed_tool_names(&["web_search".to_string(), "web_fetch".to_string()]);
 
-        assert_eq!(executor.allowed_tool_names, ["web_search"]);
+        assert_eq!(executor.allowed_tool_names, ["web_search", "web_fetch"]);
         let forged = executor
             .execute(
                 &accepted.run_id,
@@ -5601,6 +5693,40 @@ mod tests {
         assert_eq!(urls, ["https://example.com/chosen"]);
         assert!(state.evidence_ids.is_empty());
         assert_eq!(state.slots_in_use, 0);
+    }
+
+    #[test]
+    fn partial_fetch_observation_preserves_the_failed_url_for_model_recovery() {
+        let requested = vec![
+            "https://example.com/ok".to_string(),
+            "https://example.net/blocked".to_string(),
+        ];
+        let fetched = vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: requested[0].clone(),
+            canonical_url: requested[0].clone(),
+            title: "Fetched article".into(),
+            domain: "example.com".into(),
+            snippet: "candidate".into(),
+            fetched_excerpt: Some("usable fetched body".into()),
+            provider_id: "search-provider".into(),
+            provider_kind: "mcp".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "body-hash".into(),
+            extraction_method: "mcp_fetch_raw_content".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.fetch".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        }];
+
+        assert_eq!(
+            failed_fetch_urls(&requested, &fetched),
+            [requested[1].clone()]
+        );
     }
 
     #[test]

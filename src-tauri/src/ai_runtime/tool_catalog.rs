@@ -5,6 +5,7 @@
 //!
 //! Source contract anchors:
 //! name: "web_search"
+//! name: "web_fetch"
 //! name: "skills_list"
 
 #[path = "tool_catalog_impl.rs"]

@@ -23,7 +23,7 @@ fn catalog_owns_execution_metadata() {
 }
 
 #[test]
-fn web_search_uses_the_open_query_and_current_run_url_contract_only() {
+fn web_tools_expose_single_responsibility_search_and_fetch_contracts() {
     let properties = catalog_find("web_search")
         .expect("web_search catalog entry")
         .input_schema["properties"]
@@ -31,11 +31,19 @@ fn web_search_uses_the_open_query_and_current_run_url_contract_only() {
         .expect("web_search properties");
 
     assert!(properties.contains_key("query"));
-    assert!(properties.contains_key("urls"));
+    assert!(!properties.contains_key("urls"));
     assert!(
         !properties.contains_key("gap"),
         "the generic loop must not expose the retired closed EvidenceGap protocol"
     );
+
+    let fetch = catalog_find("web_fetch").expect("web_fetch catalog entry");
+    let fetch_properties = fetch.input_schema["properties"]
+        .as_object()
+        .expect("web_fetch properties");
+    assert!(fetch_properties.contains_key("urls"));
+    assert!(!fetch_properties.contains_key("query"));
+    assert_eq!(fetch.input_schema["required"], serde_json::json!(["urls"]));
 }
 
 #[test]
@@ -46,6 +54,10 @@ fn catalog_owns_one_stable_budget_class_for_every_budgeted_tool_kind() {
     );
     assert_eq!(
         catalog_tool_budget_class("web_search"),
+        Some(ToolBudgetClass::Network)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("web_fetch"),
         Some(ToolBudgetClass::Network)
     );
     assert_eq!(
@@ -203,9 +215,10 @@ fn write_tools_not_in_default_readonly() {
 }
 
 #[test]
-fn reign_in_catalog_exposes_only_one_network_tool() {
+fn catalog_exposes_only_the_two_single_responsibility_network_tools() {
     let names: Vec<&str> = TOOL_CATALOG.iter().map(|entry| entry.name).collect();
     assert!(names.contains(&"web_search"));
+    assert!(names.contains(&"web_fetch"));
     for legacy in [
         "fetch_web_page",
         "web_fetch_batch",

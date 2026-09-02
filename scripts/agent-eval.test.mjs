@@ -15,6 +15,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertStrictContractSummary,
   assertStrictSmokeSummary,
   buildAgentEvalChildEnvironment,
   buildLivePilotChildEnvironment,
@@ -54,6 +55,52 @@ test("smoke release gate requires all 24 deterministic interaction cases to pass
       caseCount: 24,
       completedCaseCount: 24,
       passed: 24,
+      failed: 0,
+    }),
+  );
+});
+
+test("contract release gate rejects partial 36/48 reports and accepts an explicit complete result", () => {
+  assert.throws(
+    () =>
+      assertStrictContractSummary({
+        schemaVersion: "agent-eval-summary-v2",
+        caseCount: 48,
+        executedCaseCount: 36,
+        completedCaseCount: 36,
+        answeredCaseCount: 36,
+        expectedRefusalCount: 0,
+        unexpectedFailureCount: 0,
+        passed: 36,
+        failed: 12,
+      }),
+    /agent_eval_contract_incomplete/,
+  );
+  assert.throws(
+    () =>
+      assertStrictContractSummary({
+        schemaVersion: "agent-eval-summary-v2",
+        caseCount: 48,
+        executedCaseCount: 48,
+        completedCaseCount: 48,
+        answeredCaseCount: 36,
+        expectedRefusalCount: 0,
+        unexpectedFailureCount: 12,
+        passed: 36,
+        failed: 12,
+      }),
+    /agent_eval_contract_failed/,
+  );
+  assert.doesNotThrow(() =>
+    assertStrictContractSummary({
+      schemaVersion: "agent-eval-summary-v2",
+      caseCount: 48,
+      executedCaseCount: 48,
+      completedCaseCount: 36,
+      answeredCaseCount: 36,
+      expectedRefusalCount: 12,
+      unexpectedFailureCount: 0,
+      passed: 48,
       failed: 0,
     }),
   );
@@ -213,19 +260,26 @@ test("product quality requires two six-run live routes and complete human review
     completedCaseCount: 6,
     passed: 6,
     failed: 0,
-    cases: [1, 12, 13, 24, 36, 48].map((caseId) => ({
+    cases: [1, 26, 28, 30, 32, 34].map((caseId) => ({
       caseId,
       repetition: 1,
       overallPass: true,
       runtimeEvidence: {
         terminalState: "completed",
         terminalErrorCode: null,
+        toolCallCount: caseId === 1 ? 0 : 2,
+        observedSourceKinds: caseId === 1 ? [] : ["web"],
       },
       verdict: {
         caseId,
         overallPass: true,
         authorization: { status: "pass" },
         safety: { status: "pass" },
+        citationSupport: { status: "pass" },
+      },
+      telemetry: {
+        modelTurns: caseId === 1 ? 1 : 3,
+        toolCalls: caseId === 1 ? 0 : 2,
       },
     })),
   });
@@ -306,6 +360,19 @@ test("product quality requires two six-run live routes and complete human review
       ),
     /agent_eval_live_review_score_invalid/,
   );
+  const overBudget = structuredClone(reports);
+  for (const item of overBudget[0].cases) {
+    item.telemetry.modelTurns = 8;
+  }
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        overBudget,
+        { schemaVersion: "agent-live-review-v1", status: "approved", items },
+        reportNames,
+      ),
+    /agent_eval_live_call_budget_invalid/,
+  );
 });
 
 test("product gate runs the Rust strict validator before trusting live counters", () => {
@@ -325,7 +392,7 @@ test("product gate runs the Rust strict validator before trusting live counters"
     passed: 6,
     failed: 0,
     status: "live_pilot_executed",
-    cases: [1, 12, 13, 24, 36, 48].map((caseId) => ({ caseId })),
+    cases: [1, 26, 28, 30, 32, 34].map((caseId) => ({ caseId })),
   });
   writeFileSync(
     first,

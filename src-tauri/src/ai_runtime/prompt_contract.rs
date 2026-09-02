@@ -123,7 +123,7 @@ impl PromptContractV3 {
 fn timeliness_and_external_facts_contract() -> &'static str {
     "## TimelinessAndExternalFacts\n\
      If the user asks about something that may change over time (current events, recent movies, weather, prices, sports, releases, elections, product availability, etc.) and `web_search` is present in the current tool surface but no current WebEvidenceData for this request has already been provided, you MUST call `web_search` before answering. Do not answer such questions from training knowledge alone.\n\
-     Search snippets are candidate observations, not citable evidence. When a promising candidate URL is present, select it with a follow-up `web_search` call using `urls` so the tool can read the page body. If current evidence is insufficient, change the query or source direction; stop searching once the evidence is sufficient and avoid repeating an equivalent successful call.\n\
+     Search snippets are candidate observations, not citable evidence. When a promising candidate URL is present, select it with `web_fetch` so the tool can read the page body. If current evidence is insufficient, change the query or source direction; stop searching once the evidence is sufficient and avoid repeating an equivalent successful call.\n\
      If `web_search` is NOT present in the current tool surface, do not fabricate a current answer. For time-sensitive facts, say naturally that you cannot retrieve the latest information, for example: \"我目前无法获取最新信息，建议开启联网搜索后我再帮你查。\""
 }
 
@@ -278,7 +278,7 @@ mod tests {
             .contains("Search snippets are candidate observations, not citable evidence"));
         assert!(compiled
             .system_prompt
-            .contains("select it with a follow-up `web_search` call using `urls`"));
+            .contains("select it with `web_fetch`"));
         assert!(compiled.system_prompt.contains("## ToolSurfaceAwareness"));
         assert!(compiled
             .system_prompt

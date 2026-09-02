@@ -2280,6 +2280,31 @@ fn strong_temporal_and_high_risk_requests_require_current_run_web_evidence() {
     }
 }
 
+#[test]
+fn ordinary_volatile_fact_does_not_inherit_corroboration_without_explicit_request() {
+    let mut ordinary = request();
+    ordinary.web_enabled = true;
+    ordinary.turn.message = "近期有什么正在热映的电影？".into();
+    let ordinary_envelope = RunIntake::resolve_envelope(&ordinary).expect("ordinary envelope");
+    assert_eq!(
+        ordinary_envelope.web_reason,
+        WebDecisionReason::VolatileExternalFact
+    );
+    assert!(!ordinary_envelope
+        .explicit_constraints
+        .iter()
+        .any(|constraint| constraint.kind == "corroborated_web_evidence"));
+
+    let mut cross_checked = ordinary;
+    cross_checked.turn.message = "近期有什么正在热映的电影？请用两个独立来源交叉核验。".into();
+    let cross_checked_envelope =
+        RunIntake::resolve_envelope(&cross_checked).expect("cross-checked envelope");
+    assert!(cross_checked_envelope
+        .explicit_constraints
+        .iter()
+        .any(|constraint| constraint.kind == "corroborated_web_evidence"));
+}
+
 /// HR-2 regression: ordinary external questions use the progressive route.
 #[test]
 fn ordinary_external_questions_use_webpreferred_without_strict_finalization() {

@@ -319,15 +319,15 @@ IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
 ```
 
 `agent:eval:smoke` 执行完整 24 条 online headless interaction matrix，且仅当
-`caseCount`、`completedCaseCount` 与 `passed` 均为 24、`failed` 为 0 时通过；
-离线和硬边界由独立安全轨执行。`agent:eval:contract` 执行 48 题、逐层五次压力执行、
+明细与 v2 汇总一致、无意外失败时通过；离线和硬边界由独立安全轨执行。
+`agent:eval:contract` 执行 48 题并分开统计正常回答、预期安全拒绝与意外失败，同时执行逐层五次压力、
 硬边界、安全轨和组合终端；`agent:eval` 是额外产品门，不能由 contract 单独满足。
 安全案例失败会写入 `securityGate=false`，不会阻止报告生成。版本化确定性结果见
 `docs/eval/results/v1.2.15-agent-capacity.json`。`agent:eval:live -- preflight`
 只生成被 Git 忽略的 `target/agent-eval/live-preflight.json`；它不是 live
 测试结果，也不会绕过后续批准与费用 checkpoint。Pilot 的严格白名单结果写入
 同目录的 `live-pilot-session-<64hex>.json`，不会包含 prompt、answer、route
-或凭据。
+或凭据。真实执行即使因状态、预算或质量不通过，也必须先写入并签名失败报告；最终产品验证仍以非零拒绝该报告。
 
 PR CI 的 macOS ARM64 quality job 执行 smoke、前端/Rust 依赖审计和完整通用测试；
 tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` 版本化基线。
@@ -350,4 +350,4 @@ tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` �
 记录。每份 live 报告还必须携带由受约束 Rust live 执行路径生成、本机私有评测密钥绑定 session 与精确报告字节的认证旁证；最终门用同一 SHA-256 快照完成认证、严格校验和 JSON 判定，禁止复制后改写报告或在校验期间替换文件。只有 MiniMax-M3 与 MiMo v2.5 都完成获批的试运行，且所有 hard
 admission 与人格门槛均通过后，才可以将对应路由加入严格结构化终局校准表。
 
-2026-09-01 的 MiniMax 诊断校准最后一轮结果是 5/6 完成、4/6 合同通过，产品门保持失败；过程中发现并修正了评测标记进入真实检索文本、Web-only Run 获得本地 context 工具、连续样本覆盖同一路径导致索引漂移等评测/控制面缺陷。MiMo 与四维人工评分未在本轮预算内完成，任何文档不得将本轮写成真实质量通过。
+INC-HR-007 的 MiniMax、MiMo 两条真实路由各执行了 6 Run：MiniMax 未达到执行通过态且旧 writer 丢失了失败报告，MiMo 触发 `live_pilot_call_budget_invalid`；两条路由均未进入人工评分。writer 已回正为真实失败也持久化并签名，但本轮 12 Run 预算已经耗尽，任何文档不得将本轮写成真实质量通过。

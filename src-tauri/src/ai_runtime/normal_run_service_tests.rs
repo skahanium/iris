@@ -656,7 +656,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-fetch-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\",\\\"urls\\\":[\\\"https://source.invalid/contract\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-fetch-call\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"urls\\\":[\\\"https://source.invalid/contract\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
@@ -680,6 +680,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
     let capabilities = vec![CapabilityId::new("web.search")];
     let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
     assert!(tools.iter().any(|tool| tool.name == "web_search"));
+    assert!(tools.iter().any(|tool| tool.name == "web_fetch"));
     let provider_snapshot =
         super::mcp_runtime_registry::resolve_selected_web_search_provider(&state.db)
             .expect("freeze selected MCP provider before the model tool loop");
@@ -1068,9 +1069,8 @@ async fn ordinary_research_reply_repairs_missing_run_local_citation_before_compl
         )),
         HttpResponseScript::sse(&tool_call_sse_with_id(
             "ordinary-research-fetch",
-            "web_search",
+            "web_fetch",
             serde_json::json!({
-                "query":"近期科技股下跌 原因",
                 "urls":["https://source.invalid/contract"]
             }),
         )),
@@ -1262,9 +1262,8 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
         )),
         HttpResponseScript::sse(&tool_call_sse_with_id(
             "news-fetch",
-            "web_search",
+            "web_fetch",
             serde_json::json!({
-                "query":"最新 synthetic 新闻",
                 "urls":[
                     "https://source.invalid/contract",
                     "https://source-2.invalid/2"
@@ -1395,9 +1394,8 @@ async fn recent_movie_research_uses_generic_web_evidence_without_city_or_domain_
         )),
         HttpResponseScript::sse(&tool_call_sse_with_id(
             "movie-fetch",
-            "web_search",
+            "web_fetch",
             serde_json::json!({
-                "query":"近期有什么好看的电影上映",
                 "urls":[
                     "https://source.invalid/contract",
                     "https://source-2.invalid/2"

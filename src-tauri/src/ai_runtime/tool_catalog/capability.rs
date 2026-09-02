@@ -24,7 +24,7 @@ impl ToolCatalogEntry {
             | "get_outline" => &["vault.read"],
             "get_context_packets" => &["context.read"],
             "system_time_now" | "app_context_read" | "capabilities_read" => &["runtime.read"],
-            "web_search" => &["web.search"],
+            "web_search" | "web_fetch" => &["web.search"],
             "insert_text_at_cursor" | "replace_selection" => &["note.apply_patch"],
             "vault_create_note"
             | "vault_rename_move"

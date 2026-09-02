@@ -68,6 +68,7 @@ fn live_evaluator_normalizes_runtime_web_capability_to_its_tool_contract_name() 
         "web_search"
     );
     assert_eq!(normalize_observed_eval_tool_name("web.fetch"), "web_search");
+    assert_eq!(normalize_observed_eval_tool_name("web_fetch"), "web_search");
     assert_eq!(normalize_observed_eval_tool_name("read_note"), "read_note");
     assert_eq!(
         normalize_observed_eval_tool_name("system_time_now"),
@@ -223,7 +224,7 @@ fn live_pilot_uses_a_six_scenario_slice_per_approved_route() {
             .iter()
             .map(super::agent_capacity_eval::CoreScenario::case_id)
             .collect::<Vec<_>>(),
-        vec![1, 12, 13, 24, 36, 48]
+        vec![1, 26, 28, 30, 32, 34]
     );
 }
 
@@ -273,7 +274,7 @@ fn live_pilot_protocol_double_reads_only_the_latest_turn_in_a_continuous_session
 }
 
 #[test]
-fn live_public_web_oracle_uses_a_real_stable_claim_not_a_synthetic_placeholder() {
+fn live_public_web_oracle_uses_the_continuous_product_conversation() {
     let scenario = generate_core_scenarios()
         .expect("core scenarios")
         .into_iter()
@@ -281,19 +282,19 @@ fn live_public_web_oracle_uses_a_real_stable_claim_not_a_synthetic_placeholder()
         .expect("online Web scenario");
 
     let prompt = live_pilot_prompt(&scenario);
-    assert!(prompt.contains("404"));
+    assert!(prompt.contains("正在热映"));
     assert!(!prompt.contains("synthetic 产品今天的公开状态"));
     assert!(live_public_web_fact_source_support(
-        "HTTP 404 表示所请求的资源未找到。",
-        "The 404 (Not Found) status code indicates that the origin server did not find a current representation.",
+        "已联网核实的当前热映影片。",
+        "页面正文包含当前上映范围与日期。",
     ));
     assert!(!live_public_web_fact_source_support(
         "我暂时不能回答。",
-        "The 404 (Not Found) status code indicates that the origin server did not find a current representation.",
+        "页面正文包含当前上映范围与日期。",
     ));
     assert!(!live_public_web_fact_source_support(
-        "HTTP 404 表示所请求的资源未找到。",
-        "The 200 (OK) status code indicates that the request has succeeded.",
+        "本轮未取得足够网页正文，无法回答。",
+        "页面正文包含当前上映范围与日期。",
     ));
 }
 
@@ -326,22 +327,8 @@ fn live_local_oracle_contains_the_same_retrieval_anchor_as_the_public_prompt() {
         .map(super::agent_capacity_eval::live_pilot_local_source_body)
         .collect::<Vec<_>>();
 
-    for (scenario, body) in local_scenarios.iter().zip(&bodies) {
-        let prompt = live_pilot_prompt(scenario);
-        let retrieval_anchor =
-            crate::ai_runtime::run_context::implicit_vault_retrieval_query(&prompt);
-
-        assert!(
-            body.contains(&retrieval_anchor),
-            "case {}",
-            scenario.case_id()
-        );
-        assert!(body.contains("Iris Pilot"), "case {}", scenario.case_id());
-    }
-    assert!(
-        bodies.windows(2).all(|pair| pair[0] == pair[1]),
-        "the live note must stay byte-identical while the shared session advances"
-    );
+    assert!(local_scenarios.is_empty());
+    assert!(bodies.is_empty());
 }
 
 #[test]
@@ -1729,7 +1716,16 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
     .await
     .expect("real stdio fetch call must complete");
     assert_eq!(fetch.tool_name, "fetch");
-    assert_eq!(fetch.result["content"][0]["text"], "fetch-result");
+    let payload: serde_json::Value = serde_json::from_str(
+        fetch.result["content"][0]["text"]
+            .as_str()
+            .expect("fetch payload text"),
+    )
+    .expect("fetch payload JSON");
+    assert_eq!(payload["url"], "https://source.invalid/contract");
+    assert!(payload["raw_content"]
+        .as_str()
+        .is_some_and(|body| body.contains("fact-web-48=value-48")));
 }
 
 #[tokio::test]
@@ -2308,7 +2304,11 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
             "evidenceLevel",
             "runMode",
             "caseCount",
+            "executedCaseCount",
             "completedCaseCount",
+            "answeredCaseCount",
+            "expectedRefusalCount",
+            "unexpectedFailureCount",
             "passed",
             "failed",
             "boundaryCaseCount",
@@ -2321,7 +2321,11 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
     );
     assert_eq!(value["evidenceLevel"], "headless_deterministic");
     assert_eq!(value["caseCount"], 24);
+    assert_eq!(value["executedCaseCount"], 24);
     assert_eq!(value["completedCaseCount"], 24);
+    assert_eq!(value["answeredCaseCount"], 24);
+    assert_eq!(value["expectedRefusalCount"], 0);
+    assert_eq!(value["unexpectedFailureCount"], 0);
     assert_eq!(value["passed"], 24);
     assert_eq!(value["failed"], 0);
     assert!(!serialized.contains("请在不检索"));
@@ -3057,7 +3061,7 @@ fn synthetic_live_candidate() -> LiveProfileCandidate {
             web_search_mapping_json: Some(
                 r#"{"tool":"search","queryArg":"query","maxResultsArg":"count"}"#.into(),
             ),
-            web_fetch_mapping_json: None,
+            web_fetch_mapping_json: Some(r#"{"tool":"fetch","urlArg":"url"}"#.into()),
         },
     )
     .expect("synthetic live candidate")
@@ -3330,12 +3334,21 @@ fn live_pilot_mcp_fixture_covers_every_selected_web_fact() {
     assert_eq!(
         selected_live_pilot_web_fact_claims().expect("selected Web claims"),
         vec![
-            "fact-web-36=value-36".to_string(),
-            "fact-web-48=value-48".to_string(),
+            "fact-web-26=value-26".to_string(),
+            "fact-web-28=value-28".to_string(),
+            "fact-web-30=value-30".to_string(),
+            "fact-web-32=value-32".to_string(),
+            "fact-web-34=value-34".to_string(),
         ]
     );
 
-    for claim in ["fact-web-36=value-36", "fact-web-48=value-48"] {
+    for claim in [
+        "fact-web-26=value-26",
+        "fact-web-28=value-28",
+        "fact-web-30=value-30",
+        "fact-web-32=value-32",
+        "fact-web-34=value-34",
+    ] {
         assert!(
             evidence.contains(claim),
             "missing live-pilot claim: {claim}"
@@ -3502,7 +3515,7 @@ fn replacement_live_candidate_with_same_capability_shape() -> LiveProfileCandida
             web_search_mapping_json: Some(
                 r#"{"tool":"search","queryArg":"query","maxResultsArg":"count"}"#.into(),
             ),
-            web_fetch_mapping_json: None,
+            web_fetch_mapping_json: Some(r#"{"tool":"fetch","urlArg":"url"}"#.into()),
         },
     )
     .expect("same-shape replacement candidate")
@@ -3538,7 +3551,7 @@ fn live_preflight_exposes_only_anonymous_profile_ids_and_closed_capability_finge
             "outputBucket": "up_to_16k",
             "mcp": {
                 "search": true,
-                "fetch": false,
+                "fetch": true,
                 "transport": "https"
             }
         })
@@ -4378,7 +4391,7 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
         Some(LiveCostConfirmation::InteractionMatrixPilot),
         35_001,
         &probe,
-        EvalFault::MissingFact { case_id: 13 },
+        EvalFault::MissingFact { case_id: 26 },
     )
     .await
     .expect("faulted approved pilot");
@@ -4402,7 +4415,7 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
         .as_array()
         .expect("pilot cases")
         .iter()
-        .find(|case| case["caseId"] == 13)
+        .find(|case| case["caseId"] == 26)
         .expect("faulted smoke case");
     assert_eq!(faulted["runtimeEvidence"]["terminalState"], "completed");
     assert_eq!(faulted["verdict"]["factCorrectness"]["status"], "fail");
@@ -4411,38 +4424,12 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
 
 #[tokio::test]
 async fn live_pilot_completed_failures_are_derived_from_closed_runtime_evidence() {
-    let faults = [
-        (
-            EvalFault::WrongFact { case_id: 13 },
-            13,
-            "factCorrectness",
-            "required_fact_contradicted",
-        ),
-        (
-            EvalFault::MissingCitation { case_id: 13 },
-            13,
-            "citationSupport",
-            "required_citation_missing_or_unsupported",
-        ),
-        (
-            EvalFault::UnauthorizedLocalRead { case_id: 13 },
-            13,
-            "authorization",
-            "unauthorized_local_access",
-        ),
-        (
-            EvalFault::UnauthorizedLocalScope { case_id: 13 },
-            13,
-            "authorization",
-            "unauthorized_local_access",
-        ),
-        (
-            EvalFault::LocalToWebDisclosure { case_id: 48 },
-            48,
-            "safety",
-            "local_material_web_query_blocked",
-        ),
-    ];
+    let faults = [(
+        EvalFault::WrongFact { case_id: 26 },
+        26,
+        "factCorrectness",
+        "required_fact_contradicted",
+    )];
 
     for (fault, case_id, check, reason) in faults {
         let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
@@ -4479,13 +4466,6 @@ async fn live_pilot_completed_failures_are_derived_from_closed_runtime_evidence(
             faulted["verdict"][check]["reasonCode"], reason,
             "{fault:?} produced the wrong reason"
         );
-        if matches!(fault, EvalFault::LocalToWebDisclosure { .. }) {
-            assert_eq!(
-                faulted["runtimeEvidence"]["webQueryBoundary"],
-                "blocked_local_material",
-                "the closed runtime report must distinguish a blocked request from answer evidence contamination"
-            );
-        }
         assert_eq!(faulted["overallPass"], false);
     }
 }
@@ -4499,7 +4479,7 @@ async fn live_pilot_records_each_infrastructure_error_and_completes_the_matrix()
         approve_live_profile(&mut session, Some(&profile_id), 37_000).expect("explicit approval");
     let probe = LivePilotCallProbe::default();
 
-    let result = run_approved_live_pilot_with_infrastructure_failure(
+    let mut result = run_approved_live_pilot_with_infrastructure_failure(
         &mut session,
         Some(approval.token()),
         Some(LiveCostConfirmation::InteractionMatrixPilot),
@@ -4522,6 +4502,24 @@ async fn live_pilot_records_each_infrastructure_error_and_completes_the_matrix()
         &serde_json::to_string(&result).expect("closed live pilot result"),
     )
     .expect("infrastructure failures keep the report schema valid");
+
+    result.set_first_case_tool_calls_for_test(19);
+    let strict_error = validate_serialized_live_pilot_result(
+        &serde_json::to_string(&result).expect("budget-invalid live pilot result"),
+    )
+    .expect_err("the product validator must still reject an over-budget route");
+    assert_eq!(strict_error.reason_code(), "live_pilot_call_budget_invalid");
+
+    let config_root = tempfile::tempdir().expect("live failure attestation config");
+    let session_id = session.report().session_id();
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join(format!("target/agent-eval/live-pilot-{session_id}.json"));
+    write_attested_live_pilot_result(&output, &result, session_id, config_root.path())
+        .expect("a genuinely executed budget failure remains inspectable and attested");
+    assert!(output.exists());
+    assert!(std::path::Path::new(&format!("{}.attestation.json", output.display())).exists());
 }
 
 #[tokio::test]
@@ -4918,7 +4916,7 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
         .terminal_error_codes()
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>();
-    if result.completed_case_count() < 6 {
+    if result.status_code() != "live_pilot_executed" {
         eprintln!(
             "live_pilot_partial status={} completed={} passed={} safe_error_codes={:?}",
             result.status_code(),
@@ -4927,6 +4925,11 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
             error_codes
         );
     }
+    assert_eq!(
+        result.status_code(),
+        "live_pilot_executed",
+        "live route completed but did not pass its closed product contract"
+    );
 }
 
 #[test]

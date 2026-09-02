@@ -94,7 +94,7 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                 Write-McpResponse $id @{ content = @(@{ type = "text"; text = '{"error":"Extract failed","status":429}' }); isError = $false }
                 continue
             }
-            $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: 2026-08-18T07:00:00Z"
+            $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: $FixtureTimestamp"
             $arguments = ($line | ConvertFrom-Json).params.arguments
             $payload = @{ url = [string]$arguments.url; raw_content = "fetch-result $claims" } | ConvertTo-Json -Compress
             Write-McpResponse $id @{ content = @(@{ type = "text"; text = $payload }); isError = $false }
@@ -119,16 +119,16 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
         }
         else {
             if ($ResultCount -gt 1) {
-                $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: 2026-08-18T07:00:00Z"
+                $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: $FixtureTimestamp"
                 $text = "[1] title: Contract`nurl: https://source.invalid/contract`nsnippet: deterministic $claims"
                 $additional = (2..$ResultCount | ForEach-Object {
-                    $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: 2026-08-18T07:00:00Z"
+                    $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: $FixtureTimestamp"
                     "[$_] title: Result $_`nurl: https://source-$_.invalid/$_`nsnippet: deterministic $claims"
                 }) -join "`n"
                 $text += "`n$additional"
             }
             else {
-                $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: 2026-08-18T07:00:00Z"
+                $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: $FixtureTimestamp"
                 $text = "[1] title: Contract`nurl: https://source.invalid/contract`nsnippet: deterministic $claims"
             }
             Write-McpResponse $id @{ content = @(@{ type = "text"; text = $text }); isError = $false }

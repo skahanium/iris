@@ -219,6 +219,14 @@ impl RunIntake {
                 value: Some(serde_json::to_string(model_override)?),
             });
         }
+        if web_decision.reason == WebDecisionReason::HighStakesCurrentFact
+            || explicitly_requires_corroborated_web(&directive_text)
+        {
+            explicit_constraints.push(ExplicitConstraint {
+                kind: "corroborated_web_evidence".into(),
+                value: None,
+            });
+        }
         Ok(ExecutionEnvelope {
             effect,
             context,
@@ -631,9 +639,9 @@ fn validate_input_submission(
     Ok(())
 }
 
-/// Keep ordinary externally verifiable facts on the strict one-search Direct
-/// route. ToolLoop is reserved for requests that explicitly ask the model to
-/// conduct an investigation across multiple sources or steps.
+/// Recognize an explicit request for multi-step research. Ordinary external
+/// facts already enter the same ToolLoop through freshness; this signal only
+/// upgrades otherwise offline work and never creates a separate research path.
 fn requires_multi_step_research(message: &str) -> bool {
     contains_any(
         message,
@@ -652,6 +660,23 @@ fn requires_multi_step_research(message: &str) -> bool {
             "调查",
         ],
     )
+}
+
+fn explicitly_requires_corroborated_web(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "cross-check",
+            "cross check",
+            "two independent sources",
+            "multiple independent sources",
+            "交叉核验",
+            "交叉验证",
+            "两个独立来源",
+            "多方核实",
+        ],
+    ) || (contains_any(message, &["http://", "https://"])
+        && contains_any(message, &["核实", "验证", "check", "verify", "citation"]))
 }
 
 fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {

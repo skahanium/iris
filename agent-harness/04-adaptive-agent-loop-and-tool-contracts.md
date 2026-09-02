@@ -82,9 +82,10 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 ## 7. Web 候选、正文与本地工具
 
-- `web_search` 继续作为核心模型可见网络入口；Host 可在同一受控实现中搜索和抓取 current-Run URL。
-- 无 `urls` 的发现调用每次最多返回 4 个去重候选，每 Run 最多保留 8 个。候选只提供标题、来源、时间和有界片段，`evidenceIds` 为空。
-- 模型必须从本 Run 候选中选择 URL 再调用 `web_search` 的 `urls` 参数；只有抓取到正文的选中 URL 才登记 evidence 并获得 `Wn`。
+- 模型工具面只保留两个单一职责网络动作：`web_search { query }` 发现候选，`web_fetch { urls }` 读取已选正文。两者共用同一个 `web.search` 用户授权、network 分类预算、`WebEvidenceBroker`、冻结 Provider 顺序和 evidence ledger，不构成第二套循环。
+- `web_search` 每次最多返回 4 个去重候选，每 Run 最多保留 8 个。候选只提供标题、来源、时间和有界片段，`evidenceIds` 为空；它不再接受 `urls` 重载。
+- `web_fetch` 只接受当前 Run 候选或用户明确提供的 HTTPS URL。只有抓取到 URL 匹配的实质正文才登记 evidence 并获得 `Wn`；搜索片段绝不能在 `run_tool_loop` 中被升级为证据。
+- 一批 URL 部分成功时，观察同时返回成功正文、失败 URL、剩余证据要求和预算，让模型选择换源、补充抓取或基于已取得正文完成；单个抓取失败不直接把整轮降级为限制回答。
 - 搜索过但未选中的候选、抓取失败的页面和历史 Run URL 均不能支持最终结论。
 - 本地工具保持 `search_hybrid`、`search_semantic`、`search_keyword`、`read_note`、`get_outline`、`get_backlinks` 等正交能力。
 - Web 和本地结果进入同一 evidence ledger，但保持不同权限、内容泄漏和来源展示策略。
@@ -103,7 +104,9 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 - 普通回答：自然正文，可附受控来源区；不要求 `submit_final_answer`。
 - WebPreferred：有证据时展示当前 Run 来源；无证据时可以基于模型知识回答并说明时效限制。
-- WebRequired、CitationCheck 和高风险当前事实：必须满足当前 Run evidence 要求，必要时使用结构化终局。
+- 普通 `VolatileExternalFact`：至少一份与核心结论相关、已抓取正文且被精确引用的当前 Run Web evidence 即可完成；不再无差别要求官方来源或两个域名。
+- `HighStakesCurrentFact`、`CitationCheck` 或用户明确要求交叉核实：必须取得官方来源，或至少两个相互独立域名的合格正文。只有搜索片段、来源冲突或跨 Run evidence 均不得通过。
+- 严格路径仍在验证后一次发布；证据不足时限制说明不得携带 citation map、source summary 或来源卡片。
 - `ProvenancePolicy` 统一解析 `Wn`、`E{id}`、`L{id}`、`Mn`；`[Cn]` 和数据库裸 ID 只用于内部或展示。
 - Harness 校验来源存在、归属、时效和声明的覆盖关系，不宣称完成自由文本 NLI。
 

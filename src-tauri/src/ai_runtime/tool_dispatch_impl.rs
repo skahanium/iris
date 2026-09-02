@@ -31,7 +31,7 @@ pub use context_impl::ToolDispatchContext;
 pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "search_hybrid", "search_semantic", "search_keyword", "get_regulation", "get_context_packets",
     "system_time_now", "app_context_read", "capabilities_read",
-    "web_search", "read_note", "list_vault", "get_outline", "get_backlinks",
+    "web_search", "web_fetch", "read_note", "list_vault", "get_outline", "get_backlinks",
     "memory_read", "memory_write", "scheduled_task_create", "scheduled_task_list",
     "scheduled_task_delete",
     "vault_create_note", "vault_rename_move", "vault_delete_to_trash", "vault_asset_write",
@@ -76,7 +76,7 @@ fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
         return false;
     }
     let err = result.error.as_deref().unwrap_or("");
-    tool_name == "web_search"
+    matches!(tool_name, "web_search" | "web_fetch")
         && (err.contains("timeout") || err.contains("network") || err.contains("connection"))
 }
 pub async fn dispatch_tool_with_retry(
@@ -150,6 +150,7 @@ async fn dispatch_tool_inner(
         "app_context_read" => runtime_impl::app_context_read_tool(state, ctx),
         "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx),
         "web_search" => web_impl::web_search_tool(state, args, ctx).await,
+        "web_fetch" => web_impl::web_fetch_tool(state, args, ctx).await,
         "read_note" => note_impl::read_note(state, ctx, args).await,
         "list_vault" => note_impl::list_vault(state, args, ctx).await,
         "get_outline" => note_impl::get_outline(state, ctx, args).await,

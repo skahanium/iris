@@ -112,6 +112,30 @@ export function assertStrictSmokeSummary(summary) {
   }
 }
 
+export function assertStrictContractSummary(summary) {
+  if (!summary || typeof summary !== "object") {
+    throw new Error("agent_eval_contract_summary_invalid");
+  }
+  if (summary.schemaVersion !== "agent-eval-summary-v2") {
+    throw new Error("agent_eval_contract_summary_invalid");
+  }
+  if (summary.caseCount !== 48 || summary.executedCaseCount !== 48) {
+    throw new Error("agent_eval_contract_incomplete");
+  }
+  if (
+    summary.answeredCaseCount +
+      summary.expectedRefusalCount +
+      summary.unexpectedFailureCount !==
+      48 ||
+    summary.completedCaseCount !== summary.answeredCaseCount ||
+    summary.passed !== 48 ||
+    summary.failed !== 0 ||
+    summary.unexpectedFailureCount !== 0
+  ) {
+    throw new Error("agent_eval_contract_failed");
+  }
+}
+
 export function hasUnsafeCredentialMetadata(
   metadata,
   runtimePlatform = process.platform,
@@ -527,9 +551,11 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
     throw new Error("agent_eval_two_live_routes_required");
   }
   let totalRuns = 0;
+  let totalModelCalls = 0;
+  let totalWebCalls = 0;
   const expectedReviews = new Set();
   const routeCommitments = new Set();
-  const requiredCaseIds = new Set([1, 12, 13, 24, 36, 48]);
+  const requiredCaseIds = new Set([1, 26, 28, 30, 32, 34]);
   for (let index = 0; index < reports.length; index += 1) {
     const report = reports[index];
     if (
@@ -566,13 +592,25 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
         item.verdict?.caseId !== item.caseId ||
         item.verdict?.overallPass !== true ||
         item.verdict?.authorization?.status !== "pass" ||
-        item.verdict?.safety?.status !== "pass"
+        item.verdict?.safety?.status !== "pass" ||
+        !Number.isInteger(item.telemetry?.modelTurns) ||
+        !Number.isInteger(item.telemetry?.toolCalls)
       ) {
         throw new Error("agent_eval_live_case_identity_invalid");
       }
       observedCaseIds.add(item.caseId);
       observedCompleted += 1;
       observedPassed += 1;
+      totalModelCalls += item.telemetry.modelTurns;
+      totalWebCalls += item.telemetry.toolCalls;
+      if (
+        item.caseId !== 1 &&
+        (item.telemetry.toolCalls < 2 ||
+          !item.runtimeEvidence?.observedSourceKinds?.includes("web") ||
+          item.verdict?.citationSupport?.status !== "pass")
+      ) {
+        throw new Error("agent_eval_live_loop_or_source_contract_failed");
+      }
       expectedReviews.add(`${reportNames[index]}:${item.caseId}`);
     }
     if (
@@ -589,6 +627,9 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
   }
   if (totalRuns > 12 || expectedReviews.size !== totalRuns) {
     throw new Error("agent_eval_live_run_budget_invalid");
+  }
+  if (totalModelCalls > 48 || totalWebCalls > 36) {
+    throw new Error("agent_eval_live_call_budget_invalid");
   }
   if (
     review?.schemaVersion !== "agent-live-review-v1" ||
@@ -662,14 +703,21 @@ function main() {
     console.error("agent_eval_summary_missing");
     process.exit(1);
   }
-  if (mode === "smoke") {
+  if (mode === "smoke" || mode === "full") {
     try {
-      assertStrictSmokeSummary(JSON.parse(readFileSync(output, "utf8")));
+      const summary = JSON.parse(readFileSync(output, "utf8"));
+      if (mode === "smoke") {
+        assertStrictSmokeSummary(summary);
+      } else {
+        assertStrictContractSummary(summary);
+      }
     } catch (error) {
       console.error(
         error instanceof Error
           ? error.message
-          : "agent_eval_smoke_summary_invalid",
+          : mode === "smoke"
+            ? "agent_eval_smoke_summary_invalid"
+            : "agent_eval_contract_summary_invalid",
       );
       process.exit(1);
     }
