@@ -15,5 +15,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         implementation: ToolImplementationStatus::Dispatchable,
         default_enabled_without_skill: true,
         max_results: None,
+        execution_metadata: None,
     }]
 }

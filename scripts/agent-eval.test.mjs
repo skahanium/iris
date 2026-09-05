@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -14,10 +15,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertStrictContractSummary,
   assertStrictSmokeSummary,
   buildAgentEvalChildEnvironment,
   buildLivePilotChildEnvironment,
+  hasUnsafeCredentialMetadata,
   resolveLiveEvaluationPaths,
+  validateProductQualityArtifacts,
 } from "./agent-eval.mjs";
 
 const workspaceRoot = path.resolve(
@@ -53,6 +57,63 @@ test("smoke release gate requires all 24 deterministic interaction cases to pass
       passed: 24,
       failed: 0,
     }),
+  );
+});
+
+test("contract release gate rejects partial 36/48 reports and accepts an explicit complete result", () => {
+  assert.throws(
+    () =>
+      assertStrictContractSummary({
+        schemaVersion: "agent-eval-summary-v2",
+        caseCount: 48,
+        executedCaseCount: 36,
+        completedCaseCount: 36,
+        answeredCaseCount: 36,
+        expectedRefusalCount: 0,
+        unexpectedFailureCount: 0,
+        passed: 36,
+        failed: 12,
+      }),
+    /agent_eval_contract_incomplete/,
+  );
+  assert.throws(
+    () =>
+      assertStrictContractSummary({
+        schemaVersion: "agent-eval-summary-v2",
+        caseCount: 48,
+        executedCaseCount: 48,
+        completedCaseCount: 48,
+        answeredCaseCount: 36,
+        expectedRefusalCount: 0,
+        unexpectedFailureCount: 12,
+        passed: 36,
+        failed: 12,
+      }),
+    /agent_eval_contract_failed/,
+  );
+  assert.doesNotThrow(() =>
+    assertStrictContractSummary({
+      schemaVersion: "agent-eval-summary-v2",
+      caseCount: 48,
+      executedCaseCount: 48,
+      completedCaseCount: 36,
+      answeredCaseCount: 36,
+      expectedRefusalCount: 12,
+      unexpectedFailureCount: 0,
+      passed: 48,
+      failed: 0,
+    }),
+  );
+});
+
+test("credential metadata uses POSIX ownership and mode checks only on POSIX", () => {
+  const metadata = { mode: 0o100666, uid: 1001 };
+
+  assert.equal(hasUnsafeCredentialMetadata(metadata, "win32", 1000), false);
+  assert.equal(hasUnsafeCredentialMetadata(metadata, "linux", 1000), true);
+  assert.equal(
+    hasUnsafeCredentialMetadata({ mode: 0o100600, uid: 1000 }, "darwin", 1000),
+    false,
   );
 });
 
@@ -146,10 +207,379 @@ test("live pilot CLI requires session, profile and exact one-run cost confirmati
       "--approve",
       profile,
       "--confirm-cost",
-      "one-24-case-interaction-matrix-pilot",
+      "one-6-case-interaction-matrix-pilot",
     ).stderr,
     /agent_eval_live_custom_roots_required/,
   );
+});
+
+test("live campaign CLI requires two distinct approved routes and one pooled cost confirmation", () => {
+  const run = (...args) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(workspaceRoot, "scripts/agent-eval.mjs"),
+        "live",
+        "campaign",
+        ...args,
+      ],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          IRIS_AGENT_EVAL_SOURCE_DB: path.join(
+            workspaceRoot,
+            "target/agent-eval/definitely-missing.db",
+          ),
+        },
+        encoding: "utf8",
+      },
+    );
+  const session = `session-${"a".repeat(64)}`;
+  const routeA = `profile-${"b".repeat(32)}`;
+  const routeB = `profile-${"c".repeat(32)}`;
+
+  assert.match(run().stderr, /agent_eval_live_requires_current_session/);
+  assert.match(
+    run("--session", session, "--approve", routeA).stderr,
+    /agent_eval_live_requires_two_distinct_approved_profiles/,
+  );
+  assert.match(
+    run("--session", session, "--approve", `${routeA},${routeB}`).stderr,
+    /agent_eval_live_campaign_requires_user_cost_checkpoint/,
+  );
+  assert.match(
+    run(
+      "--session",
+      session,
+      "--approve",
+      `${routeA},${routeB}`,
+      "--confirm-cost",
+      "two-route-12-run-campaign",
+    ).stderr,
+    /agent_eval_live_custom_roots_required/,
+  );
+});
+
+test("live canary CLI requires two distinct approved routes and the four-run checkpoint", () => {
+  const run = (...args) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(workspaceRoot, "scripts/agent-eval.mjs"),
+        "live",
+        "canary",
+        ...args,
+      ],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          IRIS_AGENT_EVAL_SOURCE_DB: path.join(
+            workspaceRoot,
+            "target/agent-eval/definitely-missing.db",
+          ),
+        },
+        encoding: "utf8",
+      },
+    );
+  const session = `session-${"a".repeat(64)}`;
+  const routeA = `profile-${"b".repeat(32)}`;
+  const routeB = `profile-${"c".repeat(32)}`;
+
+  assert.match(
+    run("--session", session, "--approve", `${routeA},${routeB}`).stderr,
+    /agent_eval_live_canary_requires_user_cost_checkpoint/,
+  );
+  assert.match(
+    run(
+      "--session",
+      session,
+      "--approve",
+      `${routeA},${routeB}`,
+      "--confirm-cost",
+      "two-route-4-run-canary",
+    ).stderr,
+    /agent_eval_live_custom_roots_required/,
+  );
+});
+
+test("product gate refuses to claim quality without an explicit live result", () => {
+  const output = path.join(
+    workspaceRoot,
+    "target",
+    "agent-eval",
+    "product-gate.json",
+  );
+  const previous = existsSync(output) ? readFileSync(output, "utf8") : null;
+  mkdirSync(path.dirname(output), { recursive: true });
+  writeFileSync(output, '{"status":"stale-pass"}\n', "utf8");
+  try {
+    const child = spawnSync(
+      process.execPath,
+      [path.join(workspaceRoot, "scripts/agent-eval.mjs"), "gate"],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          IRIS_AGENT_EVAL_MODE: "smoke",
+        },
+        encoding: "utf8",
+      },
+    );
+
+    assert.notEqual(child.status, 0);
+    assert.match(child.stderr, /agent_eval_two_live_results_required/);
+    assert.equal(existsSync(output), false);
+  } finally {
+    if (previous !== null) {
+      writeFileSync(output, previous, "utf8");
+    } else {
+      rmSync(output, { force: true });
+    }
+  }
+});
+
+test("product quality rejects legacy v2 live reports even when their counters look complete", () => {
+  const report = (profileId, routeCommitment) => ({
+    schemaVersion: "agent-live-pilot-v2",
+    profileId,
+    routeCommitment,
+    status: "live_pilot_executed",
+    caseCount: 6,
+    requiredCaseCount: 6,
+    completedCaseCount: 6,
+    passed: 6,
+    failed: 0,
+    cases: [1, 26, 28, 30, 32, 34].map((caseId) => ({
+      caseId,
+      repetition: 1,
+      overallPass: true,
+      runtimeEvidence: {
+        terminalState: "completed",
+        terminalErrorCode: null,
+        toolCallCount: caseId === 1 ? 0 : 2,
+        observedSourceKinds: caseId === 1 ? [] : ["web"],
+      },
+      verdict: {
+        caseId,
+        overallPass: true,
+        authorization: { status: "pass" },
+        safety: { status: "pass" },
+        citationSupport: { status: "pass" },
+      },
+      telemetry: {
+        modelTurns: caseId === 1 ? 1 : 3,
+        toolCalls: caseId === 1 ? 0 : 2,
+        webToolCalls: caseId === 1 ? 0 : 2,
+      },
+    })),
+  });
+  const reports = [
+    report(
+      "profile-11111111111111111111111111111111",
+      `route-${"1".repeat(64)}`,
+    ),
+    report(
+      "profile-22222222222222222222222222222222",
+      `route-${"2".repeat(64)}`,
+    ),
+  ];
+  const reportNames = ["minimax-live.json", "mimo-live.json"];
+  const items = reports.flatMap((value, reportIndex) =>
+    value.cases.map(({ caseId }) => ({
+      report: reportNames[reportIndex],
+      caseId,
+      intentFollowing: 4.5,
+      factualSources: 4.5,
+      relevanceCompleteness: 4,
+      correctionContinuity: 4.5,
+    })),
+  );
+
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        reports,
+        { schemaVersion: "agent-live-review-v1", status: "approved", items },
+        reportNames,
+      ),
+    /agent_eval_live_quality_gate_failed/,
+  );
+});
+
+test("product quality accepts only v4 trace reports that are bound to human review packets", () => {
+  const report = (routeCommitment, routeLabel, packetHash) => ({
+    schemaVersion: "agent-live-pilot-v4",
+    routeCommitment,
+    routeLabel,
+    campaignId:
+      "campaign-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    status: "live_trace_executed",
+    caseCount: 6,
+    requiredCaseCount: 6,
+    completedCaseCount: 6,
+    mechanicalPassed: 6,
+    mechanicalFailed: 0,
+    reviewPacketSha256: packetHash,
+    campaignBudget: {
+      maxRuns: 12,
+      maxModelTurns: 96,
+      maxWebToolCalls: 72,
+      observedRuns: 12,
+      observedModelTurns: 32,
+      observedWebToolCalls: 20,
+    },
+    cases: [1, 26, 28, 30, 32, 34].map((caseId) => ({
+      caseId,
+      repetition: 1,
+      semanticStatus: "pending_human_review",
+      mechanical: {
+        terminal: "pass",
+        authorization: "pass",
+        searchFetchTrace: caseId === 1 ? "not_applicable" : "pass",
+        runLocalSources: caseId === 1 ? "not_applicable" : "pass",
+        citationBinding: caseId === 1 ? "not_applicable" : "pass",
+        safety: "pass",
+        continuity: caseId === 1 ? "not_applicable" : "pass",
+      },
+      telemetry: {
+        modelTurns: caseId === 1 ? 1 : 3,
+        toolCalls: caseId === 1 ? 0 : 2,
+        webToolCalls: caseId === 1 ? 0 : 2,
+      },
+    })),
+  });
+  const hashA = "a".repeat(64);
+  const hashB = "b".repeat(64);
+  const reports = [
+    report(`route-${"1".repeat(64)}`, "Route A", hashA),
+    report(`route-${"2".repeat(64)}`, "Route B", hashB),
+  ];
+  const reportNames = [
+    "live-pilot-campaign-a.json",
+    "live-pilot-campaign-b.json",
+  ];
+  const items = reports.flatMap((value, reportIndex) =>
+    value.cases.map(({ caseId }) => ({
+      report: reportNames[reportIndex],
+      caseId,
+      reviewPacketSha256: value.reviewPacketSha256,
+      intentFollowing: 4.5,
+      factualSources: 4.5,
+      relevanceCompleteness: 4,
+      correctionContinuity: 4.5,
+      directFailure: false,
+    })),
+  );
+
+  assert.deepEqual(
+    validateProductQualityArtifacts(
+      reports,
+      { schemaVersion: "agent-live-review-v2", status: "approved", items },
+      reportNames,
+    ),
+    { totalRuns: 12, averageScore: 4.375 },
+  );
+  const mismatchedPacket = structuredClone(items);
+  mismatchedPacket[0].reviewPacketSha256 = hashB;
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        reports,
+        {
+          schemaVersion: "agent-live-review-v2",
+          status: "approved",
+          items: mismatchedPacket,
+        },
+        reportNames,
+      ),
+    /agent_eval_live_review_packet_mismatch/,
+  );
+  const mismatchedBudget = structuredClone(reports);
+  mismatchedBudget[1].campaignBudget.observedWebToolCalls = 19;
+  assert.throws(
+    () =>
+      validateProductQualityArtifacts(
+        mismatchedBudget,
+        { schemaVersion: "agent-live-review-v2", status: "approved", items },
+        reportNames,
+      ),
+    /agent_eval_live_campaign_budget_inconsistent/,
+  );
+});
+
+test("product gate runs the Rust strict validator before trusting live counters", () => {
+  const directory = path.join(workspaceRoot, "target", "agent-eval");
+  mkdirSync(directory, { recursive: true });
+  const suffix = `${process.pid}-${Date.now()}`;
+  const first = path.join(directory, `tampered-live-a-${suffix}.json`);
+  const second = path.join(directory, `tampered-live-b-${suffix}.json`);
+  const review = path.join(directory, `tampered-review-${suffix}.json`);
+  const hollow = (profile, route) => ({
+    schemaVersion: "agent-live-pilot-v2",
+    profileId: profile,
+    routeCommitment: route,
+    requiredCaseCount: 6,
+    completedCaseCount: 6,
+    caseCount: 6,
+    passed: 6,
+    failed: 0,
+    status: "live_pilot_executed",
+    cases: [1, 26, 28, 30, 32, 34].map((caseId) => ({ caseId })),
+  });
+  writeFileSync(
+    first,
+    JSON.stringify(
+      hollow(
+        "profile-11111111111111111111111111111111",
+        `route-${"1".repeat(64)}`,
+      ),
+    ),
+  );
+  writeFileSync(
+    second,
+    JSON.stringify(
+      hollow(
+        "profile-22222222222222222222222222222222",
+        `route-${"2".repeat(64)}`,
+      ),
+    ),
+  );
+  writeFileSync(
+    review,
+    JSON.stringify({
+      schemaVersion: "agent-live-review-v1",
+      status: "approved",
+      items: [],
+    }),
+  );
+  try {
+    const child = spawnSync(
+      process.execPath,
+      [path.join(workspaceRoot, "scripts/agent-eval.mjs"), "gate"],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          IRIS_AGENT_EVAL_LIVE_RESULTS: [first, second].join(path.delimiter),
+          IRIS_AGENT_EVAL_LIVE_REVIEW: review,
+        },
+        encoding: "utf8",
+      },
+    );
+
+    assert.notEqual(child.status, 0);
+    assert.match(
+      child.stderr,
+      /agent_eval_live_result_strict_validation_failed/,
+    );
+    assert.equal(existsSync(path.join(directory, "product-gate.json")), false);
+  } finally {
+    for (const artifact of [first, second, review]) {
+      rmSync(artifact, { force: true });
+    }
+  }
 });
 
 test("default live paths bind one canonical source database data root and config root", () => {

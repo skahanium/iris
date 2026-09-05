@@ -667,3 +667,27 @@ export interface FeedChangedEvent {
   newItems: number;
   errorCode: string | null;
 }
+
+/**
+ * @deprecated 仅用于读取历史 MCP binding；新 Run 不再创建或授权领域操作。
+ */
+export type DomainOperation =
+  | "weather.current"
+  | "weather.forecast"
+  | "news.search"
+  | "finance.quote"
+  | "finance.metrics"
+  | "finance.news"
+  | "entertainment.now_playing"
+  | "entertainment.upcoming"
+  | "entertainment.streaming"
+  | "sports.schedule"
+  | "sports.score";
+
+/**
+ * @deprecated 仅用于读取历史 MCP binding；新 binding 统一使用 `external.read`。
+ */
+export interface DomainOutputMapping {
+  recordsPath: string;
+  fields: Record<string, string>;
+}

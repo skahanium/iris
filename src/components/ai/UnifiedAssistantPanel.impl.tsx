@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
-import { AssistantRunWebVerificationFailed } from "@/components/ai/AssistantRunCapabilityDegraded";
+import {
+  AssistantRunCapabilityDegraded,
+  AssistantRunWebVerificationFailed,
+} from "@/components/ai/AssistantRunCapabilityDegraded";
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
@@ -103,6 +106,10 @@ export function UnifiedAssistantPanel({
   >([]);
   const [confirming, setConfirming] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [submittingInput, setSubmittingInput] = useState(false);
+  const [pendingInputValues, setPendingInputValues] = useState<
+    Record<string, string>
+  >({});
   const [retryingWebVerification, setRetryingWebVerification] = useState(false);
   const [classifiedContextRef, setClassifiedContextRef] = useState<
     string | null
@@ -215,7 +222,11 @@ export function UnifiedAssistantPanel({
         .then((bindings) => {
           if (!active) return;
           const available = bindings.filter(
-            (binding) => binding.providerEnabled && binding.configMatches,
+            (binding) =>
+              binding.providerEnabled &&
+              binding.configMatches &&
+              !binding.domainOperation &&
+              !binding.outputMapping,
           );
           setExternalBindings(available);
           setSelectedExternalBindingIds((selected) =>
@@ -262,8 +273,7 @@ export function UnifiedAssistantPanel({
   useAssistantConversationProjection({
     run: assistantRun.eventState,
     presentation: assistantRun.presentationState,
-    presentationAnswer: assistantAnswerReveal.answer,
-    presentationRevealing: assistantAnswerReveal.revealing,
+    presentationReveal: assistantAnswerReveal,
     session: runSession,
     messages,
     setMessages,
@@ -286,6 +296,7 @@ export function UnifiedAssistantPanel({
       streaming ||
       assistantRun.isBusy ||
       assistantRun.pendingConfirmation !== null ||
+      assistantRun.pendingInput !== null ||
       assistantRun.recovery !== null,
     session: runSession,
     contextReferences: bubbleSelection.contextReferences,
@@ -350,6 +361,7 @@ export function UnifiedAssistantPanel({
     assistantRun.isBusy ||
     isStarting ||
     assistantRun.pendingConfirmation !== null ||
+    assistantRun.pendingInput !== null ||
     assistantRun.recovery !== null;
   const stopStreaming = useCallback(() => {
     void assistantRun
@@ -428,6 +440,32 @@ export function UnifiedAssistantPanel({
       })
       .finally(() => setResuming(false));
   }, [assistantRun]);
+  const handleSubmitPendingInput = useCallback(() => {
+    if (
+      !assistantRun.pendingInput ||
+      assistantRun.pendingInput.fields.some(
+        (field) => !pendingInputValues[field]?.trim(),
+      )
+    )
+      return;
+    setSubmittingInput(true);
+    setLastError(null);
+    void assistantRun
+      .submitInput(
+        Object.fromEntries(
+          assistantRun.pendingInput.fields.map((field) => [
+            field,
+            pendingInputValues[field]!.trim(),
+          ]),
+        ),
+      )
+      .then(() => setPendingInputValues({}))
+      .catch(() => setLastError("补充信息提交失败，请重试。"))
+      .finally(() => setSubmittingInput(false));
+  }, [assistantRun, pendingInputValues]);
+  useEffect(() => {
+    setPendingInputValues({});
+  }, [assistantRun.pendingInput?.inputId]);
 
   return (
     <div
@@ -458,6 +496,11 @@ export function UnifiedAssistantPanel({
         <p className="border-b border-destructive/30 px-3 py-2 text-xs text-destructive">
           {lastError}
         </p>
+      ) : null}
+      {assistantRun.eventState?.capabilityDegradation ? (
+        <AssistantRunCapabilityDegraded
+          degradation={assistantRun.eventState.capabilityDegradation}
+        />
       ) : null}
       {assistantRun.eventState?.webVerificationFailure ? (
         <AssistantRunWebVerificationFailed
@@ -526,6 +569,24 @@ export function UnifiedAssistantPanel({
           key={assistantSessionIdentity(runSession)}
           messages={messages}
           streaming={streaming}
+          pendingInput={
+            assistantRun.pendingInput && assistantRun.eventState
+              ? {
+                  runId: assistantRun.eventState.runId,
+                  prompt: assistantRun.pendingInput.prompt,
+                  fields: assistantRun.pendingInput.fields,
+                  values: pendingInputValues,
+                  submitting: submittingInput,
+                  onValueChange: (field, value) =>
+                    setPendingInputValues((previous) => ({
+                      ...previous,
+                      [field]: value,
+                    })),
+                  onSubmit: handleSubmitPendingInput,
+                  onCancel: stopStreaming,
+                }
+              : null
+          }
           assistantFocus={assistantFocus}
           messageListRef={messageListRef}
           onCitationClick={handleCitationClick}

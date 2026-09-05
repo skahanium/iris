@@ -47,10 +47,11 @@ describe("AssistantCitationFooter", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开来源" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源组" }));
+    expect(screen.getByText("本次检索来源组")).toBeInTheDocument();
     expect(screen.getByText("Match report")).toBeInTheDocument();
     expect(screen.getByText("Coach news")).toBeInTheDocument();
-    expect(screen.queryByText("Unused")).not.toBeInTheDocument();
+    expect(screen.getByText("Unused")).toBeInTheDocument();
   });
 
   it("labels an uncalibrated source group as this-run retrieval sources", () => {
@@ -70,19 +71,19 @@ describe("AssistantCitationFooter", () => {
     );
 
     const toggle = screen.getByRole("button", {
-      name: "展开本次检索来源",
+      name: "展开本次检索来源组",
     });
     expect(screen.getByText("2 个来源")).toBeInTheDocument();
     expect(screen.queryByText("Verified one")).not.toBeInTheDocument();
 
     fireEvent.click(toggle);
 
-    expect(screen.getByText("本次检索来源")).toBeInTheDocument();
+    expect(screen.getByText("本次检索来源组")).toBeInTheDocument();
     expect(screen.getByText("Verified one")).toBeInTheDocument();
     expect(screen.getByText("Verified two")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源，不表示已逐段核验。",
+        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源组，不表示已逐段核验。",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("本轮已核验证据")).not.toBeInTheDocument();
@@ -107,9 +108,63 @@ describe("AssistantCitationFooter", () => {
     );
 
     expect(screen.getByText("12 个来源")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源组" }));
     expect(screen.getByText("Source 1")).toBeInTheDocument();
     expect(screen.getByText("Source 12")).toBeInTheDocument();
+  });
+
+  it("treats a missing binding as this-run retrieval sources instead of precise citations", () => {
+    render(
+      <AssistantCitationFooter
+        content="模型回答没有行内引用格式。"
+        entries={[
+          { index: 1, title: "Verified one", url: "https://example.com/one" },
+          { index: 2, title: "Verified two", url: "https://example.com/two" },
+        ]}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", {
+      name: "展开本次检索来源组",
+    });
+    fireEvent.click(toggle);
+
+    expect(screen.getByText("本次检索来源组")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源组，不表示已逐段核验。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("fails safe for an unknown binding version", () => {
+    const binding = {
+      mode: "future_unknown_version",
+      referencedIndices: [],
+    } as unknown as import("@/types/ai").CitationBinding;
+
+    render(
+      <AssistantCitationFooter
+        content="模型回答没有行内引用格式。"
+        binding={binding}
+        entries={[
+          { index: 1, title: "Verified one", url: "https://example.com/one" },
+          { index: 2, title: "Verified two", url: "https://example.com/two" },
+        ]}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", {
+      name: "展开本次检索来源组",
+    });
+    fireEvent.click(toggle);
+
+    expect(screen.getByText("本次检索来源组")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "本回答未提供可精确绑定的行内引用；以下仅为本次检索来源组，不表示已逐段核验。",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows only category counts until the source disclosure is expanded", () => {
@@ -135,5 +190,30 @@ describe("AssistantCitationFooter", () => {
     expect(
       screen.getAllByText("用户输入 1 · 授权材料 2 · 网页 2 · 推断 1"),
     ).toHaveLength(2);
+  });
+
+  it("does not present insertion order as source quality ranking", () => {
+    render(
+      <AssistantCitationFooter
+        content="模型回答没有行内引用格式。"
+        binding={{
+          mode: "source_group_fallback",
+          referencedIndices: [],
+          fallbackReason: "missing_marker",
+        }}
+        entries={[
+          { index: 1, title: "First", url: "https://example.com/one" },
+          { index: 2, title: "Second", url: "https://example.com/two" },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源组" }));
+
+    expect(screen.getByText("First")).toBeInTheDocument();
+    expect(screen.getByText("Second")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/排名|评分|第1名|第2名|质量排序/),
+    ).not.toBeInTheDocument();
   });
 });

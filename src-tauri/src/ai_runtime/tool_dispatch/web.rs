@@ -73,7 +73,31 @@ pub(super) async fn web_search_tool(
     let query = args["query"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing query"))?;
-    let urls = args["urls"]
+    let output = crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(
+        &state.db,
+        crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
+            query: query.to_string(),
+            urls: Vec::new(),
+            enabled: ctx.web_search_enabled,
+            max_search_results: 8,
+            max_fetches: 0,
+            provider_snapshots: Vec::new(),
+            provider_selection_frozen: false,
+        },
+    )
+    .await?;
+    web_search_tool_response(query, output)
+}
+
+pub(super) async fn web_fetch_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
+) -> AppResult<serde_json::Value> {
+    if !ctx.web_search_enabled {
+        return Err(AppError::msg("web fetch not enabled for this request"));
+    }
+    let urls: Vec<String> = args["urls"]
         .as_array()
         .map(|items| {
             items
@@ -82,13 +106,17 @@ pub(super) async fn web_search_tool(
                 .collect()
         })
         .unwrap_or_default();
+    if urls.is_empty() {
+        return Err(AppError::msg("missing urls"));
+    }
+    let query = "selected current-run web candidates";
     let output = crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(
         &state.db,
         crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
-            query: query.to_string(),
+            query: query.into(),
             urls,
             enabled: ctx.web_search_enabled,
-            max_search_results: 8,
+            max_search_results: 0,
             max_fetches: ctx.max_web_fetches,
             provider_snapshots: Vec::new(),
             provider_selection_frozen: false,
@@ -131,6 +159,7 @@ mod tests {
             }],
             usage: WebEvidenceUsage {
                 successful_search_requests: WebEvidenceSearchRequestUsage::default(),
+                successful_page_fetches: 0,
                 providers: Vec::new(),
             },
         }
@@ -194,6 +223,7 @@ mod tests {
                 .collect(),
             usage: WebEvidenceUsage {
                 successful_search_requests: WebEvidenceSearchRequestUsage { mcp: 1 },
+                successful_page_fetches: 0,
                 providers: Vec::new(),
             },
         };

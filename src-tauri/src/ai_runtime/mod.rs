@@ -33,12 +33,10 @@ pub mod classified_retrieval;
 // Legacy CEF history is retained only so users' pre-existing encrypted files
 // remain untouched. New classified Runs use `classified_ephemeral` exclusively.
 pub mod classified_session;
+pub(crate) mod context_materials;
 pub mod conversation_memory;
 pub(crate) mod direct_provider_route;
 pub(crate) mod document_policy_repository;
-pub(crate) mod domain_executor;
-#[cfg(test)]
-mod domain_executor_tests;
 pub(crate) mod final_answer_integrity;
 pub(crate) mod final_answer_submission;
 pub(crate) mod frozen_change_plan;

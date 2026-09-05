@@ -82,6 +82,131 @@ pub(crate) enum VerificationRequirement {
     /// A successful explicitly granted `external.read` call in this exact Run
     /// must register usable evidence before a final answer is accepted.
     CurrentRunExternal,
+    /// Historical current-fact-domain marker retained only to deserialize
+    /// accepted legacy Runs. New Runs never select it; the normal service
+    /// terminalizes such an active legacy Run before Provider dispatch.
+    CurrentRunDomain,
+}
+
+/// Historical current-fact domain frozen into a pre-HR-6 accepted Run.
+///
+/// New intake does not create this value. It remains serializable so a stored
+/// legacy envelope can be read and safely terminalized without data loss.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FreshFactDomain {
+    #[default]
+    None,
+    Runtime,
+    Weather,
+    News,
+    Finance,
+    Entertainment,
+    Sports,
+    GenericWeb,
+}
+
+/// One concrete operation stored by the retired current-fact contract.
+///
+/// This remains a wire-compatibility type for existing SQLite rows and MCP
+/// snapshots; it is not part of the new Agent tool surface or routing path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DomainOperation {
+    #[serde(rename = "weather.current")]
+    WeatherCurrent,
+    #[serde(rename = "weather.forecast")]
+    WeatherForecast,
+    #[serde(rename = "news.search")]
+    NewsSearch,
+    #[serde(rename = "finance.quote")]
+    FinanceQuote,
+    #[serde(rename = "finance.metrics")]
+    FinanceMetrics,
+    #[serde(rename = "finance.news")]
+    FinanceNews,
+    #[serde(rename = "entertainment.now_playing")]
+    EntertainmentNowPlaying,
+    #[serde(rename = "entertainment.upcoming")]
+    EntertainmentUpcoming,
+    #[serde(rename = "entertainment.streaming")]
+    EntertainmentStreaming,
+    #[serde(rename = "sports.schedule")]
+    SportsSchedule,
+    #[serde(rename = "sports.score")]
+    SportsScore,
+}
+
+impl DomainOperation {
+    /// Return the stable wire value persisted in envelopes and provider bindings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WeatherCurrent => "weather.current",
+            Self::WeatherForecast => "weather.forecast",
+            Self::NewsSearch => "news.search",
+            Self::FinanceQuote => "finance.quote",
+            Self::FinanceMetrics => "finance.metrics",
+            Self::FinanceNews => "finance.news",
+            Self::EntertainmentNowPlaying => "entertainment.now_playing",
+            Self::EntertainmentUpcoming => "entertainment.upcoming",
+            Self::EntertainmentStreaming => "entertainment.streaming",
+            Self::SportsSchedule => "sports.schedule",
+            Self::SportsScore => "sports.score",
+        }
+    }
+
+    /// Parse one stable persisted operation value without accepting aliases.
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "weather.current" => Self::WeatherCurrent,
+            "weather.forecast" => Self::WeatherForecast,
+            "news.search" => Self::NewsSearch,
+            "finance.quote" => Self::FinanceQuote,
+            "finance.metrics" => Self::FinanceMetrics,
+            "finance.news" => Self::FinanceNews,
+            "entertainment.now_playing" => Self::EntertainmentNowPlaying,
+            "entertainment.upcoming" => Self::EntertainmentUpcoming,
+            "entertainment.streaming" => Self::EntertainmentStreaming,
+            "sports.schedule" => Self::SportsSchedule,
+            "sports.score" => Self::SportsScore,
+            _ => return None,
+        })
+    }
+}
+
+/// Minimum location context a current-fact domain needs before Web research.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LocationRequirement {
+    #[default]
+    None,
+    Country,
+    City,
+}
+
+/// Frozen, backward-compatible current-fact policy attached to one accepted Run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FreshFactPolicy {
+    pub(crate) schema_version: u8,
+    pub(crate) domain: FreshFactDomain,
+    #[serde(default)]
+    pub(crate) operation: Option<DomainOperation>,
+    pub(crate) window_start: Option<String>,
+    pub(crate) window_end: Option<String>,
+    pub(crate) location_requirement: LocationRequirement,
+}
+
+impl Default for FreshFactPolicy {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            domain: FreshFactDomain::None,
+            operation: None,
+            window_start: None,
+            window_end: None,
+            location_requirement: LocationRequirement::None,
+        }
+    }
 }
 
 /// Stable explanation for the deterministic Web decision attached to a Run.
@@ -160,12 +285,24 @@ pub(crate) struct RunBudgetPolicy {
     pub(crate) max_turn_output_tokens: u32,
     pub(crate) max_model_turns: u32,
     pub(crate) max_tool_calls: u32,
+    /// Maximum local read/search calls within the shared tool budget.
+    pub(crate) max_local_tool_calls: u32,
+    /// Maximum Web/network calls within the shared tool budget.
+    pub(crate) max_network_tool_calls: u32,
+    /// Maximum user-authorized external read calls within the shared tool budget.
+    pub(crate) max_external_read_tool_calls: u32,
+    /// Maximum trusted runtime snapshot calls within the shared tool budget.
+    pub(crate) max_runtime_tool_calls: u32,
+    /// Maximum confirmation-bound change calls within the shared tool budget.
+    pub(crate) max_confirmed_change_calls: u32,
     pub(crate) max_child_runs: u32,
     pub(crate) child_max_model_turns: u32,
     pub(crate) child_max_tool_calls: u32,
     pub(crate) child_input_tokens_per_turn: u32,
     pub(crate) child_output_tokens_per_turn: u32,
     pub(crate) post_confirmation_max_model_turns: u32,
+    /// Maximum target-bounded local read calls after one confirmed change set.
+    pub(crate) post_confirmation_max_local_tool_calls: u32,
 }
 
 /// Physical storage and capability isolation boundary for a Run.
@@ -255,6 +392,9 @@ pub(crate) struct ExecutionEnvelope {
     pub(crate) required_capabilities: Vec<CapabilityId>,
     /// Explicit constraints that remain binding throughout the Run.
     pub(crate) explicit_constraints: Vec<ExplicitConstraint>,
+    /// Frozen current-fact policy; defaults to a no-op for historical envelopes.
+    #[serde(default)]
+    pub(crate) fresh_fact: FreshFactPolicy,
 }
 
 impl RunBudgetPolicy {
@@ -276,6 +416,30 @@ impl RunBudgetPolicy {
         Self::for_profile(profile)
     }
 
+    /// Freeze the only additional Direct shape admitted for a conversation
+    /// whose committed history has crossed the bounded short-term window.
+    ///
+    /// This is still a Direct, zero-tool Run. It reuses the existing Standard
+    /// token envelope only to pay for one bounded no-tool memory compression
+    /// followed by the actual answer; it cannot gain a tool, ChildRun or
+    /// confirmation capability at execution time.
+    pub(crate) fn for_accepted_envelope(
+        envelope: &ExecutionEnvelope,
+        requires_memory_compaction: bool,
+    ) -> Self {
+        if envelope.effort == Effort::Direct && requires_memory_compaction {
+            Self::direct_memory_compaction()
+        } else {
+            Self::for_envelope(envelope)
+        }
+    }
+
+    /// Return whether this is the strictly recognized two-turn, zero-tool
+    /// Direct memory shape rather than an arbitrary expanded Direct policy.
+    pub(crate) fn is_direct_memory_compaction_shape(&self) -> bool {
+        *self == Self::direct_memory_compaction()
+    }
+
     /// Standard bounded policy for isolated evaluation harnesses without an accepted Run row.
     #[cfg(test)]
     pub(crate) fn standard() -> Self {
@@ -285,66 +449,110 @@ impl RunBudgetPolicy {
     fn for_profile(profile: RunBudgetProfile) -> Self {
         match profile {
             RunBudgetProfile::Direct => Self {
-                schema_version: 1,
+                schema_version: 3,
                 profile,
                 max_prompt_tokens: 64_000,
                 max_completion_tokens: 8_000,
                 max_turn_output_tokens: 8_000,
                 max_model_turns: 1,
                 max_tool_calls: 0,
+                max_local_tool_calls: 0,
+                max_network_tool_calls: 0,
+                max_external_read_tool_calls: 0,
+                max_runtime_tool_calls: 0,
+                max_confirmed_change_calls: 0,
                 max_child_runs: 0,
                 child_max_model_turns: 0,
                 child_max_tool_calls: 0,
                 child_input_tokens_per_turn: 0,
                 child_output_tokens_per_turn: 0,
                 post_confirmation_max_model_turns: 0,
+                post_confirmation_max_local_tool_calls: 0,
             },
             RunBudgetProfile::Standard => Self {
-                schema_version: 1,
+                schema_version: 3,
                 profile,
                 max_prompt_tokens: 128_000,
                 max_completion_tokens: 16_000,
                 max_turn_output_tokens: 4_000,
                 max_model_turns: 8,
                 max_tool_calls: 24,
+                max_local_tool_calls: 12,
+                max_network_tool_calls: 6,
+                max_external_read_tool_calls: 6,
+                max_runtime_tool_calls: 4,
+                max_confirmed_change_calls: 6,
                 max_child_runs: 0,
                 child_max_model_turns: 0,
                 child_max_tool_calls: 0,
                 child_input_tokens_per_turn: 0,
                 child_output_tokens_per_turn: 0,
                 post_confirmation_max_model_turns: 0,
+                post_confirmation_max_local_tool_calls: 0,
             },
             RunBudgetProfile::Delegated => Self {
-                schema_version: 1,
+                schema_version: 3,
                 profile,
                 max_prompt_tokens: 96_000,
                 max_completion_tokens: 12_000,
                 max_turn_output_tokens: 4_000,
                 max_model_turns: 8,
                 max_tool_calls: 24,
+                max_local_tool_calls: 12,
+                max_network_tool_calls: 6,
+                max_external_read_tool_calls: 6,
+                max_runtime_tool_calls: 4,
+                max_confirmed_change_calls: 6,
                 max_child_runs: 3,
                 child_max_model_turns: 2,
                 child_max_tool_calls: 6,
                 child_input_tokens_per_turn: 2_000,
                 child_output_tokens_per_turn: 1_024,
                 post_confirmation_max_model_turns: 0,
+                post_confirmation_max_local_tool_calls: 0,
             },
             RunBudgetProfile::DurableApply => Self {
-                schema_version: 1,
+                schema_version: 3,
                 profile,
                 max_prompt_tokens: 128_000,
                 max_completion_tokens: 16_000,
                 max_turn_output_tokens: 4_000,
                 max_model_turns: 8,
                 max_tool_calls: 24,
+                max_local_tool_calls: 12,
+                max_network_tool_calls: 6,
+                max_external_read_tool_calls: 6,
+                max_runtime_tool_calls: 4,
+                max_confirmed_change_calls: 6,
                 max_child_runs: 0,
                 child_max_model_turns: 0,
                 child_max_tool_calls: 0,
                 child_input_tokens_per_turn: 0,
                 child_output_tokens_per_turn: 0,
-                post_confirmation_max_model_turns: 0,
+                post_confirmation_max_model_turns: 2,
+                post_confirmation_max_local_tool_calls: 4,
             },
         }
+    }
+
+    fn direct_memory_compaction() -> Self {
+        let mut policy = Self::for_profile(RunBudgetProfile::Standard);
+        policy.profile = RunBudgetProfile::Direct;
+        policy.max_model_turns = 2;
+        policy.max_tool_calls = 0;
+        policy.max_local_tool_calls = 0;
+        policy.max_network_tool_calls = 0;
+        policy.max_external_read_tool_calls = 0;
+        policy.max_runtime_tool_calls = 0;
+        policy.max_confirmed_change_calls = 0;
+        policy.max_child_runs = 0;
+        policy.child_max_model_turns = 0;
+        policy.child_max_tool_calls = 0;
+        policy.child_input_tokens_per_turn = 0;
+        policy.child_output_tokens_per_turn = 0;
+        policy.post_confirmation_max_model_turns = 0;
+        policy.post_confirmation_max_local_tool_calls = 0;
+        policy
     }
 }
 
@@ -644,6 +852,9 @@ pub struct AssistantRunSnapshot {
     /// Current confirmation summary, if the Run is waiting for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pending_confirmation: Option<PendingConfirmationSummary>,
+    /// Current deterministic input request, if this Run is waiting for a user value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pending_input: Option<PendingRunInput>,
     /// Safe recovery information, if applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) recovery: Option<RunRecoveryKind>,
@@ -671,6 +882,8 @@ pub(crate) enum RunState {
     Running,
     /// The Run is waiting for a user confirmation.
     AwaitingConfirmation,
+    /// The Run is waiting for a bounded user-provided value before continuing.
+    AwaitingInput,
     /// The Run is durably paused and may later resume.
     Paused,
     /// The Run is validating an output before completion.
@@ -737,6 +950,10 @@ pub(crate) enum RunEventType {
     WebVerificationFailed,
     /// A frozen change plan needs user confirmation.
     ConfirmationRequired,
+    /// A bounded input is required to continue this Run.
+    InputRequired,
+    /// The required input was supplied and this Run may resume.
+    InputProvided,
     /// Policy denied an action.
     PermissionDenied,
     /// The Provider Router selected a permitted fallback candidate.
@@ -884,6 +1101,24 @@ pub(crate) enum RunEventPayload {
         /// RFC 3339 expiry of the frozen approval window.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expires_at: Option<String>,
+    },
+    /// A bounded user input request with no raw provider data.
+    InputRequired {
+        /// Stable input request identity.
+        input_id: String,
+        /// Input category, such as `location`.
+        input_kind: String,
+        /// Required bounded field names.
+        fields: Vec<String>,
+        /// Safe prompt shown to the user.
+        prompt: String,
+    },
+    /// Sanitized values supplied for a previously requested input.
+    InputProvided {
+        /// Stable input request identity.
+        input_id: String,
+        /// Bounded, validated values keyed by field name.
+        values: std::collections::BTreeMap<String, String>,
     },
     /// A safe policy denial.
     PermissionDenied {
@@ -1205,10 +1440,31 @@ pub enum RunControlAction {
         /// Stable confirmation identifier.
         confirmation_id: String,
     },
+    /// Provide the bounded value requested by an `InputRequired` event.
+    SubmitInput {
+        /// Stable input request identity.
+        input_id: String,
+        /// Validated values for the requested fields.
+        values: std::collections::BTreeMap<String, String>,
+    },
     /// Resume a valid paused or confirmation-blocked Run.
     Resume,
     /// Cancel an active Run.
     Cancel,
+}
+
+/// A safe, replayable input request exposed while a Run is awaiting user data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingRunInput {
+    /// Stable input request identity.
+    pub(crate) input_id: String,
+    /// Input category.
+    pub(crate) kind: String,
+    /// Required bounded field names.
+    pub(crate) fields: Vec<String>,
+    /// User-facing prompt.
+    pub(crate) prompt: String,
 }
 
 /// Safe, bounded reason for a Web evidence failure. These values never contain provider output,
@@ -1321,6 +1577,10 @@ pub enum SafeRunErrorCode {
     /// A required persistence operation failed safely.
     #[serde(rename = "agent_run_persistence_failed")]
     PersistenceFailed,
+    /// The Host reached an unexpected execution state that is neither a
+    /// provider, permission nor persistence failure.
+    #[serde(rename = "agent_run_internal_execution_failed")]
+    InternalExecutionFailed,
     /// The Run was cancelled before completion.
     #[serde(rename = "agent_run_cancelled")]
     Cancelled,
@@ -1405,6 +1665,9 @@ pub enum SafeRunErrorCode {
     /// The same client request id was replayed with a different payload.
     #[serde(rename = "agent_run_idempotency_conflict")]
     IdempotencyConflict,
+    /// The normal session already owns another non-terminal top-level Run.
+    #[serde(rename = "agent_run_active_run_exists")]
+    ActiveRunExists,
     /// The model referenced a tool call id that this Run never issued.
     #[serde(rename = "agent_run_unknown_tool_call_id")]
     UnknownToolCallId,
@@ -1414,6 +1677,18 @@ pub enum SafeRunErrorCode {
     /// Web evidence is required but the Run has none registered.
     #[serde(rename = "agent_run_web_evidence_required")]
     WebEvidenceRequired,
+    /// The model route cannot expose the grounded finalization protocol required by a current-fact Run.
+    #[serde(rename = "agent_run_grounded_finalization_unavailable")]
+    GroundedFinalizationUnavailable,
+    /// A current-fact Run could not collect enough evidence to support its final answer.
+    #[serde(rename = "agent_run_fresh_evidence_insufficient")]
+    FreshEvidenceInsufficient,
+    /// A current-fact Run requires an explicit location that is not available.
+    #[serde(rename = "agent_run_location_required")]
+    LocationRequired,
+    /// A submitted Run input does not match the pending request.
+    #[serde(rename = "agent_run_input_invalid")]
+    InputInvalid,
 }
 
 impl std::fmt::Display for SafeRunErrorCode {
@@ -1424,17 +1699,23 @@ impl std::fmt::Display for SafeRunErrorCode {
 
 impl SafeRunErrorCode {
     /// Extract the stable run error code carried by an `AppError`, when its
-    /// message is a known wire code; otherwise the persistence fallback is
+    /// message is a known wire code; otherwise an internal-execution fallback is
     /// returned. This is the single typed entry point replacing inline
     /// string-round-trip deserialization at call sites.
     pub(crate) fn from_app_error(error: &crate::error::AppError) -> Self {
         match error {
             crate::error::AppError::Message(message) => {
                 serde_json::from_value::<Self>(serde_json::Value::String(message.clone()))
-                    .unwrap_or(Self::PersistenceFailed)
+                    .unwrap_or(Self::InternalExecutionFailed)
             }
             crate::error::AppError::Run(code) => *code,
-            _ => Self::PersistenceFailed,
+            crate::error::AppError::Provider { kind, .. } => match kind {
+                crate::error::ProviderErrorKind::Timeout => Self::ProviderTimeout,
+                crate::error::ProviderErrorKind::Cancelled => Self::Cancelled,
+                _ => Self::ProviderUnavailable,
+            },
+            crate::error::AppError::Db(_) => Self::PersistenceFailed,
+            _ => Self::InternalExecutionFailed,
         }
     }
 
@@ -1469,6 +1750,7 @@ impl SafeRunErrorCode {
             Self::WebEvidenceInvalid => "agent_run_web_evidence_invalid",
             Self::WebVerificationRequired => "agent_run_web_verification_required",
             Self::PersistenceFailed => "agent_run_persistence_failed",
+            Self::InternalExecutionFailed => "agent_run_internal_execution_failed",
             Self::Cancelled => "agent_run_cancelled",
             Self::ClassifiedContextRequired => "agent_run_classified_context_required",
             Self::ClassifiedContextExpired => "agent_run_classified_context_expired",
@@ -1497,9 +1779,14 @@ impl SafeRunErrorCode {
             Self::InvalidSubagentBatchReport => "agent_run_invalid_subagent_batch_report",
             Self::RetryNotAvailable => "agent_run_retry_not_available",
             Self::IdempotencyConflict => "agent_run_idempotency_conflict",
+            Self::ActiveRunExists => "agent_run_active_run_exists",
             Self::UnknownToolCallId => "agent_run_unknown_tool_call_id",
             Self::UnverifiedWebCitation => "agent_run_unverified_web_citation",
             Self::WebEvidenceRequired => "agent_run_web_evidence_required",
+            Self::GroundedFinalizationUnavailable => "agent_run_grounded_finalization_unavailable",
+            Self::FreshEvidenceInsufficient => "agent_run_fresh_evidence_insufficient",
+            Self::LocationRequired => "agent_run_location_required",
+            Self::InputInvalid => "agent_run_input_invalid",
         }
     }
 }
@@ -1516,6 +1803,8 @@ impl RunEventPayload {
             Self::CapabilityDegraded { .. } => RunEventType::CapabilityDegraded,
             Self::WebVerificationFailed { .. } => RunEventType::WebVerificationFailed,
             Self::ConfirmationRequired { .. } => RunEventType::ConfirmationRequired,
+            Self::InputRequired { .. } => RunEventType::InputRequired,
+            Self::InputProvided { .. } => RunEventType::InputProvided,
             Self::PermissionDenied { .. } => RunEventType::PermissionDenied,
             Self::ProviderSwitched { .. } => RunEventType::ProviderSwitched,
             Self::EvidenceRegistered { .. } => RunEventType::EvidenceRegistered,
@@ -1555,13 +1844,17 @@ pub(crate) fn transition_to(
         ) | (
             RunState::Running,
             RunState::AwaitingConfirmation
+                | RunState::AwaitingInput
                 | RunState::Paused
                 | RunState::Verifying
                 | RunState::Completed
                 | RunState::Failed
                 | RunState::Cancelled
-        ) | (RunState::AwaitingConfirmation, RunState::Running)
-            | (RunState::Paused, RunState::Running)
+        ) | (
+            RunState::AwaitingConfirmation,
+            RunState::Running | RunState::Cancelled
+        ) | (RunState::Paused, RunState::Running)
+            | (RunState::AwaitingInput, RunState::Preparing)
             | (
                 RunState::Verifying,
                 RunState::Paused | RunState::Completed | RunState::Failed | RunState::Cancelled
@@ -1623,17 +1916,17 @@ mod tests {
     }
 
     #[test]
-    fn from_app_error_falls_back_for_unknown_or_typed_errors() {
+    fn from_app_error_preserves_provider_failures_and_uses_internal_fallbacks() {
         let unknown = AppError::msg("some unclassified failure");
         assert_eq!(
             SafeRunErrorCode::from_app_error(&unknown),
-            SafeRunErrorCode::PersistenceFailed
+            SafeRunErrorCode::InternalExecutionFailed
         );
 
         let structured = AppError::provider(ProviderErrorKind::Timeout, "upstream timeout");
         assert_eq!(
             SafeRunErrorCode::from_app_error(&structured),
-            SafeRunErrorCode::PersistenceFailed
+            SafeRunErrorCode::ProviderTimeout
         );
     }
 }

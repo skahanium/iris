@@ -8,6 +8,11 @@ param(
 # Deterministic Windows-native counterpart to agent-capacity-mcp-stdio.sh.
 # It deliberately uses only .NET console APIs so MCP contract tests can run
 # without WSL, Git Bash, or an inherited PATH.
+$FixtureLocation = -join @([char]0x4E0A, [char]0x6D77)
+$FixtureCondition = [string][char]0x6674
+$FixtureTimestamp = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", [Globalization.CultureInfo]::InvariantCulture)
+$FixtureDate = $FixtureTimestamp.Substring(0, 10)
+
 function Write-McpResponse([object]$Id, [object]$Result) {
     [Console]::Out.WriteLine((@{
         jsonrpc = "2.0"
@@ -60,7 +65,14 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                 additionalProperties = $false
             }
         })
-        if ($Mode -eq "search-fetch") {
+        if ($Mode -eq "domain-dto") {
+            $tools += @{
+                name = "domain"
+                annotations = @{ readOnlyHint = $true }
+                inputSchema = @{ type = "object"; properties = @{}; additionalProperties = $false }
+            }
+        }
+        elseif ($Mode -eq "search-fetch" -or $Mode -eq "fetch-rate-limit") {
             $tools += @{
                 name = "fetch"
                 annotations = @{ readOnlyHint = $true }
@@ -78,24 +90,46 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
 
     if ($line.Contains('"method":"tools/call"')) {
         if ($line.Contains('"name":"fetch"')) {
-            Write-McpResponse $id @{ content = @(@{ type = "text"; text = "fetch-result" }); isError = $false }
+            if ($Mode -eq "fetch-rate-limit") {
+                Write-McpResponse $id @{ content = @(@{ type = "text"; text = '{"error":"Extract failed","status":429}' }); isError = $false }
+                continue
+            }
+            $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: $FixtureTimestamp"
+            $arguments = ($line | ConvertFrom-Json).params.arguments
+            $payload = @{ url = [string]$arguments.url; raw_content = "fetch-result $claims" } | ConvertTo-Json -Compress
+            Write-McpResponse $id @{ content = @(@{ type = "text"; text = $payload }); isError = $false }
+        }
+        elseif ($line.Contains('"name":"domain"')) {
+            Write-McpResponse $id @{
+                content = @(@{ type = "text"; text = "domain-result" })
+                structuredContent = @{ records = @(@{
+                    location = $FixtureLocation; condition = $FixtureCondition; temperature = "26"; units = "C"
+                    observationTime = $FixtureTimestamp; issueTime = $FixtureTimestamp
+                    title = "Synthetic title"; publisher = "Synthetic Publisher"; publishedAt = $FixtureTimestamp; topic = "synthetic"
+                    instrument = "AAPL"; assetKind = "equity"; currency = "USD"; asOf = $FixtureTimestamp; delay = "0"; value = "123.45"
+                    region = $FixtureLocation; channel = "Synthetic Channel"; date = $FixtureDate; checkedAt = $FixtureTimestamp
+                    competition = "Synthetic League"; participants = @("A", "B"); startTime = $FixtureTimestamp; status = "scheduled"; score = "1-0"
+                    sourceUrl = "https://source.invalid/domain"; sourceTitle = "Synthetic Domain"; observedAt = $FixtureTimestamp; evidenceId = "provider-supplied-id"
+                }) }
+                isError = $false
+            }
         }
         elseif ($Mode -eq "search-empty") {
             Write-McpResponse $id @{ content = @(@{ type = "text"; text = "no parseable web evidence" }); isError = $false }
         }
         else {
             if ($ResultCount -gt 1) {
-                $claims = (1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " "
-                $text = "[1] title: Contract`nurl: https://source.invalid/contract`nsnippet: deterministic$claims"
+                $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: $FixtureTimestamp"
+                $text = "[1] title: Contract`nurl: https://source.invalid/contract`nsnippet: deterministic $claims"
                 $additional = (2..$ResultCount | ForEach-Object {
-                    $claims = (1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " "
+                    $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: $FixtureTimestamp"
                     "[$_] title: Result $_`nurl: https://source-$_.invalid/$_`nsnippet: deterministic $claims"
                 }) -join "`n"
                 $text += "`n$additional"
             }
             else {
-                $claims = (1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " "
-                $text = "[1] title: Contract`nurl: https://source.invalid/contract`nsnippet: deterministic$claims"
+                $claims = ((1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " ") + " date: $FixtureTimestamp"
+                $text = "[1] title: Contract`nurl: https://source.invalid/contract`nsnippet: deterministic $claims"
             }
             Write-McpResponse $id @{ content = @(@{ type = "text"; text = $text }); isError = $false }
         }

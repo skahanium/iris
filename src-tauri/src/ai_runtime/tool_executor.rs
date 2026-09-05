@@ -35,6 +35,13 @@ impl ToolRegistry {
         let snapshots = crate::ai_runtime::mcp_external_tools::load_run_snapshots(db, run_id)?;
         let mut registry = Self::new();
         for snapshot in snapshots {
+            // Historical domain snapshots remain readable for compatibility,
+            // but are never exposed to new Runs as generic external tools.
+            if snapshot.capability
+                == crate::ai_runtime::mcp_external_tools::LEGACY_WEB_DOMAIN_READ_CAPABILITY
+            {
+                continue;
+            }
             if !crate::ai_runtime::mcp_external_tools::snapshot_contract_is_valid(&snapshot) {
                 return Err(AppError::msg("external_tool_binding_config_changed"));
             }
@@ -107,6 +114,7 @@ impl ToolRegistry {
             "get_context_packets",
             "get_backlinks",
             "web_search",
+            "web_fetch",
             "spawn_subagent",
         ];
         tools
@@ -243,6 +251,7 @@ mod tests {
         assert!(names.contains(&"read_note"));
         assert!(names.contains(&"get_outline"));
         assert!(names.contains(&"web_search"));
+        assert!(names.contains(&"web_fetch"));
         assert!(!names.contains(&"search_hybrid"));
         assert!(!names.contains(&"search_keyword"));
         assert!(!names.contains(&"search_semantic"));

@@ -1,9 +1,19 @@
 use crate::ai_runtime::run_contract::CapabilityId;
 use crate::ai_runtime::{ToolAccessLevel, ToolCapabilityAffinity};
 
-use super::ToolCatalogEntry;
+use super::{ToolBudgetClass, ToolCatalogEntry};
 
 impl ToolCatalogEntry {
+    /// Whether this tool discovers candidate resources rather than reading one
+    /// already-selected target. The loop uses this capability-shaped metadata
+    /// only to bound one model turn; it never infers a task domain from it.
+    pub(crate) fn is_discovery(&self) -> bool {
+        matches!(
+            self.name,
+            "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault" | "web_search"
+        )
+    }
+
     /// Stable capability contract required before this tool can be exposed or
     /// dispatched. This is intentionally exact by tool name: access levels are
     /// presentation metadata and must never broaden a Run authorization.
@@ -14,7 +24,7 @@ impl ToolCatalogEntry {
             | "get_outline" => &["vault.read"],
             "get_context_packets" => &["context.read"],
             "system_time_now" | "app_context_read" | "capabilities_read" => &["runtime.read"],
-            "web_search" => &["web.search"],
+            "web_search" | "web_fetch" => &["web.search"],
             "insert_text_at_cursor" | "replace_selection" => &["note.apply_patch"],
             "vault_create_note"
             | "vault_rename_move"
@@ -61,6 +71,42 @@ impl ToolCatalogEntry {
     /// Capability affinity for task-policy driven tool exposure.
     pub fn capability_affinity(&self) -> Vec<ToolCapabilityAffinity> {
         capability_affinity(self)
+    }
+
+    /// Budget classification for a concrete built-in dispatch.
+    ///
+    /// Execution metadata wins where it exists. The fallback is deliberately
+    /// based on authority rather than task/domain wording so every catalog
+    /// tool has one stable classification.
+    pub(crate) fn budget_class(&self) -> ToolBudgetClass {
+        if let Some(metadata) = self.execution_metadata {
+            return match metadata.cost_class {
+                "local" => ToolBudgetClass::Local,
+                "network" => ToolBudgetClass::Network,
+                "runtime" => ToolBudgetClass::Runtime,
+                "external_read" => ToolBudgetClass::ExternalRead,
+                _ => ToolBudgetClass::ConfirmedChange,
+            };
+        }
+        match self.name {
+            "fs_read_authorized_folder"
+            | "doc_convert"
+            | "doc_ocr"
+            | "doc_extract_pdf"
+            | "doc_extract_table" => ToolBudgetClass::ExternalRead,
+            _ if self.requires_confirmation => ToolBudgetClass::ConfirmedChange,
+            _ => match self.access_level {
+                ToolAccessLevel::ReadIndex | ToolAccessLevel::ReadNoteSpan => {
+                    ToolBudgetClass::Local
+                }
+                ToolAccessLevel::ReadProfile => ToolBudgetClass::Runtime,
+                ToolAccessLevel::Network => ToolBudgetClass::Network,
+                ToolAccessLevel::WriteCache
+                | ToolAccessLevel::WriteMarkdown
+                | ToolAccessLevel::WriteSettings
+                | ToolAccessLevel::ManageSkills => ToolBudgetClass::ConfirmedChange,
+            },
+        }
     }
 }
 

@@ -27,21 +27,84 @@ import {
 
 import { renderCalloutBlockquote } from "@/lib/callout-pm-serialize";
 
-function cellPlainText(cell: ProseMirrorNode): string {
-  let text = "";
-  cell.descendants((child) => {
+const ZWSP = "\u200b";
+
+function stripZeroWidthSpacesFromHeading(
+  node: ProseMirrorNode,
+): ProseMirrorNode {
+  if (!node.textContent.includes(ZWSP)) return node;
+  const children: ProseMirrorNode[] = [];
+  node.forEach((child) => {
     if (child.isText) {
-      let t = child.text ?? "";
-      for (const mark of child.marks) {
-        if (mark.type.name === "bold") t = `**${t}**`;
-        else if (mark.type.name === "italic") t = `*${t}*`;
-        else if (mark.type.name === "strike") t = `~~${t}~~`;
-        else if (mark.type.name === "code") t = `\`${t}\``;
+      const text = (child.text ?? "").replaceAll(ZWSP, "");
+      if (text) {
+        children.push(node.type.schema.text(text, child.marks));
       }
-      text += t;
+    } else {
+      children.push(child);
     }
   });
-  return text.trim();
+  return node.type.create(
+    node.attrs,
+    children.length > 0 ? Fragment.fromArray(children) : undefined,
+  );
+}
+
+function escapeTableCellText(text: string): string {
+  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+}
+
+function applyInlineMarks(text: string, marks: readonly unknown[]): string {
+  let value = text;
+  for (const mark of marks) {
+    const typeName = (mark as { type: { name: string } }).type.name;
+    if (typeName === "bold") value = `**${value}**`;
+    else if (typeName === "italic") value = `*${value}*`;
+    else if (typeName === "strike") value = `~~${value}~~`;
+    else if (typeName === "code") value = `\`${value}\``;
+    else if (typeName === "link") {
+      const href = (mark as { attrs: { href?: string } }).attrs.href ?? "";
+      value = `[${value}](${href})`;
+    } else if (typeName === "wikiLink") {
+      value = `[[${value}]]`;
+    }
+  }
+  return value;
+}
+
+function inlineNodeToMarkdown(node: ProseMirrorNode): string {
+  if (node.isText) {
+    return applyInlineMarks(escapeTableCellText(node.text ?? ""), node.marks);
+  }
+  if (node.type.name === "image") {
+    const attrs = node.attrs as {
+      src?: string;
+      alt?: string;
+      title?: string | null;
+    };
+    const alt = attrs.alt ?? "";
+    const title = attrs.title ? ` "${attrs.title}"` : "";
+    return `![${escapeTableCellText(alt)}](${attrs.src ?? ""}${title})`;
+  }
+  if (node.type.name === "hardBreak") {
+    return "<br>";
+  }
+  // Fallback: preserve text content for unknown inline nodes.
+  return escapeTableCellText(node.textContent);
+}
+
+function cellToMarkdown(cell: ProseMirrorNode): string {
+  const parts: string[] = [];
+  cell.forEach((child) => {
+    if (child.type.name === "paragraph") {
+      const inline: string[] = [];
+      child.forEach((inner) => inline.push(inlineNodeToMarkdown(inner)));
+      parts.push(inline.join(""));
+    } else {
+      parts.push(escapeTableCellText(child.textContent));
+    }
+  });
+  return parts.join("<br>").trim();
 }
 
 function renderTable(state: MarkdownSerializerState, node: ProseMirrorNode) {
@@ -50,7 +113,7 @@ function renderTable(state: MarkdownSerializerState, node: ProseMirrorNode) {
 
   rows.forEach((row, rowIndex) => {
     const cells: string[] = [];
-    row.forEach((cell) => cells.push(cellPlainText(cell)));
+    row.forEach((cell) => cells.push(cellToMarkdown(cell)));
     state.write(`| ${cells.join(" | ")} |\n`);
     if (rowIndex === 0) {
       state.write(`| ${cells.map(() => "---").join(" | ")} |\n`);
@@ -195,7 +258,12 @@ const irisMarkdownSerializer = new MarkdownSerializer(
       if (renderIrisIndentedHtmlBlock(state, node, `h${level}`)) {
         return;
       }
-      baseHeadingSerialize(state, node, parent, index);
+      baseHeadingSerialize(
+        state,
+        stripZeroWidthSpacesFromHeading(node),
+        parent,
+        index,
+      );
     },
     image(state, node, parent, index) {
       baseImageSerialize(state, node, parent, index);
@@ -267,9 +335,16 @@ const irisMarkdownSerializer = new MarkdownSerializer(
     taskItem(state, node) {
       const checked = node.attrs.checked === true;
       state.write(checked ? "- [x] " : "- [ ] ");
+      let first = true;
       node.forEach((child) => {
         if (child.type.name === "paragraph") {
+          if (!first) state.write("\n");
           state.renderInline(child);
+          first = false;
+        } else {
+          if (!first) state.write("\n");
+          state.render(child, node, 0);
+          first = false;
         }
       });
     },

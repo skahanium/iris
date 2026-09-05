@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -150,5 +152,16 @@ describe("AssistantRunCapabilityDegraded", () => {
 
     expect(host.textContent).toContain("联网 API Key 无效，请重新输入原始 Key");
     expect(host.textContent).not.toContain("可稍后重试");
+  });
+
+  it("is wired into the production assistant panel event projection", () => {
+    const source = readFileSync(
+      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+      "utf8",
+    );
+
+    expect(source).toContain("AssistantRunCapabilityDegraded");
+    expect(source).toContain("eventState?.capabilityDegradation");
+    expect(source).toContain("<AssistantRunCapabilityDegraded");
   });
 });

@@ -7,9 +7,9 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ai_runtime::run_contract::{EvidenceRef, EvidenceSourceKind};
+use crate::ai_runtime::run_contract::{EvidenceRef, EvidenceSourceKind, SafeRunErrorCode};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -119,6 +119,9 @@ pub(crate) struct ExternalToolEvidenceInput {
     pub(crate) raw_result_hash: String,
     pub(crate) retrieved_at: String,
     pub(crate) bounded_excerpt: String,
+    pub(crate) url: Option<String>,
+    pub(crate) normalized_url: Option<String>,
+    pub(crate) domain: Option<String>,
 }
 
 /// Lossless ledger identifier plus the UI-safe reference shape.
@@ -134,10 +137,10 @@ pub(crate) struct RegisteredEvidence {
 pub(crate) struct AgentEvidenceRepository;
 
 impl AgentEvidenceRepository {
-    /// Summarize only verified evidence attached to this exact Run and final
-    /// message. This powers uncalibrated source-group disclosure without
-    /// turning session history, raw tool output, or model inferences into
-    /// visible sources.
+    /// Summarize only the selected evidence attached to this exact Run and
+    /// final message. This powers the controlled source area without turning
+    /// session history, raw tool output, or model inferences into visible
+    /// sources.
     pub(crate) fn source_summary_for_current_run(
         db: &Database,
         run_id: &str,
@@ -207,7 +210,7 @@ impl AgentEvidenceRepository {
     pub(crate) fn provenance_policy(
         db: &Database,
         run_id: &str,
-        strict_web: bool,
+        strict_current_evidence: bool,
     ) -> AppResult<crate::ai_runtime::provenance::ProvenancePolicy> {
         db.with_read_conn(|conn| {
             // Count the materials actually registered for this Run rather than
@@ -289,8 +292,55 @@ impl AgentEvidenceRepository {
                 current_run_local_evidence_ids: local,
                 current_run_web_evidence_ids: web,
                 current_run_external_evidence_ids: external,
-                strict_web,
+                strict_current_evidence,
             })
+        })
+    }
+
+    /// Load every non-retired evidence registration owned by one Run. The
+    /// returned references are Run-local and safe for deterministic final
+    /// protocol validation; no excerpt or raw provider payload is exposed.
+    #[cfg(test)]
+    pub(crate) fn list_current_run_registered(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Vec<RegisteredEvidence>> {
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1 AND evidence.retired_at IS NULL
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let ids = statement
+                .query_map([run_id], |row| row.get::<_, i64>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            ids.into_iter()
+                .map(|id| registered_by_id(conn, id))
+                .collect()
+        })
+    }
+
+    /// Return canonical HTTPS URLs already registered by this exact Run.
+    /// This is a provenance guard for follow-up page fetches, not a second
+    /// evidence source: values are read from the existing Run-local ledger.
+    pub(crate) fn current_run_web_urls(db: &Database, run_id: &str) -> AppResult<BTreeSet<String>> {
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT evidence.normalized_url
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'web_search'
+                   AND evidence.retired_at IS NULL
+                   AND evidence.normalized_url LIKE 'https://%'",
+            )?;
+            let urls = statement
+                .query_map([run_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<BTreeSet<_>, _>>()
+                .map_err(AppError::from)?;
+            Ok(urls)
         })
     }
 
@@ -442,10 +492,12 @@ impl AgentEvidenceRepository {
                               message_seq_first, source_type, title, content_hash,
                               retrieval_reason, retrieved_at, provider_id, provider_kind,
                               raw_result_hash, extraction_method, origin_run_id,
-                              material_role, stale, bounded_excerpt, created_at)
+                              material_role, stale, bounded_excerpt, created_at,
+                              url, normalized_url, domain)
                              VALUES (?1, ?2, ?3, ?4, ?5, 'web', ?6, ?7,
                                      'external.read', ?8, ?9, 'mcp', ?10,
-                                     'mcp_tool_output_v1', ?11, 'lookup', 0, ?12, ?13)",
+                                     'mcp_tool_output_v1', ?11, 'lookup', 0, ?12, ?13,
+                                     ?14, ?15, ?16)",
                     params![
                         input.session_id,
                         citation.index,
@@ -460,6 +512,9 @@ impl AgentEvidenceRepository {
                         input.run_id,
                         input.bounded_excerpt,
                         now,
+                        input.url.clone(),
+                        input.normalized_url.clone(),
+                        input.domain.clone(),
                     ],
                 )?;
                 let registered = registered_by_id(conn, conn.last_insert_rowid())?;
@@ -558,6 +613,196 @@ impl AgentEvidenceRepository {
         })
     }
 
+    /// Load only the evidence explicitly selected by a modern final message,
+    /// while retaining the current Run's W1..Wn ordinal projection.
+    pub(crate) fn list_selected_current_run_web_citation_links(
+        db: &Database,
+        run_id: &str,
+        evidence_ids: &[i64],
+    ) -> AppResult<Vec<crate::ai_runtime::citation_linkify::WebCitationLink>> {
+        if evidence_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let selected = evidence_ids.iter().copied().collect::<BTreeSet<_>>();
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id, evidence.title, evidence.url
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'web_search'
+                   AND evidence.source_type = 'web'
+                   AND evidence.retired_at IS NULL
+                   AND evidence.url LIKE 'https://%'
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let rows = statement
+                .query_map([run_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows
+                .into_iter()
+                .enumerate()
+                .filter_map(|(offset, (evidence_id, title, url))| {
+                    if !selected.contains(&evidence_id) {
+                        return None;
+                    }
+                    let index = i64::try_from(offset + 1).unwrap_or(i64::MAX);
+                    Some(crate::ai_runtime::citation_linkify::WebCitationLink {
+                        index,
+                        label: format!("[W{index}]"),
+                        title,
+                        url,
+                    })
+                })
+                .collect())
+        })
+    }
+
+    /// Resolve Run-local `Wn` ordinals to the exact ledger rows used by the
+    /// final answer. Returned ids retain Run registration order and never use
+    /// the session-global citation index.
+    pub(crate) fn current_run_web_evidence_ids_for_indices(
+        db: &Database,
+        run_id: &str,
+        referenced_indices: &[i64],
+    ) -> AppResult<Vec<i64>> {
+        let selected = referenced_indices.iter().copied().collect::<BTreeSet<_>>();
+        if selected.is_empty() {
+            return Ok(Vec::new());
+        }
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'web_search'
+                   AND evidence.source_type = 'web'
+                   AND evidence.retired_at IS NULL
+                   AND evidence.url LIKE 'https://%'
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let ids = statement
+                .query_map([run_id], |row| row.get::<_, i64>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids
+                .into_iter()
+                .enumerate()
+                .filter_map(|(offset, evidence_id)| {
+                    let index = i64::try_from(offset + 1).ok()?;
+                    selected.contains(&index).then_some(evidence_id)
+                })
+                .collect())
+        })
+    }
+
+    /// Map source references already accepted by `ProvenancePolicy` to the
+    /// exact ledger rows persisted with the final message. This function does
+    /// not authorize syntax: the validated origin determines whether the
+    /// numeric component is a Run-local ordinal (`M`/`W`) or a ledger id
+    /// (`L`/`E`).
+    pub(crate) fn evidence_ids_for_validated_references(
+        db: &Database,
+        run_id: &str,
+        references: &BTreeMap<String, crate::ai_runtime::provenance::InformationOrigin>,
+    ) -> AppResult<Vec<i64>> {
+        use crate::ai_runtime::provenance::InformationOrigin;
+
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id, run_evidence.registration_source,
+                        evidence.source_type, COALESCE(evidence.retrieval_reason, '')
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1 AND evidence.retired_at IS NULL
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let rows = statement
+                .query_map([run_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let web = rows
+                .iter()
+                .filter(|(_, registration, source_type, _)| {
+                    registration == "web_search" && source_type == "web"
+                })
+                .map(|(id, _, _, _)| *id)
+                .collect::<Vec<_>>();
+            let materials = rows
+                .iter()
+                .filter(|(_, registration, source_type, reason)| {
+                    registration == "context"
+                        && source_type == "local"
+                        && matches!(
+                            reason.as_str(),
+                            "explicit_reference" | "explicit_reference_exact_path_fallback"
+                        )
+                })
+                .map(|(id, _, _, _)| *id)
+                .collect::<Vec<_>>();
+            let local = rows
+                .iter()
+                .filter(|(_, registration, source_type, _)| {
+                    registration == "context" && source_type == "local"
+                })
+                .map(|(id, _, _, _)| *id)
+                .collect::<BTreeSet<_>>();
+            let external = rows
+                .iter()
+                .filter(|(_, registration, _, _)| registration == "external_tool")
+                .map(|(id, _, _, _)| *id)
+                .collect::<BTreeSet<_>>();
+
+            let mut selected = BTreeSet::new();
+            for (reference, origin) in references {
+                let numeric = reference
+                    .get(1..)
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .filter(|value| *value > 0);
+                let evidence_id = match (origin, numeric) {
+                    (InformationOrigin::UserAuthorizedMaterial, Some(ordinal)) => materials
+                        .get(usize::try_from(ordinal - 1).unwrap_or(usize::MAX))
+                        .copied(),
+                    (InformationOrigin::WebToolEvidence, Some(ordinal)) => web
+                        .get(usize::try_from(ordinal - 1).unwrap_or(usize::MAX))
+                        .copied(),
+                    (InformationOrigin::LocalToolEvidence, Some(id)) if local.contains(&id) => {
+                        Some(id)
+                    }
+                    (InformationOrigin::ExternalToolEvidence, Some(id))
+                        if external.contains(&id) =>
+                    {
+                        Some(id)
+                    }
+                    (
+                        InformationOrigin::UserAuthorizedMaterial
+                        | InformationOrigin::WebToolEvidence
+                        | InformationOrigin::LocalToolEvidence
+                        | InformationOrigin::ExternalToolEvidence,
+                        _,
+                    ) => return Err(AppError::run(SafeRunErrorCode::EvidenceInvalid)),
+                    _ => None,
+                };
+                if let Some(evidence_id) = evidence_id {
+                    selected.insert(evidence_id);
+                }
+            }
+            Ok(selected.into_iter().collect())
+        })
+    }
+
     /// Check that the exact Run, rather than merely its session, successfully
     /// registered HTTPS Web evidence through the `web_search` capability.
     pub(crate) fn has_current_run_web_evidence(
@@ -575,10 +820,13 @@ impl AgentEvidenceRepository {
                      FROM agent_run_evidence run_evidence
                      JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
                      WHERE run_evidence.run_id = ?1
-                       AND run_evidence.registration_source = 'web_search'
                        AND evidence.source_type = 'web'
                        AND evidence.retired_at IS NULL
-                       AND evidence.url LIKE 'https://%'
+                       AND (
+                         (run_evidence.registration_source = 'web_search'
+                          AND evidence.url LIKE 'https://%')
+                         OR run_evidence.registration_source = 'external_tool'
+                       )
                  )",
             )?;
             statement

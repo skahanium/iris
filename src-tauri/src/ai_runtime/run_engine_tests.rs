@@ -6,11 +6,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
+use super::context_materials::ContextMaterialPlan;
 use super::conversation_memory::ConversationMemory;
-use super::domain_executor::{
-    DomainExecutor, DomainMaterial, DomainMaterialOrigin, DomainMaterialRole,
+use super::frozen_change_plan::{
+    FrozenChangeOperationInput, FrozenChangePlan, FrozenChangePlanInput, FrozenChangeSetInput,
 };
-use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
 use super::normal_session_repository::NormalSessionRepository;
 use super::policy_decision_engine::RunPolicyDecision;
 use super::run_context::RunContextAssembler;
@@ -25,7 +25,8 @@ use super::run_engine::{
 };
 use super::run_intake::RunIntake;
 use crate::ai_runtime::agent_evidence_repository::{
-    AgentEvidenceRepository, LocalEvidenceInput, MaterialRole, WebEvidenceInput,
+    AgentEvidenceRepository, ExternalToolEvidenceInput, LocalEvidenceInput, MaterialRole,
+    WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
@@ -306,6 +307,10 @@ struct StrictWebEvidenceExecutor {
     evidence_ids: Vec<i64>,
 }
 
+struct StrictExternalEvidenceExecutor {
+    evidence_ids: Vec<i64>,
+}
+
 struct UnusedToolLoopExecutor;
 
 impl ToolLoopProvider for MetaAnalysisStreamingProvider {
@@ -499,6 +504,36 @@ impl ToolLoopExecutor for StrictWebEvidenceExecutor {
     }
 }
 
+impl ToolLoopExecutor for StrictExternalEvidenceExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { Err(AppError::msg("unused_strict_external_executor")) })
+    }
+
+    fn evidence_ids(&self) -> Vec<i64> {
+        self.evidence_ids.clone()
+    }
+
+    fn requires_external_evidence(&self) -> bool {
+        true
+    }
+
+    fn has_external_evidence(&self) -> bool {
+        true
+    }
+
+    fn final_submission_is_valid(
+        &self,
+        _submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
+    ) -> bool {
+        true
+    }
+}
+
 fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvider {
     ScriptedToolLoopProvider {
         responses: std::sync::Mutex::new(VecDeque::from([
@@ -670,6 +705,49 @@ async fn direct_streaming_enforces_the_frozen_run_budget_when_usage_is_missing_a
             "each accepted Direct Run passes its persisted frozen budget to the provider"
         );
     }
+}
+
+#[tokio::test]
+async fn evaluation_direct_run_forwards_the_same_effective_budget_to_the_gateway() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, standard_tool_loop_request()).expect("accepted");
+    let sink = RecordingSink::default();
+    let telemetry = EvaluationTelemetryTap::default();
+    let mut effective = AgentRunRepository::budget_policy_for_session(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("stored policy")
+    .expect("policy");
+    effective.max_completion_tokens = 64;
+    effective.max_turn_output_tokens = 32;
+    let provider = MissingUsageStreamingProvider {
+        content: "已按评测预算完成。".to_string(),
+        budgets: std::sync::Mutex::new(Vec::new()),
+    };
+
+    RunEngine::execute_direct_streaming_with_eval_telemetry_and_policy(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+        &telemetry,
+        effective.clone(),
+    )
+    .await
+    .expect("evaluation direct run");
+
+    assert_eq!(
+        provider.budgets.lock().expect("budget lock").as_slice(),
+        [crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
+            max_prompt_tokens: Some(effective.max_prompt_tokens),
+            max_completion_tokens: Some(64),
+            max_turn_output_tokens: Some(32),
+        }],
+        "evaluation may tighten a Run, but the Gateway must receive that same effective policy"
+    );
 }
 
 #[test]
@@ -929,7 +1007,7 @@ fn history_selection_never_exceeds_eight_thousand_tokens_or_splits_pairs() {
 }
 
 #[tokio::test]
-async fn strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_calls() {
+async fn strict_web_multi_turn_pressure_keeps_run_local_precise_citations_without_repair_calls() {
     for repetition in 0..20 {
         let db = Database::open_in_memory().expect("database");
         let sink = RecordingSink::default();
@@ -967,30 +1045,14 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_c
                 },
             )
             .expect("register strict-web pressure evidence");
-            let responses = if turn % 5 == 0 {
-                vec![crate::ai_runtime::model_gateway::GatewayResponse {
-                    content: Some(format!("第 {turn} 轮结论。")),
-                    tool_calls: vec![],
-                    usage: Default::default(),
-                    finish_reason: "stop".to_string(),
-                    reasoning_content: None,
-                    continuation: None,
-                }]
-            } else {
-                let marker = match turn % 3 {
-                    0 => "[W1]",
-                    1 => "[1]",
-                    _ => "[¹]",
-                };
-                vec![crate::ai_runtime::model_gateway::GatewayResponse {
-                    content: Some(format!("第 {turn} 轮结论。{marker}")),
-                    tool_calls: vec![],
-                    usage: Default::default(),
-                    finish_reason: "stop".to_string(),
-                    reasoning_content: None,
-                    continuation: None,
-                }]
-            };
+            let responses = vec![crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some(format!("第 {turn} 轮结论。[W1]")),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            }];
             let provider = ScriptedToolLoopProvider {
                 responses: std::sync::Mutex::new(VecDeque::from(responses)),
             };
@@ -1035,17 +1097,8 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_c
                 .expect("strict-web pressure persisted answer");
             assert!(citation_map.contains("\"index\":1"));
             assert!(!citation_map.contains("\"index\":2"));
-            if turn % 5 == 0 {
-                assert_eq!(content, format!("第 {turn} 轮结论。"));
-                assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
-            } else {
-                assert_eq!(content, format!("第 {turn} 轮结论。"));
-                assert!(
-                    !content.contains("[W1]"),
-                    "uncalibrated source-group routes must not expose a model-authored precise marker"
-                );
-                assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
-            }
+            assert_eq!(content, format!("第 {turn} 轮结论。[W1]"));
+            assert!(citation_map.contains("\"mode\":\"exact\""));
         }
     }
 }
@@ -1331,7 +1384,10 @@ fn background_failure_guard_terminalizes_a_running_run_without_exposing_its_caus
     let failed =
         serde_json::to_value(replay.events.last().expect("failed")).expect("serialize failed");
     assert_eq!(replay.run.state, RunState::Failed);
-    assert_eq!(failed["payload"]["code"], "agent_run_persistence_failed");
+    assert_eq!(
+        failed["payload"]["code"],
+        "agent_run_internal_execution_failed"
+    );
     assert!(!failed.to_string().contains("unexpected orchestration"));
 }
 
@@ -1502,8 +1558,8 @@ fn durable_apply_interrupted_after_consumed_confirmation_with_expiry(
             state_version: running.state_version(),
             event_type: RunEventType::ToolStarted,
             payload: RunEventPayload::ToolStarted {
-                capability: plan.operation().to_string(),
-                tool_call_id: plan.tool_call_id().to_string(),
+                capability: plan.operations()[0].operation().to_string(),
+                tool_call_id: plan.operations()[0].tool_call_id().to_string(),
             },
         },
     )
@@ -1546,9 +1602,161 @@ fn startup_recovery_offers_resume_only_when_consumed_target_is_still_at_base_has
 }
 
 #[test]
+fn startup_recovery_resumes_only_the_unapplied_suffix_of_a_consumed_change_set() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    let (confirmation_id, session_id): (String, i64) = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT c.confirmation_id, r.session_id
+                 FROM agent_run_confirmations c
+                 JOIN agent_runs r ON r.run_id = c.run_id
+                 WHERE c.run_id = ?1 AND c.status = 'consumed'",
+                [&accepted.run_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(Into::into)
+        })
+        .expect("consumed confirmation identity");
+    let chained = FrozenChangePlan::freeze_set(FrozenChangeSetInput {
+        confirmation_id,
+        run_id: accepted.run_id.clone(),
+        session_id,
+        request_id: accepted.run_id.clone(),
+        vault_id: crate::cas::hash::content_hash_str(&vault.to_string_lossy()),
+        operations: vec![
+            FrozenChangeOperationInput {
+                tool_call_id: format!("tool-{}", accepted.run_id),
+                operation: "replace_selection".into(),
+                relative_paths: vec!["notes/a.md".into()],
+                base_content_hashes: vec![(
+                    "notes/a.md".into(),
+                    crate::cas::hash::content_hash_str("base"),
+                )],
+                expected_post_content_hashes: vec![(
+                    "notes/a.md".into(),
+                    crate::cas::hash::content_hash_str("after"),
+                )],
+                change: serde_json::json!({
+                    "target_path": "notes/a.md",
+                    "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                    "range": { "start": 0, "end": 4 },
+                    "original_text": "base",
+                    "replacement": "after"
+                }),
+                rollback_summary: "可通过版本历史撤销".into(),
+            },
+            FrozenChangeOperationInput {
+                tool_call_id: format!("tool-{}-suffix", accepted.run_id),
+                operation: "replace_selection".into(),
+                relative_paths: vec!["notes/a.md".into()],
+                base_content_hashes: vec![(
+                    "notes/a.md".into(),
+                    crate::cas::hash::content_hash_str("after"),
+                )],
+                expected_post_content_hashes: vec![(
+                    "notes/a.md".into(),
+                    crate::cas::hash::content_hash_str("final"),
+                )],
+                change: serde_json::json!({
+                    "target_path": "notes/a.md",
+                    "base_content_hash": crate::cas::hash::content_hash_str("after"),
+                    "range": { "start": 0, "end": 5 },
+                    "original_text": "after",
+                    "replacement": "final"
+                }),
+                rollback_summary: "可通过版本历史撤销".into(),
+            },
+        ],
+        expires_at_unix_ms: i64::MAX,
+    })
+    .expect("freeze chained recovery set");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_run_confirmations
+             SET plan_hash = ?1, plan_json = ?2
+             WHERE run_id = ?3 AND status = 'consumed'",
+            rusqlite::params![
+                chained.plan_hash(),
+                chained.persisted_plan_json()?,
+                accepted.run_id,
+            ],
+        )?;
+        conn.execute(
+            "DELETE FROM agent_run_steps WHERE run_id = ?1 AND kind = 'durable_apply'",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("install chained recovery set");
+    let state_version = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("running replay")
+        .expect("run")
+        .run
+        .state_version;
+    let checkpoint = |stage, cursor| {
+        DurableApplyCheckpoint::new_change_set(
+            chained.confirmation_id(),
+            chained.plan_hash(),
+            stage,
+            chained
+                .all_base_content_hashes()
+                .iter()
+                .map(|(_, hash)| hash.clone())
+                .collect(),
+            chained
+                .all_expected_post_content_hashes()
+                .iter()
+                .map(|(_, hash)| hash.clone())
+                .collect(),
+            cursor,
+            chained.operations().len(),
+            Vec::new(),
+        )
+        .expect("recovery set checkpoint")
+    };
+    for (stage, cursor) in [
+        (DurableApplyCheckpointStage::Approved, 0),
+        (DurableApplyCheckpointStage::Dispatching, 0),
+        (DurableApplyCheckpointStage::Applied, 1),
+    ] {
+        AgentRunRepository::append_checkpoint_step(
+            &db,
+            AppendRunCheckpointInput {
+                run_id: accepted.run_id.clone(),
+                state_version,
+                checkpoint: checkpoint(stage, cursor),
+            },
+        )
+        .expect("persist completed prefix");
+    }
+    std::fs::write(vault.join("notes/a.md"), "after").expect("simulate first applied operation");
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover partial set"),
+        1
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("paused run");
+    assert_eq!(replay.run.state, RunState::Paused);
+    assert_eq!(replay.run.recovery, Some(RunRecoveryKind::ResumeAvailable));
+    let latest = AgentRunRepository::latest_durable_apply_checkpoint(&db, &accepted.run_id)
+        .expect("latest checkpoint")
+        .expect("partial checkpoint");
+    assert_eq!(latest.stage(), DurableApplyCheckpointStage::Applied);
+    assert_eq!(latest.next_operation_index(), 1);
+    assert_eq!(
+        std::fs::read_to_string(vault.join("notes/a.md")).expect("prefix stays applied"),
+        "after"
+    );
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
 fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
     let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
-    let (legacy_v1, canonical) = db
+    let (legacy_v1, expected_materialized) = db
         .with_read_conn(|conn| {
             let canonical: String = conn.query_row(
                 "SELECT budget_policy_json FROM agent_runs WHERE run_id = ?1",
@@ -1556,17 +1764,35 @@ fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
                 |row| row.get(0),
             )?;
             let mut legacy_v1: serde_json::Value = serde_json::from_str(&canonical)?;
+            let mut expected_materialized: super::run_contract::RunBudgetPolicy =
+                serde_json::from_str(&canonical)?;
+            expected_materialized.post_confirmation_max_model_turns = 0;
+            expected_materialized.post_confirmation_max_local_tool_calls = 0;
             let fields = legacy_v1
                 .as_object_mut()
                 .expect("canonical budget is an object");
+            fields.insert("schemaVersion".to_string(), serde_json::json!(1));
+            fields.insert(
+                "postConfirmationMaxModelTurns".to_string(),
+                serde_json::json!(0),
+            );
             for field in [
                 "maxPromptTokens",
                 "maxCompletionTokens",
                 "maxTurnOutputTokens",
+                "maxLocalToolCalls",
+                "maxNetworkToolCalls",
+                "maxExternalReadToolCalls",
+                "maxRuntimeToolCalls",
+                "maxConfirmedChangeCalls",
+                "postConfirmationMaxLocalToolCalls",
             ] {
                 fields.remove(field);
             }
-            Ok::<_, crate::error::AppError>((serde_json::to_string(&legacy_v1)?, canonical))
+            Ok::<_, crate::error::AppError>((
+                serde_json::to_string(&legacy_v1)?,
+                serde_json::to_string(&expected_materialized)?,
+            ))
         })
         .expect("derive persisted v1 budget");
     db.with_conn(|conn| {
@@ -1593,8 +1819,8 @@ fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
         })
         .expect("read recovered budget");
     assert_eq!(
-        stored, canonical,
-        "recovery must materialize v1 exactly once"
+        stored, expected_materialized,
+        "recovery must materialize v1 without granting the new verification capability"
     );
 
     std::fs::remove_dir_all(vault).expect("remove recovery vault");
@@ -1898,7 +2124,7 @@ fn startup_recovery_leaves_a_pending_confirmation_awaiting_user_input() {
 }
 
 #[test]
-fn startup_recovery_completes_a_rejected_confirmation_as_not_modified() {
+fn rejected_confirmation_recovery_stays_cancelled() {
     let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
     db.with_conn(|conn| {
         conn.execute(
@@ -1922,19 +2148,25 @@ fn startup_recovery_completes_a_rejected_confirmation_as_not_modified() {
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
-    assert_eq!(replay.run.state, RunState::Completed);
-    let message: String = db
+    assert_eq!(replay.run.state, RunState::Cancelled);
+    assert!(replay.run.final_message_id.is_none());
+    assert_eq!(
+        serde_json::to_value(replay.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["payload"]["reason"],
+        "user_rejected_change"
+    );
+    let assistant_messages: i64 = db
         .with_read_conn(|conn| {
             conn.query_row(
-                "SELECT content FROM session_messages
+                "SELECT COUNT(*) FROM session_messages
                  WHERE session_id = 1 AND role = 'assistant'",
                 [],
                 |row| row.get(0),
             )
             .map_err(Into::into)
         })
-        .expect("fixed rejection message");
-    assert_eq!(message, "已取消该变更，未作任何修改。");
+        .expect("no rejection assistant message");
+    assert_eq!(assistant_messages, 0);
     assert_eq!(
         std::fs::read_to_string(vault.join("notes/a.md")).expect("read untouched note"),
         "base"
@@ -2355,111 +2587,6 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
     let durable = sink.events.lock().expect("sink lock").clone();
     assert_eq!(durable.len(), 1);
     assert_eq!(durable[0]["payload"]["stage"], "正在生成答复");
-}
-
-#[test]
-fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
-    let db = Database::open_in_memory().expect("database");
-    let accepted = RunIntake::start(&db, request()).expect("accepted");
-    let preparing = AgentRunRepository::append_event(
-        &db,
-        AppendRunEventInput {
-            run_id: accepted.run_id.clone(),
-            state_version: 0,
-            event_type: RunEventType::StageChanged,
-            payload: RunEventPayload::StageChanged {
-                state: RunState::Preparing,
-                stage: "正在准备工具执行".to_string(),
-                stage_code: None,
-            },
-        },
-    )
-    .expect("preparing");
-    let running = AgentRunRepository::append_event(
-        &db,
-        AppendRunEventInput {
-            run_id: accepted.run_id.clone(),
-            state_version: event_state_version(&preparing),
-            event_type: RunEventType::StageChanged,
-            payload: RunEventPayload::StageChanged {
-                state: RunState::Running,
-                stage: "正在调用模型和工具".to_string(),
-                stage_code: None,
-            },
-        },
-    )
-    .expect("running");
-    let sink = RecordingSink::default();
-    let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
-        &db,
-        &accepted.run_id,
-        event_state_version(&running),
-        &sink,
-        true,
-    );
-    observer.enable_source_group_citation_filter();
-    observer.on_tools_finished().expect("unlock final answer");
-
-    for (index, token) in [
-        "结论：根据你提",
-        "供的信息，先给出结论。\n",
-        "本轮 web 证据显示已发布 [W1]。\n",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        observer
-            .observe(
-                &StreamEvent {
-                    request_id: accepted.run_id.clone(),
-                    event_type: StreamEventType::Token,
-                    data: StreamEventData::Token {
-                        token: token.to_string(),
-                        replace_visible: false,
-                    },
-                    surface: StreamSurface::VisibleAnswerSanitized,
-                    classified: false,
-                },
-                index as u32,
-            )
-            .expect("stream final token");
-    }
-    observer.bind_validated_content(
-        "结论：根据可用的信息，先给出结论。\n查到的网页资料显示已发布 。\n",
-    );
-    observer.flush().expect("flush validated stream");
-
-    let presentation = sink
-        .presentation_events
-        .lock()
-        .expect("presentation lock")
-        .clone();
-    let deltas = presentation
-        .iter()
-        .filter(|event| event["kind"] == "answer_delta")
-        .collect::<Vec<_>>();
-    assert_eq!(
-        deltas.len(),
-        2,
-        "source-group answer must stream incrementally"
-    );
-    assert!(deltas
-        .iter()
-        .all(|event| !event["delta"].as_str().unwrap_or_default().contains("[W")));
-    assert!(deltas.iter().all(|event| {
-        let delta = event["delta"].as_str().unwrap_or_default();
-        !delta.contains("你提供") && !delta.contains("本轮")
-    }));
-    assert!(presentation
-        .iter()
-        .all(|event| event["kind"] != "answer_reset"));
-    assert_eq!(
-        deltas
-            .iter()
-            .filter_map(|event| event["delta"].as_str())
-            .collect::<String>(),
-        "结论：根据可用的信息，先给出结论。\n查到的网页资料显示已发布 。\n"
-    );
 }
 
 #[test]
@@ -3234,7 +3361,7 @@ async fn presentation_delivery_failure_never_invalidates_the_durable_answer() {
 }
 
 #[tokio::test]
-async fn completed_emit_failure_never_appends_a_second_terminal_event() {
+async fn terminal_sink_failure_recovers_without_reexecution() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let provider = MockStreamingProvider {
@@ -3246,7 +3373,7 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
         events: std::sync::Mutex::new(Vec::new()),
     };
 
-    let error = RunEngine::execute_direct_streaming_with_sink(
+    RunEngine::execute_direct_streaming_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -3254,14 +3381,11 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
         &sink,
     )
     .await
-    .expect_err("completed emit failure is surfaced safely");
-    assert_eq!(
-        error.to_string(),
-        SafeRunErrorCode::EventDeliveryFailed.as_str()
-    );
+    .expect("a delivery failure cannot overwrite a durable completed result");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
-        .expect("replay")
+        .expect("first replay")
         .expect("run");
     assert_eq!(replay.run.state, RunState::Completed);
     assert_eq!(
@@ -3277,6 +3401,11 @@ async fn completed_emit_failure_never_appends_a_second_terminal_event() {
             .count(),
         1
     );
+    let replay_again = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("second replay")
+        .expect("run");
+    assert_eq!(replay_again.run.state, RunState::Completed);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -3362,7 +3491,7 @@ async fn tool_loop_appends_one_recovery_turn_after_a_title_only_answer() {
                 continuation: None,
             },
             crate::ai_runtime::model_gateway::GatewayResponse {
-                content: Some("近期报道主要聚焦其国内政策与外交活动。".to_string()),
+                content: Some("近期报道主要聚焦其国内政策与外交活动。[W1]".to_string()),
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
@@ -3408,13 +3537,117 @@ async fn tool_loop_appends_one_recovery_turn_after_a_title_only_answer() {
         .expect("persisted recovered answer");
     assert_eq!(
         persisted,
-        "特朗普 最新新闻 2026年8月\n\n近期报道主要聚焦其国内政策与外交活动。"
+        "特朗普 最新新闻 2026年8月\n\n近期报道主要聚焦其国内政策与外交活动。[W1]"
     );
     assert!(provider
         .responses
         .lock()
         .expect("scripted responses")
         .is_empty());
+}
+
+#[tokio::test]
+async fn strict_external_submission_persists_only_the_referenced_evidence() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, standard_tool_loop_request()).expect("accepted");
+    let register_external = |suffix: &str| {
+        AgentEvidenceRepository::register_external_tool(
+            &db,
+            ExternalToolEvidenceInput {
+                session_id: 1,
+                run_id: accepted.run_id.clone(),
+                message_seq_first: 1,
+                title: format!("external_{suffix}"),
+                provider_id: "readonly-provider".into(),
+                provider_config_hash: "provider-hash".into(),
+                binding_id: format!("binding-{suffix}"),
+                raw_result_hash: format!("result-{suffix}"),
+                retrieved_at: "2026-09-01T00:00:00Z".into(),
+                bounded_excerpt: format!("external result {suffix}"),
+                url: None,
+                normalized_url: None,
+                domain: None,
+            },
+        )
+        .expect("external evidence")
+    };
+    let selected = register_external("selected");
+    let unused = register_external("unused");
+    let provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![ToolCall::new(
+                    "external-final",
+                    crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME,
+                    serde_json::json!({
+                        "blocks": [{
+                            "markdown": "已核实所选外部记录。",
+                            "sources": [format!("E{}", selected.evidence_id)]
+                        }]
+                    })
+                    .to_string(),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "核实外部记录".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![crate::ai_runtime::final_answer_submission::tool_spec()],
+        &[],
+        None,
+        &provider,
+        &StrictExternalEvidenceExecutor {
+            evidence_ids: vec![selected.evidence_id, unused.evidence_id],
+        },
+        &sink,
+    )
+    .await
+    .expect("strict external finalization");
+
+    let (evidence_refs, citation_map): (String, String) = db
+        .with_read_conn(|connection| {
+            connection
+                .query_row(
+                    "SELECT evidence_refs_json, citation_map_json
+                     FROM session_messages
+                     WHERE session_id = 1 AND role = 'assistant'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(Into::into)
+        })
+        .expect("persisted strict external answer");
+    assert_eq!(
+        serde_json::from_str::<Vec<i64>>(&evidence_refs).expect("evidence refs"),
+        vec![selected.evidence_id]
+    );
+    let citation_map: serde_json::Value =
+        serde_json::from_str(&citation_map).expect("citation map");
+    assert!(citation_map["sourceSummary"]
+        .as_array()
+        .is_some_and(|entries| entries
+            .iter()
+            .any(|entry| { entry["category"] == "external_tool" && entry["count"] == 1 })));
+    assert_eq!(
+        citation_map["attribution"][0]["sources"],
+        serde_json::json!([format!("E{}", selected.evidence_id)])
+    );
 }
 
 #[tokio::test]
@@ -3513,7 +3746,7 @@ async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
 }
 
 #[tokio::test]
-async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_claim_support() {
+async fn strict_web_answer_without_current_run_marker_withholds_unsupported_draft() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3580,7 +3813,9 @@ async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_cl
         &sink,
     )
     .await
-    .expect("missing current-run marker must degrade to a current-run source binding, not claim support");
+    .expect(
+        "missing current-run marker produces a completed limitation, not a false source binding",
+    );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
@@ -3596,8 +3831,8 @@ async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_cl
             )
             .map_err(Into::into)
         })
-        .expect("persisted source-group answer");
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+        .expect("persisted limitation answer");
+    assert!(!citation_map.contains("source_group_fallback"));
     assert!(!citation_map.contains("claim_support"));
     let content: String = db
         .with_read_conn(|conn| {
@@ -3608,12 +3843,15 @@ async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_cl
             )
             .map_err(Into::into)
         })
-        .expect("persisted source-group body");
-    assert_eq!(content, "缺少本轮引用的答复。");
+        .expect("persisted limitation body");
+    assert_eq!(
+        content,
+        crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+    );
 }
 
 #[tokio::test]
-async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker() {
+async fn natural_web_answer_keeps_only_the_current_run_precise_marker() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3677,7 +3915,7 @@ async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker(
         &sink,
     )
     .await
-    .expect("uncalibrated source-group answer completes");
+    .expect("precisely bound current-run answer completes");
 
     let (content, citation_map): (String, String) = db
         .with_read_conn(|conn| {
@@ -3690,17 +3928,18 @@ async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker(
             .map_err(Into::into)
         })
         .expect("persisted strict-web answer");
-    assert_eq!(content, "根据可用的信息，查到的网页资料表明版本已发布。");
-    assert!(!content.contains("[W1]"));
-    assert!(!content.contains("你提供"));
-    assert!(!content.contains("本轮"));
+    assert_eq!(
+        content,
+        "根据你提供的信息，本轮 web 证据表明版本已发布。[W1]"
+    );
+    assert!(content.contains("[W1]"));
     assert!(citation_map.contains("https://example.test/current-run"));
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
-    assert!(citation_map.contains("\"uncalibrated_route\""));
+    assert!(!citation_map.contains("source_group_fallback"));
+    assert!(citation_map.contains("\"mode\":\"exact\""));
 }
 
 #[tokio::test]
-async fn strict_web_missing_marker_uses_current_run_source_binding_only() {
+async fn strict_web_missing_marker_withholds_unsupported_draft() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3763,7 +4002,7 @@ async fn strict_web_missing_marker_uses_current_run_source_binding_only() {
         &sink,
     )
     .await
-    .expect("source-group fallback completes");
+    .expect("unsupported draft is safely withheld");
 
     let (content, citation_map): (String, String) = db
         .with_read_conn(|conn| {
@@ -3774,14 +4013,16 @@ async fn strict_web_missing_marker_uses_current_run_source_binding_only() {
             )
             .map_err(Into::into)
     })
-        .expect("source-group answer persisted");
-    assert_eq!(content, "结论来自当前轮证据。");
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
-    assert!(!citation_map.contains("claim_support"));
+        .expect("limitation answer persisted");
+    assert_eq!(
+        content,
+        crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+    );
+    assert!(!citation_map.contains("source_group_fallback"));
 }
 
 #[tokio::test]
-async fn source_group_web_follow_up_does_not_rehydrate_historical_precise_citations() {
+async fn web_follow_up_keeps_current_run_citations_separate_from_history() {
     let db = Database::open_in_memory().expect("database");
     let first = RunIntake::start(&db, request()).expect("first accepted");
     let first_evidence = AgentEvidenceRepository::register_web(
@@ -3890,8 +4131,8 @@ async fn source_group_web_follow_up_does_not_rehydrate_historical_precise_citati
     let follow_up_context =
         RunContextAssembler::assemble(&db, None, &follow_up.session.session_key, &follow_up.run_id)
             .expect("assemble follow-up context with prior strict-web answer");
-    let follow_up_messages =
-        follow_up_context.messages_with_domain_plan(&follow_up_context.domain_plan());
+    let follow_up_messages = follow_up_context
+        .messages_with_context_material_plan(&follow_up_context.context_material_plan());
     let historical_answer = follow_up_messages
         .iter()
         .find(|message| message.content.text_content().contains("首轮回答"))
@@ -3933,8 +4174,9 @@ async fn source_group_web_follow_up_does_not_rehydrate_historical_precise_citati
             .map_err(Into::into)
         })
         .expect("follow-up persisted");
-    assert_eq!(content, "第二轮回答。");
-    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+    assert_eq!(content, "第二轮回答。[W1]");
+    assert!(!citation_map.contains("source_group_fallback"));
+    assert!(citation_map.contains("\"mode\":\"exact\""));
     assert!(citation_map.contains("\"index\":1"));
     assert!(!citation_map.contains("\"index\":2"));
 }
@@ -4045,7 +4287,11 @@ async fn streaming_provider_failure_persists_a_safe_failed_terminal_event() {
     .await
     .expect_err("provider failure");
 
-    assert_eq!(error.to_string(), "agent_run_provider_unavailable");
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::InternalExecutionFailed.as_str(),
+        "an unclassified Host error must not masquerade as a provider outage"
+    );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run exists");
@@ -4230,25 +4476,11 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
 
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
-    let plan = DomainExecutor::plan(
-        &super::run_contract::ExecutionEnvelope {
-            effect: super::run_contract::Effect::Answer,
-            context: super::run_contract::ContextMode::None,
-            freshness: super::run_contract::Freshness::Offline,
-            web_reason: super::run_contract::WebDecisionReason::LegacyUnknown,
-            verification_requirement: super::run_contract::VerificationRequirement::None,
-            effort: super::run_contract::Effort::Direct,
-            security_domain: SecurityDomain::Normal,
-            risk: super::run_contract::RiskClass::ReadOnly,
-            modalities: vec![super::run_contract::Modality::Image],
-            material_needs: Vec::new(),
-            required_capabilities: vec![CapabilityId::new("model.vision")],
-            explicit_constraints: Vec::new(),
-        },
-        "描述图片",
-        &[],
-        &[],
-    );
+    let plan = ContextMaterialPlan {
+        prompt_instructions: String::new(),
+        rendered_authorized_material: String::new(),
+        rendered_local_retrieval: String::new(),
+    };
     let provider = CapturingProvider {
         messages: std::sync::Mutex::new(Vec::new()),
     };
@@ -4271,7 +4503,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
         reasoning_content: None,
     }];
 
-    RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+    RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -4308,108 +4540,6 @@ fn terminal_event_count(events: &[super::run_contract::AssistantRunEvent]) -> us
             )
         })
         .count()
-}
-
-struct LeakingStreamingProvider;
-
-impl ToolLoopProvider for LeakingStreamingProvider {
-    fn answer_turn<'a>(
-        &'a self,
-        run_id: &'a str,
-        _messages: &'a [crate::ai_runtime::LlmMessage],
-        _tools: &'a [crate::ai_runtime::ToolSpec],
-        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
-        observer: &'a mut dyn StreamEventObserver,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
-                + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async move {
-            let leaked = "北京市教育局将于2026年3月12日组织专项检查。".to_string();
-            observer.observe(
-                &StreamEvent {
-                    request_id: run_id.to_string(),
-                    event_type: StreamEventType::Token,
-                    data: StreamEventData::Token {
-                        token: leaked.clone(),
-                        replace_visible: false,
-                    },
-                    surface: StreamSurface::VisibleAnswer,
-                    classified: false,
-                },
-                0,
-            )?;
-            Ok(crate::ai_runtime::model_gateway::GatewayResponse {
-                content: Some(leaked),
-                tool_calls: vec![],
-                usage: Default::default(),
-                finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
-            })
-        })
-    }
-}
-
-#[tokio::test]
-async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final_persistence() {
-    let db = Database::open_in_memory().expect("database");
-    let accepted = RunIntake::start(&db, request()).expect("accepted");
-    let plan = DomainExecutor::plan(
-        &super::run_contract::ExecutionEnvelope {
-            effect: super::run_contract::Effect::Draft,
-            context: super::run_contract::ContextMode::ExplicitReferences,
-            freshness: super::run_contract::Freshness::Offline,
-            web_reason: super::run_contract::WebDecisionReason::LegacyUnknown,
-            verification_requirement: super::run_contract::VerificationRequirement::None,
-            effort: super::run_contract::Effort::Direct,
-            security_domain: SecurityDomain::Normal,
-            risk: super::run_contract::RiskClass::ReadOnly,
-            modalities: vec![super::run_contract::Modality::Text],
-            material_needs: vec![super::run_contract::MaterialNeed::Exemplar],
-            required_capabilities: vec![CapabilityId::new("model.text")],
-            explicit_constraints: vec![],
-        },
-        "起草一份检查通知",
-        &[DomainMaterial {
-            origin: DomainMaterialOrigin::LocalRetrieval {
-                role: DomainMaterialRole::Exemplar,
-            },
-            label: "通知范文".into(),
-            content: "北京市教育局将于2026年3月12日组织专项检查。".into(),
-        }],
-        &[],
-    );
-    let sink = RecordingSink::default();
-
-    let error = RunEngine::execute_direct_streaming_with_prompt_evidence_and_domain_plan_with_sink(
-        &db,
-        &accepted.session,
-        &accepted.run_id,
-        "authorized prompt",
-        &[],
-        &plan,
-        &LeakingStreamingProvider,
-        &sink,
-    )
-    .await
-    .expect_err("exemplar-only facts must be rejected before persistence");
-
-    assert_eq!(
-        error.to_string(),
-        SafeRunErrorCode::EvidenceInvalid.as_str()
-    );
-    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
-        .expect("replay")
-        .expect("run exists");
-    assert_eq!(replay.run.state, RunState::Failed);
-    assert!(replay.run.final_message_id.is_none());
-    assert!(replay.events.iter().all(|event| {
-        serde_json::to_value(event).expect("serialize event")["type"] != "content_delta"
-    }));
 }
 
 #[test]

@@ -39,6 +39,29 @@ pub struct ToolCatalogEntry {
     pub implementation: ToolImplementationStatus,
     pub default_enabled_without_skill: bool,
     pub max_results: Option<u32>,
+    pub(crate) execution_metadata: Option<ToolExecutionMetadata>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolExecutionMetadata {
+    pub(crate) cost_class: &'static str,
+    pub(crate) output_policy: &'static str,
+    pub(crate) evidence_policy: &'static str,
+}
+
+/// Frozen accounting bucket for one concrete tool dispatch.
+///
+/// This classification is intentionally derived from the central catalog, not
+/// from intent or provider-specific tool names. Unknown frozen external tools
+/// are accounted as external reads by the loop, which is the least-privilege
+/// fallback for an integration that is outside the built-in catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolBudgetClass {
+    Local,
+    Network,
+    ExternalRead,
+    Runtime,
+    ConfirmedChange,
 }
 
 /// The complete built-in tool catalog. Add new tools through group modules only.
@@ -84,6 +107,11 @@ pub fn catalog_default_readonly_names() -> Vec<&'static str> {
 /// Look up a catalog entry by name.
 pub fn catalog_find(name: &str) -> Option<&'static ToolCatalogEntry> {
     TOOL_CATALOG.iter().find(|e| e.name == name)
+}
+
+/// Return the single catalog-owned budget class for a built-in tool.
+pub fn catalog_tool_budget_class(name: &str) -> Option<ToolBudgetClass> {
+    catalog_find(name).map(ToolCatalogEntry::budget_class)
 }
 
 /// Total number of catalog entries.

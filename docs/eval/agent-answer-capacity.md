@@ -1,6 +1,14 @@
 # Iris Agent 复杂回答与承压评测
 
-本文定义 Iris Agent 在长问题、复杂问题和多来源问题上的可重复评测口径。
+> **文档状态**：历史评测记录（非现行 Harness 规范）
+>
+> 2026-08-31 起，现行任务矩阵、确定性验收边界与 Provider 授权规则以
+> [Agent Harness 验收规范](../../agent-harness/06-evaluation-performance-and-acceptance.md)
+> 为唯一权威。本文件保留 v1.2.15 的结果和当时的领域化试验，供 Git 历史比较；其中
+> “所有外部事实严格联网”“六领域 DTO/地点状态机”以及指定 MiniMax/MiMo 的试点前提
+> 已被 HR-2/HR-6/HR-7 撤回，不能作为新 Run 行为或当前质量结论。
+
+本文保留 Iris Agent 在长问题、复杂问题和多来源问题上的历史可重复评测口径。
 评测首先按“回答所需的最小证据”分组，而不是按模型实际调用了什么工具分组：
 
 - `no_retrieval`：不需要外部事实或本地材料；
@@ -95,15 +103,15 @@ binding 都匹配；即便两个配置具有相同 capability fingerprint，替�
 消费，旧会话不能重放。
 
 用户必须同时提供当前 session、该 session 下的匿名 profile，并逐次确认
-`one-24-case-interaction-matrix-pilot` 成本 checkpoint。随后才会签发短时效、同会话绑定、一次性
+`two-route-12-run-campaign` 成本 checkpoint。随后才会签发短时效、同会话绑定、一次性
 的随机 approval token；所有门禁完成后，选中的非密钥路由与 MCP 元数据才复制
-到 `tempfile` 管理的独立 `AppState`。每个已选模型固定执行 8 个交互完整性场景、各重复 3 次，
-共 24 个 normal headless Run；MiniMax-M3 与 MiMo v2.5 分别完成后构成 48 次真实试运行。
-确定性
-对端继续复用完整 synthetic oracle；真实网络对端改用公开核验任务和对应的 live
-oracle，二者绝不共享伪造网页事实。只有每个选中模型的 24 个真实 Run（两个模型合计 48 个）全部到达终态、每题封闭 verdict
-均通过，且没有归因、内部协议、权限或来源边界违规，结果才标记 `live_pilot_executed`；
-离线网页场景的合规安全拒绝是通过的终态，保留在 `completedCaseCount` 之外但不得阻止放行。
+到 `tempfile` 管理的独立 `AppState`。每条批准路由固定执行 6 个 normal headless Run，
+两条独立路由合计不超过 12 Run。确定性对端继续复用 synthetic oracle；真实网络对端改用
+公开核验任务，二者绝不共享伪造网页事实。真实轨迹满足终态、授权、search→fetch、
+Run-local 来源、引用绑定、安全、连续性与预算后才标记 `live_trace_executed`；它只表示
+可以进入人工语义审阅，不表示事实正确或产品质量通过。
+
+`agent:eval` 还要求两份不同匿名 `routeCommitment`、同一 Campaign 的 v4 轨迹和一份逐场景人工评分文件；随机 `profileId` 和文件名不同都不能冒充路由不同。进入评分前，Rust 严格验证器会重新检查固定六场景集合、逐项机械轨迹/telemetry、全局 12/96/72 预算与报告—审阅包哈希绑定；Canary 采用 4/32/24 生产等价上限。人工量表为意图遵循、事实与来源、相关性与完整性、纠正与连续性四项；单项至少 4/5、总平均至少 4.2。contract、两条 live 路由和人工复核全部通过后，脚本才原子生成 `target/agent-eval/product-gate.json`。
 若评测器自身在某个案例的准备或取分阶段出错，该案例会以闭集
 `agent_run_evaluation_inconclusive` 记录为失败，剩余案例仍会继续并写出完整报告；
 原始错误不进入结果文件，标准错误流只输出固定 reason code 供本地诊断。
@@ -121,6 +129,43 @@ oracle，二者绝不共享伪造网页事实。只有每个选中模型的 24 �
 联网案例必须调用 `web_search`、写入本 Run 的 Web 证据关联并生成可解析引用；离线、
 搜索失败、来源冲突、旧证据复用或伪造引用时必须拒绝事实结论。场景覆盖无时间关键词的
 赛事提问、赛果、新闻、职位、价格、中英混合、长对话中的错误前提、历史摘要和提示注入干扰。
+
+本轮另增加固定多轮 current-fact 复现场景：
+
+- `current_fact_movie_follow_up_scenario`：固定时间为 `2026-08-18`，证据只允许两部带
+  上海院线/日期的电影，并放入一个无日期旧电影诱饵；断言回答只引用允许实体，不引用诱饵。
+- `agent_does_not_deny_web_after_current_run_search`：模型在同一 Run 已使用 `web_search`
+  后，不得再声称“没有联网/抓取能力”。
+
+## 六领域当前事实可靠性矩阵
+
+CAP-001 收口后，六类当前事实（天气、新闻、金融、影视、体育以及 runtime 日期）的
+确定性契约由领域 DTO 验证器、确认地点解析和 provider 白名单映射共同执行。本轮新增
+以下成功/失败矩阵测试：
+
+- `domain_tool_output_requires_source_and_observed_time`：领域 DTO 缺少 HTTPS 来源或
+  数据时点（天气 observation time / 金融 asOf）时失败关闭，不产生最终事实正文；
+  成功夹具保留 `EvidenceOrigin.evidenceId/observedAt/sourceUrl`。
+- `weather_without_confirmed_city_requests_location`：天气缺少确认城市时返回
+  `agent_run_location_required`，只从当前请求或 global `location.city` 取城市，
+  不从 Web/IP/相似 key 推断。
+- `location_scope_widens_city_then_province_then_country`：新闻/全国档期等允许放宽的
+  领域遵守固定 city → province → country 顺序；天气不得放宽。
+- `stale_weather_and_market_data_fail_closed`：天气 observation 超过 3 小时、金融
+  行情声明 delay 超过 15 分钟时均以 `agent_run_fresh_evidence_stale` 拒绝。
+- `movie_availability_requires_region_channel_and_date`：影视可用性必须同时包含
+  region、channel 和 date，缺失即失败关闭。
+- `finance_analysis_cannot_introduce_unsupported_numbers`：描述性金融分析只能使用
+  输入 `FinanceRecord` 中已验证的数值，出现证据外数字返回
+  `finance_analysis_unsupported_number`。
+
+## 诊断哨兵与原始 provider 输出隔离
+
+新增 `domain_tool_diagnostics_never_expose_raw_output`：把 provider 原始 JSON 中的
+`SECRET_SENTINEL`、`NOTE_SENTINEL`、`ARGUMENT_SENTINEL` 放入映射边界，断言白名单
+DTO、Run event、tool audit、UI error 和版本化 eval report 均不包含这些哨兵。原始
+provider JSON 只经过白名单 output mapping 缩略为附录 D 字段，不会进入事件、审计、
+错误或评测报告。
 
 ## 核心 48 题
 
@@ -166,9 +211,11 @@ v1.2.15 确定性 full 结果为 48/48：
 索引规模 >48、向量可用性与 Web 延迟在确定性层固定为 `live_not_tested`；
 检索干扰 >48 不在 CI 中物化，只保留调度与下界声明。
 
-压力探针与生产 `NormalRunToolExecutor` 共用 Web 证据预算：首次检索最多 8 条，
-一次回答累计最多 12 条，第 13 条必须拒绝；两者禁止使用不同的隐含上限。这里的
-`web_evidence_count` 只表示 Iris 的证据预算，绝不表示网络
+压力探针与生产 `NormalRunToolExecutor` 共用 Web 分层预算：每次发现最多 4 个候选，
+每 Run 最多保留 8 个候选；候选不写 evidence ledger。模型选中 URL 并抓取正文后才占用
+累计最多 12 条的最终证据容量，第 13 条必须拒绝。候选层和最终证据层不是同一标量，
+因此 `web_evidence_count` 阶梯只声明 `lower_bound_only`；4/8 候选与 12/13 evidence
+分别由命名回归和硬边界验证。该轴只表示 Iris 的证据预算，绝不表示网络
 延迟；机器报告将 `webLatency` 单独固定为 `live_not_tested`。检索干扰项
 在 48 篇上仍为 5/5，只能声明 `lower_bound_only`；组合终局不是标量，
 声明为 `non_scalar_suite`。推理深度各层虽经过真实 headless RunEngine，
@@ -259,41 +306,45 @@ prompt、answer、路径、URL、证据正文、工具参数、凭证或真实�
 
 ```bash
 npm run agent:eval:smoke
-npm run agent:eval
+npm run agent:eval:contract
 npm run rag:eval
-npm run agent:eval:live -- preflight
-npm run agent:eval:live -- pilot --session session-<64hex> \
-  --approve profile-<32hex> --confirm-cost one-24-case-interaction-matrix-pilot
+npm run agent:eval:live -- preflight --models <model>
+npm run agent:eval:live -- campaign --session session-<64hex> \
+  --approve profile-<32hex>,profile-<32hex> --confirm-cost two-route-12-run-campaign \
+  --models <model-a>,<model-b>
+IRIS_AGENT_EVAL_LIVE_RESULTS="<result-a>:<result-b>" \
+IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
 ```
 
 `agent:eval:smoke` 执行完整 24 条 online headless interaction matrix，且仅当
-`caseCount`、`completedCaseCount` 与 `passed` 均为 24、`failed` 为 0 时通过；
-离线和硬边界由独立安全轨执行。`agent:eval` 执行 48 题、逐层五次压力执行、
-硬边界、安全轨、六个组合终端并生成严格白名单报告。
+明细与 v2 汇总一致、无意外失败时通过；离线和硬边界由独立安全轨执行。
+`agent:eval:contract` 执行 48 题并分开统计正常回答、预期安全拒绝与意外失败，同时执行逐层五次压力、
+硬边界、安全轨和组合终端；`agent:eval` 是额外产品门，不能由 contract 单独满足。
 安全案例失败会写入 `securityGate=false`，不会阻止报告生成。版本化确定性结果见
 `docs/eval/results/v1.2.15-agent-capacity.json`。`agent:eval:live -- preflight`
 只生成被 Git 忽略的 `target/agent-eval/live-preflight.json`；它不是 live
 测试结果，也不会绕过后续批准与费用 checkpoint。Pilot 的严格白名单结果写入
-同目录的 `live-pilot-session-<64hex>.json`，不会包含 prompt、answer、route
-或凭据。
+同目录的 `live-pilot-session-<64hex>-route-a|b.json`，不会包含内部路由、凭据或隐藏推理；固定公开 prompt、最终可见回答和有限来源摘录只在与报告哈希绑定的本地审阅包中出现。真实执行即使因状态、预算或质量不通过，也必须先写入并签名失败报告；最终产品验证仍以非零拒绝该报告。
 
 PR CI 的 macOS ARM64 quality job 执行 smoke、前端/Rust 依赖审计和完整通用测试；
 tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` 版本化基线。
 发布 source guard 要求同一 SHA 已有成功的 main push CI（其中包含 Windows x64
 桌面 E2E）；最终草稿 Release 同时依赖完整 Agent 基线和两个平台包。
 
-## 终验记录（v1.2.15 优雅补齐）
+## 历史终验记录（v1.2.15，已被当前产品门取代）
 
 本轮（harness 诚实 + 产品授权收窄）后已执行并通过：
 
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib agent_capacity_eval`
 - `cargo test --manifest-path src-tauri/Cargo.toml --test agent_permission_boundaries`
 - `npm run agent:eval:smoke`
-- `npm run agent:eval`（版本化报告已更新为 48/48、`securityGate=true`）
+- 当时语义下的 `npm run agent:eval`（版本化报告曾更新为 48/48、`securityGate=true`）
 
-压力轴 `index_scale>48` / `vector_availability` / `webLatency` 继续
+这段记录只描述旧提交上的确定性合同，不代表当前 `agent:eval` 产品门通过。压力轴 `index_scale>48` / `vector_availability` / `webLatency` 继续
 `live_not_tested`。版本化确定性报告也固定使用
 `claimBoundary.liveProfiles=live_not_tested`：它不能携带、继承或推广真实模型的
 放行结论。真实联网证据只能来自被忽略的、按精确模型与路由绑定的 live-pilot
-记录；只有 MiniMax-M3 与 MiMo v2.5 都完成获批的重复试运行，且所有 hard
+记录。每份 live 报告还必须携带由受约束 Rust live 执行路径生成、本机私有评测密钥绑定 session 与精确报告字节的认证旁证；最终门用同一 SHA-256 快照完成认证、严格校验和 JSON 判定，禁止复制后改写报告或在校验期间替换文件。只有 MiniMax-M3 与 MiMo v2.5 都完成获批的试运行，且所有 hard
 admission 与人格门槛均通过后，才可以将对应路由加入严格结构化终局校准表。
+
+INC-HR-010 撤回旧 live v2/v3 的质量结论：它们将 404/fixture 误作公开事实 oracle，或使用低于生产上限的平均切割。v4 只将真实回答标记为待人工审阅，输出带有限来源摘录的签名审阅包；新的双路 Campaign 尚未执行，任何文档不得将确定性演练或旧结果写成真实质量通过。

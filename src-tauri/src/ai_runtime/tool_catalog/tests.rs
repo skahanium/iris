@@ -2,6 +2,106 @@ use super::*;
 use crate::ai_runtime::tool_dispatch::{DISPATCHABLE_TOOL_NAMES, HARNESS_ONLY_TOOL_NAMES};
 
 #[test]
+fn catalog_owns_execution_metadata() {
+    let web = catalog_find("web_search")
+        .and_then(|entry| entry.execution_metadata)
+        .expect("web_search metadata");
+    assert_eq!(web.cost_class, "network");
+    assert_eq!(web.output_policy, "bounded_packets");
+    assert_eq!(web.evidence_policy, "current_run_web");
+
+    let read = catalog_find("read_note")
+        .and_then(|entry| entry.execution_metadata)
+        .expect("read_note metadata");
+    assert_eq!(read.cost_class, "local");
+    assert_eq!(read.evidence_policy, "current_run_local");
+
+    assert!(
+        catalog_find("conclude_reasoning").is_some_and(|entry| entry.execution_metadata.is_none()),
+        "internal-only tools without a production execution policy must not advertise metadata"
+    );
+}
+
+#[test]
+fn web_tools_expose_single_responsibility_search_and_fetch_contracts() {
+    let properties = catalog_find("web_search")
+        .expect("web_search catalog entry")
+        .input_schema["properties"]
+        .as_object()
+        .expect("web_search properties");
+
+    assert!(properties.contains_key("query"));
+    assert!(!properties.contains_key("urls"));
+    assert!(
+        !properties.contains_key("gap"),
+        "the generic loop must not expose the retired closed EvidenceGap protocol"
+    );
+
+    let fetch = catalog_find("web_fetch").expect("web_fetch catalog entry");
+    let fetch_properties = fetch.input_schema["properties"]
+        .as_object()
+        .expect("web_fetch properties");
+    assert!(fetch_properties.contains_key("urls"));
+    assert!(!fetch_properties.contains_key("query"));
+    assert_eq!(fetch.input_schema["required"], serde_json::json!(["urls"]));
+}
+
+#[test]
+fn catalog_owns_one_stable_budget_class_for_every_budgeted_tool_kind() {
+    assert_eq!(
+        catalog_tool_budget_class("search_keyword"),
+        Some(ToolBudgetClass::Local)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("web_search"),
+        Some(ToolBudgetClass::Network)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("web_fetch"),
+        Some(ToolBudgetClass::Network)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("fs_read_authorized_folder"),
+        Some(ToolBudgetClass::ExternalRead)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("system_time_now"),
+        Some(ToolBudgetClass::Runtime)
+    );
+    assert_eq!(
+        catalog_tool_budget_class("insert_text_at_cursor"),
+        Some(ToolBudgetClass::ConfirmedChange)
+    );
+    assert_eq!(catalog_tool_budget_class("unknown_frozen_tool"), None);
+}
+
+#[test]
+fn discovery_calls_are_catalog_metadata_not_domain_routing() {
+    for tool_name in [
+        "search_hybrid",
+        "search_semantic",
+        "search_keyword",
+        "list_vault",
+        "web_search",
+    ] {
+        assert!(
+            catalog_find(tool_name)
+                .expect("discovery tool in catalog")
+                .is_discovery(),
+            "{tool_name}"
+        );
+    }
+    for tool_name in ["read_note", "get_regulation", "system_time_now"] {
+        assert!(
+            !catalog_find(tool_name)
+                .expect("exact tool in catalog")
+                .is_discovery(),
+            "{tool_name}"
+        );
+    }
+}
+
+#[test]
 fn catalog_has_all_dispatchable_tools() {
     let catalog_disp = catalog_dispatchable_names();
     for name in DISPATCHABLE_TOOL_NAMES {
@@ -115,9 +215,10 @@ fn write_tools_not_in_default_readonly() {
 }
 
 #[test]
-fn reign_in_catalog_exposes_only_one_network_tool() {
+fn catalog_exposes_only_the_two_single_responsibility_network_tools() {
     let names: Vec<&str> = TOOL_CATALOG.iter().map(|entry| entry.name).collect();
     assert!(names.contains(&"web_search"));
+    assert!(names.contains(&"web_fetch"));
     for legacy in [
         "fetch_web_page",
         "web_fetch_batch",
@@ -145,6 +246,22 @@ fn reign_in_catalog_exposes_only_one_network_tool() {
         assert!(
             !names.contains(&legacy),
             "{legacy} must not be agent-visible"
+        );
+    }
+}
+
+#[test]
+fn retired_current_fact_domain_tools_are_not_agent_visible() {
+    for name in [
+        "weather_lookup",
+        "news_lookup",
+        "finance_lookup",
+        "entertainment_lookup",
+        "sports_lookup",
+    ] {
+        assert!(
+            catalog_find(name).is_none(),
+            "{name} is a retired domain route and must not be exposed to a new Run"
         );
     }
 }

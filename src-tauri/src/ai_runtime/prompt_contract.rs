@@ -99,11 +99,12 @@ impl PromptContractV3 {
         }
     }
 
-    /// Render Web evidence as untrusted system data for the selected finalization mode.
+    /// Historical strict-Web prompt fixture retained only for migration tests.
     ///
     /// This keeps the expression rule adjacent to the global attribution and
     /// user-visible style contracts; callers only select the already-governed
     /// execution mode and supply the serialized evidence packet.
+    #[cfg(test)]
     pub(crate) fn web_evidence_data_prompt(
         evidence_json: &str,
         structured_finalization: bool,
@@ -122,7 +123,7 @@ impl PromptContractV3 {
 fn timeliness_and_external_facts_contract() -> &'static str {
     "## TimelinessAndExternalFacts\n\
      If the user asks about something that may change over time (current events, recent movies, weather, prices, sports, releases, elections, product availability, etc.) and `web_search` is present in the current tool surface but no current WebEvidenceData for this request has already been provided, you MUST call `web_search` before answering. Do not answer such questions from training knowledge alone.\n\
-     If current WebEvidenceData or tool results for this request are already present, do not search again; base the answer on the provided evidence.\n\
+     Search snippets are candidate observations, not citable evidence. When a promising candidate URL is present, select it with `web_fetch` so the tool can read the page body. If current evidence is insufficient, change the query or source direction; stop searching once the evidence is sufficient and avoid repeating an equivalent successful call.\n\
      If `web_search` is NOT present in the current tool surface, do not fabricate a current answer. For time-sensitive facts, say naturally that you cannot retrieve the latest information, for example: \"我目前无法获取最新信息，建议开启联网搜索后我再帮你查。\""
 }
 
@@ -134,7 +135,7 @@ fn tool_surface_awareness_contract() -> &'static str {
 
 fn tool_use_decision_contract() -> &'static str {
     "## ToolUseDecision\n\
-     Prefer a search when the answer depends on information newer than your training. When searching, use concrete queries and avoid redundant repeated searches. If the first search is insufficient, refine the query rather than giving up. If a tool result is incomplete, say what is missing instead of inventing details."
+     If an essential user choice such as scope, location, preference, language, or target is missing, ask one short natural clarification question before calling tools or stating external facts. Do not invent the missing choice or reserve a hidden input transaction. Otherwise, prefer a search when the answer depends on information newer than your training. When searching, use concrete queries and avoid redundant repeated searches. If the first search is insufficient, refine the query rather than giving up. If a tool result is incomplete, say what is missing instead of inventing details."
 }
 
 fn attribution_contract() -> &'static str {
@@ -274,12 +275,18 @@ mod tests {
             .contains("you MUST call `web_search` before answering"));
         assert!(compiled
             .system_prompt
-            .contains("do not search again; base the answer on the provided evidence"));
+            .contains("Search snippets are candidate observations, not citable evidence"));
+        assert!(compiled
+            .system_prompt
+            .contains("select it with `web_fetch`"));
         assert!(compiled.system_prompt.contains("## ToolSurfaceAwareness"));
         assert!(compiled
             .system_prompt
             .contains("do not claim you have no search ability"));
         assert!(compiled.system_prompt.contains("## ToolUseDecision"));
+        assert!(compiled
+            .system_prompt
+            .contains("ask one short natural clarification question"));
         assert!(compiled
             .system_prompt
             .contains("refine the query rather than giving up"));

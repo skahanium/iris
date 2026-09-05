@@ -22,8 +22,7 @@ describe("assistant stream rendering performance contract", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
 
     expect(panel).toContain("useAssistantAnswerReveal");
-    expect(panel).toContain("presentationAnswer");
-    expect(panel).toContain("presentationRevealing");
+    expect(panel).toContain("presentationReveal");
   });
 
   it("contains streaming assistant bubble layout and paint work", () => {

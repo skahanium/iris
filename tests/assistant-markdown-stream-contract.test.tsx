@@ -105,4 +105,73 @@ describe("assistant Run transcript rendering", () => {
 
     expect(document.body.textContent).toContain("final content");
   });
+
+  it("renders required input inside the owning conversation turn", async () => {
+    const submit = vi.fn();
+    const cancel = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[
+            {
+              role: "user",
+              content: "今晚附近影院有什么场次？",
+              runId: "run-location",
+            },
+            { role: "assistant", content: "", runId: "run-location" },
+          ]}
+          streaming={false}
+          pendingInput={{
+            runId: "run-location",
+            prompt: "要查询附近影院或场次，请告诉我城市。",
+            fields: ["city"],
+            values: { city: "佛山" },
+            submitting: false,
+            onValueChange: vi.fn(),
+            onSubmit: submit,
+            onCancel: cancel,
+          }}
+        />,
+      );
+    });
+
+    const card = document.body.querySelector(
+      '[data-testid="assistant-run-input-required"]',
+    );
+    expect(card).not.toBeNull();
+    expect(
+      document.body.textContent?.indexOf("今晚附近影院有什么场次？"),
+    ).toBeLessThan(
+      document.body.textContent?.indexOf("要查询附近影院或场次") ?? -1,
+    );
+
+    const buttons = Array.from(card?.querySelectorAll("button") ?? []);
+    act(() => buttons.find((button) => button.textContent === "继续")?.click());
+    act(() =>
+      buttons.find((button) => button.textContent === "取消本轮")?.click(),
+    );
+    expect(submit).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("marks a historical cancelled user-only turn", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[
+            {
+              role: "user",
+              content: "最近有什么新上映的电影吗？",
+              runId: "run-cancelled",
+              turnState: "cancelled",
+            },
+          ]}
+          streaming={false}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("本次回答已取消");
+  });
 });

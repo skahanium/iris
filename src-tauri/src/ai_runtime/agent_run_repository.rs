@@ -100,6 +100,7 @@ impl DurableApplyCheckpointStage {
             (previous, self),
             (Self::Approved, Self::Dispatching)
                 | (Self::Dispatching, Self::Applied)
+                | (Self::Applied, Self::Dispatching)
                 | (Self::Applied, Self::Completed)
         )
     }
@@ -116,6 +117,10 @@ pub(crate) struct DurableApplyCheckpoint {
     base_content_hashes: Vec<String>,
     expected_post_content_hashes: Vec<String>,
     evidence_ids: Vec<i64>,
+    #[serde(default)]
+    next_operation_index: usize,
+    #[serde(default)]
+    operation_count: usize,
 }
 
 impl DurableApplyCheckpoint {
@@ -136,6 +141,8 @@ impl DurableApplyCheckpoint {
             base_content_hashes,
             expected_post_content_hashes,
             evidence_ids,
+            next_operation_index: 0,
+            operation_count: 1,
         };
         checkpoint.validate()?;
         Ok(checkpoint)
@@ -147,7 +154,19 @@ impl DurableApplyCheckpoint {
                 && value.chars().count() <= 256
                 && !value.chars().any(char::is_control)
         };
-        if self.schema_version != 1
+        let valid_v2_cursor = match self.stage {
+            DurableApplyCheckpointStage::Approved => self.next_operation_index == 0,
+            DurableApplyCheckpointStage::Dispatching => {
+                self.next_operation_index < self.operation_count
+            }
+            DurableApplyCheckpointStage::Applied => {
+                self.next_operation_index > 0 && self.next_operation_index <= self.operation_count
+            }
+            DurableApplyCheckpointStage::Completed => {
+                self.next_operation_index == self.operation_count
+            }
+        };
+        if !(self.schema_version == 1 || self.schema_version == 2)
             || !safe_identity(&self.confirmation_id)
             || !safe_identity(&self.plan_hash)
             || self.base_content_hashes.len() != self.expected_post_content_hashes.len()
@@ -162,6 +181,11 @@ impl DurableApplyCheckpoint {
                 .evidence_ids
                 .iter()
                 .any(|evidence_id| *evidence_id <= 0)
+            || (self.schema_version == 2
+                && (self.operation_count == 0
+                    || self.operation_count > 6
+                    || self.next_operation_index > self.operation_count
+                    || !valid_v2_cursor))
         {
             return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
         }
@@ -186,6 +210,52 @@ impl DurableApplyCheckpoint {
 
     pub(crate) fn expected_post_content_hashes(&self) -> &[String] {
         &self.expected_post_content_hashes
+    }
+
+    pub(crate) const fn next_operation_index(&self) -> usize {
+        self.next_operation_index
+    }
+
+    pub(crate) const fn operation_count(&self) -> usize {
+        if self.schema_version == 1 {
+            1
+        } else {
+            self.operation_count
+        }
+    }
+
+    pub(crate) const fn is_legacy_schema(&self) -> bool {
+        self.schema_version == 1
+    }
+
+    /// Construct the v2 checkpoint for a bounded multi-operation change set.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the persisted checkpoint identity is deliberately explicit and body-free"
+    )]
+    pub(crate) fn new_change_set(
+        confirmation_id: impl Into<String>,
+        plan_hash: impl Into<String>,
+        stage: DurableApplyCheckpointStage,
+        base_content_hashes: Vec<String>,
+        expected_post_content_hashes: Vec<String>,
+        next_operation_index: usize,
+        operation_count: usize,
+        evidence_ids: Vec<i64>,
+    ) -> AppResult<Self> {
+        let checkpoint = Self {
+            schema_version: 2,
+            confirmation_id: confirmation_id.into(),
+            plan_hash: plan_hash.into(),
+            stage,
+            base_content_hashes,
+            expected_post_content_hashes,
+            evidence_ids,
+            next_operation_index,
+            operation_count,
+        };
+        checkpoint.validate()?;
+        Ok(checkpoint)
     }
 }
 
@@ -230,8 +300,8 @@ pub(crate) enum FrozenConfirmationApproval {
 
 /// Result of rejecting a persisted confirmation through one idempotent control request.
 pub(crate) enum FrozenConfirmationRejection {
-    /// The pending plan was rejected and the Run durably resumed.
-    Resumed(AssistantRunEvent),
+    /// The pending plan was rejected and the Run durably cancelled.
+    Cancelled(AssistantRunEvent),
     /// The same plan had already been rejected by an earlier identical control request.
     AlreadyRejected,
 }
@@ -312,6 +382,7 @@ impl AgentRunRepository {
                     (conn.last_insert_rowid(), session_key)
                 } else {
                     ensure_normal_session(conn, input.session_id, &input.session_key)?;
+                    ensure_no_active_top_level_run(conn, input.session_id)?;
                     (input.session_id, input.session_key.clone())
                 };
                 let (prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash) =
@@ -331,8 +402,22 @@ impl AgentRunRepository {
                 let context_scope_json = serde_json::to_string(&input.context_scope)?;
                 let display_mentions_json = serde_json::to_string(&input.display_mentions)?;
                 let envelope_json = serde_json::to_string(&input.envelope)?;
-                let budget_policy_json =
-                    serde_json::to_string(&RunBudgetPolicy::for_envelope(&input.envelope))?;
+                // The Direct memory shape is selected once from the already
+                // persisted session history while the Run is accepted. It is
+                // never inferred later from a changing session: once frozen
+                // it remains a two-model, zero-tool ceiling even if the
+                // conversation grows further.
+                let session_history_count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1",
+                    [session_id],
+                    |row| row.get(0),
+                )?;
+                let budget_policy_json = serde_json::to_string(
+                    &RunBudgetPolicy::for_accepted_envelope(
+                        &input.envelope,
+                        session_history_count >= 24,
+                    ),
+                )?;
                 let explicit_action_json = input
                     .explicit_action
                     .as_ref()
@@ -443,15 +528,50 @@ impl AgentRunRepository {
     /// This deliberately does not insert a second `session_messages` record.
     /// A newer visible message makes the historical failure ineligible, so a
     /// late provider response can never be inserted into a newer conversation.
+    #[cfg(test)]
     pub(crate) fn accept_retry(
         db: &Database,
         input: RetryRunInput,
     ) -> AppResult<AssistantRunAccepted> {
+        Self::accept_retry_outcome(db, input).map(|outcome| outcome.accepted)
+    }
+
+    /// Accept a retry and report whether this call created the Run.
+    ///
+    /// Repeated retries with the same `client_request_id` return the original
+    /// identity with `is_new=false`; only the first caller may start an
+    /// executor or emit a second accepted notification.
+    pub(crate) fn accept_retry_outcome(
+        db: &Database,
+        input: RetryRunInput,
+    ) -> AppResult<AcceptRunOutcome> {
+        let intake_fingerprint = retry_intake_fingerprint(&input)?;
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
-                if let Some((existing, _)) = accepted_for_client_request(conn, &input.client_request_id)? {
-                    return Ok(existing);
+                if let Some((existing, stored_fingerprint)) =
+                    accepted_for_client_request(conn, &input.client_request_id)?
+                {
+                    if stored_fingerprint.as_deref() != Some(intake_fingerprint.as_str()) {
+                        return Err(AppError::run(SafeRunErrorCode::IdempotencyConflict));
+                    }
+                    return Ok(AcceptRunOutcome {
+                        accepted: existing,
+                        is_new: false,
+                    });
                 }
+                let session_id = conn
+                    .query_row(
+                        "SELECT id FROM sessions WHERE session_key = ?1",
+                        [&input.session_key],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(|error| match error {
+                        rusqlite::Error::QueryReturnedNoRows => {
+                            AppError::run(SafeRunErrorCode::SessionNotFound)
+                        }
+                        other => other.into(),
+                    })?;
+                ensure_no_active_top_level_run(conn, session_id)?;
                 let source = conn
                     .query_row(
                         "SELECT r.session_id, r.turn_id, r.effect, r.effort, r.security_domain, r.risk,
@@ -510,12 +630,14 @@ impl AgentRunRepository {
                     "INSERT INTO agent_runs
                      (run_id, client_request_id, session_id, turn_id, status, state_version,
                       effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                      goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version,
+                      goal_summary, budget_policy_json, intake_fingerprint,
+                      prompt_profile_snapshot_json, prompt_contract_version,
                       prompt_contract_hash, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)",
                     rusqlite::params![input.run_id, input.client_request_id, session_id, turn_id,
                         effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                        goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version,
+                        goal_summary, budget_policy_json, intake_fingerprint,
+                        prompt_profile_snapshot_json, prompt_contract_version,
                         prompt_contract_hash, now],
                 )?;
                 let envelope: crate::ai_runtime::run_contract::ExecutionEnvelope =
@@ -531,13 +653,16 @@ impl AgentRunRepository {
                 ).map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
                 conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;
-                Ok(AssistantRunAccepted {
-                    client_request_id: input.client_request_id,
-                    run_id: input.run_id,
-                    turn_id,
-                    session: AssistantSessionRef { domain: SecurityDomain::Normal, session_key: input.session_key },
-                    state: RunState::Accepted,
-                    state_version: 0,
+                Ok(AcceptRunOutcome {
+                    accepted: AssistantRunAccepted {
+                        client_request_id: input.client_request_id,
+                        run_id: input.run_id,
+                        turn_id,
+                        session: AssistantSessionRef { domain: SecurityDomain::Normal, session_key: input.session_key },
+                        state: RunState::Accepted,
+                        state_version: 0,
+                    },
+                    is_new: true,
                 })
             })
         })
@@ -625,6 +750,71 @@ impl AgentRunRepository {
         })
     }
 
+    /// Append one bounded, secret-free model routing diagnostic to the Run's
+    /// existing route summary column. Callers may provide identifiers and
+    /// protocol outcomes only; request, response and credential bodies are
+    /// deliberately excluded from this storage contract.
+    pub(crate) fn append_provider_route_diagnostic(
+        db: &Database,
+        run_id: &str,
+        diagnostic: Value,
+    ) -> AppResult<()> {
+        let diagnostic = diagnostic
+            .as_object()
+            .cloned()
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+        let diagnostic_json = serde_json::to_string(&diagnostic)?;
+        if diagnostic_json.chars().count() > 1_000 {
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
+        }
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let stored = conn
+                    .query_row(
+                        "SELECT provider_route_summary_json FROM agent_runs WHERE run_id = ?1",
+                        [run_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(not_found_or_db)?;
+                let mut summary = serde_json::from_str::<Value>(&stored)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                let summary_object = summary
+                    .as_object_mut()
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+                let attempts = summary_object
+                    .entry("attempts")
+                    .or_insert_with(|| serde_json::json!([]))
+                    .as_array_mut()
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+                if attempts.len() >= 12 {
+                    attempts.remove(0);
+                }
+                attempts.push(Value::Object(diagnostic));
+                summary_object.insert("schemaVersion".into(), Value::from(1));
+                let mut serialized = serde_json::to_string(&summary)?;
+                while serialized.chars().count() > 16_000 {
+                    let attempts = summary
+                        .as_object_mut()
+                        .and_then(|object| object.get_mut("attempts"))
+                        .and_then(Value::as_array_mut)
+                        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
+                    if attempts.len() <= 1 {
+                        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
+                    }
+                    attempts.remove(0);
+                    serialized = serde_json::to_string(&summary)?;
+                }
+                conn.execute(
+                    "UPDATE agent_runs
+                     SET provider_route_summary_json = ?1, updated_at = ?2
+                     WHERE run_id = ?3",
+                    rusqlite::params![serialized, chrono::Utc::now().to_rfc3339(), run_id],
+                )?;
+                Ok(())
+            })
+        })
+    }
+
     /// Persist the next body-free Durable Apply checkpoint.
     pub(crate) fn append_checkpoint_step(
         db: &Database,
@@ -668,6 +858,8 @@ impl AgentRunRepository {
                         || latest.expected_post_content_hashes
                             != input.checkpoint.expected_post_content_hashes
                         || !input.checkpoint.stage.follows(latest.stage)
+                        || latest.operation_count() != input.checkpoint.operation_count()
+                        || !checkpoint_cursor_follows(&latest, &input.checkpoint)
                     {
                         return Err(AppError::run(SafeRunErrorCode::CheckpointStageConflict));
                     }
@@ -733,12 +925,12 @@ impl AgentRunRepository {
         let checkpoint = Self::latest_durable_apply_checkpoint(db, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
         let base_content_hashes = plan
-            .base_content_hashes()
+            .all_base_content_hashes()
             .iter()
             .map(|(_, hash)| hash.clone())
             .collect::<Vec<_>>();
         let expected_post_content_hashes = plan
-            .expected_post_content_hashes()
+            .all_expected_post_content_hashes()
             .iter()
             .map(|(_, hash)| hash.clone())
             .collect::<Vec<_>>();
@@ -746,9 +938,13 @@ impl AgentRunRepository {
             || checkpoint.plan_hash != plan.plan_hash()
             || checkpoint.base_content_hashes != base_content_hashes
             || checkpoint.expected_post_content_hashes != expected_post_content_hashes
+            || checkpoint.operation_count() != plan.operations().len()
+            || checkpoint.next_operation_index() >= checkpoint.operation_count()
             || !matches!(
                 checkpoint.stage,
-                DurableApplyCheckpointStage::Approved | DurableApplyCheckpointStage::Dispatching
+                DurableApplyCheckpointStage::Approved
+                    | DurableApplyCheckpointStage::Dispatching
+                    | DurableApplyCheckpointStage::Applied
             )
         {
             return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
@@ -1254,18 +1450,20 @@ impl AgentRunRepository {
                 {
                     return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
                 }
-                let checkpoint = DurableApplyCheckpoint::new(
+                let checkpoint = DurableApplyCheckpoint::new_change_set(
                     confirmation_id,
                     plan_hash,
                     DurableApplyCheckpointStage::Approved,
-                    plan.base_content_hashes()
+                    plan.all_base_content_hashes()
                         .iter()
                         .map(|(_, hash)| hash.clone())
                         .collect(),
-                    plan.expected_post_content_hashes()
+                    plan.all_expected_post_content_hashes()
                         .iter()
                         .map(|(_, hash)| hash.clone())
                         .collect(),
+                    0,
+                    plan.operations().len(),
                     Vec::new(),
                 )?;
                 let step_seq: i64 = conn.query_row(
@@ -1376,10 +1574,12 @@ impl AgentRunRepository {
                 let checkpoint = latest_durable_apply_checkpoint_in_conn(conn, run_id)?
                     .ok_or_else(|| AppError::run(SafeRunErrorCode::ControlNotAvailable))?;
                 if checkpoint.confirmation_id != confirmation_id
+                    || checkpoint.next_operation_index() >= checkpoint.operation_count()
                     || !matches!(
                         checkpoint.stage,
                         DurableApplyCheckpointStage::Approved
                             | DurableApplyCheckpointStage::Dispatching
+                            | DurableApplyCheckpointStage::Applied
                     )
                 {
                     return Err(AppError::run(SafeRunErrorCode::ControlNotAvailable));
@@ -1418,7 +1618,7 @@ impl AgentRunRepository {
         })
     }
 
-    /// Reject an exact pending plan and resume its Run without dispatching the plan.
+    /// Reject an exact pending plan and cancel its Run without dispatching the plan.
     pub(crate) fn reject_frozen_confirmation(
         db: &Database,
         session_key: &str,
@@ -1477,7 +1677,7 @@ impl AgentRunRepository {
                 let next_state_version = stored_state_version + 1;
                 let updated = conn.execute(
                     "UPDATE agent_runs
-                     SET status = 'running', state_version = ?1, updated_at = ?2
+                     SET status = 'cancelled', state_version = ?1, updated_at = ?2
                      WHERE run_id = ?3 AND state_version = ?4",
                     rusqlite::params![next_state_version, now, run_id, stored_state_version],
                 )?;
@@ -1494,15 +1694,15 @@ impl AgentRunRepository {
                     run_id,
                     event_seq,
                     next_state_version,
-                    RunEventType::Resumed,
+                    RunEventType::Cancelled,
                     &now,
-                    RunEventPayload::Resumed {
-                        reason: "变更计划已拒绝，正在继续处理".to_string(),
+                    RunEventPayload::Cancelled {
+                        reason: "user_rejected_change".to_string(),
                     },
                 )
                 .map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
-                Ok(FrozenConfirmationRejection::Resumed(event))
+                Ok(FrozenConfirmationRejection::Cancelled(event))
             })
         })
     }
@@ -1511,7 +1711,7 @@ impl AgentRunRepository {
         Self::get_scoped(db, run_id, None)
     }
 
-    /// Return the latest recoverable Run for one normal-domain session.
+    /// Read the immutable current-fact policy frozen in a Run's envelope.
     pub(crate) fn latest_active_for_session(
         db: &Database,
         session_key: &str,
@@ -1521,7 +1721,7 @@ impl AgentRunRepository {
                 "SELECT r.run_id FROM agent_runs r
                  JOIN sessions s ON s.id = r.session_id
                  WHERE s.session_key = ?1
-                   AND r.status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'paused', 'verifying')
+                   AND r.status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'awaiting_input', 'paused', 'verifying')
                  ORDER BY r.updated_at DESC, r.created_at DESC LIMIT 1",
                 [session_key],
                 |row| row.get::<_, String>(0),
@@ -1696,6 +1896,7 @@ impl AgentRunRepository {
                     state_version,
                     final_message_id: final_message_id.map(|id| id.to_string()),
                     pending_confirmation,
+                    pending_input: pending_input_summary(&events),
                     recovery,
                 },
                 events,
@@ -1887,7 +2088,7 @@ impl AgentRunRepository {
             }))
         })
     }
-    /// Read the immutable execution budget only when the normal-domain session matches.
+
     ///
     /// Legacy `{}` rows are deterministically materialized once from the
     /// persisted execution envelope before the policy is returned.
@@ -1934,6 +2135,32 @@ impl AgentRunRepository {
     }
 }
 
+fn checkpoint_cursor_follows(
+    previous: &DurableApplyCheckpoint,
+    next: &DurableApplyCheckpoint,
+) -> bool {
+    if previous.schema_version == 1 && next.schema_version == 1 {
+        return true;
+    }
+    match (previous.stage(), next.stage()) {
+        (DurableApplyCheckpointStage::Approved, DurableApplyCheckpointStage::Dispatching) => {
+            previous.next_operation_index() == next.next_operation_index()
+        }
+        (DurableApplyCheckpointStage::Dispatching, DurableApplyCheckpointStage::Applied) => {
+            next.next_operation_index() == previous.next_operation_index().saturating_add(1)
+        }
+        (DurableApplyCheckpointStage::Applied, DurableApplyCheckpointStage::Dispatching) => {
+            previous.next_operation_index() == next.next_operation_index()
+                && previous.next_operation_index() < previous.operation_count()
+        }
+        (DurableApplyCheckpointStage::Applied, DurableApplyCheckpointStage::Completed) => {
+            previous.next_operation_index() == previous.operation_count()
+                && next.next_operation_index() == next.operation_count()
+        }
+        _ => false,
+    }
+}
+
 fn materialize_budget_policy(
     stored_policy: &str,
     envelope_json: &str,
@@ -1941,26 +2168,174 @@ fn materialize_budget_policy(
     let envelope: ExecutionEnvelope = serde_json::from_str(envelope_json)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
     let canonical_policy = RunBudgetPolicy::for_envelope(&envelope);
+    let direct_memory_policy = RunBudgetPolicy::for_accepted_envelope(&envelope, true);
     let normalized = serde_json::to_string(&canonical_policy)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
     if stored_policy == "{}" {
         return Ok((canonical_policy, normalized));
     }
     if let Ok(stored_policy) = serde_json::from_str::<RunBudgetPolicy>(stored_policy) {
-        if stored_policy != canonical_policy {
+        if stored_policy.schema_version == canonical_policy.schema_version {
+            if stored_policy != canonical_policy {
+                if stored_policy == direct_memory_policy
+                    && stored_policy.is_direct_memory_compaction_shape()
+                {
+                    let normalized = stored_policy_json(&stored_policy)?;
+                    return Ok((stored_policy, normalized));
+                }
+                let legacy_expected = legacy_post_confirmation_zero_policy(&canonical_policy);
+                if stored_policy == legacy_expected {
+                    let normalized = stored_policy_json(&stored_policy)?;
+                    return Ok((stored_policy, normalized));
+                }
+                return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
+            }
+            return Ok((stored_policy, normalized));
+        }
+    }
+    if let Ok(schema_two_policy) =
+        serde_json::from_str::<LegacyRunBudgetPolicySchema2>(stored_policy)
+    {
+        let mut materialized = RunBudgetPolicy::for_envelope(&envelope);
+        let mut legacy_expected = materialized.clone();
+        legacy_expected.post_confirmation_max_model_turns = 0;
+        legacy_expected.post_confirmation_max_local_tool_calls = 0;
+        if schema_two_policy != LegacyRunBudgetPolicySchema2::from(&legacy_expected) {
             return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
         }
-        return Ok((stored_policy, normalized));
+        // A Run accepted before HR-5 never receives newly introduced post-
+        // confirmation capability. Reading it remains safe and deterministic.
+        materialized.post_confirmation_max_model_turns = 0;
+        materialized.post_confirmation_max_local_tool_calls = 0;
+        let normalized = serde_json::to_string(&materialized)
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
+        return Ok((materialized, normalized));
+    }
+    if let Ok(schema_one_policy) =
+        serde_json::from_str::<LegacyRunBudgetPolicySchema1>(stored_policy)
+    {
+        let legacy_policy = legacy_post_confirmation_zero_policy(&canonical_policy);
+        if schema_one_policy != LegacyRunBudgetPolicySchema1::from(&legacy_policy) {
+            return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
+        }
+        let normalized = serde_json::to_string(&legacy_policy)
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
+        return Ok((legacy_policy, normalized));
     }
     let legacy_policy: LegacyRunBudgetPolicyV1 = serde_json::from_str(stored_policy)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
-    if legacy_policy != LegacyRunBudgetPolicyV1::from(&canonical_policy) {
+    let legacy_policy_expected = legacy_post_confirmation_zero_policy(&canonical_policy);
+    if legacy_policy != LegacyRunBudgetPolicyV1::from(&legacy_policy_expected) {
         return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
     }
-    Ok((canonical_policy, normalized))
+    let normalized = serde_json::to_string(&legacy_policy_expected)
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
+    Ok((legacy_policy_expected, normalized))
 }
 
-/// The complete persisted v1 shape before frozen token fields were added.
+fn stored_policy_json(policy: &RunBudgetPolicy) -> AppResult<String> {
+    serde_json::to_string(policy).map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))
+}
+
+fn legacy_post_confirmation_zero_policy(policy: &RunBudgetPolicy) -> RunBudgetPolicy {
+    let mut legacy = policy.clone();
+    legacy.post_confirmation_max_model_turns = 0;
+    legacy.post_confirmation_max_local_tool_calls = 0;
+    legacy
+}
+
+/// Complete schema-2 policy before bounded post-confirmation local reads.
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyRunBudgetPolicySchema2 {
+    schema_version: u8,
+    profile: crate::ai_runtime::run_contract::RunBudgetProfile,
+    max_prompt_tokens: u32,
+    max_completion_tokens: u32,
+    max_turn_output_tokens: u32,
+    max_model_turns: u32,
+    max_tool_calls: u32,
+    max_local_tool_calls: u32,
+    max_network_tool_calls: u32,
+    max_external_read_tool_calls: u32,
+    max_runtime_tool_calls: u32,
+    max_confirmed_change_calls: u32,
+    max_child_runs: u32,
+    child_max_model_turns: u32,
+    child_max_tool_calls: u32,
+    child_input_tokens_per_turn: u32,
+    child_output_tokens_per_turn: u32,
+    post_confirmation_max_model_turns: u32,
+}
+
+impl From<&RunBudgetPolicy> for LegacyRunBudgetPolicySchema2 {
+    fn from(policy: &RunBudgetPolicy) -> Self {
+        Self {
+            schema_version: 2,
+            profile: policy.profile,
+            max_prompt_tokens: policy.max_prompt_tokens,
+            max_completion_tokens: policy.max_completion_tokens,
+            max_turn_output_tokens: policy.max_turn_output_tokens,
+            max_model_turns: policy.max_model_turns,
+            max_tool_calls: policy.max_tool_calls,
+            max_local_tool_calls: policy.max_local_tool_calls,
+            max_network_tool_calls: policy.max_network_tool_calls,
+            max_external_read_tool_calls: policy.max_external_read_tool_calls,
+            max_runtime_tool_calls: policy.max_runtime_tool_calls,
+            max_confirmed_change_calls: policy.max_confirmed_change_calls,
+            max_child_runs: policy.max_child_runs,
+            child_max_model_turns: policy.child_max_model_turns,
+            child_max_tool_calls: policy.child_max_tool_calls,
+            child_input_tokens_per_turn: policy.child_input_tokens_per_turn,
+            child_output_tokens_per_turn: policy.child_output_tokens_per_turn,
+            post_confirmation_max_model_turns: policy.post_confirmation_max_model_turns,
+        }
+    }
+}
+
+/// The complete schema-1 policy before classified tool-call limits were added.
+///
+/// This is intentionally exact rather than permissive: only a policy that is
+/// otherwise identical to the persisted envelope may be materialized once.
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyRunBudgetPolicySchema1 {
+    schema_version: u8,
+    profile: crate::ai_runtime::run_contract::RunBudgetProfile,
+    max_prompt_tokens: u32,
+    max_completion_tokens: u32,
+    max_turn_output_tokens: u32,
+    max_model_turns: u32,
+    max_tool_calls: u32,
+    max_child_runs: u32,
+    child_max_model_turns: u32,
+    child_max_tool_calls: u32,
+    child_input_tokens_per_turn: u32,
+    child_output_tokens_per_turn: u32,
+    post_confirmation_max_model_turns: u32,
+}
+
+impl From<&RunBudgetPolicy> for LegacyRunBudgetPolicySchema1 {
+    fn from(policy: &RunBudgetPolicy) -> Self {
+        Self {
+            schema_version: 1,
+            profile: policy.profile,
+            max_prompt_tokens: policy.max_prompt_tokens,
+            max_completion_tokens: policy.max_completion_tokens,
+            max_turn_output_tokens: policy.max_turn_output_tokens,
+            max_model_turns: policy.max_model_turns,
+            max_tool_calls: policy.max_tool_calls,
+            max_child_runs: policy.max_child_runs,
+            child_max_model_turns: policy.child_max_model_turns,
+            child_max_tool_calls: policy.child_max_tool_calls,
+            child_input_tokens_per_turn: policy.child_input_tokens_per_turn,
+            child_output_tokens_per_turn: policy.child_output_tokens_per_turn,
+            post_confirmation_max_model_turns: policy.post_confirmation_max_model_turns,
+        }
+    }
+}
+
+/// The complete persisted policy before frozen token fields were added.
 ///
 /// This is intentionally exact rather than permissive: only a policy that is
 /// otherwise identical to the persisted envelope may be materialized once.
@@ -1982,7 +2357,7 @@ struct LegacyRunBudgetPolicyV1 {
 impl From<&RunBudgetPolicy> for LegacyRunBudgetPolicyV1 {
     fn from(policy: &RunBudgetPolicy) -> Self {
         Self {
-            schema_version: policy.schema_version,
+            schema_version: 1,
             profile: policy.profile,
             max_model_turns: policy.max_model_turns,
             max_tool_calls: policy.max_tool_calls,
@@ -2093,6 +2468,21 @@ fn ensure_normal_session(conn: &Connection, session_id: i64, session_key: &str) 
         Ok(())
     } else {
         Err(AppError::run(SafeRunErrorCode::SessionNotFound))
+    }
+}
+
+fn ensure_no_active_top_level_run(conn: &Connection, session_id: i64) -> AppResult<()> {
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM agent_runs
+         WHERE session_id = ?1
+           AND status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'awaiting_input', 'paused', 'verifying')",
+        [session_id],
+        |row| row.get(0),
+    )?;
+    if active_count == 0 {
+        Ok(())
+    } else {
+        Err(AppError::run(SafeRunErrorCode::ActiveRunExists))
     }
 }
 
@@ -2279,6 +2669,21 @@ fn intake_fingerprint(
     Ok(hex::encode(Sha256::digest(canonical)))
 }
 
+fn retry_intake_fingerprint(input: &RetryRunInput) -> AppResult<String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RetryFingerprint<'a> {
+        session_key: &'a str,
+        source_run_id: &'a str,
+    }
+
+    let canonical = serde_json::to_vec(&RetryFingerprint {
+        session_key: &input.session_key,
+        source_run_id: &input.source_run_id,
+    })?;
+    Ok(hex::encode(Sha256::digest(canonical)))
+}
+
 fn insert_event(conn: &Connection, event: &AssistantRunEvent) -> AppResult<()> {
     let serialized = serde_json::to_value(event)?;
     conn.execute(
@@ -2328,6 +2733,35 @@ fn safe_body_summary(body: &str) -> String {
 }
 
 fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
+    if let RunEventPayload::InputRequired {
+        input_id,
+        input_kind,
+        fields,
+        prompt,
+    } = payload
+    {
+        if input_id.trim().is_empty()
+            || input_id.chars().count() > 160
+            || input_kind != "location"
+            || fields != &["city".to_string()]
+            || prompt.trim().is_empty()
+            || prompt.chars().count() > 256
+        {
+            return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+        }
+    }
+    if let RunEventPayload::InputProvided { input_id, values } = payload {
+        if input_id.trim().is_empty()
+            || values.len() != 1
+            || values.get("city").is_none_or(|city| {
+                city.trim().is_empty()
+                    || city.chars().count() > 128
+                    || city.chars().any(char::is_control)
+            })
+        {
+            return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+        }
+    }
     if let RunEventPayload::ReasoningSummary { summary_id, text } = payload {
         if summary_id.trim().is_empty()
             || summary_id.chars().count() > 160
@@ -2432,6 +2866,8 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
     match payload {
         RunEventPayload::StageChanged { state, .. } => Some(*state),
         RunEventPayload::ConfirmationRequired { .. } => Some(RunState::AwaitingConfirmation),
+        RunEventPayload::InputRequired { .. } => Some(RunState::AwaitingInput),
+        RunEventPayload::InputProvided { .. } => Some(RunState::Preparing),
         RunEventPayload::Paused { .. } => Some(RunState::Paused),
         RunEventPayload::Resumed { .. } => Some(RunState::Running),
         RunEventPayload::Completed { .. } => Some(RunState::Completed),
@@ -2448,6 +2884,38 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
         | RunEventPayload::ProviderSwitched { .. }
         | RunEventPayload::EvidenceRegistered { .. } => None,
     }
+}
+
+fn pending_input_summary(
+    events: &[crate::ai_runtime::run_contract::AssistantRunEvent],
+) -> Option<crate::ai_runtime::run_contract::PendingRunInput> {
+    let mut pending = None;
+    for event in events {
+        match event.payload() {
+            RunEventPayload::InputRequired {
+                input_id,
+                input_kind,
+                fields,
+                prompt,
+            } => {
+                pending = Some(crate::ai_runtime::run_contract::PendingRunInput {
+                    input_id: input_id.clone(),
+                    kind: input_kind.clone(),
+                    fields: fields.clone(),
+                    prompt: prompt.clone(),
+                });
+            }
+            RunEventPayload::InputProvided { input_id, .. }
+                if pending
+                    .as_ref()
+                    .is_some_and(|value| value.input_id == *input_id) =>
+            {
+                pending = None;
+            }
+            _ => {}
+        }
+    }
+    pending
 }
 
 fn validate_tool_call_lifecycle(

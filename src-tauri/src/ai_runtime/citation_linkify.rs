@@ -127,68 +127,6 @@ pub(crate) fn bind_current_run_citations(
     }
 }
 
-/// Remove model-authored citation marker syntax when a Run intentionally uses
-/// answer-level source-group disclosure. In that mode no visible marker may
-/// imply that the harness verified a claim-level binding.
-pub(crate) fn strip_model_authored_citation_markers(content: &str) -> String {
-    let chars = content.chars().collect::<Vec<_>>();
-    let mut sanitized = String::with_capacity(content.len());
-    let mut cursor = 0;
-    while cursor < chars.len() {
-        if chars[cursor] != '[' {
-            sanitized.push(chars[cursor]);
-            cursor += 1;
-            continue;
-        }
-        let mut end = cursor + 1;
-        while end < chars.len() && chars[end] != ']' {
-            end += 1;
-        }
-        if end == chars.len() {
-            sanitized.push(chars[cursor]);
-            cursor += 1;
-            continue;
-        }
-        let label = chars[cursor + 1..end].iter().collect::<String>();
-        if parse_marker_index(&normalize_marker_label(&label)).is_none() {
-            sanitized.push('[');
-            sanitized.push_str(&label);
-            sanitized.push(']');
-        }
-        cursor = end + 1;
-    }
-    sanitized
-}
-
-/// Apply the source-group citation policy to a still-growing model stream.
-///
-/// A marker such as `[W1]` may arrive across several provider chunks.  Hold
-/// only a possible trailing marker prefix back until it is complete; emitting
-/// `[W` even briefly would falsely suggest claim-level verification in a
-/// source-group Run.
-pub(crate) fn strip_model_authored_citation_markers_for_stream(content: &str) -> String {
-    let stable = content
-        .rfind('[')
-        .filter(|start| !content[*start..].contains(']'))
-        .filter(|start| possible_citation_marker_prefix(&content[*start..]))
-        .map_or(content, |start| &content[..start]);
-    strip_model_authored_citation_markers(stable)
-}
-
-fn possible_citation_marker_prefix(value: &str) -> bool {
-    let mut characters = value.chars();
-    if characters.next() != Some('[') {
-        return false;
-    }
-    match characters.next() {
-        None => true,
-        Some('W' | 'w') => characters.all(|character| character.is_ascii_digit()),
-        Some(character) => {
-            character.is_ascii_digit() && characters.all(|item| item.is_ascii_digit())
-        }
-    }
-}
-
 /// Rewrite bare footnote markers / source lines into clickable Markdown links.
 ///
 /// Models often emit Unicode superscript footnotes without URLs. When the Run
@@ -843,26 +781,6 @@ mod tests {
         assert_eq!(
             bind_strict_current_run_citations("没有行内标记。", &sample_cites()).unwrap_err(),
             StrictCitationBindingError::MissingPreciseCurrentRunMarkers
-        );
-    }
-
-    #[test]
-    fn source_group_streaming_withholds_partial_model_citation_markers() {
-        assert_eq!(
-            strip_model_authored_citation_markers_for_stream("结论来自本轮来源 [W"),
-            "结论来自本轮来源 "
-        );
-        assert_eq!(
-            strip_model_authored_citation_markers_for_stream("结论来自本轮来源 [W1"),
-            "结论来自本轮来源 "
-        );
-        assert_eq!(
-            strip_model_authored_citation_markers_for_stream("结论来自本轮来源 [W1]。"),
-            "结论来自本轮来源 。"
-        );
-        assert_eq!(
-            strip_model_authored_citation_markers_for_stream("普通 Markdown [链接"),
-            "普通 Markdown [链接"
         );
     }
 }

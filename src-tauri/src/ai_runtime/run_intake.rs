@@ -8,11 +8,11 @@ use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetResponse,
     AssistantRunRetryRequest, AssistantRunStartRequest, AssistantSessionRef, CapabilityId,
-    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed,
-    Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType, SafeRunErrorCode,
-    SecurityDomain, VerificationRequirement, WebDecisionReason,
+    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, FreshFactPolicy, Freshness,
+    MaterialNeed, Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType,
+    SafeRunErrorCode, SecurityDomain, VerificationRequirement, WebDecisionReason,
 };
-use crate::ai_runtime::tool_surface::{classify_time_sensitivity, TimeSensitivity};
+use crate::ai_runtime::run_engine::emit_durable_event_best_effort;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -27,6 +27,7 @@ pub(crate) enum NormalRunControlOutcome {
     ConfirmationApproved,
     ConfirmationRejected,
     RecoveryResumed { confirmation_id: String },
+    InputProvided,
     Noop,
 }
 
@@ -77,6 +78,10 @@ impl RunIntake {
                 "\u{4e0d}\u{4fee}\u{6539}",
             ],
         );
+        // New Runs deliberately do not write a domain plan. The legacy field
+        // remains in the envelope solely so historical Runs can be resumed
+        // without migration; task/risk signals below are the new authority.
+        let fresh_fact = FreshFactPolicy::default();
         let web_decision =
             ExclusionClassifier::resolve(request, &message, &directive_text, local_only);
         let effect = if do_not_modify {
@@ -103,7 +108,7 @@ impl RunIntake {
             ContextMode::ExplicitScope
         } else if implicit_vault_required {
             ContextMode::ImplicitVault
-        } else if is_novel_writing_request(&directive_text) || request.session.is_some() {
+        } else if request.session.is_some() {
             ContextMode::Conversation
         } else {
             ContextMode::None
@@ -114,18 +119,16 @@ impl RunIntake {
                 .iter()
                 .any(|part| matches!(part, crate::ai_types::ContentPart::ImageUrl { .. }))
         });
-        let time_sensitive = classify_time_sensitivity(&directive_text) == TimeSensitivity::Current;
         let effort = match effect {
             Effect::Apply => Effort::Durable,
-            _ if freshness == Freshness::WebPreferred
+            _ if matches!(freshness, Freshness::WebPreferred | Freshness::WebRequired)
                 || has_images
                 || has_retrieval_scope(request)
                 || !request.external_tool_grants.is_empty()
                 || child_run_requested
                 || is_high_stakes_current_request(&directive_text)
                 || requires_multi_step_research(&directive_text)
-                || needs_offline_vault_tool_loop(request, &directive_text)
-                || (request.web_enabled && time_sensitive) =>
+                || needs_offline_vault_tool_loop(request, &directive_text) =>
             {
                 Effort::ToolLoop
             }
@@ -139,20 +142,13 @@ impl RunIntake {
         if !request.turn.explicit_references.is_empty() {
             material_needs.push(MaterialNeed::Reference);
         }
-        if is_official_writing_request(&directive_text) {
-            material_needs.push(MaterialNeed::Exemplar);
-        }
-        if needs_authority_material(&directive_text) {
-            material_needs.push(MaterialNeed::Authority);
-        }
         if freshness != Freshness::Offline {
             material_needs.push(MaterialNeed::Web);
         }
         material_needs.sort_by_key(|need| match need {
-            MaterialNeed::Exemplar => 0,
-            MaterialNeed::Authority => 1,
-            MaterialNeed::Reference => 2,
-            MaterialNeed::Web => 3,
+            MaterialNeed::Reference => 0,
+            MaterialNeed::Web => 1,
+            MaterialNeed::Authority | MaterialNeed::Exemplar => 2,
         });
         material_needs.dedup();
         // The envelope is the only source of capabilities that may reach a
@@ -173,7 +169,13 @@ impl RunIntake {
             Effect::Answer => {}
         }
         if matches!(effort, Effort::ToolLoop | Effort::Durable) {
-            required_capabilities.push(CapabilityId::new("context.read"));
+            // A ToolLoop is an execution shape, not an authorization source.
+            // Context/Vault reads are exposed only when the user selected
+            // material or the request itself established an implicit Vault
+            // dependency. A Web-only loop must not inherit local read tools.
+            if has_explicit_materials_or_scope {
+                required_capabilities.push(CapabilityId::new("context.read"));
+            }
             if allow_implicit_vault_for_run(
                 request.security_domain,
                 &directive_text,
@@ -185,7 +187,11 @@ impl RunIntake {
         // The user-controlled Web toggle is the sole authority that can add
         // Web capability. Freshness only describes evidence obligation; it
         // must never be a second permission switch.
-        if request.web_enabled && request.security_domain == SecurityDomain::Normal && !local_only {
+        if request.web_enabled
+            && request.security_domain == SecurityDomain::Normal
+            && !local_only
+            && freshness != Freshness::Offline
+        {
             required_capabilities.push(CapabilityId::new("web.search"));
         }
         if child_run_requested {
@@ -213,6 +219,14 @@ impl RunIntake {
                 value: Some(serde_json::to_string(model_override)?),
             });
         }
+        if web_decision.reason == WebDecisionReason::HighStakesCurrentFact
+            || explicitly_requires_corroborated_web(&directive_text)
+        {
+            explicit_constraints.push(ExplicitConstraint {
+                kind: "corroborated_web_evidence".into(),
+                value: None,
+            });
+        }
         Ok(ExecutionEnvelope {
             effect,
             context,
@@ -230,6 +244,7 @@ impl RunIntake {
             material_needs,
             required_capabilities,
             explicit_constraints,
+            fresh_fact,
         })
     }
 
@@ -394,16 +409,19 @@ impl RunIntake {
         .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
         // The durable event is authoritative. A transient IPC notification
         // failure must not strand a newly accepted Run before execution.
-        let _ = sink.emit(&event);
+        emit_durable_event_best_effort(sink, &event);
         Ok(outcome)
     }
 
-    /// Accept a fresh retry for the latest failed user turn without duplicating it.
-    pub(crate) fn retry_with_sink(
+    /// Accept a retry and report whether this call created the Run.
+    ///
+    /// Only `is_new=true` may start an executor; idempotent replays return the
+    /// original identity and do not emit a second accepted notification.
+    pub(crate) fn retry_with_sink_outcome(
         db: &Database,
         request: AssistantRunRetryRequest,
         sink: &impl crate::ai_runtime::run_engine::RunEventSink,
-    ) -> AppResult<AssistantRunAccepted> {
+    ) -> AppResult<AcceptRunOutcome> {
         if request.session.domain != SecurityDomain::Normal
             || request.source_run_id.trim().is_empty()
             || request.client_request_id.trim().is_empty()
@@ -411,7 +429,7 @@ impl RunIntake {
         {
             return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
-        let accepted = AgentRunRepository::accept_retry(
+        let outcome = AgentRunRepository::accept_retry_outcome(
             db,
             RetryRunInput {
                 session_key: request.session.session_key,
@@ -420,15 +438,20 @@ impl RunIntake {
                 run_id: uuid::Uuid::new_v4().to_string(),
             },
         )?;
+        if !outcome.is_new {
+            return Ok(outcome);
+        }
         let event = AgentRunRepository::get_for_session(
             db,
-            &accepted.session.session_key,
-            &accepted.run_id,
+            &outcome.accepted.session.session_key,
+            &outcome.accepted.run_id,
         )?
         .and_then(|response| response.events.into_iter().next())
         .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
-        sink.emit(&event)?;
-        Ok(accepted)
+        // The durable event is authoritative. A transient IPC notification
+        // failure must not strand a newly accepted retry before execution.
+        emit_durable_event_best_effort(sink, &event);
+        Ok(outcome)
     }
 
     /// Read only through the owning normal-domain session reference.
@@ -473,7 +496,7 @@ impl RunIntake {
     ) -> AppResult<NormalRunControlOutcome> {
         let (outcome, event) = Self::control_event(db, request)?;
         if let Some(event) = event {
-            sink.emit(&event)?;
+            emit_durable_event_best_effort(sink, &event);
         }
         Ok(outcome)
     }
@@ -542,13 +565,37 @@ impl RunIntake {
                     request.expected_state_version,
                     chrono::Utc::now().timestamp_millis(),
                 )? {
-                    FrozenConfirmationRejection::Resumed(event) => {
+                    FrozenConfirmationRejection::Cancelled(event) => {
                         Ok((NormalRunControlOutcome::ConfirmationRejected, Some(event)))
                     }
                     FrozenConfirmationRejection::AlreadyRejected => {
                         Ok((NormalRunControlOutcome::Noop, None))
                     }
                 }
+            }
+            RunControlAction::SubmitInput { input_id, values } => {
+                if snapshot.run.state == crate::ai_runtime::run_contract::RunState::Preparing
+                    && snapshot.events.iter().any(|event| {
+                        matches!(
+                            event.payload(),
+                            RunEventPayload::InputProvided { input_id: provided, .. }
+                                if provided == &input_id
+                        )
+                    })
+                {
+                    return Ok((NormalRunControlOutcome::Noop, None));
+                }
+                validate_input_submission(&snapshot, &input_id, &values)?;
+                let event = AgentRunRepository::append_event(
+                    db,
+                    crate::ai_runtime::agent_run_repository::AppendRunEventInput {
+                        run_id: request.run_id.clone(),
+                        state_version: request.expected_state_version,
+                        event_type: RunEventType::InputProvided,
+                        payload: RunEventPayload::InputProvided { input_id, values },
+                    },
+                )?;
+                Ok((NormalRunControlOutcome::InputProvided, Some(event)))
             }
             RunControlAction::Resume => {
                 let (event, confirmation_id) = AgentRunRepository::resume_durable_apply(
@@ -566,9 +613,35 @@ impl RunIntake {
     }
 }
 
-/// Keep ordinary externally verifiable facts on the strict one-search Direct
-/// route. ToolLoop is reserved for requests that explicitly ask the model to
-/// conduct an investigation across multiple sources or steps.
+fn validate_input_submission(
+    snapshot: &AssistantRunGetResponse,
+    input_id: &str,
+    values: &std::collections::BTreeMap<String, String>,
+) -> AppResult<()> {
+    if snapshot.run.state != crate::ai_runtime::run_contract::RunState::AwaitingInput
+        || input_id.trim().is_empty()
+        || values.len() != 1
+        || values
+            .get("city")
+            .is_none_or(|city| city.trim().is_empty() || city.chars().count() > 128)
+    {
+        return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+    }
+    let pending = snapshot
+        .run
+        .pending_input
+        .as_ref()
+        .filter(|pending| pending.input_id == input_id && pending.kind == "location")
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InputInvalid))?;
+    if pending.fields != ["city".to_string()] {
+        return Err(AppError::run(SafeRunErrorCode::InputInvalid));
+    }
+    Ok(())
+}
+
+/// Recognize an explicit request for multi-step research. Ordinary external
+/// facts already enter the same ToolLoop through freshness; this signal only
+/// upgrades otherwise offline work and never creates a separate research path.
 fn requires_multi_step_research(message: &str) -> bool {
     contains_any(
         message,
@@ -587,6 +660,23 @@ fn requires_multi_step_research(message: &str) -> bool {
             "调查",
         ],
     )
+}
+
+fn explicitly_requires_corroborated_web(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "cross-check",
+            "cross check",
+            "two independent sources",
+            "multiple independent sources",
+            "交叉核验",
+            "交叉验证",
+            "两个独立来源",
+            "多方核实",
+        ],
+    ) || (contains_any(message, &["http://", "https://"])
+        && contains_any(message, &["核实", "验证", "check", "verify", "citation"]))
 }
 
 fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
@@ -827,7 +917,7 @@ struct ExclusionClassifier;
 impl ExclusionClassifier {
     fn resolve(
         request: &AssistantRunStartRequest,
-        message: &str,
+        _message: &str,
         directive_text: &str,
         local_only: bool,
     ) -> WebIntentDecision {
@@ -845,179 +935,48 @@ impl ExclusionClassifier {
         }
         let explicit_web = has_explicit_web_instruction(directive_text);
 
-        // Soft exclusions. Conversation-meta must be evaluated even when the
-        // message mentions past browsing ("browse the web", "联网查"), otherwise
-        // those keywords false-positive as ExplicitWebRequest.
-        if is_short_greeting(directive_text) {
-            return offline(WebDecisionReason::ConversationMeta);
-        }
-        if is_conversation_meta_request(directive_text) {
-            return offline(WebDecisionReason::ConversationMeta);
-        }
-        if request.session.is_some() && is_short_runtime_follow_up(directive_text) {
-            return offline(WebDecisionReason::ConversationMeta);
-        }
-        if !explicit_web {
-            if is_trusted_runtime_request(directive_text) {
-                return offline(WebDecisionReason::TrustedRuntimeFact);
-            }
-            if is_local_transformation_request(directive_text)
-                && is_material_bound_transformation(request, message, directive_text)
-            {
-                return offline(WebDecisionReason::LocalTransformation);
-            }
-            if is_material_bound_evidence_request(request, directive_text)
-                && !is_volatile_external_request(directive_text)
-                && !is_high_stakes_current_request(directive_text)
-                && !requests_external_evidence(directive_text)
-            {
-                return offline(WebDecisionReason::LocalTransformation);
-            }
-            if looks_like_strong_vault_dependency(directive_text)
-                && !is_volatile_external_request(directive_text)
-                && !is_high_stakes_current_request(directive_text)
-                && !requests_external_evidence(directive_text)
-                && !rejects_local_material_as_factual_source(directive_text)
-            {
-                return offline(WebDecisionReason::LocalTransformation);
-            }
-            if is_creative_generation_request(directive_text) {
-                return offline(WebDecisionReason::CreativeGeneration);
-            }
+        // Only trusted runtime facts bypass the Web surface.  Conversation
+        // follow-ups, creative requests and local-material work are semantic
+        // choices for the model, not Host-side capability revocations: a user
+        // may challenge a prior factual answer or ask to verify it in any of
+        // those forms.
+        if !explicit_web && is_trusted_runtime_request(directive_text) {
+            return offline(WebDecisionReason::TrustedRuntimeFact);
         }
 
-        // Every non-excluded factual request is strict. Do not try to infer
-        // freshness from keywords such as "latest" or "World Cup": those
-        // heuristics are exactly how recently completed events were missed.
-        // An explicit external grant is itself the user's evidence source
-        // selection. It must not silently expand into a Web requirement, but
-        // the final answer still requires evidence from that exact Run.
+        // An explicit external grant is the user's selected evidence source.
+        // It must not silently expand into Web access, while finalization still
+        // requires evidence from this exact Run.
         if !request.external_tool_grants.is_empty()
             && !explicit_web
             && !contains_any(directive_text, &["http://", "https://"])
         {
-            return offline_requires_external(WebDecisionReason::StrictExternalFact);
+            return offline_requires_external(WebDecisionReason::DefaultOnline);
         }
-        if !request.web_enabled {
-            return offline_requires_web(WebDecisionReason::UserDisabled);
+        let strict_reason = if contains_any(directive_text, &["http://", "https://"]) {
+            Some(WebDecisionReason::ExplicitUrl)
+        } else if explicit_web {
+            Some(WebDecisionReason::ExplicitWebRequest)
+        } else if is_high_stakes_current_request(directive_text) {
+            Some(WebDecisionReason::HighStakesCurrentFact)
+        } else if is_volatile_external_request(directive_text) {
+            Some(WebDecisionReason::VolatileExternalFact)
+        } else {
+            None
+        };
+        if let Some(reason) = strict_reason {
+            return if request.web_enabled {
+                required(reason)
+            } else {
+                offline_requires_web(WebDecisionReason::UserDisabled)
+            };
         }
-        if contains_any(directive_text, &["http://", "https://"]) {
-            return required(WebDecisionReason::ExplicitUrl);
+        if request.web_enabled {
+            preferred(WebDecisionReason::DefaultOnline)
+        } else {
+            offline(WebDecisionReason::UserDisabled)
         }
-        if explicit_web {
-            return required(WebDecisionReason::ExplicitWebRequest);
-        }
-        if is_high_stakes_current_request(directive_text) {
-            return required(WebDecisionReason::HighStakesCurrentFact);
-        }
-        if is_volatile_external_request(directive_text) {
-            return required(WebDecisionReason::VolatileExternalFact);
-        }
-        required(WebDecisionReason::StrictExternalFact)
     }
-}
-
-fn is_material_bound_transformation(
-    request: &AssistantRunStartRequest,
-    message: &str,
-    directive_text: &str,
-) -> bool {
-    request.explicit_action.is_some()
-        || !request.turn.explicit_references.is_empty()
-        || has_quoted_material(message)
-        || contains_any(
-            directive_text,
-            &[
-                "provided material",
-                "provided text",
-                "supplied",
-                "attached material",
-                "attachment",
-                "the text above",
-                "text above",
-                "this text",
-                "this sentence",
-                "this paragraph",
-                "my draft",
-                "my text",
-                "provided draft",
-                "我提供的材料",
-                "上面的材料",
-                "上面的段落",
-                "上面的",
-                "附件",
-                "这段",
-                "这句话",
-                "这段话",
-                "这段文字",
-            ],
-        )
-}
-
-/// User-provided material is authoritative for a request that explicitly asks
-/// to summarize, compare, or extract only that material. This is deliberately
-/// narrower than merely attaching a file: an attachment must not suppress the
-/// Web requirement for a question that also seeks current external facts.
-fn is_material_bound_evidence_request(
-    request: &AssistantRunStartRequest,
-    directive_text: &str,
-) -> bool {
-    !request.turn.explicit_references.is_empty()
-        && contains_any(
-            directive_text,
-            &[
-                "based on",
-                "according to",
-                "summarize",
-                "compare",
-                "extract",
-                "only use",
-                "仅根据",
-                "根据",
-                "总结",
-                "概括",
-                "提炼",
-                "对比",
-                "列出",
-            ],
-        )
-}
-
-/// Signals that an otherwise material-bound comparison also asks for external
-/// proof. This is intentionally used only to *veto* a local-only exemption:
-/// the default for anything not clearly a material transformation remains
-/// strict current-Run Web verification, so an unrecognised phrasing fails
-/// toward verification rather than a factual answer from local context alone.
-fn requests_external_evidence(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "web evidence",
-            "online evidence",
-            "public evidence",
-            "public information",
-            "public status",
-            "current public",
-            "external evidence",
-            "external source",
-            "external",
-            "on the web",
-            "on the internet",
-            "联网搜索",
-            "联网检索",
-            "联网核验",
-            "联网查证",
-            "联网查询",
-            "网页证据",
-            "公开证据",
-            "公开信息",
-            "公开状态",
-            "当前公开",
-            "外部证据",
-            "外部来源",
-            "外部",
-        ],
-    )
 }
 
 /// A request that rejects local notes as proof cannot enter the implicit-vault
@@ -1042,15 +1001,6 @@ fn rejects_local_material_as_factual_source(message: &str) -> bool {
             "without local",
         ],
     )
-}
-
-fn has_quoted_material(message: &str) -> bool {
-    message.chars().any(|character| {
-        matches!(
-            character,
-            '"' | '\'' | '“' | '”' | '‘' | '’' | '「' | '」' | '『' | '』' | '`'
-        )
-    })
 }
 
 fn offline(reason: WebDecisionReason) -> WebIntentDecision {
@@ -1082,6 +1032,14 @@ fn required(reason: WebDecisionReason) -> WebIntentDecision {
         freshness: Freshness::WebRequired,
         reason,
         verification_requirement: VerificationRequirement::CurrentRunWeb,
+    }
+}
+
+fn preferred(reason: WebDecisionReason) -> WebIntentDecision {
+    WebIntentDecision {
+        freshness: Freshness::WebPreferred,
+        reason,
+        verification_requirement: VerificationRequirement::None,
     }
 }
 
@@ -1145,6 +1103,17 @@ fn is_local_transformation_request(message: &str) -> bool {
 }
 
 fn has_explicit_web_instruction(message: &str) -> bool {
+    // Mentioning a previous search in an explanation question is not itself
+    // an instruction to search again.  The model still receives the generic
+    // WebPreferred surface when enabled and can decide to verify a disputed
+    // factual claim from conversation context.
+    if message.starts_with("why did ")
+        || message.starts_with("why was ")
+        || message.starts_with("为什么你")
+        || message.starts_with("为什么刚才")
+    {
+        return false;
+    }
     contains_any(
         message,
         &[
@@ -1181,7 +1150,9 @@ fn is_trusted_runtime_request(message: &str) -> bool {
     contains_any(
         message,
         &[
-            "今天星期几",
+            "今天是几月几日",
+            "今天几月几日",
+            "今天是几号",
             "今天几号",
             "当前日期",
             "本机日期",
@@ -1190,7 +1161,7 @@ fn is_trusted_runtime_request(message: &str) -> bool {
             "本机时间",
             "应用版本",
             "iris 版本",
-            "联网是否开启",
+            "今天星期几",
             "what day of the week is it today",
             "which day of the week is it today",
             "what day is it",
@@ -1208,83 +1179,26 @@ fn is_trusted_runtime_request(message: &str) -> bool {
     )
 }
 
-fn is_conversation_meta_request(message: &str) -> bool {
-    if contains_any(
-        message,
-        &[
-            "previous run",
-            "tool called",
-            "browsing fail",
-            "what did you do",
-        ],
-    ) {
-        return true;
-    }
-    let has_prior_reference = contains_any(
-        message,
-        &[
-            "刚才",
-            "刚刚",
-            "上一条",
-            "上一个",
-            "之前",
-            "previous",
-            "earlier",
-            "prior",
-            "previous run",
-        ],
-    );
-    let has_assistant_reference = contains_any(
-        message,
-        &["你", "助手", "模型", "harness", "you", "assistant"],
-    );
-    let has_behavior_reference = contains_any(
-        message,
-        &[
-            "联网", "搜索", "工具", "调用", "报错", "出错", "错误", "失败", "坏掉", "罢工",
-            "browse", "search", "tool", "error", "failed",
-        ],
-    );
-    (has_prior_reference && (has_assistant_reference || has_behavior_reference))
-        || (has_assistant_reference
-            && has_behavior_reference
-            && contains_any(
-                message,
-                &["为什么", "为何", "怎么", "还联网", "why", "how come"],
-            ))
-}
-
-/// A short follow-up about a failure or the assistant's behavior belongs to
-/// the immediately active conversation, not to the public Web. Requiring an
-/// existing session prevents an isolated question such as "why did it fail"
-/// from silently changing its ordinary factual meaning.
-fn is_short_runtime_follow_up(message: &str) -> bool {
-    let compact = message.trim();
-    compact.chars().count() <= 32
-        && contains_any(
-            compact,
-            &[
-                "why",
-                "how come",
-                "what happened",
-                "failed",
-                "failure",
-                "error",
-                "怎么了",
-                "为什么",
-                "为何",
-                "失败",
-                "出错",
-                "报错",
-            ],
-        )
-}
-
 fn is_volatile_external_request(message: &str) -> bool {
+    // Discourse about a prior turn may contain temporal words such as “just
+    // now”, but it does not by itself assert a current external fact.  Keep
+    // Web available as a preference; do not turn it into a strict factual
+    // contract merely because the conversation is being discussed.
+    if is_reflective_dialogue_request(message) {
+        return false;
+    }
     contains_any(
         message,
         &[
             "最新",
+            "近期",
+            "最近",
+            "当前",
+            "现在",
+            "今日",
+            "今天",
+            "今晚",
+            "本周",
             "实时",
             "现任",
             "截至",
@@ -1299,6 +1213,12 @@ fn is_volatile_external_request(message: &str) -> bool {
             "天气",
             "新闻",
             "latest",
+            "recent",
+            "current",
+            "today",
+            "tonight",
+            "this week",
+            "now",
             "real-time",
             "realtime",
             "current score",
@@ -1310,6 +1230,25 @@ fn is_volatile_external_request(message: &str) -> bool {
             "breaking news",
         ],
     )
+}
+
+fn is_reflective_dialogue_request(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("what did you do") {
+        return true;
+    }
+    (contains_any(
+        message,
+        &["刚才", "刚刚", "上一条", "之前", "你", "助手", "模型"],
+    ) && contains_any(
+        message,
+        &["为什么", "怎么", "失败", "调用", "搜索", "工具", "报错"],
+    )) || (lower.contains("previous") || lower.contains("earlier") || lower.contains("prior"))
+        && (lower.contains("tool")
+            || lower.contains("search")
+            || lower.contains("browse")
+            || lower.contains("fail")
+            || lower.contains("error"))
 }
 
 fn is_high_stakes_current_request(message: &str) -> bool {
@@ -1358,72 +1297,6 @@ fn is_high_stakes_current_request(message: &str) -> bool {
         )
 }
 
-fn is_short_greeting(message: &str) -> bool {
-    let normalized = message.trim_matches(|ch: char| {
-        ch.is_whitespace() || ch.is_ascii_punctuation() || "，。！？；：、（）“”‘’".contains(ch)
-    });
-    matches!(
-        normalized,
-        "hi" | "hello"
-            | "hey"
-            | "thanks"
-            | "thank you"
-            | "你好"
-            | "您好"
-            | "嗨"
-            | "哈喽"
-            | "在吗"
-            | "你还在吗"
-            | "早上好"
-            | "晚上好"
-            | "谢谢"
-    )
-}
-
-fn is_creative_generation_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "write a poem",
-            "write a story",
-            "brainstorm",
-            "fictional",
-            "fantasy scene",
-            "invent a character",
-            "invent a",
-            "short story",
-            "write a song",
-            "creative writing",
-            "opening remarks",
-            "launch opening",
-            "opening line",
-            "without external research",
-            "do not research",
-            "\u{5199}\u{4e00}\u{9996}\u{8bd7}",
-            "\u{5199}\u{4e00}\u{4e2a}\u{5f00}\u{573a}\u{767d}",
-            "\u{5f00}\u{573a}\u{767d}",
-            "\u{5ba3}\u{4f20}\u{6587}\u{6848}",
-            "\u{53e3}\u{53f7}",
-            "\u{4e0d}\u{4f9d}\u{8d56}\u{5916}\u{90e8}\u{8d44}\u{6599}",
-            "\u{4e0d}\u{8981}\u{68c0}\u{7d22}",
-            "\u{521b}\u{4f5c}",
-            "\u{865a}\u{6784}",
-        ],
-    )
-}
-fn is_novel_writing_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "chapter",
-            "novel",
-            "fiction",
-            "write a story",
-            "\u{5c0f}\u{8bf4}",
-        ],
-    )
-}
-
 /// Offline Answers without explicit `@`/`#` materials still need a tool loop when the
 /// user clearly depends on vault notes; otherwise the model cannot call `read_note` /
 /// `search_hybrid`. Creative, greeting, and pure rewrite paths stay Direct.
@@ -1435,12 +1308,6 @@ pub(crate) fn needs_offline_vault_tool_loop(
         return false;
     }
     if request.security_domain == SecurityDomain::Classified {
-        return false;
-    }
-    if is_novel_writing_request(message)
-        || is_short_greeting(message)
-        || is_conversation_meta_request(message)
-    {
         return false;
     }
     // 「只用本地资料改写/翻译」uses「本地」as an offline constraint, not a vault
@@ -1455,8 +1322,8 @@ pub(crate) fn needs_offline_vault_tool_loop(
 ///
 /// Decision table:
 /// - Explicit `@`/`#` or folder/tag scope → allow (path scope enforces bounds)
-/// - Ordinary/work task with clear local dependency → allow full vault
-/// - Creative / rewrite / novel / classified / no local dependency → deny
+/// - A request with a clear local dependency → allow the bounded vault surface
+/// - Classified or no-local-dependency requests → deny
 pub(crate) fn allow_implicit_vault_for_run(
     security_domain: SecurityDomain,
     user_message: &str,
@@ -1469,12 +1336,6 @@ pub(crate) fn allow_implicit_vault_for_run(
         return false;
     }
     if security_domain == SecurityDomain::Classified {
-        return false;
-    }
-    if is_novel_writing_request(user_message)
-        || is_short_greeting(user_message)
-        || is_conversation_meta_request(user_message)
-    {
         return false;
     }
     if is_local_transformation_request(user_message) {
@@ -1534,22 +1395,6 @@ fn mentions_vault_as_material_source(message: &str) -> bool {
             "vault 里的",
             "读取 vault",
             "搜索 vault",
-        ],
-    )
-}
-
-fn is_official_writing_request(message: &str) -> bool {
-    contains_any(message, &["memo", "brief", "official notice"])
-}
-fn needs_authority_material(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "regulation",
-            "compliance",
-            "policy",
-            "procedure",
-            "responsibility",
         ],
     )
 }

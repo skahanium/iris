@@ -338,6 +338,42 @@ describe("Assistant Run 前端合同", () => {
 });
 
 describe("Assistant Run 事件归约", () => {
+  it("提交补充地点后进入可恢复的准备阶段并清除输入", () => {
+    const state = reduce([
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(2, "stage_changed", {
+        kind: "stage_changed",
+        state: "preparing",
+        stage: "正在准备",
+      }),
+      event(3, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "正在等待补充信息",
+      }),
+      event(4, "input_required", {
+        kind: "input_required",
+        inputId: "location-run-001",
+        inputKind: "location",
+        fields: ["city"],
+        prompt: "请告诉我需要查询的城市",
+      }),
+      event(5, "input_provided", {
+        kind: "input_provided",
+        inputId: "location-run-001",
+        values: { city: "上海" },
+      }),
+    ]);
+
+    expect(state.state).toBe("preparing");
+    expect(state.pendingInput).toBeNull();
+    expect(state.stage).toBe("正在恢复运行状态");
+  });
+
   it("优先按稳定 stageCode 映射文案并兼容旧事件", () => {
     const coded = reduce([
       event(1, "stage_changed", {

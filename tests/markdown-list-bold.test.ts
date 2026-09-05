@@ -180,3 +180,17 @@ describe("chat_user profile bold repair", () => {
     expect(output).toContain("<strong>另外：</strong>");
   });
 });
+
+// --- Phase C: preserve raw HTML from bold repair ---
+
+describe("repair does not touch raw HTML", () => {
+  it("leaves ** inside an HTML attribute unchanged", () => {
+    const md = '<span title="a ** b">x</span>';
+    expect(repairTightStrongPunctuationBoundaries(md)).toBe(md);
+  });
+
+  it("leaves ** inside an HTML comment unchanged", () => {
+    const md = "<!-- ** not bold ** -->";
+    expect(repairTightStrongPunctuationBoundaries(md)).toBe(md);
+  });
+});

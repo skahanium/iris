@@ -162,13 +162,31 @@ fn normalize_taint_text(value: &str) -> String {
 }
 
 fn taint_fragments(material: &str) -> Vec<String> {
-    let mut fragments = material
-        .split(|character: char| {
-            !character.is_ascii_alphanumeric() && !character.is_ascii_whitespace()
-        })
+    let ascii_tokens = material
+        .split(|character: char| !character.is_ascii_alphanumeric())
         .map(normalize_taint_text)
-        .filter(|fragment| fragment.chars().count() >= 6)
+        .filter(|fragment| !fragment.is_empty())
         .collect::<Vec<_>>();
+    let mut fragments = Vec::new();
+    // A single ordinary English word (for example, "synthetic") is not a
+    // reliable disclosure signal: it is often shared by an unrelated public
+    // query. Require a phrase for prose, while retaining code-like long
+    // tokens that are much less likely to be coincidental.
+    for token in &ascii_tokens {
+        let is_code_like = token.chars().count() >= 12
+            && token.chars().any(|character| character.is_ascii_digit());
+        if is_code_like {
+            fragments.push(token.clone());
+        }
+    }
+    for width in 2..=3 {
+        for phrase in ascii_tokens.windows(width) {
+            let fragment = phrase.join(" ");
+            if fragment.chars().count() >= 8 {
+                fragments.push(fragment);
+            }
+        }
+    }
     for run in material.split(|character: char| !is_cjk(character)) {
         let normalized = normalize_taint_text(run);
         if normalized.chars().count() >= 4 {
@@ -395,6 +413,7 @@ mod tests {
                     material_needs: vec![MaterialNeed::Reference],
                     required_capabilities: vec![],
                     explicit_constraints: vec![],
+                    fresh_fact: Default::default(),
                 },
             },
         )
@@ -477,6 +496,27 @@ mod tests {
                 &[local_material.to_string()],
             ),
             "a public clause must remain searchable when it does not repeat the selected material"
+        );
+    }
+
+    #[test]
+    fn generic_single_ascii_token_does_not_block_an_independent_public_query() {
+        let local_material = "retrieval context: explicitly selected synthetic material\n\
+            fact-local-40=value-40";
+
+        assert!(
+            !query_contains_authorized_material(
+                "synthetic evaluation evidence",
+                &[local_material.to_string()],
+            ),
+            "a shared generic word is not an authorized-material disclosure"
+        );
+        assert!(
+            query_contains_authorized_material(
+                "find explicitly selected synthetic material",
+                &[local_material.to_string()],
+            ),
+            "a multi-word authorized phrase remains blocked"
         );
     }
 

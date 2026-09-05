@@ -4,20 +4,22 @@ use std::time::Duration;
 use super::agent_capacity_eval::{
     spawn_llm_protocol_double, EvaluationTelemetryTap, HttpResponseScript,
 };
+use super::agent_evidence_repository::AgentEvidenceRepository;
 use super::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
 use super::agent_tool_loop::ToolLoopExecutor;
+use super::conversation_memory::ConversationMemory;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
     build_cached_skill_activation, execute_normal_run, execute_normal_run_with_eval_telemetry,
-    required_web_query_from_authorized_material, required_web_query_from_user_history,
-    strict_follow_up_capabilities,
 };
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
-    AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, ContextMode,
-    RunEventPayload, RunEventType, RunState, SecurityDomain,
+    AssistantRunAccepted, AssistantRunEvent, AssistantRunStartRequest, AssistantSessionRef,
+    AssistantTurnDraft, CapabilityId, ContextMode, Effort, FreshFactDomain, FreshFactPolicy,
+    RunEventPayload, RunEventType, RunPresentationPayload, RunState, SecurityDomain,
+    WebDecisionReason,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
@@ -28,6 +30,7 @@ use crate::ai_types::{EndpointFamily, ProviderConfig};
 use crate::app::AppState;
 use crate::error::AppResult;
 use crate::llm::config::{LlmRoutingConfig, ModelReference, ProviderOverride};
+use crate::storage::db::Database;
 
 #[derive(Default)]
 struct RecordingSink {
@@ -40,6 +43,33 @@ impl RunEventSink for RecordingSink {
             .lock()
             .expect("recording sink lock")
             .push(serde_json::to_value(event)?);
+        Ok(())
+    }
+}
+
+struct AnswerCompleteDurabilityProbe<'a> {
+    db: &'a Database,
+    session: AssistantSessionRef,
+    run_id: String,
+    observed_durable_state: Mutex<Option<bool>>,
+}
+
+impl RunEventSink for AnswerCompleteDurabilityProbe<'_> {
+    fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
+        Ok(())
+    }
+
+    fn emit_presentation(&self, run_id: &str, payload: RunPresentationPayload) -> AppResult<()> {
+        if matches!(payload, RunPresentationPayload::AnswerComplete) {
+            assert_eq!(run_id, self.run_id);
+            let durable = RunIntake::get(self.db, &self.session, &self.run_id)
+                .expect("probe Run snapshot")
+                .is_some_and(|response| {
+                    response.run.state == RunState::Completed
+                        && response.run.final_message_id.is_some()
+                });
+            *self.observed_durable_state.lock().expect("probe lock") = Some(durable);
+        }
         Ok(())
     }
 }
@@ -72,91 +102,20 @@ fn web_tool_loop_request() -> AssistantRunStartRequest {
     request
 }
 
-#[test]
-fn required_web_query_avoids_polluting_a_new_question_with_retry_chatter() {
-    let history = vec![
-        "你再试试?".to_string(),
-        "这不会是 OpenAI 自导自演的吧？".to_string(),
-    ];
-
-    assert_eq!(
-        required_web_query_from_user_history(
-            "为什么我总觉得 OpenAI 和 Anthropic 的负责人表演欲望都严重过头？",
-            &history,
-        ),
-        "为什么我总觉得 OpenAI 和 Anthropic 的负责人表演欲望都严重过头？"
-    );
-}
-
-#[test]
-fn required_web_query_uses_last_substantive_turn_for_a_retry_instruction() {
-    let history = vec![
-        "你再试试?".to_string(),
-        "详细讲一下 OpenAI AI 智能体越狱事件".to_string(),
-    ];
-
-    assert_eq!(
-        required_web_query_from_user_history("你再试试?", &history),
-        "详细讲一下 OpenAI AI 智能体越狱事件\n你再试试?"
-    );
-}
-
-#[test]
-fn required_web_query_uses_explicitly_authorized_material_to_resolve_a_deictic_question() {
-    let query = required_web_query_from_authorized_material(
-        "这是什么时候召开的会议？",
-        &[],
-        ["中国共产党第十八次全国代表大会".to_string()],
-    );
-
-    assert!(query.contains("中国共产党第十八次全国代表大会"));
-    assert!(query.contains("这是什么时候召开的会议"));
-}
-
-#[test]
-fn required_web_query_sanitizes_the_authorized_subject_before_disclosure() {
-    let query = required_web_query_from_authorized_material(
-        "这是什么时候召开的会议？",
-        &[],
-        ["  中国共产党\u{0000}\n第十八次全国代表大会\t  ".to_string()],
-    );
-
-    assert_eq!(
-        query,
-        "中国共产党 第十八次全国代表大会 这是什么时候召开的会议？"
-    );
-    assert!(!query.chars().any(char::is_control));
-}
-
-#[test]
-fn required_web_query_never_uses_automatic_local_retrieval_without_explicit_authorization() {
-    let query = required_web_query_from_authorized_material(
-        "这是什么时候召开的会议？",
-        &[],
-        std::iter::empty::<String>(),
-    );
-
-    assert_eq!(query, "这是什么时候召开的会议？");
-}
-
-#[test]
-fn strict_web_follow_up_surface_keeps_only_vault_and_explicit_external_reads() {
-    let capabilities = strict_follow_up_capabilities(&[
-        CapabilityId::new("runtime.read"),
-        CapabilityId::new("vault.read"),
-        CapabilityId::new("web.search"),
-        CapabilityId::new("external.read"),
-        CapabilityId::new("note.apply_patch"),
-    ]);
-    let names = capabilities
-        .iter()
-        .map(CapabilityId::as_str)
-        .collect::<Vec<_>>();
-
-    assert_eq!(names, ["vault.read", "external.read"]);
+fn direct_required_web_request() -> AssistantRunStartRequest {
+    let mut request = direct_request();
+    request.client_request_id = "headless-normal-web-direct-required".into();
+    request.turn.message =
+        "Please search online and verify when the first iPhone was announced.".into();
+    request.web_enabled = true;
+    request
 }
 
 fn install_headless_contract_mcp(state: &AppState) {
+    install_headless_contract_mcp_with_mode(state, "search-only");
+}
+
+fn install_headless_contract_mcp_with_mode(state: &AppState, mode: &str) {
     let (command, args) = if cfg!(windows) {
         let fixture = format!(
             "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
@@ -171,7 +130,8 @@ fn install_headless_contract_mcp(state: &AppState) {
                 "Bypass".to_string(),
                 "-File".to_string(),
                 fixture,
-                "search-only".to_string(),
+                mode.to_string(),
+                "2".to_string(),
             ],
         )
     } else {
@@ -179,7 +139,7 @@ fn install_headless_contract_mcp(state: &AppState) {
             "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
             env!("CARGO_MANIFEST_DIR")
         );
-        ("/bin/sh", vec![fixture, "search-only".to_string()])
+        ("/bin/sh", vec![fixture, mode.to_string(), "2".to_string()])
     };
     upsert_web_evidence_provider(
         &state.db,
@@ -196,10 +156,83 @@ fn install_headless_contract_mcp(state: &AppState) {
             .to_string(),
             credential_refs_json: "{}".into(),
             web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.into()),
-            web_fetch_mapping_json: None,
+            web_fetch_mapping_json: matches!(mode, "search-fetch" | "fetch-rate-limit")
+                .then(|| r#"{"tool":"fetch","urlArg":"url"}"#.into()),
         },
     )
     .expect("headless MCP registry setup");
+}
+
+fn install_test_routing(state: &AppState, base_url: &str, model_name: &str) {
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(base_url.to_string()),
+            enabled_models: Some(vec![model_name.to_string()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: model_name.to_string(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+}
+
+fn tool_call_sse(tool_name: &str, arguments: serde_json::Value) -> String {
+    tool_call_sse_with_id("domain-operation-call", tool_name, arguments)
+}
+
+fn tool_call_sse_with_id(
+    tool_call_id: &str,
+    tool_name: &str,
+    arguments: serde_json::Value,
+) -> String {
+    let arguments = serde_json::to_string(&arguments).expect("serialize tool arguments");
+    let payload = serde_json::json!({
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": tool_call_id,
+                    "type": "function",
+                    "function": { "name": tool_name, "arguments": arguments }
+                }]
+            }
+        }]
+    });
+    format!("data: {payload}\n\ndata: [DONE]\n\n")
+}
+
+#[allow(clippy::type_complexity)]
+fn start_headless_tool_loop(
+    state: &AppState,
+    request: AssistantRunStartRequest,
+) -> (
+    RecordingSink,
+    AssistantRunAccepted,
+    crate::ai_runtime::run_context::RunContext,
+    crate::ai_runtime::context_materials::ContextMaterialPlan,
+    Vec<i64>,
+) {
+    let sink = RecordingSink::default();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted headless tool-loop run");
+    let context = RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("run context");
+    let material_plan = context.context_material_plan();
+    let initial_evidence =
+        RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
+            .expect("initial evidence registration");
+    (sink, accepted, context, material_plan, initial_evidence)
 }
 
 #[tokio::test]
@@ -238,6 +271,53 @@ async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, "user");
     assert_eq!(messages[0].content, "请概述当前信息");
+}
+
+#[tokio::test]
+async fn direct_streaming_does_not_emit_answer_complete_before_durable_finalization() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"普通直答\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["headless-direct-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "headless-direct-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+
+    let mut request = direct_request();
+    request.turn.message = "hello".into();
+    let accepted = RunIntake::start(&state.db, request).expect("accepted run");
+    let probe = AnswerCompleteDurabilityProbe {
+        db: &state.db,
+        session: accepted.session.clone(),
+        run_id: accepted.run_id.clone(),
+        observed_durable_state: Mutex::new(None),
+    };
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &probe).await;
+
+    assert_eq!(
+        *probe
+            .observed_durable_state
+            .lock()
+            .expect("probe lock"),
+        Some(true),
+        "AnswerComplete must be emitted only after the assistant message and Completed state are durable"
+    );
 }
 
 #[tokio::test]
@@ -534,7 +614,8 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
         super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
         &sink,
         Vec::new(),
-    );
+    )
+    .with_allowed_tool_names(&["system_time_now".to_string()]);
 
     let result = executor
         .execute(
@@ -553,7 +634,7 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
 async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_terminalization() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
-    install_headless_contract_mcp(&state);
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let sink = RecordingSink::default();
     let mut research_request = web_tool_loop_request();
     research_request.turn.message =
@@ -567,13 +648,16 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         &accepted.run_id,
     )
     .expect("run context");
-    let domain_plan = context.domain_plan();
+    let material_plan = context.context_material_plan();
     let initial_evidence =
         RunContextAssembler::register_evidence(&state.db, &accepted.run_id, &context)
             .expect("initial evidence registration");
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-fetch-call\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"urls\\\":[\\\"https://source.invalid/contract\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
@@ -597,6 +681,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
     let capabilities = vec![CapabilityId::new("web.search")];
     let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
     assert!(tools.iter().any(|tool| tool.name == "web_search"));
+    assert!(tools.iter().any(|tool| tool.name == "web_fetch"));
     let provider_snapshot =
         super::mcp_runtime_registry::resolve_selected_web_search_provider(&state.db)
             .expect("freeze selected MCP provider before the model tool loop");
@@ -609,16 +694,22 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
         &sink,
         vec![provider_snapshot],
+    )
+    .with_allowed_tool_names(
+        &tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
     );
 
     RunEngine::execute_tool_loop_with_sink(
         &state.db,
         &accepted.session,
         &accepted.run_id,
-        context.messages_with_domain_plan(&domain_plan),
+        context.messages_with_context_material_plan(&material_plan),
         tools,
         &initial_evidence,
-        Some(&domain_plan),
+        Some(&material_plan),
         &provider,
         &executor,
         &sink,
@@ -629,24 +720,56 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
         .expect("completed run");
-    let web_evidence_count = state
+    let (web_evidence_count, extraction_method, bounded_excerpt) = state
         .db
         .with_read_conn(|conn| {
             conn.query_row(
-                "SELECT COUNT(*) FROM session_evidence WHERE origin_run_id = ?1 AND source_type = 'web'",
+                "SELECT COUNT(*), MIN(extraction_method), MIN(bounded_excerpt)
+                 FROM session_evidence
+                 WHERE origin_run_id = ?1 AND source_type = 'web'",
                 [&accepted.run_id],
-                |row| row.get::<_, i64>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .map_err(Into::into)
         })
         .expect("evidence ledger query");
+    let last_tool_observation = |call_index: usize| {
+        let content = calls[call_index].body["messages"]
+            .as_array()
+            .expect("model messages")
+            .iter()
+            .rev()
+            .find(|message| message["role"] == "tool")
+            .and_then(|message| message["content"].as_str())
+            .expect("tool observation");
+        serde_json::from_str::<serde_json::Value>(content).expect("tool observation JSON")
+    };
+    let discovery = last_tool_observation(1);
+    let fetched = last_tool_observation(2);
 
-    assert_eq!(calls.len(), 2, "LLM must complete a real tool continuation");
+    assert_eq!(calls.len(), 3, "LLM must search, fetch, and synthesize");
     assert_eq!(response.run.state, RunState::Completed);
+    assert_eq!(discovery["output"]["evidenceIds"], serde_json::json!([]));
+    assert_eq!(discovery["output"]["requiresFetchForCitation"], true);
+    assert_eq!(discovery["output"]["observationDepth"], "search_snippet");
     assert!(
-        web_evidence_count >= 1,
-        "web result must enter the evidence ledger"
+        fetched["output"]["evidenceIds"]
+            .as_array()
+            .is_some_and(|ids| ids.len() == 1),
+        "only the selected fetched body becomes evidence"
     );
+    assert_eq!(fetched["output"]["requiresFetchForCitation"], false);
+    assert_eq!(fetched["output"]["observationDepth"], "fetched_body");
+    assert_eq!(web_evidence_count, 1);
+    assert_eq!(extraction_method, "mcp_fetch_raw_content");
+    assert!(bounded_excerpt.contains("fetch-result"));
+    assert!(!bounded_excerpt.contains("snippet: deterministic"));
     assert!(response
         .events
         .iter()
@@ -654,7 +777,756 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
 }
 
 #[tokio::test]
-async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine() {
+async fn production_runtime_time_uses_frozen_surface_and_recovers() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let mut request = direct_request();
+    request.client_request_id = "production-runtime-time".into();
+    request.turn.message = "请调研当前时间，并使用 system_time_now 工具确认后汇总。".into();
+    request.web_enabled = false;
+    let (sink, accepted, context, material_plan, initial_evidence) =
+        start_headless_tool_loop(&state, request);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"runtime-time-call\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"当前时间是 2026-08-18 08:00:00。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        &gateway,
+        ProviderConfig {
+            name: "headless-runtime-model".into(),
+            base_url: llm.base_url.clone(),
+            api_key: None,
+            model: "runtime-model".into(),
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        256,
+    )
+    .expect("model gateway provider");
+    let capabilities = vec![CapabilityId::new("runtime.read")];
+    let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
+    assert!(tools.iter().any(|tool| tool.name == "system_time_now"));
+    let executor = NormalRunToolExecutor::new(
+        &state,
+        None,
+        &accepted,
+        &context,
+        capabilities,
+        super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
+        &sink,
+        Vec::new(),
+    )
+    .with_allowed_tool_names(
+        &tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    RunEngine::execute_tool_loop_with_sink(
+        &state.db,
+        &accepted.session,
+        &accepted.run_id,
+        context.messages_with_context_material_plan(&material_plan),
+        tools,
+        &initial_evidence,
+        Some(&material_plan),
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect("production runtime tool-loop chain");
+
+    let calls = llm.finish().await.expect("LLM double completion");
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(
+        calls.len(),
+        2,
+        "runtime tool call must complete a real continuation"
+    );
+    assert_eq!(response.run.state, RunState::Completed);
+    let runtime_tool_audit = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM tool_audit WHERE run_id = ?1 AND tool_name = 'system_time_now'",
+                [&accepted.run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("tool audit query");
+    assert_eq!(runtime_tool_audit, 1, "system_time_now must be dispatched");
+}
+
+#[tokio::test]
+async fn production_location_like_request_does_not_pause_a_new_run_for_structured_input() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"无法获取天气。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "headless-contract-model");
+    install_headless_contract_mcp(&state);
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-missing-city-input".into();
+    request.turn.message = "今天天气怎么样？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted weather run without city");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert!(
+        response.run.state.is_terminal(),
+        "new Run must terminate rather than reserve a city-specific structured input"
+    );
+    assert!(response.run.pending_input.is_none());
+}
+
+#[tokio::test]
+async fn ordinary_missing_context_does_not_reserve_a_structured_input_run() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"不应在补充信息前调用模型。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "hr1-ordinary-missing-context-model");
+    install_headless_contract_mcp(&state);
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "hr1-ordinary-missing-context".into();
+    request.turn.message = "附近电影院今晚有什么场次？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted ordinary missing-context Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("ordinary missing-context Run");
+    assert!(
+        response.run.state.is_terminal(),
+        "ordinary missing context must not strand an active structured-input Run"
+    );
+    assert!(
+        response.run.pending_input.is_none(),
+        "ordinary clarification must not reserve an active Run input"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_clarification_completes_and_next_run_receives_conversation_context() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"为了查询附近电影院今晚的场次，请告诉我所在的城市或地区？\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-hr4-natural-clarification",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "hr4-natural-clarification".into();
+    request.turn.message = "附近电影院今晚有什么场次？".into();
+    request.web_enabled = true;
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted clarification Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("clarification snapshot")
+        .expect("clarification Run");
+    assert_eq!(response.run.state, RunState::Completed);
+    assert!(response.run.pending_input.is_none());
+    let messages =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("persisted clarification messages");
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.role == "assistant")
+            .count(),
+        1
+    );
+    assert!(messages.iter().any(|message| {
+        message.role == "assistant" && message.content.contains("城市或地区")
+    }));
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 1);
+
+    let mut follow_up_request = direct_request();
+    follow_up_request.client_request_id = "hr4-natural-clarification-follow-up".into();
+    follow_up_request.session = Some(accepted.session.clone());
+    follow_up_request.turn.message = "深圳".into();
+    let follow_up = RunIntake::start(&state.db, follow_up_request).expect("accept follow-up Run");
+    let follow_up_context = RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &follow_up.session.session_key,
+        &follow_up.run_id,
+    )
+    .expect("assemble follow-up conversation context");
+    let follow_up_messages = follow_up_context
+        .messages_with_context_material_plan(&follow_up_context.context_material_plan());
+    assert!(follow_up_messages.iter().any(|message| {
+        message
+            .content
+            .text_content()
+            .contains("附近电影院今晚有什么场次")
+    }));
+    assert!(follow_up_messages.iter().any(|message| {
+        message
+            .content
+            .text_content()
+            .contains("请告诉我所在的城市或地区")
+    }));
+}
+
+#[tokio::test]
+async fn legacy_current_fact_run_is_terminalized_without_provider_replay() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"must not be requested\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("callable local Provider boundary");
+    install_test_routing(&state, &llm.base_url, "legacy-run-must-not-replay-model");
+    let sink = RecordingSink::default();
+    let accepted = RunIntake::start_with_sink(&state.db, direct_request(), &sink)
+        .expect("accept legacy compatibility fixture");
+    let mut envelope = RunIntake::resolve_envelope(&direct_request())
+        .expect("build historical compatibility envelope");
+    envelope.fresh_fact = FreshFactPolicy {
+        domain: FreshFactDomain::Weather,
+        ..FreshFactPolicy::default()
+    };
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "UPDATE agent_runs SET envelope_json = ?1 WHERE run_id = ?2",
+                rusqlite::params![serde_json::to_string(&envelope)?, accepted.run_id],
+            )?;
+            Ok(())
+        })
+        .expect("install historical envelope");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    assert_eq!(
+        llm.request_count(),
+        0,
+        "a retired historical current-fact Run must terminalize before it reaches a callable Provider"
+    );
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("terminal snapshot")
+        .expect("terminal Run");
+    assert_eq!(response.run.state, RunState::Failed);
+    assert!(response.run.final_message_id.is_none());
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed { code, .. })
+            if *code == super::run_contract::SafeRunErrorCode::FinalizationProtocolInvalid
+    ));
+}
+
+#[tokio::test]
+async fn ordinary_research_reply_repairs_missing_run_local_citation_before_completion() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "ordinary-research-search",
+            "web_search",
+            serde_json::json!({"query":"近期科技股下跌 原因"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "ordinary-research-fetch",
+            "web_fetch",
+            serde_json::json!({
+                "urls":["https://source.invalid/contract"]
+            }),
+        )),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-hr4-ordinary-research",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "hr1-ordinary-research-finalization".into();
+    request.turn.message = "请联网核实为什么近期科技股下跌？".into();
+    request.web_enabled = true;
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted ordinary research Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("ordinary research Run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "a normal sourced answer must not require a structured finalization tool; events={:?}; model_requests={}",
+        response
+            .events
+            .iter()
+            .map(AssistantRunEvent::payload)
+            .collect::<Vec<_>>(),
+        llm.request_count()
+    );
+    assert_eq!(
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("session messages")
+            .into_iter()
+            .filter(|message| message.role == "assistant")
+            .count(),
+        1,
+        "the normal answer must be persisted exactly once"
+    );
+    let calls = llm.finish().await.expect("LLM completion");
+    assert_eq!(
+        calls.len(),
+        4,
+        "the real loop searches, fetches, and repairs the source binding once"
+    );
+    let tool_names = calls[0].body["tools"]
+        .as_array()
+        .expect("tool surface")
+        .iter()
+        .filter_map(|tool| tool["function"]["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(tool_names.contains(&"web_search"));
+    assert!(
+        !tool_names.contains(&"submit_final_answer"),
+        "ordinary WebRequired answers must not require a structured finalization tool"
+    );
+    let citation_map: String = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT citation_map_json FROM session_messages
+                 WHERE session_id = 1 AND role = 'assistant'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("precise citation map");
+    assert!(!citation_map.contains("source_group_fallback"));
+    assert!(citation_map.contains("https://"));
+}
+
+#[tokio::test]
+async fn high_stakes_current_fact_keeps_structured_finalization_tool() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "high-stakes-search",
+            "web_search",
+            serde_json::json!({"query":"当前法律建议"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse(
+            "submit_final_answer",
+            serde_json::json!({
+                "blocks": [{
+                    "markdown": "当前法律资料已按来源要求提交。",
+                    "sources": ["W1"]
+                }]
+            }),
+        )),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-hr4-high-stakes",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "hr4-high-stakes-finalization".into();
+    request.turn.message = "请给我当前法律建议。".into();
+    request.web_enabled = true;
+    let envelope = RunIntake::resolve_envelope(&request).expect("high-stakes envelope");
+    assert_eq!(
+        envelope.web_reason,
+        WebDecisionReason::HighStakesCurrentFact
+    );
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted high-stakes Run");
+
+    execute_normal_run(Arc::clone(&state), accepted, None, None, &sink).await;
+
+    let calls = llm.finish().await.expect("LLM completion");
+    let tool_names = calls[0].body["tools"]
+        .as_array()
+        .expect("tool surface")
+        .iter()
+        .filter_map(|tool| tool["function"]["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(tool_names.contains(&"web_search"));
+    assert!(
+        tool_names.contains(&"submit_final_answer"),
+        "high-stakes current facts retain the existing strict terminal contract"
+    );
+}
+
+#[tokio::test]
+async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "news-web-disabled".into();
+    request.turn.message = "最新 synthetic 新闻".into();
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accept offline news Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("offline news snapshot")
+        .expect("offline news Run");
+    assert_eq!(response.run.state, RunState::Failed);
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: super::run_contract::SafeRunErrorCode::WebVerificationRequired,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recovers() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 1000)",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("advance evidence ledger sequence");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "news-search",
+            "web_search",
+            serde_json::json!({"query":"最新 synthetic 新闻"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "news-fetch",
+            "web_fetch",
+            serde_json::json!({
+                "urls":[
+                    "https://source.invalid/contract",
+                    "https://source-2.invalid/2"
+                ]
+            }),
+        )),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-news-fallback",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-news-web-fallback".into();
+    request.turn.message = "最新 synthetic 新闻".into();
+    request.web_enabled = true;
+    assert_eq!(
+        RunIntake::resolve_envelope(&request)
+            .expect("classify news fallback Run")
+            .fresh_fact,
+        Default::default()
+    );
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accept news fallback Run");
+    assert_eq!(
+        AgentRunRepository::budget_policy_for_session(
+            &state.db,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("news Run budget")
+        .expect("persisted news Run budget")
+        .max_model_turns,
+        8,
+        "a tool-enabled current-fact Run must keep the Standard loop budget"
+    );
+    assert!(
+        crate::ai_runtime::mcp_external_tools::load_run_snapshots(&state.db, &accepted.run_id)
+            .expect("load news fallback snapshots")
+            .is_empty(),
+        "News fallback must not borrow a structured binding"
+    );
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("news fallback snapshot")
+        .expect("news fallback Run");
+    assert_eq!(
+        llm.request_count(),
+        4,
+        "news Run must search, fetch, draft, and repair; events={:?}",
+        response
+            .events
+            .iter()
+            .map(AssistantRunEvent::payload)
+            .collect::<Vec<_>>()
+    );
+    let calls = llm.finish().await.expect("LLM completion");
+    assert_eq!(response.run.state, RunState::Completed);
+    let names = calls[0].body["tools"]
+        .as_array()
+        .expect("model tool surface")
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().expect("tool name"))
+        .collect::<Vec<_>>();
+    assert!(!names.contains(&"news_lookup"));
+    assert!(
+        names.contains(&"web_search"),
+        "HR-3 的严格联网任务也必须从通用循环暴露 Web 工具"
+    );
+    assert!(!names.contains(&"submit_final_answer"));
+    assert_eq!(calls.len(), 4);
+    let current_evidence =
+        crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_registered(
+            &state.db,
+            &accepted.run_id,
+        )
+        .expect("current Run evidence");
+    assert!(
+        current_evidence
+            .iter()
+            .all(|evidence| evidence.evidence_id > 1000),
+        "Run-local W1 must not depend on a matching global ledger ID"
+    );
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    assert_eq!(
+        RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("recovery snapshot")
+            .expect("recovered Run")
+            .run
+            .final_message_id,
+        response.run.final_message_id
+    );
+}
+
+#[tokio::test]
+async fn recent_movie_research_uses_generic_web_evidence_without_city_or_domain_tools() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 2000)",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("advance evidence ledger sequence");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "movie-search",
+            "web_search",
+            serde_json::json!({"query":"近期有什么好看的电影上映"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse_with_id(
+            "movie-fetch",
+            "web_fetch",
+            serde_json::json!({
+                "urls":[
+                    "https://source.invalid/contract",
+                    "https://source-2.invalid/2"
+                ]
+            }),
+        )),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-movie-fallback",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-movie-web-fallback".into();
+    request.turn.message = "近期有什么好看的电影上映？".into();
+    request.web_enabled = true;
+    let envelope = RunIntake::resolve_envelope(&request).expect("classify movie research Run");
+    assert_eq!(envelope.fresh_fact, Default::default());
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accept broad movie research Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("movie research snapshot")
+        .expect("movie research Run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "ordinary current research must complete naturally; events={:?}; evidence={:?}",
+        response
+            .events
+            .iter()
+            .map(AssistantRunEvent::payload)
+            .collect::<Vec<_>>(),
+        AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
+            .expect("diagnostic movie evidence")
+    );
+    assert!(response.run.pending_input.is_none());
+    let evidence =
+        AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
+            .expect("movie research evidence");
+    assert!(evidence.iter().all(|item| item.evidence_id > 2000));
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 4);
+}
+
+#[tokio::test]
+async fn strict_current_fact_repairs_out_of_run_w8_then_completes_with_limitation() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse(
+            "web_search",
+            serde_json::json!({"query":"当前法律建议"}),
+        )),
+        HttpResponseScript::sse(&tool_call_sse(
+            "submit_final_answer",
+            serde_json::json!({
+                "blocks": [{
+                    "markdown": "这段内容引用了不属于当前 Run 的来源。",
+                    "sources": ["W8"]
+                }]
+            }),
+        )),
+        HttpResponseScript::sse(&tool_call_sse(
+            "submit_final_answer",
+            serde_json::json!({
+                "blocks": [{
+                    "markdown": "修复后仍引用了不属于当前 Run 的来源。",
+                    "sources": ["W8"]
+                }]
+            }),
+        )),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-invalid-web-source",
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "production-invalid-web-source".into();
+    request.turn.message = "请给我当前法律建议。".into();
+    request.web_enabled = true;
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accept invalid-source Run");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("invalid-source snapshot")
+        .expect("invalid-source Run");
+    assert_eq!(response.run.state, RunState::Completed);
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Completed {
+            source_summary,
+            ..
+        }) if source_summary.is_empty()
+    ));
+    let assistant_messages =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("session messages")
+            .into_iter()
+            .filter(|message| message.role == "assistant")
+            .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 1);
+    assert_eq!(
+        assistant_messages[0].content,
+        super::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+    );
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 3);
+}
+
+#[tokio::test]
+async fn strict_web_run_fails_closed_when_no_tool_capable_model_is_available() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
@@ -692,10 +1564,10 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
 
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
-        .expect("completed run");
+        .expect("terminal run");
     assert_eq!(
         response.run.state,
-        RunState::Completed,
+        RunState::Failed,
         "terminal events: {:?}",
         response
             .events
@@ -704,52 +1576,84 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
             .collect::<Vec<_>>()
     );
 
-    let calls = tokio::time::timeout(Duration::from_secs(2), llm.finish())
-        .await
-        .expect("strict service path must reach the one model turn")
-        .expect("LLM double completion");
+    assert!(
+        !response
+            .events
+            .iter()
+            .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })),
+        "通用循环在模型不具备工具能力时不得绕过它预取联网证据"
+    );
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: crate::ai_runtime::run_contract::SafeRunErrorCode::NoCapableModel,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn required_web_run_fails_closed_when_the_selected_model_lacks_tool_support() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(&tool_call_sse(
+        "submit_final_answer",
+        serde_json::json!({
+            "blocks": [{
+                "markdown": "第一代 iPhone 于 2007 年发布。",
+                "sources": ["W1"]
+            }]
+        }),
+    ))])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["headless-contract-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "headless-contract-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+
+    let sink = RecordingSink::default();
+    let request = direct_required_web_request();
     assert_eq!(
-        calls.len(),
-        1,
-        "strict Web service path uses one model turn"
+        RunIntake::resolve_envelope(&request)
+            .expect("strict Web envelope")
+            .effort,
+        Effort::ToolLoop
     );
-    let system_prompt = calls[0].body["messages"]
-        .as_array()
-        .expect("provider messages")
-        .iter()
-        .filter_map(|message| message["content"].as_str())
-        .find(|content| content.contains("## WebEvidenceData"))
-        .expect("web evidence system prompt");
-    assert!(
-        system_prompt.contains("Keep source mechanics out of visible prose"),
-        "uncalibrated routes must keep source-group mechanics out of visible prose"
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .expect("accepted direct required Web run");
+    assert_eq!(
+        accepted.state,
+        RunState::Accepted,
+        "the strict Web fixture must start from an accepted Run"
     );
-    assert!(
-        !system_prompt.contains("CurrentRunVerifiedWebEvidence"),
-        "model-facing evidence data must not expose the old lifecycle heading"
-    );
-    assert!(
-        !system_prompt.contains("source-group disclosure"),
-        "model-facing evidence data must not expose source-group protocol labels"
-    );
-    assert!(
-        !system_prompt.contains("Cite its [Wn] labels"),
-        "uncalibrated routes must not request model-authored precise citations"
-    );
-    let tool_names = calls[0].body["tools"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|tool| tool["function"]["name"].as_str())
-        .collect::<Vec<_>>();
-    assert!(
-        tool_names.is_empty(),
-        "a strict Web-only Run must not expose unrelated tools to the model: {tool_names:?}"
-    );
-    assert!(response
-        .events
-        .iter()
-        .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("terminal run");
+    assert_eq!(response.run.state, RunState::Failed);
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: crate::ai_runtime::run_contract::SafeRunErrorCode::NoCapableModel,
+            ..
+        })
+    ));
 }
 
 #[tokio::test]
@@ -878,7 +1782,7 @@ async fn evaluation_headless_entry_observes_the_real_normal_service_direct_path(
         response.run.state,
         RunState::Completed,
         "terminal payload: {:?}",
-        response.events.last().map(|event| event.payload())
+        response.events.last().map(|event| event.payload()),
     );
     let calls = tokio::time::timeout(std::time::Duration::from_secs(2), llm.finish())
         .await
@@ -888,4 +1792,97 @@ async fn evaluation_headless_entry_observes_the_real_normal_service_direct_path(
     assert_eq!(calls.len(), 1);
     assert_eq!(snapshot.model_turns(), 1);
     assert_eq!(snapshot.final_output_successes(), 1);
+}
+
+#[tokio::test]
+async fn long_direct_conversation_uses_one_no_tool_compaction_then_answers_from_the_updated_summary(
+) {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let session = NormalSessionRepository::create(&state.db).expect("session");
+    state
+        .db
+        .with_conn(|conn| {
+            for seq in 1..=26_i64 {
+                conn.execute(
+                    "INSERT INTO session_messages (session_id, seq, role, content, created_at, turn_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("history-{seq}"),
+                        format!("2026-09-05T00:06:{seq:02}Z"),
+                        format!("history-turn-{}", (seq + 1) / 2),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed history");
+    ConversationMemory::refresh_for_session(&state.db, session.session_id, Default::default())
+        .expect("fallback memory");
+
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"goal_summary\\\":\\\"current-direct-goal\\\",\\\"preference_summary\\\":\\\"latest correction\\\",\\\"decision_summary\\\":\\\"confirmed\\\",\\\"open_threads_summary\\\":\\\"next\\\"}\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"来自更新摘要的正常答复\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "long-direct-model");
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "long-direct-memory-run".into();
+    request.session = Some(AssistantSessionRef {
+        domain: SecurityDomain::Normal,
+        session_key: session.session_key.clone(),
+    });
+    request.turn.message = "请承接此前目标并回答。".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
+    RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("long Direct context must assemble before provider dispatch");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "terminal payload: {:?}",
+        response.events.last().map(|event| event.payload()),
+    );
+
+    let calls = tokio::time::timeout(Duration::from_secs(2), llm.finish())
+        .await
+        .expect("LLM double must complete")
+        .expect("LLM double completion");
+    assert_eq!(calls.len(), 2, "one compaction turn plus one answer turn");
+    let second_messages = calls[1].body["messages"]
+        .as_array()
+        .expect("second request messages");
+    assert!(second_messages.iter().any(|message| {
+        message
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|content| content.contains("current-direct-goal"))
+    }));
+    let budget = AgentRunRepository::budget_policy_for_session(
+        &state.db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("budget")
+    .expect("policy");
+    assert!(budget.is_direct_memory_compaction_shape());
 }

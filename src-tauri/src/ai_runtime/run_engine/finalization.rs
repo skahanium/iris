@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai_types::CitationBinding;
 
 const MAX_FINAL_OUTPUT_CHARS: usize = 32_000;
 
@@ -36,7 +37,10 @@ pub(super) fn apply_required_web_degradation_notice(
     content: &mut String,
     web_degraded: bool,
 ) -> AppResult<()> {
-    if !web_degraded || content.trim().is_empty() {
+    if !web_degraded
+        || content.trim().is_empty()
+        || crate::ai_runtime::agent_tool_loop::is_evidence_limited_response(content)
+    {
         return Ok(());
     }
     *content = format!("> 联网搜索未取得结果，以下为离线回答。\n\n{content}");
@@ -195,11 +199,24 @@ pub(super) fn fail_finalization_with_sink(
 ) -> AppResult<()> {
     log_finalization_failure(run_id, failure.stage, failure.code);
     let _internal_reason = &failure.internal_reason;
+    // Tool execution and presentation events advance state_version while a
+    // Run is active. Finalization must append from the current durable fact,
+    // not from the version that happened to start the model turn.
+    let state_version = match AgentRunRepository::get(db, run_id)? {
+        Some(snapshot) if snapshot.run.state.is_terminal() => {
+            // Cancellation and another already-durable terminal decision win
+            // over a stale model/finalization callback. Do not append a
+            // second failure that rewrites the user-visible outcome.
+            return Err(AppError::run(SafeRunErrorCode::TerminalState));
+        }
+        Some(snapshot) => snapshot.run.state_version,
+        None => running_state_version,
+    };
     let append = AgentRunRepository::append_event(
         db,
         AppendRunEventInput {
             run_id: run_id.to_string(),
-            state_version: running_state_version,
+            state_version,
             event_type: RunEventType::Failed,
             payload: RunEventPayload::Failed {
                 code: failure.code,
@@ -209,14 +226,7 @@ pub(super) fn fail_finalization_with_sink(
     );
     match append {
         Ok(failed) => {
-            if sink.emit(&failed).is_err() {
-                log_finalization_failure(
-                    run_id,
-                    RunFinalizationStage::EventDelivery,
-                    SafeRunErrorCode::EventDeliveryFailed,
-                );
-                return Err(AppError::run(SafeRunErrorCode::EventDeliveryFailed));
-            }
+            emit_durable_event_best_effort(sink, &failed);
             Err(AppError::run(failure.code))
         }
         Err(_) => {
@@ -229,7 +239,7 @@ pub(super) fn fail_finalization_with_sink(
             if let Ok(event) = crate::ai_runtime::run_contract::AssistantRunEvent::new(
                 run_id,
                 seq,
-                running_state_version.saturating_add(1),
+                state_version.saturating_add(1),
                 RunEventType::Failed,
                 chrono::Utc::now().to_rfc3339(),
                 RunEventPayload::Failed {
@@ -273,25 +283,26 @@ pub(super) fn validated_current_run_final_submission(
     db: &Database,
     run_id: &str,
     submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
-    strict_web: bool,
+    strict_current_evidence: bool,
 ) -> Result<crate::ai_runtime::provenance::ValidatedFinalAnswerSubmission, RunFinalizationFailure> {
-    let policy =
-        AgentEvidenceRepository::provenance_policy(db, run_id, strict_web).map_err(|error| {
-            RunFinalizationFailure::new(
-                RunFinalizationStage::EvidenceValidation,
-                SafeRunErrorCode::EvidenceInvalid,
-                error.to_string(),
-            )
-        })?;
-    crate::ai_runtime::provenance::validate_final_answer_submission(submission, &policy).map_err(
-        |error| {
+    let provenance_policy =
+        AgentEvidenceRepository::provenance_policy(db, run_id, strict_current_evidence).map_err(
+            |error| {
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::EvidenceValidation,
+                    SafeRunErrorCode::EvidenceInvalid,
+                    error.to_string(),
+                )
+            },
+        )?;
+    crate::ai_runtime::provenance::validate_final_answer_submission(submission, &provenance_policy)
+        .map_err(|error| {
             RunFinalizationFailure::new(
                 RunFinalizationStage::EvidenceValidation,
                 SafeRunErrorCode::FinalizationProtocolInvalid,
                 error.to_string(),
             )
-        },
-    )
+        })
 }
 
 pub(super) fn flush_validated_stream_or_fail(
@@ -301,7 +312,7 @@ pub(super) fn flush_validated_stream_or_fail(
     observer: &mut AgentRunStreamObserver<'_>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
-    observer.flush().map_err(|error| {
+    observer.flush_without_terminal().map_err(|error| {
         let code = if error.to_string().contains("delivery") || error.to_string().contains("emit") {
             SafeRunErrorCode::EventDeliveryFailed
         } else {
@@ -319,7 +330,7 @@ pub(super) fn flush_validated_stream_or_fail(
 }
 
 /// Shared Direct/ToolLoop terminal contract:
-/// AnswerComplete (via flush) → durable `completed` emit → clear abort handle.
+/// validated deltas → durable message/`completed` → AnswerComplete → clear abort handle.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_run_terminal(
     db: &Database,
@@ -351,49 +362,40 @@ pub(super) fn emit_run_terminal(
             }
         }
     };
-    let citation_map =
+    let cites = if evidence_ids.is_empty() {
+        Vec::new()
+    } else if let Some(binding) = citation_binding.as_ref() {
         match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
-            Ok(cites) if !cites.is_empty() => {
-                crate::ai_runtime::citation_linkify::web_citation_map_json(
-                    &cites,
-                    citation_binding.as_ref(),
-                    effective_source_summary.as_ref(),
-                    attribution,
-                )
+            Ok(mut cites) => {
+                cites.retain(|cite| binding.referenced_indices.contains(&cite.index));
+                cites
             }
-            Ok(_) => match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
-                Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(
-                    &cites,
-                    citation_binding.as_ref(),
-                    effective_source_summary.as_ref(),
-                    attribution,
-                ),
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "web citation map skipped after evidence lookup failure"
-                    );
-                    crate::ai_runtime::citation_linkify::web_citation_map_json(
-                        &[],
-                        citation_binding.as_ref(),
-                        effective_source_summary.as_ref(),
-                        attribution,
-                    )
-                }
-            },
             Err(error) => {
                 tracing::warn!(
                     error = %error,
                     "current Run citation map skipped after evidence lookup failure"
                 );
-                crate::ai_runtime::citation_linkify::web_citation_map_json(
-                    &[],
-                    citation_binding.as_ref(),
-                    effective_source_summary.as_ref(),
-                    attribution,
-                )
+                Vec::new()
             }
-        };
+        }
+    } else {
+        match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
+            Ok(cites) => cites,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "web citation map skipped after evidence lookup failure"
+                );
+                Vec::new()
+            }
+        }
+    };
+    let citation_map = crate::ai_runtime::citation_linkify::web_citation_map_json(
+        &cites,
+        citation_binding.as_ref(),
+        effective_source_summary.as_ref(),
+        attribution,
+    );
     if let Err(error) = AgentRunRepository::finalize(
         db,
         FinalizeRunInput {
@@ -451,16 +453,11 @@ pub(super) fn emit_run_terminal(
         .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
         .and_then(|response| response.events.last().cloned())
         .ok_or_else(|| AppError::run(SafeRunErrorCode::PersistenceFailed))?;
-    if sink.emit(&completed).is_err() {
-        log_finalization_failure(
-            run_id,
-            RunFinalizationStage::EventDelivery,
-            SafeRunErrorCode::EventDeliveryFailed,
-        );
-        return Err(AppError::msg(
-            SafeRunErrorCode::EventDeliveryFailed.as_str(),
-        ));
-    }
+    emit_durable_event_best_effort(sink, &completed);
+    // Terminal presentation delivery is best-effort: it is a live UI
+    // projection of an already-durable Completed fact, so a failed emit must
+    // never turn a successfully persisted Run into an error.
+    let _ = sink.emit_terminal_presentation(run_id);
     crate::ai_runtime::model_gateway::clear_abort(run_id);
     Ok(())
 }
@@ -518,8 +515,11 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
         SafeRunErrorCode::OutputTooLong => "模型回答超过本次运行上限，请缩小问题范围后重试",
         SafeRunErrorCode::IncompleteOutput => "回答未完整生成，请重试",
-        SafeRunErrorCode::EvidenceInvalid => "回答与所附证据无法安全关联，请重新附带资料后重试",
-        SafeRunErrorCode::FinalizationProtocolInvalid => "模型未完成本次答案的来源归因协议，请重试",
+        SafeRunErrorCode::EvidenceInvalid => "回答无法与本次可用证据安全关联，请重试",
+        SafeRunErrorCode::FreshEvidenceInsufficient => {
+            "当前联网证据不足以支持可靠回答，请调整问题或稍后重试"
+        }
+        SafeRunErrorCode::FinalizationProtocolInvalid => "本次回答未完成必要的来源校验，请重试",
         SafeRunErrorCode::EventDeliveryFailed => "回答状态未能送达界面，请重新打开会话查看结果",
         SafeRunErrorCode::InvalidExplicitReference => "引用材料无效，请重新附带后重试",
         SafeRunErrorCode::ExplicitReferenceChanged => "引用材料已发生变化，请重新附带后重试",
@@ -538,6 +538,7 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::StateVersionConflict
         | SafeRunErrorCode::ConfirmationExpired
         | SafeRunErrorCode::PersistenceFailed
+        | SafeRunErrorCode::InternalExecutionFailed
         | SafeRunErrorCode::InvalidChangePlan
         | SafeRunErrorCode::ContinuationLockFailed
         | SafeRunErrorCode::ControlNotAvailable
@@ -562,27 +563,36 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::InvalidSubagentBatchReport
         | SafeRunErrorCode::RetryNotAvailable
         | SafeRunErrorCode::IdempotencyConflict
+        | SafeRunErrorCode::ActiveRunExists
         | SafeRunErrorCode::UnknownToolCallId
         | SafeRunErrorCode::UnverifiedWebCitation
-        | SafeRunErrorCode::WebEvidenceRequired => "运行暂时无法完成，请稍后重试",
+        | SafeRunErrorCode::WebEvidenceRequired
+        | SafeRunErrorCode::GroundedFinalizationUnavailable
+        | SafeRunErrorCode::LocationRequired
+        | SafeRunErrorCode::InputInvalid => "运行暂时无法完成，请稍后重试",
     }
 }
 
 /// Map transport diagnostics to a small safe public vocabulary. The raw provider
 /// error is deliberately neither persisted into the Run event nor shown to the user.
 pub(super) fn classify_provider_failure(error: &AppError) -> SafeRunErrorCode {
-    let message = error.to_string().to_ascii_lowercase();
-    if message.contains("agent_run_event_delivery_failed") {
-        SafeRunErrorCode::EventDeliveryFailed
-    } else if message.contains("first_response_timeout")
-        || message.contains("stream_idle_timeout")
-        || message.contains("timed out")
-        || message.contains("timeout")
-        || message.contains("deadline")
-    {
-        SafeRunErrorCode::ProviderTimeout
-    } else {
-        SafeRunErrorCode::ProviderUnavailable
+    match error {
+        AppError::Run(code) => *code,
+        AppError::Provider {
+            kind: crate::error::ProviderErrorKind::Timeout,
+            ..
+        } => SafeRunErrorCode::ProviderTimeout,
+        AppError::Provider { .. } | AppError::Http(_) => SafeRunErrorCode::ProviderUnavailable,
+        AppError::Message(message) if message == "agent_run_event_delivery_failed" => {
+            SafeRunErrorCode::EventDeliveryFailed
+        }
+        AppError::Message(message)
+            if message.contains("first_response_timeout")
+                || message.contains("stream_idle_timeout") =>
+        {
+            SafeRunErrorCode::ProviderTimeout
+        }
+        _ => SafeRunErrorCode::InternalExecutionFailed,
     }
 }
 
@@ -602,7 +612,7 @@ pub(super) fn settle_cancelled_run_with_partial(
         return Ok(false);
     }
     let mut partial = observer.interrupt_visible_content();
-    if partial.trim().is_empty() {
+    if partial.trim().is_empty() && !observer.withholds_unvalidated_content() {
         if let Some(fallback) = fallback_content {
             partial = fallback.to_string();
         }
@@ -624,7 +634,7 @@ pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
         "agent_run_tool_loop_limit" => SafeRunErrorCode::ToolLoopLimit,
         "agent_run_output_too_long" => SafeRunErrorCode::OutputTooLong,
         "agent_run_incomplete_output" => SafeRunErrorCode::IncompleteOutput,
-        "agent_run_invalid_model_response" => SafeRunErrorCode::InvalidRequest,
+        "agent_run_invalid_model_response" => SafeRunErrorCode::EmptyOutput,
         "agent_run_final_submission_required" | "agent_run_final_submission_invalid" => {
             SafeRunErrorCode::FinalizationProtocolInvalid
         }
@@ -660,21 +670,115 @@ mod apply_notice_tests {
     use std::collections::HashSet;
 
     use super::{
-        apply_required_web_degradation_notice, classify_tool_loop_failure,
+        apply_required_web_degradation_notice, classify_provider_failure,
+        classify_tool_loop_failure, emit_run_terminal, safe_failure_message,
         validate_web_urls_against_allowed, validated_final_model_answer,
         validated_final_model_answer_with_telemetry,
     };
-    use crate::ai_runtime::run_contract::AssistantSessionRef;
-    use crate::ai_runtime::run_contract::SafeRunErrorCode;
-    use crate::error::AppError;
+    use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+    use crate::ai_runtime::run_contract::{
+        AssistantRunStartRequest, AssistantSessionRef, AssistantTurnDraft, RunEventPayload,
+        RunEventType, RunState, SafeRunErrorCode, SecurityDomain,
+    };
+    use crate::ai_runtime::run_engine::observer::NoopRunEventSink;
+    use crate::ai_runtime::run_intake::RunIntake;
+    use crate::error::{AppError, ProviderErrorKind};
     use crate::storage::db::Database;
 
     fn dummy_session() -> AssistantSessionRef {
-        use crate::ai_runtime::run_contract::SecurityDomain;
         AssistantSessionRef {
             domain: SecurityDomain::Normal,
             session_key: "test".to_string(),
         }
+    }
+
+    #[test]
+    fn evidence_limitation_terminal_has_no_citations_or_source_summary() {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(
+            &db,
+            AssistantRunStartRequest {
+                client_request_id: "evidence-limitation-terminal".into(),
+                session: None,
+                turn: AssistantTurnDraft {
+                    message: "请核实当前事实".into(),
+                    content_parts: None,
+                    explicit_references: Vec::new(),
+                    retrieval_scope: Default::default(),
+                    display_mentions: Vec::new(),
+                },
+                explicit_action: None,
+                web_enabled: true,
+                model_override: None,
+                external_tool_grants: Vec::new(),
+                security_domain: SecurityDomain::Normal,
+                classified_context_ref: None,
+            },
+        )
+        .expect("accepted");
+        let preparing = AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: 0,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Preparing,
+                    stage: "正在准备".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("preparing");
+        let running = AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing.state_version(),
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "正在调用模型和工具".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running");
+
+        emit_run_terminal(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            running.state_version(),
+            crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE.into(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            &NoopRunEventSink,
+        )
+        .expect("limitation completes");
+
+        let citation_map: serde_json::Value = db
+            .with_read_conn(|connection| {
+                let raw = connection.query_row(
+                    "SELECT citation_map_json FROM session_messages
+                     WHERE session_id = 1 AND role = 'assistant'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )?;
+                serde_json::from_str(&raw).map_err(Into::into)
+            })
+            .expect("citation map");
+        assert_eq!(citation_map["web"], serde_json::json!([]));
+        assert!(citation_map.get("sourceSummary").is_none());
+        let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert!(matches!(
+            replay.events.last().map(|event| event.payload()),
+            Some(RunEventPayload::Completed { source_summary, .. }) if source_summary.is_empty()
+        ));
     }
 
     #[test]
@@ -738,6 +842,60 @@ mod apply_notice_tests {
             classify_tool_loop_failure(&AppError::msg("agent_run_provenance_reference_invalid"));
 
         assert_eq!(code, SafeRunErrorCode::FinalizationProtocolInvalid);
+    }
+
+    #[test]
+    fn empty_provider_response_is_not_reported_as_a_capability_failure() {
+        let code = classify_tool_loop_failure(&AppError::msg("agent_run_invalid_model_response"));
+
+        assert_eq!(code, SafeRunErrorCode::EmptyOutput);
+        assert_ne!(
+            safe_failure_message(code),
+            safe_failure_message(SafeRunErrorCode::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn only_structured_provider_failures_use_provider_copy() {
+        assert_eq!(
+            classify_provider_failure(&AppError::provider(
+                ProviderErrorKind::TemporarilyUnavailable,
+                "upstream overloaded",
+            )),
+            SafeRunErrorCode::ProviderUnavailable
+        );
+        assert_eq!(
+            classify_provider_failure(&AppError::msg("internal_run_projection_failed")),
+            SafeRunErrorCode::PersistenceFailed
+        );
+    }
+
+    #[test]
+    fn safe_failure_messages_distinguish_capability_completion_evidence_and_attachments() {
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::NoCapableModel),
+            "没有已启用模型满足当前任务所需能力，请在模型设置中启用兼容模型"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::IncompleteOutput),
+            "回答未完整生成，请重试"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::FreshEvidenceInsufficient),
+            "当前联网证据不足以支持可靠回答，请调整问题或稍后重试"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::EvidenceInvalid),
+            "回答无法与本次可用证据安全关联，请重试"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::FinalizationProtocolInvalid),
+            "本次回答未完成必要的来源校验，请重试"
+        );
+        assert_eq!(
+            safe_failure_message(SafeRunErrorCode::InvalidExplicitReference),
+            "引用材料无效，请重新附带后重试"
+        );
     }
 
     #[test]

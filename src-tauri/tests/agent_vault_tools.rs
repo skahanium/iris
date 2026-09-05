@@ -24,12 +24,16 @@ fn ctx_with_scope<'a>(
     retrieval_scope: &'a RetrievalScope,
 ) -> ToolDispatchContext<'a> {
     ToolDispatchContext {
+        db: None,
+        selected_web_provider_id: None,
         note_path,
         file_id: None,
         run_id: None,
         write_target_path: None,
+        confirmed_write_targets: None,
         document_policy: None,
         web_search_enabled: false,
+        available_tool_names: &[],
         max_web_fetches: 3,
         cold_start_packets: &[],
         retrieval_scope,
@@ -393,7 +397,12 @@ async fn markdown_patch_rejects_out_of_vault_target_without_creating_file() {
     )
     .await;
 
-    assert!(!result.success);
+    assert!(
+        result.success,
+        "patch dispatch returns a structured rejection: {:?}",
+        result.error
+    );
+    assert_eq!(result.output["result"]["success"], false);
     assert!(!dir.path().join("outside.md").exists());
     assert_eq!(
         std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap(),

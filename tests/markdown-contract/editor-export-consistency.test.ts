@@ -1,4 +1,4 @@
-﻿/**
+/**
  * editor-export-consistency.test.ts
  *
  * Contract-surface consistency via the production save path:
@@ -141,6 +141,43 @@ describe("vault preview = editor export semantics", () => {
 // ═══════════════════════════════════════════════════════════════
 // 导出完整性：不丢失任何元素
 // ═══════════════════════════════════════════════════════════════
+
+describe("contract editor profiles reuse production pipeline", () => {
+  const exportCases = [
+    "Hello **world**.",
+    "# Title\n\nParagraph.",
+    "- [x] Done\n- [ ] Todo",
+    "| A | B |\n| --- | --- |\n| 1 | 2 |",
+    "> [!note] Info\n> Body.",
+    '<div class="raw">Raw</div>',
+  ];
+
+  it.each(exportCases)(
+    "editor_export contract equals production PM serializer: %s",
+    (md) => {
+      const contractExport = renderMarkdownWithProfile(
+        md,
+        "editor_export",
+      ).output;
+      const productionExport = serializeBody(md);
+      expect(contractExport).toBe(productionExport);
+    },
+  );
+
+  it.each(exportCases)(
+    "editor_ingest contract equals production ingest: %s",
+    (md) => {
+      const contractIngest = renderMarkdownWithProfile(
+        md,
+        "editor_ingest",
+      ).output;
+      const productionIngest = ingestMarkdownForEditor({
+        bodyMarkdown: md,
+      }).tipTapHtml;
+      expect(contractIngest).toBe(productionIngest);
+    },
+  );
+});
 
 describe("export completeness — no element loss", () => {
   it("export includes all heading levels", () => {

@@ -206,18 +206,32 @@ pub async fn assistant_session_load(
                         .then_some(item.turn_id.as_deref())
                         .flatten()
                         .and_then(|turn_id| process_by_turn.get(turn_id));
+                    let evidence_refs = item.evidence_refs.clone();
                     let web_citations = historical_web_citations_for_run(
                         &state.db,
-                        process.map(|value| value.run_id.as_str()),
+                        item.run_id
+                            .as_deref()
+                            .or_else(|| process.map(|value| value.run_id.as_str())),
+                        evidence_refs.as_deref(),
                         item.web_citations,
                     );
                     let citation_binding = item.citation_binding.or_else(|| {
-                        (!web_citations.is_empty()).then_some(crate::ai_types::CitationBinding {
-                            mode: crate::ai_types::CitationBindingMode::SourceGroupFallback,
-                            referenced_indices: Vec::new(),
-                            fallback_reason: Some("legacy_binding_unavailable".to_string()),
-                        })
+                        (evidence_refs.is_none() && !web_citations.is_empty()).then_some(
+                            crate::ai_types::CitationBinding {
+                                mode: crate::ai_types::CitationBindingMode::SourceGroupFallback,
+                                referenced_indices: Vec::new(),
+                                fallback_reason: Some("legacy_binding_unavailable".to_string()),
+                            },
+                        )
                     });
+                    let source_summary = historical_source_summary_for_run(
+                        &state.db,
+                        item.run_id
+                            .as_deref()
+                            .or_else(|| process.map(|value| value.run_id.as_str())),
+                        evidence_refs.as_deref(),
+                        item.source_summary,
+                    );
                     AssistantSessionMessage {
                         seq: item.seq,
                         role: item.role,
@@ -240,7 +254,7 @@ pub async fn assistant_session_load(
                         display_mentions: item.display_mentions,
                         web_citations,
                         citation_binding,
-                        source_summary: item.source_summary,
+                        source_summary,
                         created_at: item.created_at,
                     }
                 })
@@ -260,11 +274,32 @@ pub async fn assistant_session_load(
 fn historical_web_citations_for_run(
     db: &crate::storage::db::Database,
     run_id: Option<&str>,
+    evidence_refs: Option<&[i64]>,
     persisted: Vec<crate::ai_types::WebCitationEntry>,
 ) -> Vec<crate::ai_types::WebCitationEntry> {
     let Some(run_id) = run_id else {
         return persisted;
     };
+    if let Some(evidence_refs) = evidence_refs {
+        return match crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_selected_current_run_web_citation_links(
+            db,
+            run_id,
+            evidence_refs,
+        ) {
+            Ok(selected) => selected
+                .into_iter()
+                .map(|citation| crate::ai_types::WebCitationEntry {
+                    index: citation.index,
+                    title: citation.title,
+                    url: citation.url,
+                })
+                .collect(),
+            // A modern message has an explicit evidence selection. If that
+            // selection cannot be resolved, showing no source is safer than
+            // reviving a stale persisted or whole-Run source group.
+            Err(_) => Vec::new(),
+        };
+    }
     match crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
         Ok(run_local) if !run_local.is_empty() => run_local
             .into_iter()
@@ -276,6 +311,26 @@ fn historical_web_citations_for_run(
             .collect(),
         Ok(_) | Err(_) => persisted,
     }
+}
+
+fn historical_source_summary_for_run(
+    db: &crate::storage::db::Database,
+    run_id: Option<&str>,
+    evidence_refs: Option<&[i64]>,
+    persisted: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
+) -> Vec<crate::ai_runtime::provenance::SourceSummaryEntry> {
+    let (Some(run_id), Some(evidence_refs)) = (run_id, evidence_refs) else {
+        return persisted;
+    };
+    crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::source_summary_for_current_run(
+        db,
+        run_id,
+        evidence_refs,
+    )
+    .map(|summary| summary.entries())
+    // Modern messages own an explicit selection. Never revive a persisted
+    // whole-Run summary when the selected rows cannot be resolved.
+    .unwrap_or_default()
 }
 
 /// Rename one conversation through its declared storage domain.
@@ -386,34 +441,37 @@ pub async fn assistant_run_start<R: AssistantRunRuntime>(
                 return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
             }
             let model_override = request.model_override.clone();
-            let accepted = state
+            let outcome = state
                 .ai
                 .classified_ephemeral
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
-                .accept(
+                .accept_outcome(
                     &vault,
                     &request.client_request_id,
                     request.turn.message,
                     context_ref,
+                    model_override.as_ref(),
                 )?;
-            let event = state
-                .ai
-                .classified_ephemeral
-                .lock()
-                .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
-                .get(&accepted.run_id)?
-                .and_then(|response| response.events.into_iter().next())
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
-            sink.emit(&event)?;
-            spawn_classified_direct_run(
-                Arc::clone(&state),
-                vault,
-                app_handle,
-                accepted.clone(),
-                model_override,
-            );
-            Ok(accepted)
+            if outcome.is_new {
+                let event = state
+                    .ai
+                    .classified_ephemeral
+                    .lock()
+                    .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
+                    .get(&outcome.accepted.run_id)?
+                    .and_then(|response| response.events.into_iter().next())
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
+                let _ = sink.emit(&event);
+                spawn_classified_direct_run(
+                    Arc::clone(&state),
+                    vault,
+                    app_handle,
+                    outcome.accepted.clone(),
+                    model_override,
+                );
+            }
+            Ok(outcome.accepted)
         }
     }
 }
@@ -426,19 +484,21 @@ pub async fn assistant_run_retry(
     request: AssistantRunRetryRequest,
 ) -> AppResult<AssistantRunAccepted> {
     let sink = TauriRunEventSink::new(&app_handle);
-    let accepted = RunIntake::retry_with_sink(&state.db, request, &sink)?;
-    spawn_normal_direct_run(
-        Arc::clone(&state),
-        app_handle,
-        accepted.clone(),
-        state.vault_path().ok(),
-    );
-    Ok(accepted)
+    let outcome = RunIntake::retry_with_sink_outcome(&state.db, request, &sink)?;
+    if outcome.is_new {
+        spawn_normal_direct_run(
+            Arc::clone(&state),
+            app_handle,
+            outcome.accepted.clone(),
+            state.vault_path().ok(),
+        );
+    }
+    Ok(outcome.accepted)
 }
 
 /// Apply one explicit control action to an isolated Agent Run.
 #[tauri::command]
-pub async fn assistant_run_control<R: tauri::Runtime>(
+pub async fn assistant_run_control<R: AssistantRunRuntime>(
     state: State<'_, Arc<AppState>>,
     app_handle: AppHandle<R>,
     request: AssistantRunControlRequest,
@@ -446,7 +506,7 @@ pub async fn assistant_run_control<R: tauri::Runtime>(
     assistant_run_control_inner(Arc::clone(&state), app_handle, request).await
 }
 
-async fn assistant_run_control_inner<R: tauri::Runtime>(
+async fn assistant_run_control_inner<R: AssistantRunRuntime>(
     state: Arc<AppState>,
     app_handle: AppHandle<R>,
     request: AssistantRunControlRequest,
@@ -474,15 +534,6 @@ async fn assistant_run_control_inner<R: tauri::Runtime>(
                     state.vault_path().ok(),
                 ),
                 (
-                    NormalRunControlOutcome::ConfirmationRejected,
-                    crate::ai_runtime::run_contract::RunControlAction::RejectChange { .. },
-                ) => spawn_rejected_change_finalization(
-                    Arc::clone(&state.db),
-                    app_handle,
-                    session,
-                    run_id,
-                ),
-                (
                     NormalRunControlOutcome::RecoveryResumed { confirmation_id },
                     crate::ai_runtime::run_contract::RunControlAction::Resume,
                 ) => spawn_confirmed_change_execution(
@@ -493,6 +544,29 @@ async fn assistant_run_control_inner<R: tauri::Runtime>(
                     confirmation_id,
                     state.vault_path().ok(),
                 ),
+                (
+                    NormalRunControlOutcome::InputProvided,
+                    crate::ai_runtime::run_contract::RunControlAction::SubmitInput { .. },
+                ) => {
+                    let resumed = crate::ai_runtime::run_intake::RunIntake::get(
+                        &state.db, &session, &run_id,
+                    )?
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
+                    .run;
+                    spawn_normal_direct_run(
+                        Arc::clone(&state),
+                        app_handle,
+                        crate::ai_runtime::run_contract::AssistantRunAccepted {
+                            client_request_id: String::new(),
+                            run_id: run_id.clone(),
+                            turn_id: resumed.turn_id,
+                            session: session.clone(),
+                            state: resumed.state,
+                            state_version: resumed.state_version,
+                        },
+                        state.vault_path().ok(),
+                    );
+                }
                 _ => {}
             }
             Ok(())
@@ -597,9 +671,9 @@ fn evaluate_normal_run_policy(
     Ok(engine.evaluate_run(request))
 }
 
-/// Resume exactly one consumed frozen change plan. This path intentionally has
-/// no Provider construction or model invocation: approval authorizes the
-/// immutable arguments that were already produced during the original Run.
+/// Resume exactly one consumed frozen change set. Approval authorizes only the
+/// immutable arguments produced during the original Run; a successful full
+/// execution may subsequently use the separately bounded, read-only verifier.
 fn spawn_confirmed_change_execution<R: tauri::Runtime>(
     state: Arc<AppState>,
     app_handle: AppHandle<R>,
@@ -731,10 +805,58 @@ async fn execute_confirmed_change_with_sink(
         sink,
         Vec::new(),
     );
-    match executor.execute_confirmed_frozen_change(&plan).await {
-        Ok(result) if result.success => {
-            if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, sink, true)
-                .is_err()
+    match executor.execute_confirmed_frozen_change_set(&plan).await {
+        Ok(results) if !results.is_empty() => {
+            let applied = results.iter().filter(|result| result.success).count();
+            let complete = applied == plan.operations().len();
+            let executed_operations = plan
+                .operations()
+                .iter()
+                .zip(results.iter())
+                .filter(|(_, result)| result.success)
+                .map(|(operation, _)| {
+                    format!(
+                        "{}（{}）",
+                        operation.operation(),
+                        operation.relative_paths().join(", ")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("；");
+            let content = if complete {
+                format!(
+                    "已按确认顺序执行 {applied}/{} 项变更。\n已执行操作：{executed_operations}",
+                    plan.operations().len(),
+                )
+            } else {
+                format!(
+                    "已执行 {applied}/{} 项变更；后续操作未执行，因为目标已变化或执行条件不再满足。\n已执行操作：{executed_operations}",
+                    plan.operations().len(),
+                )
+            };
+            if complete
+                && crate::ai_runtime::normal_run_service::execute_post_confirmation_verification(
+                    Arc::clone(&state),
+                    accepted.clone(),
+                    vault.clone(),
+                    plan.relative_paths(),
+                    &content,
+                    sink,
+                )
+                .await
+                .is_ok()
+            {
+                return;
+            }
+            let fallback = if complete {
+                format!("{content} 未进行模型复核。")
+            } else {
+                content
+            };
+            if RunEngine::finalize_confirmed_change_report_with_sink(
+                &db, &session, &run_id, &fallback, complete, sink,
+            )
+            .is_err()
             {
                 fail();
             }
@@ -743,22 +865,6 @@ async fn execute_confirmed_change_with_sink(
     }
 }
 
-/// A rejected frozen plan ends the Run without dispatching a tool or calling a model.
-fn spawn_rejected_change_finalization<R: tauri::Runtime>(
-    db: Arc<crate::storage::db::Database>,
-    app_handle: AppHandle<R>,
-    session: AssistantSessionRef,
-    run_id: String,
-) {
-    tauri::async_runtime::spawn(async move {
-        let sink = TauriRunEventSink::new(&app_handle);
-        if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, &sink, false)
-            .is_err()
-        {
-            let _ = RunEngine::fail_active_with_sink(&db, &session, &run_id, &sink);
-        }
-    });
-}
 /// Start normal-domain execution after its accepted event exists.
 ///
 /// Context, policy and bounded Web evidence are prepared from persisted Run
@@ -1049,15 +1155,21 @@ mod normal_run_desktop_adapter_tests {
     use super::assistant_run_start;
     use super::{
         assistant_run_control, dispatch_normal_run_service, evaluate_normal_run_policy,
-        execute_confirmed_change_with_sink,
+        execute_confirmed_change_with_sink, historical_source_summary_for_run,
+        historical_web_citations_for_run,
     };
     #[cfg(not(windows))]
     use crate::ai_runtime::agent_capacity_eval::{spawn_llm_protocol_double, HttpResponseScript};
+    use crate::ai_runtime::agent_evidence_repository::{
+        AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
+    };
     use crate::ai_runtime::agent_run_repository::{
         AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
         DurableApplyCheckpointStage,
     };
-    use crate::ai_runtime::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
+    use crate::ai_runtime::frozen_change_plan::{
+        FrozenChangeOperationInput, FrozenChangePlan, FrozenChangePlanInput, FrozenChangeSetInput,
+    };
     #[cfg(not(windows))]
     use crate::ai_runtime::mcp_external_tools::{
         review_discovered_tool, upsert_binding, McpCapabilityBindingInput,
@@ -1095,6 +1207,116 @@ mod normal_run_desktop_adapter_tests {
         fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn modern_explicit_empty_evidence_selection_never_rehydrates_run_sources() {
+        let db = crate::storage::db::Database::open_in_memory().expect("database");
+        let session =
+            crate::ai_runtime::normal_session_repository::NormalSessionRepository::create(&db)
+                .expect("session");
+        crate::ai_runtime::agent_run_repository::AgentRunRepository::accept(
+            &db,
+            crate::ai_runtime::agent_run_repository::AcceptRunInput {
+                session_id: session.session_id,
+                session_key: session.session_key,
+                client_request_id: "projection-client".into(),
+                run_id: "projection-run".into(),
+                turn_id: "projection-turn".into(),
+                message: "核实当前事实".into(),
+                content_parts: None,
+                explicit_references: Vec::new(),
+                context_scope: Default::default(),
+                display_mentions: Vec::new(),
+                explicit_action: None,
+                envelope: crate::ai_runtime::run_contract::ExecutionEnvelope {
+                    effect: Effect::Answer,
+                    context: crate::ai_runtime::run_contract::ContextMode::None,
+                    freshness: crate::ai_runtime::run_contract::Freshness::WebRequired,
+                    web_reason:
+                        crate::ai_runtime::run_contract::WebDecisionReason::VolatileExternalFact,
+                    verification_requirement:
+                        crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb,
+                    effort: crate::ai_runtime::run_contract::Effort::ToolLoop,
+                    security_domain: SecurityDomain::Normal,
+                    risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,
+                    modalities: Vec::new(),
+                    material_needs: Vec::new(),
+                    required_capabilities: vec![
+                        crate::ai_runtime::run_contract::CapabilityId::new("web.search"),
+                    ],
+                    explicit_constraints: Vec::new(),
+                    fresh_fact: Default::default(),
+                },
+            },
+        )
+        .expect("accepted run");
+        let registered = AgentEvidenceRepository::register_web(
+            &db,
+            WebEvidenceInput {
+                session_id: session.session_id,
+                run_id: "projection-run".into(),
+                message_seq_first: 1,
+                material_role: MaterialRole::Lookup,
+                title: "已抓取正文".into(),
+                url: "https://example.test/article".into(),
+                normalized_url: "https://example.test/article".into(),
+                domain: "example.test".into(),
+                retrieved_at: "2026-09-01T00:00:00Z".into(),
+                provider_id: "test-web".into(),
+                provider_kind: "mcp".into(),
+                raw_result_hash: "projection-body-hash".into(),
+                extraction_method: "mcp_fetch_raw_content".into(),
+                bounded_excerpt: "足够长的已抓取正文".into(),
+                retrieval_reason: Some("web_fetch".into()),
+                score: None,
+                source_rank: None,
+                conflict_group: None,
+                failure_reason: None,
+            },
+        )
+        .expect("web evidence");
+
+        assert!(
+            historical_web_citations_for_run(&db, Some("projection-run"), Some(&[]), vec![],)
+                .is_empty()
+        );
+        assert!(historical_source_summary_for_run(
+            &db,
+            Some("projection-run"),
+            Some(&[]),
+            vec![crate::ai_runtime::provenance::SourceSummaryEntry {
+                category: "web".into(),
+                count: 1,
+            }],
+        )
+        .is_empty());
+        assert_eq!(
+            historical_web_citations_for_run(
+                &db,
+                Some("projection-run"),
+                Some(&[registered.evidence_id]),
+                vec![],
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            historical_source_summary_for_run(
+                &db,
+                Some("projection-run"),
+                Some(&[registered.evidence_id]),
+                vec![],
+            ),
+            vec![crate::ai_runtime::provenance::SourceSummaryEntry {
+                category: "web".into(),
+                count: 1,
+            }]
+        );
+        assert_eq!(
+            historical_web_citations_for_run(&db, Some("projection-run"), None, vec![]).len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -1157,11 +1379,11 @@ mod normal_run_desktop_adapter_tests {
                 transport_kind: "stdio".into(),
                 transport_config_json: serde_json::json!({
                     "command": "/bin/sh",
-                    "args": [fixture, "search-only"]
+                    "args": [fixture, "search-only", "2"]
                 })
                 .to_string(),
                 credential_refs_json: "{}".into(),
-                web_search_mapping_json: None,
+                web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.into()),
                 web_fetch_mapping_json: None,
             },
         )
@@ -1202,6 +1424,8 @@ mod normal_run_desktop_adapter_tests {
             read_only: true,
             user_trusted: true,
             attested_binding_config_hash: String::new(),
+            domain_operation: None,
+            output_mapping: None,
         };
         let attestation = crate::ai_runtime::mcp_external_tools::attest_reviewed_tool(
             &state.db,
@@ -1594,16 +1818,17 @@ mod normal_run_desktop_adapter_tests {
         state: &AppState,
         original: &FrozenChangePlan,
     ) -> FrozenChangePlan {
+        let original_operation = &original.operations()[0];
         let tampered = FrozenChangePlan::freeze(FrozenChangePlanInput {
             confirmation_id: original.confirmation_id().into(),
             run_id: original.run_id().into(),
             session_id: original.session_id(),
             request_id: original.run_id().into(),
-            tool_call_id: original.tool_call_id().into(),
+            tool_call_id: original_operation.tool_call_id().into(),
             vault_id: original.vault_id().into(),
             relative_paths: original.relative_paths().to_vec(),
-            operation: original.operation().into(),
-            base_content_hashes: original.base_content_hashes().to_vec(),
+            operation: original_operation.operation().into(),
+            base_content_hashes: original_operation.base_content_hashes().to_vec(),
             expected_post_content_hashes: vec![(
                 "note.md".into(),
                 crate::cas::hash::content_hash_str("tampered"),
@@ -1638,6 +1863,138 @@ mod normal_run_desktop_adapter_tests {
             })
             .expect("tamper consumed confirmation row");
         tampered
+    }
+
+    fn install_two_note_change_set(
+        directory: &tempfile::TempDir,
+        state: &Arc<AppState>,
+        accepted: &AssistantRunAccepted,
+        original: &FrozenChangePlan,
+        second_note_content: &str,
+    ) -> FrozenChangePlan {
+        std::fs::write(
+            directory.path().join("vault/note-2.md"),
+            second_note_content,
+        )
+        .expect("second note content");
+        let chained = FrozenChangePlan::freeze_set(FrozenChangeSetInput {
+            confirmation_id: original.confirmation_id().to_string(),
+            run_id: accepted.run_id.clone(),
+            session_id: original.session_id(),
+            request_id: accepted.run_id.clone(),
+            vault_id: original.vault_id().to_string(),
+            operations: vec![
+                FrozenChangeOperationInput {
+                    tool_call_id: original.operations()[0].tool_call_id().to_string(),
+                    operation: "replace_selection".to_string(),
+                    relative_paths: vec!["note.md".to_string()],
+                    base_content_hashes: vec![(
+                        ("note.md").to_string(),
+                        crate::cas::hash::content_hash_str("base"),
+                    )],
+                    expected_post_content_hashes: vec![(
+                        "note.md".to_string(),
+                        crate::cas::hash::content_hash_str("after"),
+                    )],
+                    change: serde_json::json!({
+                        "target_path": "note.md",
+                        "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                        "range": { "start": 0, "end": 4 },
+                        "original_text": "base",
+                        "replacement": "after"
+                    }),
+                    rollback_summary: "可通过版本历史撤销".to_string(),
+                },
+                FrozenChangeOperationInput {
+                    tool_call_id: format!("{}-second", original.operations()[0].tool_call_id()),
+                    operation: "replace_selection".to_string(),
+                    relative_paths: vec!["note-2.md".to_string()],
+                    base_content_hashes: vec![(
+                        "note-2.md".to_string(),
+                        crate::cas::hash::content_hash_str("base2"),
+                    )],
+                    expected_post_content_hashes: vec![(
+                        "note-2.md".to_string(),
+                        crate::cas::hash::content_hash_str("final2"),
+                    )],
+                    change: serde_json::json!({
+                        "target_path": "note-2.md",
+                        "base_content_hash": crate::cas::hash::content_hash_str("base2"),
+                        "range": { "start": 0, "end": 5 },
+                        "original_text": "base2",
+                        "replacement": "final2"
+                    }),
+                    rollback_summary: "可通过版本历史撤销".to_string(),
+                },
+            ],
+            expires_at_unix_ms: i64::MAX,
+        })
+        .expect("freeze ordered change set");
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "UPDATE agent_run_confirmations
+                     SET plan_hash = ?1, plan_json = ?2
+                     WHERE confirmation_id = ?3 AND run_id = ?4 AND status = 'consumed'",
+                    rusqlite::params![
+                        chained.plan_hash(),
+                        chained.persisted_plan_json()?,
+                        chained.confirmation_id(),
+                        accepted.run_id,
+                    ],
+                )?;
+                conn.execute(
+                    "DELETE FROM agent_run_steps WHERE run_id = ?1 AND kind = 'durable_apply'",
+                    [&accepted.run_id],
+                )?;
+                Ok(())
+            })
+            .expect("replace test-only consumed plan");
+        let running = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("running replay")
+            .expect("run");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: running.run.state_version,
+                event_type: RunEventType::ToolStarted,
+                payload: RunEventPayload::ToolStarted {
+                    capability: "replace_selection".into(),
+                    tool_call_id: chained.operations()[1].tool_call_id().to_string(),
+                },
+            },
+        )
+        .expect("start second frozen tool");
+        AgentRunRepository::append_checkpoint_step(
+            &state.db,
+            AppendRunCheckpointInput {
+                run_id: accepted.run_id.clone(),
+                state_version: running.run.state_version,
+                checkpoint: DurableApplyCheckpoint::new_change_set(
+                    chained.confirmation_id(),
+                    chained.plan_hash(),
+                    DurableApplyCheckpointStage::Approved,
+                    chained
+                        .all_base_content_hashes()
+                        .iter()
+                        .map(|(_, hash)| hash.clone())
+                        .collect(),
+                    chained
+                        .all_expected_post_content_hashes()
+                        .iter()
+                        .map(|(_, hash)| hash.clone())
+                        .collect(),
+                    0,
+                    2,
+                    Vec::new(),
+                )
+                .expect("approved set checkpoint"),
+            },
+        )
+        .expect("persist set checkpoint");
+        chained
     }
 
     fn assert_zero_write_and_dispatch(
@@ -1736,11 +2093,11 @@ mod normal_run_desktop_adapter_tests {
                     plan.confirmation_id(),
                     plan.plan_hash(),
                     DurableApplyCheckpointStage::Dispatching,
-                    plan.base_content_hashes()
+                    plan.all_base_content_hashes()
                         .iter()
                         .map(|(_, hash)| hash.clone())
                         .collect(),
-                    plan.expected_post_content_hashes()
+                    plan.all_expected_post_content_hashes()
                         .iter()
                         .map(|(_, hash)| hash.clone())
                         .collect(),
@@ -1791,6 +2148,242 @@ mod normal_run_desktop_adapter_tests {
         );
     }
 
+    #[tokio::test]
+    async fn confirmed_change_set_applies_two_ordered_operations_once_and_completes_its_cursor() {
+        let (directory, state, accepted, original) = durable_apply_fixture();
+        std::fs::write(directory.path().join("vault/note-2.md"), "base2")
+            .expect("second base note");
+        let chained = FrozenChangePlan::freeze_set(FrozenChangeSetInput {
+            confirmation_id: original.confirmation_id().to_string(),
+            run_id: accepted.run_id.clone(),
+            session_id: original.session_id(),
+            request_id: accepted.run_id.clone(),
+            vault_id: original.vault_id().to_string(),
+            operations: vec![
+                FrozenChangeOperationInput {
+                    tool_call_id: original.operations()[0].tool_call_id().to_string(),
+                    operation: "replace_selection".to_string(),
+                    relative_paths: vec!["note.md".to_string()],
+                    base_content_hashes: vec![(
+                        "note.md".to_string(),
+                        crate::cas::hash::content_hash_str("base"),
+                    )],
+                    expected_post_content_hashes: vec![(
+                        "note.md".to_string(),
+                        crate::cas::hash::content_hash_str("after"),
+                    )],
+                    change: serde_json::json!({
+                        "target_path": "note.md",
+                        "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                        "range": { "start": 0, "end": 4 },
+                        "original_text": "base",
+                        "replacement": "after"
+                    }),
+                    rollback_summary: "可通过版本历史撤销".to_string(),
+                },
+                FrozenChangeOperationInput {
+                    tool_call_id: format!("{}-second", original.operations()[0].tool_call_id()),
+                    operation: "replace_selection".to_string(),
+                    relative_paths: vec!["note-2.md".to_string()],
+                    base_content_hashes: vec![(
+                        "note-2.md".to_string(),
+                        crate::cas::hash::content_hash_str("base2"),
+                    )],
+                    expected_post_content_hashes: vec![(
+                        "note-2.md".to_string(),
+                        crate::cas::hash::content_hash_str("final2"),
+                    )],
+                    change: serde_json::json!({
+                        "target_path": "note-2.md",
+                        "base_content_hash": crate::cas::hash::content_hash_str("base2"),
+                        "range": { "start": 0, "end": 5 },
+                        "original_text": "base2",
+                        "replacement": "final2"
+                    }),
+                    rollback_summary: "可通过版本历史撤销".to_string(),
+                },
+            ],
+            expires_at_unix_ms: i64::MAX,
+        })
+        .expect("freeze ordered change set");
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "UPDATE agent_run_confirmations
+                     SET plan_hash = ?1, plan_json = ?2
+                     WHERE confirmation_id = ?3 AND run_id = ?4 AND status = 'consumed'",
+                    rusqlite::params![
+                        chained.plan_hash(),
+                        chained.persisted_plan_json()?,
+                        chained.confirmation_id(),
+                        accepted.run_id,
+                    ],
+                )?;
+                conn.execute(
+                    "DELETE FROM agent_run_steps WHERE run_id = ?1 AND kind = 'durable_apply'",
+                    [&accepted.run_id],
+                )?;
+                Ok(())
+            })
+            .expect("replace test-only consumed plan");
+        let running = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("running replay")
+            .expect("run");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: running.run.state_version,
+                event_type: RunEventType::ToolStarted,
+                payload: RunEventPayload::ToolStarted {
+                    capability: "replace_selection".into(),
+                    tool_call_id: chained.operations()[1].tool_call_id().to_string(),
+                },
+            },
+        )
+        .expect("start second frozen tool");
+        AgentRunRepository::append_checkpoint_step(
+            &state.db,
+            AppendRunCheckpointInput {
+                run_id: accepted.run_id.clone(),
+                state_version: running.run.state_version,
+                checkpoint: DurableApplyCheckpoint::new_change_set(
+                    chained.confirmation_id(),
+                    chained.plan_hash(),
+                    DurableApplyCheckpointStage::Approved,
+                    chained
+                        .all_base_content_hashes()
+                        .iter()
+                        .map(|(_, hash)| hash.clone())
+                        .collect(),
+                    chained
+                        .all_expected_post_content_hashes()
+                        .iter()
+                        .map(|(_, hash)| hash.clone())
+                        .collect(),
+                    0,
+                    2,
+                    Vec::new(),
+                )
+                .expect("approved set checkpoint"),
+            },
+        )
+        .expect("persist set checkpoint");
+
+        execute_confirmed_change_with_sink(
+            Arc::clone(&state),
+            accepted.session.clone(),
+            accepted.run_id.clone(),
+            chained.confirmation_id().to_string(),
+            state.vault_path().ok(),
+            &NoopSink,
+        )
+        .await;
+
+        let completed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("completed replay")
+            .expect("run");
+        assert_eq!(completed.run.state, RunState::Completed);
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("vault/note.md")).expect("applied note"),
+            "after"
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("vault/note-2.md"))
+                .expect("applied second note"),
+            "final2"
+        );
+        let checkpoint =
+            AgentRunRepository::latest_durable_apply_checkpoint(&state.db, &accepted.run_id)
+                .expect("checkpoint")
+                .expect("completed set checkpoint");
+        assert_eq!(checkpoint.stage(), DurableApplyCheckpointStage::Completed);
+        assert_eq!(checkpoint.next_operation_index(), 2);
+        let assistant_content = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT m.content FROM session_messages m
+                     JOIN sessions s ON s.id = m.session_id
+                     WHERE s.session_key = ?1 AND m.turn_id = ?2 AND m.role = 'assistant'",
+                    rusqlite::params![accepted.session.session_key, accepted.turn_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("completed assistant report");
+        assert!(assistant_content.contains("已执行操作：replace_selection（note.md）"));
+        assert!(assistant_content.contains("replace_selection（note-2.md）"));
+        assert_eq!(
+            crate::ai_runtime::tool_audit::count_by_run(&state.db, &accepted.run_id)
+                .expect("two dispatch audits"),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_change_set_reports_partial_completion_when_second_target_drifted() {
+        let (directory, state, accepted, original) = durable_apply_fixture();
+        let chained = install_two_note_change_set(
+            &directory,
+            &state,
+            &accepted,
+            &original,
+            "changed-by-someone-else",
+        );
+
+        execute_confirmed_change_with_sink(
+            Arc::clone(&state),
+            accepted.session.clone(),
+            accepted.run_id.clone(),
+            chained.confirmation_id().to_string(),
+            state.vault_path().ok(),
+            &NoopSink,
+        )
+        .await;
+
+        let completed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("completed partial report")
+            .expect("run");
+        assert_eq!(completed.run.state, RunState::Completed);
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("vault/note.md"))
+                .expect("first target applied"),
+            "after"
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("vault/note-2.md"))
+                .expect("drifted target preserved"),
+            "changed-by-someone-else"
+        );
+        let checkpoint =
+            AgentRunRepository::latest_durable_apply_checkpoint(&state.db, &accepted.run_id)
+                .expect("checkpoint")
+                .expect("partial checkpoint");
+        assert_eq!(checkpoint.stage(), DurableApplyCheckpointStage::Applied);
+        assert_eq!(checkpoint.next_operation_index(), 1);
+        let assistant_content = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT m.content FROM session_messages m
+                     JOIN sessions s ON s.id = m.session_id
+                     WHERE s.session_key = ?1 AND m.turn_id = ?2 AND m.role = 'assistant'",
+                    rusqlite::params![accepted.session.session_key, accepted.turn_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("partial assistant report");
+        assert!(assistant_content.contains("已执行 1/2 项变更"));
+        assert_eq!(
+            crate::ai_runtime::tool_audit::count_by_run(&state.db, &accepted.run_id)
+                .expect("two audited operations"),
+            2
+        );
+    }
+
     fn invoke_control(
         webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
         request: AssistantRunControlRequest,
@@ -1818,7 +2411,7 @@ mod normal_run_desktop_adapter_tests {
     }
 
     #[test]
-    fn production_resume_command_completes_without_model_and_repeated_resume_does_not_dispatch() {
+    fn production_resume_command_falls_back_safely_when_model_verification_is_unavailable() {
         let (directory, state, accepted, _plan) = durable_apply_fixture();
         let frozen_budget = AgentRunRepository::budget_policy_for_session(
             &state.db,
@@ -1827,7 +2420,8 @@ mod normal_run_desktop_adapter_tests {
         )
         .expect("read frozen budget")
         .expect("frozen budget");
-        assert_eq!(frozen_budget.post_confirmation_max_model_turns, 0);
+        assert_eq!(frozen_budget.post_confirmation_max_model_turns, 2);
+        assert_eq!(frozen_budget.post_confirmation_max_local_tool_calls, 4);
         RunEngine::recover_interrupted_runs(&state.db).expect("startup classification");
         let paused = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
             .expect("paused replay")

@@ -199,6 +199,9 @@ pub(crate) fn messages_for_api_with_reasoning_continuation(
                             msg["reasoning_details"] = details;
                         }
                     }
+                    ReasoningAdapter::ProviderSpecificStatic => {
+                        msg["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+                    }
                     _ => {}
                 }
                 return msg;

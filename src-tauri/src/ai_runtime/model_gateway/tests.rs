@@ -202,6 +202,61 @@ fn ordinary_openai_compatible_tool_continuation_never_replays_reasoning_content(
 }
 
 #[test]
+fn mimo_tool_turn_disables_thinking_and_replays_same_provider_reasoning_content() {
+    let messages = vec![
+        LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall::new(
+                "call_1",
+                "web_search",
+                r#"{"query":"current facts"}"#,
+            )]),
+            reasoning_content: Some("mimo-private-reasoning".into()),
+        },
+        LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"success":true}"#.into(),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        },
+    ];
+    let body = build_chat_completions_body(&GatewayRequest {
+        provider: test_provider("mimo"),
+        messages,
+        tools: vec![LlmToolDef {
+            tool_type: "function".into(),
+            function: LlmFunctionDef {
+                name: "web_search".into(),
+                description: "search".into(),
+                parameters: serde_json::json!({"type":"object"}),
+            },
+        }],
+        max_tokens: Some(1024),
+        input_token_budget: None,
+        temperature: None,
+        stream: true,
+        thinking: true,
+        reasoning: crate::ai_types::ResolvedReasoningRequest {
+            mode: crate::ai_types::ReasoningMode::Auto,
+            requested: true,
+            adapter: crate::ai_types::ReasoningAdapter::ProviderSpecificStatic,
+            ..crate::ai_types::ResolvedReasoningRequest::disabled()
+        },
+        continuation: None,
+        skip_stub_ids: vec![],
+    });
+
+    assert_eq!(body["thinking"]["type"], "disabled");
+    assert_eq!(
+        body["messages"][0]["reasoning_content"],
+        "mimo-private-reasoning"
+    );
+}
+
+#[test]
 fn deepseek_tool_continuation_preserves_reasoning_content_and_provider_control() {
     let provider = ProviderConfig {
         name: "deepseek".into(),

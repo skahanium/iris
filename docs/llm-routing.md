@@ -31,23 +31,23 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 ## 联网证据
 
-联网开关只授予联网能力。当前 Run Intake 以排除优先的确定性规则解析 `offline`、`web_required`：本机运行时事实、对话元问题、用户已提供材料的转换与创作任务可以离线；其余外部事实一律进入 `web_required`。`web_preferred` 仅为历史 Run 的兼容读值，新 Run 不会由默认分类产生它。
+联网开关只授予 `web.search` 能力。当前 Run Intake 以排除优先的确定性规则解析 `offline`、`web_preferred`、`web_required`：本机运行时事实、对话元问题、用户已提供材料的转换与创作任务可以离线；一般外部事实可进入 `web_preferred`；明确联网、强时效或高风险当前事实进入 `web_required`。有 Web 工具面时使用同一个 `AgentToolLoop`，Host 不在模型前另做预取或领域规划。
 
-`web_required` 在模型前做一次受预算约束的预取；证据充分时后续只有一次无工具模型生成，模型不能自行决定是否执行首轮搜索。仅在高风险来源门槛未满足时允许一次确定性的补充搜索。搜索与一次瞬态重试共享 20 秒 Run 预算，重试等待 250ms；鉴权、策略拒绝、Schema 错误和证据包超界不重试。页面正文抓取失败不会抹掉已取得的搜索摘要。
+模型工具面拆为两个单一职责动作：`web_search { query }` 只返回当前 Run 候选，`web_fetch { urls }` 只读取当前 Run 候选或用户明确提供的 HTTPS URL。两者共用联网授权、network 分类预算、`WebEvidenceBroker`、冻结 Provider 顺序和 evidence ledger；搜索片段不是证据，只有抓取到 URL 匹配的实质正文才登记为 `Wn`。一批 URL 部分失败时，工具观察保留成功正文、失败 URL、剩余证据要求和预算，模型可以换源继续。
 
-非严格的可选 Web 工具失败会返回结构化工具结果并产生非终态 `capability_degraded` 事件。`web_required` 无可核验证据时写入 `web_verification_failed` 后安全终态，不生成事实结论或伪引用。诊断仅记录联网模式、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。偶发降级与 MCP/harness/LLM 分流步骤见 [ops/web-capability-degradation.md](./ops/web-capability-degradation.md)；可执行 `npm run diagnose:web-degradation` 读取本地 `agent_run_events`。
+Web 工具失败会返回可行动的结构化观察并可产生非终态 `capability_degraded` 事件。普通时效事实取得一份与核心结论相关的当前 Run 正文并精确引用即可回答；高风险当前事实、CitationCheck 或用户明确要求交叉核实才要求官方来源或两个独立域名。来源不足时丢弃未验证草稿，以无 citation map 和 source summary 的自然限制说明完成；Provider、持久化、权限或内部状态损坏才使用红色失败。诊断只记录联网模式、能力、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。
 
-助手只通过 `web_search` 语义入口请求外网证据。严格结构化终局只有精确校准的 provider/model 才能启用；当前校准表为空，所有生产路由均使用来源组，不接受模型手写的精确标记。未来已校准路由的 Run-local `[W1]…[Wn]` 会渲染为上标徽章，并在消息底部「来源」列出对应 HTTPS 标题（见 [design-system.md](./design-system.md) Web 引用契约）。来源组的工具轮次保持私有，最终模型回合在与终局相同的可见文本净化后渐进输出；该净化会移除伪精确标记，并把不可精确绑定的“用户提供”归因或“本轮 / 上一轮”生命周期措辞改为自然中性表达。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。非严格工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider；严格路径先验证证据 provider，再选择无工具回答模型。普通来源区只显示来源类别计数与可点击 HTTPS 标题；不显示摘录、搜索词、工具参数、原始输出或内部推理。provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
+严格来源路径在 `bind_validated_content` 前密封正文，来源 repair 使用同一 ToolLoop 的一次修复槽；通过后只发布一次，失败不发送 `AnswerReset`。普通非严格回答继续实时流式。现代消息只按最终 `evidence_refs_json` 投影来源；显式空数组保持无来源，只有字段缺失的旧消息可以显示历史来源组。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider。普通来源区只显示最终实际引用的可点击 HTTPS 标题，不显示摘录、搜索词、工具参数、原始输出或内部推理。
 
 MCP 的 Web 路径仍只承载显式 `web.search` / `web.fetch` mapping，并只由联网开关授权。通用 MCP 只读工具走独立的 `external.read` 路径：管理中心把服务端 `readOnlyHint` 视为候选声明而非行为证明，只允许名称与递归输入 Schema 通过副作用审查、且用户对精确 provider/tool/schema 二次确认信任的工具进入白名单 binding；Composer 必须逐 Run 显式提交 binding ID/hash，Accept 原子冻结用户信任位、provider transport/config、Schema、映射和输出策略。运行中不重新 discovery，不透传服务端 description，也不允许 Skills、分类域、local-only 或模型自行扩大工具面。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现声明。
 
 内置 Tavily 预设使用官方 HTTPS MCP `https://mcp.tavily.com/mcp/`，将加密凭据服务 `iris.mcp.tavily` 作为必填 `Authorization: Bearer` 头（密钥绝不进入 URL）。其 `tavily_search` 映射 `query` / `max_results`，`tavily_extract` 映射 `urls`、`extract_depth: basic` 与 `format: markdown`。选择预设只填写配置，既不会自动启用 provider，也不会授予联网权限。
 
-## 严格事实核验（v1.2.16）
+## 当前事实证据分级（v1.3.0）
 
-联网开关只授予 `web_search` 能力；开启后，除本机运行时事实、对话元问题、用户已提供材料的变换与纯创作外，所有外部事实请求都使用 `web_required`。每次完成都必须绑定本 Run 的 HTTPS Web 证据；会话历史、摘要和旧引用不能充当新一轮的核验结果。首次搜索最多打包 8 条，整个 Run 累计最多注册 12 条；单条摘录最多 2,000 字符，Web 工具结果专用上限为 32,000 字符，超过预算必须重新打包或拒绝，绝不静默截断。精确校准路由才使用 Run-local 的 `[W1]…[Wn]`，不复用会话级编号；未校准路由只呈现来源组。联网未开启、来源不足或来源冲突时，Run 以可重试的安全终态结束，不给出事实结论。
+联网开关只授予 `web_search` 与 `web_fetch` 的共同能力边界；每次完成都必须绑定本 Run 的 HTTPS Web evidence，会话历史、摘要和旧引用不能充当新一轮核验结果。搜索候选每次最多 4 条、每 Run 最多 8 条且不占 evidence；整个 Run 最多注册 12 条正文 evidence，单条摘录最多 2,000 字符，Web 工具结果专用上限为 32,000 字符。Run-local `W1…Wn` 每轮重新编号，不复用会话级编号或数据库裸 ID。
 
-时效新闻、赛果、职位和价格优先使用官方/主办方来源；没有官方来源时至少需要两个独立可信来源一致。来源不充分时宁可拒答。
+普通近期电影、体育和新闻等 `VolatileExternalFact` 不因领域名称进入特殊路由，一份相关正文和精确引用即可完成。高风险事实、CitationCheck、显式要求官方来源或交叉核实的请求才提高到官方/双域名门槛。联网未开启、只有片段、来源冲突或严格门槛不足时不得伪造事实结论。
 
 ## 相关 IPC
 

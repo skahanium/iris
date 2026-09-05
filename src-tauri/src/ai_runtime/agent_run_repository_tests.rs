@@ -37,6 +37,7 @@ fn envelope() -> ExecutionEnvelope {
             kind: "local_only".to_string(),
             value: Some("enabled".to_string()),
         }],
+        fresh_fact: Default::default(),
     }
 }
 
@@ -78,10 +79,18 @@ fn legacy_v1_budget_json(policy: &RunBudgetPolicy) -> String {
     let fields = value
         .as_object_mut()
         .expect("canonical budget must be an object");
+    fields.insert("schemaVersion".into(), serde_json::json!(1));
+    fields.insert("postConfirmationMaxModelTurns".into(), serde_json::json!(0));
     for field in [
         "maxPromptTokens",
         "maxCompletionTokens",
         "maxTurnOutputTokens",
+        "maxLocalToolCalls",
+        "maxNetworkToolCalls",
+        "maxExternalReadToolCalls",
+        "maxRuntimeToolCalls",
+        "maxConfirmedChangeCalls",
+        "postConfirmationMaxLocalToolCalls",
     ] {
         fields.remove(field);
     }
@@ -151,6 +160,41 @@ fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
 }
 
 #[test]
+fn long_direct_history_freezes_the_only_two_turn_zero_tool_memory_shape() {
+    let (db, session_id, session_key) = setup();
+    db.with_conn(|conn| {
+        for seq in 1..=24_i64 {
+            conn.execute(
+                "INSERT INTO session_messages (session_id, seq, role, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    session_id,
+                    seq,
+                    if seq % 2 == 0 { "assistant" } else { "user" },
+                    format!("history-{seq}"),
+                    format!("2026-09-05T00:05:{seq:02}Z"),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("seed completed history");
+
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accept long direct run");
+    let budget = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("read budget")
+        .expect("budget");
+
+    assert_eq!(budget.profile, RunBudgetProfile::Direct);
+    assert_eq!(budget.max_model_turns, 2);
+    assert_eq!(budget.max_tool_calls, 0);
+    assert_eq!(budget.max_local_tool_calls, 0);
+    assert_eq!(budget.max_network_tool_calls, 0);
+    assert!(budget.is_direct_memory_compaction_shape());
+}
+
+#[test]
 fn final_evidence_must_be_registered_by_the_exact_run_not_only_its_session() {
     let (db, session_id, session_key) = setup();
     AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
@@ -173,6 +217,14 @@ fn final_evidence_must_be_registered_by_the_exact_run_not_only_its_session() {
         },
     )
     .expect("first-run evidence");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE run_id = 'run-1'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("complete first run before accepting the next turn");
     let mut second = accept_input(session_id, session_key);
     second.client_request_id = "client-request-2".to_string();
     second.run_id = "run-2".to_string();
@@ -226,6 +278,68 @@ fn accepted_and_retried_runs_keep_the_frozen_budget_policy() {
         .expect("read retry budget")
         .expect("retry budget");
     assert_eq!(retry_policy, accepted_policy);
+}
+
+#[test]
+fn hr3_new_budget_policy_freezes_category_caps_and_materializes_schema_one_rows() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key.clone());
+    input.envelope.effort = Effort::ToolLoop;
+    AgentRunRepository::accept(&db, input).expect("accept standard run");
+
+    let policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("read budget")
+        .expect("frozen budget");
+    assert_eq!(policy.schema_version, 3);
+    assert_eq!(policy.max_local_tool_calls, 12);
+    assert_eq!(policy.max_network_tool_calls, 6);
+    assert_eq!(policy.max_external_read_tool_calls, 6);
+    assert_eq!(policy.max_runtime_tool_calls, 4);
+    assert_eq!(policy.max_confirmed_change_calls, 6);
+
+    let mut schema_one = serde_json::to_value(&policy).expect("serialize policy");
+    let fields = schema_one.as_object_mut().expect("policy is a JSON object");
+    fields.insert("schemaVersion".into(), serde_json::json!(1));
+    for field in [
+        "maxLocalToolCalls",
+        "maxNetworkToolCalls",
+        "maxExternalReadToolCalls",
+        "maxRuntimeToolCalls",
+        "maxConfirmedChangeCalls",
+        "postConfirmationMaxLocalToolCalls",
+    ] {
+        fields.remove(field);
+    }
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET budget_policy_json = ?1 WHERE run_id = 'run-1'",
+            [serde_json::to_string(&schema_one)?],
+        )?;
+        Ok(())
+    })
+    .expect("simulate schema one Run");
+
+    let materialized = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("materialize schema one policy")
+        .expect("materialized budget");
+    assert_eq!(materialized, policy);
+
+    let mut tampered = serde_json::to_value(&policy).expect("serialize canonical policy");
+    tampered["maxNetworkToolCalls"] = serde_json::json!(7);
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET budget_policy_json = ?1 WHERE run_id = 'run-1'",
+            [serde_json::to_string(&tampered)?],
+        )?;
+        Ok(())
+    })
+    .expect("tamper category cap");
+    assert_eq!(
+        AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+            .expect_err("expanded category cap must fail closed")
+            .to_string(),
+        "agent_run_invalid_budget_policy"
+    );
 }
 
 #[test]
@@ -302,7 +416,7 @@ fn complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry() {
     let canonical_json = serde_json::to_value(&canonical_direct).expect("canonical direct policy");
 
     let mut unknown_schema = canonical_json.clone();
-    unknown_schema["schemaVersion"] = serde_json::json!(2);
+    unknown_schema["schemaVersion"] = serde_json::json!(4);
 
     let mut expanded_main_budget = canonical_json.clone();
     expanded_main_budget["maxModelTurns"] = serde_json::json!(1_000);
@@ -599,6 +713,114 @@ fn accept_rejects_reused_client_request_id_when_request_fingerprint_differs() {
 }
 
 #[test]
+fn same_session_concurrent_start_admits_only_one_active_run() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let db = std::sync::Arc::new(
+        Database::open(&directory.path().join("single-flight-start.db")).expect("database"),
+    );
+    let session = NormalSessionRepository::create(&db).expect("normal session");
+
+    let results = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for index in 0..2 {
+            let db = std::sync::Arc::clone(&db);
+            let mut input = accept_input(session.session_id, session.session_key.clone());
+            input.client_request_id = format!("concurrent-start-{index}");
+            input.run_id = format!("concurrent-run-{index}");
+            input.turn_id = format!("concurrent-turn-{index}");
+            input.message = format!("并发消息 {index}");
+            handles.push(scope.spawn(move || {
+                AgentRunRepository::accept_with_external_grants_outcome(&db, input, &[], false)
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("start thread"))
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec!["agent_run_active_run_exists"]
+    );
+    db.with_read_conn(|conn| {
+        let runs: i64 = conn.query_row("SELECT COUNT(*) FROM agent_runs", [], |row| row.get(0))?;
+        let messages: i64 = conn.query_row("SELECT COUNT(*) FROM session_messages", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!((runs, messages), (1, 1));
+        Ok(())
+    })
+    .expect("single-flight facts");
+}
+
+#[test]
+fn same_session_concurrent_retry_admits_only_one_active_run() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let db = std::sync::Arc::new(
+        Database::open(&directory.path().join("single-flight-retry.db")).expect("database"),
+    );
+    let session = NormalSessionRepository::create(&db).expect("normal session");
+    AgentRunRepository::accept(
+        &db,
+        accept_input(session.session_id, session.session_key.clone()),
+    )
+    .expect("source run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = 'run-1'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("make source retryable");
+
+    let results = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for index in 0..2 {
+            let db = std::sync::Arc::clone(&db);
+            let input = RetryRunInput {
+                session_key: session.session_key.clone(),
+                source_run_id: "run-1".into(),
+                client_request_id: format!("concurrent-retry-{index}"),
+                run_id: format!("retry-run-{index}"),
+            };
+            handles.push(scope.spawn(move || AgentRunRepository::accept_retry_outcome(&db, input)));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("retry thread"))
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec!["agent_run_active_run_exists"]
+    );
+    db.with_read_conn(|conn| {
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_runs
+             WHERE status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'paused', 'verifying')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(active, 1);
+        Ok(())
+    })
+    .expect("single-flight retry facts");
+}
+
+#[test]
 fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
     let (db, session_id, session_key) = setup();
     let mut input = accept_input(session_id, session_key.clone());
@@ -728,6 +950,10 @@ fn failed_run_retry_reuses_only_the_latest_failed_turn() {
     assert_eq!(retry.turn_id, "turn-1");
 
     db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = 'run-2'",
+            [],
+        )?;
         conn.execute(
             "INSERT INTO session_messages (session_id, seq, role, content, created_at)
              VALUES (?1, 2, 'user', 'newer turn makes the old failure ineligible', ?2)",
@@ -1525,11 +1751,12 @@ fn durable_confirmation_materializes_a_legacy_v1_budget_before_resuming() {
     let restored = FrozenChangePlan::from_persisted_plan_json(&consumed.plan_json)
         .expect("restore exact plan");
     assert_eq!(restored.plan_hash(), consumed.plan_hash);
-    assert_eq!(restored.change()["content"], "approved");
+    assert_eq!(restored.operations()[0].change()["content"], "approved");
     let materialized = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
         .expect("read materialized durable budget")
         .expect("durable budget");
-    assert_eq!(materialized, canonical_budget);
+    assert_eq!(materialized.post_confirmation_max_model_turns, 0);
+    assert_eq!(materialized.post_confirmation_max_local_tool_calls, 0);
     db.with_read_conn(|conn| {
         let stored: String = conn.query_row(
             "SELECT budget_policy_json FROM agent_runs WHERE run_id = 'run-1'",
@@ -1538,7 +1765,7 @@ fn durable_confirmation_materializes_a_legacy_v1_budget_before_resuming() {
         )?;
         assert_eq!(
             stored,
-            serde_json::to_string(&canonical_budget).expect("canonical durable budget")
+            serde_json::to_string(&materialized).expect("materialized durable budget")
         );
         Ok(())
     })
@@ -1710,6 +1937,79 @@ fn durable_apply_checkpoint_persists_only_hashes_and_advances_in_fixed_order() {
             .stage(),
         DurableApplyCheckpointStage::Completed
     );
+}
+
+#[test]
+fn durable_change_set_checkpoint_resumes_only_the_unapplied_suffix() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key);
+    input.envelope.effort = Effort::Durable;
+    input.envelope.effect = Effect::Apply;
+    AgentRunRepository::accept(&db, input).expect("accepted durable run");
+    let checkpoint = |stage, next_operation_index| {
+        DurableApplyCheckpoint::new_change_set(
+            "confirmation-set",
+            "sha256:set",
+            stage,
+            vec!["sha256:a0".into(), "sha256:b0".into()],
+            vec!["sha256:a1".into(), "sha256:b1".into()],
+            next_operation_index,
+            2,
+            Vec::new(),
+        )
+        .expect("valid set checkpoint")
+    };
+
+    for (stage, cursor) in [
+        (DurableApplyCheckpointStage::Approved, 0),
+        (DurableApplyCheckpointStage::Dispatching, 0),
+        (DurableApplyCheckpointStage::Applied, 1),
+    ] {
+        AgentRunRepository::append_checkpoint_step(
+            &db,
+            AppendRunCheckpointInput {
+                run_id: "run-1".into(),
+                state_version: 0,
+                checkpoint: checkpoint(stage, cursor),
+            },
+        )
+        .expect("ordered prefix checkpoint");
+    }
+    let skipped_suffix = AgentRunRepository::append_checkpoint_step(
+        &db,
+        AppendRunCheckpointInput {
+            run_id: "run-1".into(),
+            state_version: 0,
+            checkpoint: checkpoint(DurableApplyCheckpointStage::Applied, 2),
+        },
+    );
+    assert_eq!(
+        skipped_suffix
+            .expect_err("cannot mark the second operation applied before dispatch")
+            .to_string(),
+        "agent_run_checkpoint_stage_conflict"
+    );
+    for (stage, cursor) in [
+        (DurableApplyCheckpointStage::Dispatching, 1),
+        (DurableApplyCheckpointStage::Applied, 2),
+        (DurableApplyCheckpointStage::Completed, 2),
+    ] {
+        AgentRunRepository::append_checkpoint_step(
+            &db,
+            AppendRunCheckpointInput {
+                run_id: "run-1".into(),
+                state_version: 0,
+                checkpoint: checkpoint(stage, cursor),
+            },
+        )
+        .expect("ordered suffix checkpoint");
+    }
+    let latest = AgentRunRepository::latest_durable_apply_checkpoint(&db, "run-1")
+        .expect("latest checkpoint")
+        .expect("completed checkpoint");
+    assert_eq!(latest.stage(), DurableApplyCheckpointStage::Completed);
+    assert_eq!(latest.next_operation_index(), 2);
+    assert_eq!(latest.operation_count(), 2);
 }
 
 #[test]

@@ -1,12 +1,13 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
-    AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
+    is_natural_clarification, AgentModelTurnBudget, AgentToolLoop, RequiredWebBootstrapObservation,
+    ToolLoopExecutor, ToolLoopProvider, EVIDENCE_LIMITED_RESPONSE,
 };
 use super::model_gateway::{StreamEventObserver, StreamSurface};
 use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
@@ -14,6 +15,7 @@ use crate::ai_runtime::{
     FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec,
 };
 use crate::error::{AppError, AppResult};
+use crate::storage::db::Database;
 
 fn standard_tool_loop() -> AgentToolLoop {
     AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
@@ -34,7 +36,91 @@ fn direct_provider_has_an_explicit_nonzero_turn_budget() {
 }
 
 #[tokio::test]
-async fn parent_turn_reuses_one_frozen_budget_for_every_provider_call() {
+async fn post_confirmation_loop_allows_only_four_local_calls_and_reserves_the_second_turn() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_calls_response(vec![
+                tool_call_with_arguments(
+                    "verify-web",
+                    "web_search",
+                    serde_json::json!({"query":"x"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-write",
+                    "replace_selection",
+                    serde_json::json!({"replacement":"must not dispatch"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-runtime",
+                    "system_time_now",
+                    serde_json::json!({}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-1",
+                    "read_note",
+                    serde_json::json!({"path":"a.md"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-2",
+                    "read_note",
+                    serde_json::json!({"path":"b.md"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-3",
+                    "read_note",
+                    serde_json::json!({"path":"c.md"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-4",
+                    "read_note",
+                    serde_json::json!({"path":"d.md"}),
+                ),
+                tool_call_with_arguments(
+                    "verify-read-5",
+                    "read_note",
+                    serde_json::json!({"path":"e.md"}),
+                ),
+            ]),
+            scripted_final_response("核对完成"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = NameRecordingExecutor::default();
+    let mut observer = NoopObserver;
+    let mut policy = RunBudgetPolicy::standard();
+    policy.post_confirmation_max_model_turns = 2;
+    policy.post_confirmation_max_local_tool_calls = 4;
+
+    let outcome = AgentToolLoop::from_post_confirmation_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-post-confirmation-budget",
+            Vec::new(),
+            vec![
+                web_tool_spec(),
+                readonly_tool_spec("replace_selection"),
+                readonly_tool_spec("system_time_now"),
+                readonly_tool_spec("read_note"),
+            ],
+            &mut observer,
+        )
+        .await
+        .expect("bounded verification retains one final synthesis turn");
+
+    assert_eq!(outcome.content, "核对完成");
+    assert_eq!(outcome.model_turns, 2);
+    assert_eq!(outcome.tool_calls, 4);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        executor.calls.lock().expect("recorded calls").as_slice(),
+        ["read_note", "read_note", "read_note", "read_note"]
+    );
+}
+
+#[tokio::test]
+async fn parent_turn_keeps_the_frozen_ceiling_while_reserving_final_synthesis() {
     let provider = MultiTurnBudgetRecordingProvider {
         responses: Mutex::new(VecDeque::from([
             super::model_gateway::GatewayResponse {
@@ -80,22 +166,826 @@ async fn parent_turn_reuses_one_frozen_budget_for_every_provider_call() {
             &mut observer,
         )
         .await
-        .expect("two turns complete with one immutable budget");
+        .expect("two turns complete within one immutable budget policy");
+
+    let budgets = provider.budgets.lock().expect("budget lock");
+    assert_eq!(budgets.len(), 2);
+    assert_eq!(budgets[0].max_prompt_tokens, Some(128_000));
+    assert_eq!(budgets[0].max_completion_tokens, Some(12_000));
+    assert_eq!(budgets[0].max_turn_output_tokens, Some(4_000));
+    assert_eq!(budgets[1].max_prompt_tokens, Some(128_000));
+    assert!(
+        budgets[1]
+            .max_completion_tokens
+            .is_some_and(|limit| limit <= 16_000),
+        "the final turn receives only the remaining frozen completion budget"
+    );
+    assert_eq!(budgets[1].max_turn_output_tokens, Some(4_000));
+}
+
+#[tokio::test]
+async fn exploration_reserves_final_output_capacity_before_calling_the_gateway() {
+    let provider = MultiTurnBudgetRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call()),
+            scripted_final_response("final answer"),
+        ])),
+        budgets: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_model_turns = 2;
+    policy.max_completion_tokens = 6_000;
+    policy.max_turn_output_tokens = 4_000;
+    let mut observer = NoopObserver;
+
+    AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-reserved-final-output",
+            Vec::new(),
+            vec![readonly_tool_spec("system_time_now")],
+            &mut observer,
+        )
+        .await
+        .expect("the final answer has a reserved output allowance");
+
+    let budgets = provider.budgets.lock().expect("budget lock");
+    assert_eq!(
+        budgets[0],
+        AgentModelTurnBudget {
+            max_prompt_tokens: Some(128_000),
+            max_completion_tokens: Some(2_000),
+            max_turn_output_tokens: Some(2_000),
+        }
+    );
+    assert_eq!(budgets[1].max_prompt_tokens, Some(128_000));
+    assert_eq!(budgets[1].max_turn_output_tokens, Some(4_000));
+    assert!(
+        budgets[1]
+            .max_completion_tokens
+            .is_some_and(|remaining| (4_000..=6_000).contains(&remaining)),
+        "the synthesis turn receives the actual remaining allowance without exceeding the Run cap"
+    );
+}
+
+#[tokio::test]
+async fn unexposed_tool_call_is_rejected_without_reaching_executor() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call-not-exposed".into(),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: "not_exposed".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("final answer".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-unexposed-tool",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("unexposed tool call must be rejected and the loop must finish");
 
     assert_eq!(
-        provider.budgets.lock().expect("budget lock").as_slice(),
+        executor.calls.load(Ordering::SeqCst),
+        0,
+        "an unexposed tool call must never reach the executor"
+    );
+    assert!(
+        provider
+            .second_turn_messages
+            .lock()
+            .expect("repair transcript")
+            .iter()
+            .all(|message| message.tool_calls.as_ref().is_none_or(Vec::is_empty)),
+        "a rejected proposal is Host validation feedback, not an assistant/tool transcript"
+    );
+}
+
+#[tokio::test]
+async fn mixed_tool_proposals_only_persist_dispatched_calls_in_the_tool_transcript() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_calls_response(vec![
+                tool_call_with_arguments("valid", "system_time_now", serde_json::json!({})),
+                tool_call_with_arguments("invalid", "not_exposed", serde_json::json!({})),
+            ]),
+            scripted_final_response("final answer"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-mixed-proposals",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("the dispatched call can complete while the invalid one is fed back safely");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+    let repair = provider
+        .second_turn_messages
+        .lock()
+        .expect("repair transcript");
+    let assistant = repair
+        .iter()
+        .find(|message| message.tool_calls.is_some())
+        .expect("one canonical assistant tool turn");
+    assert_eq!(assistant.tool_calls.as_ref().expect("tool calls").len(), 1);
+    assert_eq!(
+        assistant.tool_calls.as_ref().expect("tool calls")[0].id,
+        "valid"
+    );
+    assert!(repair.iter().any(|message| {
+        matches!(message.role, MessageRole::System)
+            && message
+                .content
+                .text_content()
+                .contains("not_exposed:rejected_before_dispatch")
+    }));
+}
+
+#[tokio::test]
+async fn required_web_run_receives_host_observation_before_a_model_can_skip_tools() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([scripted_final_response(
+            "已根据本轮正文整理。",
+        )])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = BootstrapWebExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-required-web-bootstrap",
+            vec![LlmMessage {
+                role: MessageRole::User,
+                content: "近期有什么变化？".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            }],
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a Host bootstrap supplies the required observation before the answer turn");
+
+    assert_eq!(outcome.content, "已根据本轮正文整理。");
+    assert_eq!(outcome.tool_calls, 2);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn required_web_bootstrap_is_rejected_before_dispatch_when_two_network_actions_do_not_fit() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::new()),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = BootstrapWebExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_network_tool_calls = 1;
+    let mut observer = NoopObserver;
+
+    let error = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-required-web-bootstrap-insufficient-budget",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect_err("required bootstrap must not partially dispatch when its minimum cannot fit");
+
+    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn long_conversation_model_compaction_consumes_one_hidden_turn_and_never_streams_it() {
+    let db = Database::open_in_memory().expect("database");
+    let session =
+        super::normal_session_repository::NormalSessionRepository::create(&db).expect("session");
+    db.with_conn(|conn| {
+        for seq in 1..=27_i64 {
+            conn.execute(
+                "INSERT INTO session_messages
+                 (session_id, seq, role, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    session.session_id,
+                    seq,
+                    if seq % 2 == 0 { "assistant" } else { "user" },
+                    format!("message-{seq}"),
+                    format!("2026-09-03T00:00:{seq:02}Z"),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("seed history");
+    super::conversation_memory::ConversationMemory::refresh_for_session(
+        &db,
+        session.session_id,
+        Default::default(),
+    )
+    .expect("deterministic summary");
+    let prior_memory =
+        super::conversation_memory::ConversationMemory::latest_for_session(&db, session.session_id)
+            .expect("memory")
+            .expect("summary");
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_final_response(
+                r#"{"goal_summary":"current goal","preference_summary":"latest correction","decision_summary":"confirmed","open_threads_summary":"next"}"#,
+            ),
+            scripted_final_response("正常答复"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = MemoryCompactingExecutor {
+        db,
+        session_id: session.session_id,
+    };
+    let mut observer = NoopObserver;
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "memory-compaction-run",
+            vec![
+                LlmMessage {
+                    role: MessageRole::System,
+                    content: prior_memory.to_prompt_fragment().into(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                    reasoning_content: None,
+                },
+                LlmMessage {
+                    role: MessageRole::User,
+                    content: "继续当前任务".into(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                    reasoning_content: None,
+                },
+            ],
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect("normal answer after compaction");
+
+    assert_eq!(outcome.content, "正常答复");
+    assert_eq!(outcome.model_turns, 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(
+        provider
+            .second_turn_messages
+            .lock()
+            .expect("messages")
+            .iter()
+            .any(|message| message.content.text_content().contains("current goal")),
+        "the active answer must receive the same summary that compaction persisted"
+    );
+    let memory = super::conversation_memory::ConversationMemory::latest_for_session(
+        &executor.db,
+        session.session_id,
+    )
+    .expect("memory")
+    .expect("summary");
+    assert!(memory.goal_summary.starts_with("[模型压缩]"));
+}
+
+#[tokio::test]
+async fn confirmation_calls_in_one_model_turn_are_frozen_as_one_ordered_batch() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([scripted_tool_calls_response(vec![
+            tool_call_with_arguments(
+                "change-a",
+                "replace_selection",
+                serde_json::json!({"target_path":"a.md"}),
+            ),
+            tool_call_with_arguments(
+                "change-b",
+                "replace_selection",
+                serde_json::json!({"target_path":"b.md"}),
+            ),
+        ])])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = ChangeSetRecordingExecutor {
+        ordinary_calls: AtomicU32::new(0),
+        batches: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    let mut tool = readonly_tool_spec("replace_selection");
+    tool.requires_confirmation = true;
+
+    let error = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-change-set",
+            Vec::new(),
+            vec![tool],
+            &mut observer,
+        )
+        .await
+        .expect_err("the loop must stop at one pending confirmation");
+
+    assert_eq!(
+        error.to_string(),
+        super::agent_tool_loop::CONFIRMATION_PENDING_ERROR
+    );
+    assert_eq!(executor.ordinary_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        executor.batches.lock().expect("batch lock").as_slice(),
+        &[vec!["change-a".to_string(), "change-b".to_string()]]
+    );
+}
+
+#[tokio::test]
+async fn network_category_cap_rejects_the_second_dispatch_without_calling_executor() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "network-1",
+                "web_search",
+                serde_json::json!({ "query": "first" }),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "network-2",
+                "web_search",
+                serde_json::json!({ "query": "second" }),
+            )),
+            scripted_final_response("bounded final answer"),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let policy = RunBudgetPolicy {
+        schema_version: 2,
+        profile: RunBudgetProfile::Standard,
+        max_prompt_tokens: 64_000,
+        max_completion_tokens: 8_000,
+        max_turn_output_tokens: 4_000,
+        max_model_turns: 4,
+        max_tool_calls: 24,
+        max_local_tool_calls: 12,
+        max_network_tool_calls: 1,
+        max_external_read_tool_calls: 6,
+        max_runtime_tool_calls: 4,
+        max_confirmed_change_calls: 6,
+        max_child_runs: 0,
+        child_max_model_turns: 0,
+        child_max_tool_calls: 0,
+        child_input_tokens_per_turn: 0,
+        child_output_tokens_per_turn: 0,
+        post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-network-cap",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a category rejection leaves room for final synthesis");
+
+    assert_eq!(outcome.content, "bounded final answer");
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn rejected_tool_proposals_close_the_business_surface_before_the_reserved_synthesis_turn() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "not-exposed",
+                "not_exposed",
+                serde_json::json!({}),
+            )),
+            scripted_final_response("I can answer from the available context."),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_model_turns = 2;
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-rejected-proposal-synthesis",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a rejected proposal still leaves the reserved synthesis turn");
+
+    assert_eq!(outcome.content, "I can answer from the available context.");
+    assert_eq!(
+        provider.surfaces.lock().expect("tool surfaces").as_slice(),
+        [vec!["web_search".to_string()], Vec::<String>::new()]
+    );
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn one_model_turn_executes_only_two_independent_discovery_calls() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_calls_response(vec![
+                tool_call_with_arguments(
+                    "discover-1",
+                    "web_search",
+                    serde_json::json!({ "query": "first direction" }),
+                ),
+                tool_call_with_arguments(
+                    "discover-2",
+                    "web_search",
+                    serde_json::json!({ "query": "second direction" }),
+                ),
+                tool_call_with_arguments(
+                    "discover-3",
+                    "web_search",
+                    serde_json::json!({ "query": "dependent direction" }),
+                ),
+            ]),
+            scripted_final_response("bounded synthesis"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-bounded-discovery-batch",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("deferred discovery leaves a synthesis turn");
+
+    assert_eq!(outcome.content, "bounded synthesis");
+    assert_eq!(outcome.tool_calls, 2);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+    let second_turn = provider
+        .second_turn_messages
+        .lock()
+        .expect("second turn messages");
+    assert!(second_turn.iter().any(|message| {
+        matches!(message.role, MessageRole::System)
+            && message
+                .content
+                .text_content()
+                .contains("web_search:deferred_for_feedback")
+    }));
+    assert!(second_turn
+        .iter()
+        .all(|message| message.tool_call_id.as_deref() != Some("discover-3")));
+}
+
+#[tokio::test]
+async fn frozen_category_caps_reject_the_first_call_beyond_each_boundary() {
+    for (name, exposed_tool, allowed_dispatches) in [
+        (
+            "search_keyword",
+            readonly_tool_spec("search_keyword"),
+            12_u32,
+        ),
+        ("web_search", web_tool_spec(), 6),
+        (
+            "fs_read_authorized_folder",
+            readonly_tool_spec("fs_read_authorized_folder"),
+            6,
+        ),
+        ("system_time_now", readonly_tool_spec("system_time_now"), 4),
+        (
+            "insert_text_at_cursor",
+            readonly_tool_spec("insert_text_at_cursor"),
+            6,
+        ),
+        (
+            "unknown_frozen_external_read",
+            readonly_tool_spec("unknown_frozen_external_read"),
+            6,
+        ),
+    ] {
+        let calls = (0..=allowed_dispatches)
+            .map(|index| {
+                tool_call_with_arguments(
+                    &format!("{name}-{index}"),
+                    name,
+                    serde_json::json!({ "query": format!("attempt-{index}") }),
+                )
+            })
+            .collect();
+        let provider = ToolSurfaceRecordingProvider {
+            responses: Mutex::new(VecDeque::from([
+                scripted_tool_calls_response(calls),
+                scripted_final_response("bounded synthesis"),
+            ])),
+            surfaces: Mutex::new(Vec::new()),
+        };
+        let executor = RecordingExecutor {
+            calls: AtomicU32::new(0),
+            web_evidence: false,
+        };
+        let mut observer = NoopObserver;
+
+        let outcome = standard_tool_loop()
+            .execute(
+                &provider,
+                &executor,
+                &format!("run-category-{name}"),
+                Vec::new(),
+                vec![exposed_tool],
+                &mut observer,
+            )
+            .await
+            .expect("a rejected boundary call must leave room for synthesis");
+
+        assert_eq!(outcome.content, "bounded synthesis", "{name}");
+        let expected_dispatches = if matches!(name, "search_keyword" | "web_search") {
+            allowed_dispatches.min(2)
+        } else {
+            allowed_dispatches
+        };
+        assert_eq!(
+            executor.calls.load(Ordering::SeqCst),
+            expected_dispatches,
+            "{name} must respect both its per-turn action batch and frozen category cap"
+        );
+    }
+}
+
+#[tokio::test]
+async fn two_complete_rounds_without_progress_close_tools_before_final_synthesis() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "runtime-1",
+                "system_time_now",
+                serde_json::json!({ "step": 1 }),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "runtime-2",
+                "system_time_now",
+                serde_json::json!({ "step": 2 }),
+            )),
+            scripted_final_response("synthesized from bounded results"),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-no-progress-synthesis",
+            Vec::new(),
+            vec![readonly_tool_spec("system_time_now")],
+            &mut observer,
+        )
+        .await
+        .expect("two no-progress rounds must reserve a final synthesis turn");
+
+    assert_eq!(outcome.content, "synthesized from bounded results");
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        provider
+            .surfaces
+            .lock()
+            .expect("tool surfaces lock")
+            .as_slice(),
         [
-            AgentModelTurnBudget {
-                max_prompt_tokens: Some(128_000),
-                max_completion_tokens: Some(16_000),
-                max_turn_output_tokens: Some(4_000),
-            },
-            AgentModelTurnBudget {
-                max_prompt_tokens: Some(128_000),
-                max_completion_tokens: Some(16_000),
-                max_turn_output_tokens: Some(4_000),
-            },
+            vec!["system_time_now".to_string()],
+            vec!["system_time_now".to_string()],
+            vec![]
         ]
+    );
+}
+
+#[tokio::test]
+async fn final_model_turn_is_reserved_after_progressing_tool_rounds() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "web-1",
+                "web_search",
+                serde_json::json!({ "query": "first direction" }),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "web-2",
+                "web_search",
+                serde_json::json!({ "query": "second direction" }),
+            )),
+            scripted_final_response("synthesized after bounded exploration"),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = ResourceTracingExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let policy = RunBudgetPolicy {
+        schema_version: 2,
+        profile: RunBudgetProfile::Standard,
+        max_prompt_tokens: 64_000,
+        max_completion_tokens: 8_000,
+        max_turn_output_tokens: 4_000,
+        max_model_turns: 3,
+        max_tool_calls: 24,
+        max_local_tool_calls: 12,
+        max_network_tool_calls: 6,
+        max_external_read_tool_calls: 6,
+        max_runtime_tool_calls: 4,
+        max_confirmed_change_calls: 6,
+        max_child_runs: 0,
+        child_max_model_turns: 0,
+        child_max_tool_calls: 0,
+        child_input_tokens_per_turn: 0,
+        child_output_tokens_per_turn: 0,
+        post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-reserved-final-turn",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("the final model turn must remain available for synthesis");
+
+    assert_eq!(outcome.content, "synthesized after bounded exploration");
+    assert_eq!(executor.calls.lock().expect("trace calls lock").len(), 2);
+    assert_eq!(
+        provider
+            .surfaces
+            .lock()
+            .expect("tool surfaces lock")
+            .as_slice(),
+        [
+            vec!["web_search".to_string()],
+            vec!["web_search".to_string()],
+            vec![]
+        ]
+    );
+}
+
+#[tokio::test]
+async fn one_generic_loop_can_mix_network_and_local_reads_before_synthesizing() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "web-1",
+                "web_search",
+                serde_json::json!({ "query": "public context" }),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "local-1",
+                "search_hybrid",
+                serde_json::json!({ "query": "note context" }),
+            )),
+            scripted_final_response("combined answer"),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = ResourceTracingExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-mixed-tool-loop",
+            Vec::new(),
+            vec![web_tool_spec(), readonly_tool_spec("search_hybrid")],
+            &mut observer,
+        )
+        .await
+        .expect("one generic loop must compose authorized network and local reads");
+
+    assert_eq!(outcome.content, "combined answer");
+    let calls = executor.calls.lock().expect("trace calls lock");
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        ["web_search", "search_hybrid"]
     );
 }
 
@@ -149,6 +1039,36 @@ struct ScriptedProvider {
     responses: Mutex<VecDeque<super::model_gateway::GatewayResponse>>,
     calls: AtomicU32,
     second_turn_messages: Mutex<Vec<LlmMessage>>,
+}
+
+struct ToolSurfaceRecordingProvider {
+    responses: Mutex<VecDeque<super::model_gateway::GatewayResponse>>,
+    surfaces: Mutex<Vec<Vec<String>>>,
+}
+
+impl ToolLoopProvider for ToolSurfaceRecordingProvider {
+    fn answer_turn<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _messages: &'a [LlmMessage],
+        tools: &'a [ToolSpec],
+        _budget: AgentModelTurnBudget,
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<Box<dyn Future<Output = AppResult<super::model_gateway::GatewayResponse>> + Send + 'a>>
+    {
+        self.surfaces
+            .lock()
+            .expect("tool surfaces lock")
+            .push(tools.iter().map(|tool| tool.name.clone()).collect());
+        Box::pin(async move {
+            Ok(self
+                .responses
+                .lock()
+                .expect("responses lock")
+                .pop_front()
+                .expect("scripted response"))
+        })
+    }
 }
 
 struct MultiTurnBudgetRecordingProvider {
@@ -211,12 +1131,156 @@ struct RecordingExecutor {
     web_evidence: bool,
 }
 
+#[derive(Default)]
+struct NameRecordingExecutor {
+    calls: Mutex<Vec<String>>,
+}
+
+struct ResourceTracingExecutor {
+    calls: Mutex<Vec<(String, String, String)>>,
+}
+
+struct RepeatedFailureExecutor {
+    calls: AtomicU32,
+}
+
+struct ChangeSetRecordingExecutor {
+    ordinary_calls: AtomicU32,
+    batches: Mutex<Vec<Vec<String>>>,
+}
+
 struct FailingWebExecutor;
 struct LargeResultExecutor;
 struct LargeWebResultExecutor;
 struct OversizedWebResultExecutor;
 struct RequiredWebExecutor;
 struct RequiredExternalExecutor;
+struct SourceBindingExecutor;
+struct FinalSubmissionValidationExecutor;
+struct EmptyWebEvidenceExecutor;
+struct RecoverableWebExecutor {
+    registered: AtomicBool,
+}
+
+struct BootstrapWebExecutor {
+    calls: AtomicU32,
+}
+
+struct BootstrapWithoutEvidenceExecutor;
+
+struct MemoryCompactingExecutor {
+    db: Database,
+    session_id: i64,
+}
+
+impl ToolLoopExecutor for MemoryCompactingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("the compaction test has no tools") })
+    }
+
+    fn conversation_memory_compaction_request(
+        &self,
+    ) -> AppResult<Option<super::conversation_memory::ConversationMemoryCompactionRequest>> {
+        super::conversation_memory::ConversationMemory::pending_model_compaction(
+            &self.db,
+            self.session_id,
+        )
+    }
+
+    fn apply_conversation_memory_compaction(
+        &self,
+        request: &super::conversation_memory::ConversationMemoryCompactionRequest,
+        output: Option<&str>,
+    ) -> AppResult<Option<super::conversation_memory::ConversationMemory>> {
+        super::conversation_memory::ConversationMemory::apply_model_compaction(
+            &self.db, request, output,
+        )
+    }
+}
+
+impl ToolLoopExecutor for BootstrapWebExecutor {
+    fn required_web_bootstrap_action_count(&self) -> u32 {
+        2
+    }
+
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("the test supplies the Host bootstrap directly") })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+
+    fn has_web_evidence(&self) -> bool {
+        self.calls.load(Ordering::SeqCst) == 2
+    }
+
+    fn bootstrap_required_web_observation<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _remaining_tool_calls: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<Option<RequiredWebBootstrapObservation>>> + Send + 'a>>
+    {
+        self.calls.store(2, Ordering::SeqCst);
+        Box::pin(async {
+            Ok(Some(RequiredWebBootstrapObservation {
+                tool_calls: 2,
+                network_tool_calls: 2,
+                observation: "Host Web observation: searched original request and fetched two selected bodies.".into(),
+            }))
+        })
+    }
+}
+
+impl ToolLoopExecutor for BootstrapWithoutEvidenceExecutor {
+    fn required_web_bootstrap_action_count(&self) -> u32 {
+        2
+    }
+
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("the test supplies the Host bootstrap directly") })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+
+    fn has_web_evidence(&self) -> bool {
+        false
+    }
+
+    fn bootstrap_required_web_observation<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _remaining_tool_calls: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<Option<RequiredWebBootstrapObservation>>> + Send + 'a>>
+    {
+        Box::pin(async {
+            Ok(Some(RequiredWebBootstrapObservation {
+                tool_calls: 2,
+                network_tool_calls: 2,
+                observation:
+                    "Host searched and fetched, but neither selected page supplied a usable body."
+                        .into(),
+            }))
+        })
+    }
+}
 
 impl ToolLoopExecutor for RequiredWebExecutor {
     fn execute<'a>(
@@ -245,6 +1309,100 @@ impl ToolLoopExecutor for RequiredExternalExecutor {
 
     fn requires_external_evidence(&self) -> bool {
         true
+    }
+}
+
+impl ToolLoopExecutor for EmptyWebEvidenceExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "items": [] }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+}
+
+impl ToolLoopExecutor for SourceBindingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("source binding repair closes the business tool surface") })
+    }
+
+    fn requires_natural_source_binding(&self) -> bool {
+        true
+    }
+
+    fn natural_source_binding_is_valid(&self, content: &str) -> bool {
+        content.contains("[W1]")
+    }
+}
+
+impl ToolLoopExecutor for FinalSubmissionValidationExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("structured final repair has no business tool surface") })
+    }
+
+    fn final_submission_is_valid(
+        &self,
+        submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
+    ) -> bool {
+        submission.blocks.iter().all(|block| {
+            !block.sources.is_empty() && block.sources.iter().all(|source| source == "W1")
+        })
+    }
+}
+
+impl ToolLoopExecutor for RecoverableWebExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.registered.store(true, Ordering::SeqCst);
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "canonicalUrl": "https://example.test/current" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+
+    fn has_web_evidence(&self) -> bool {
+        self.registered.load(Ordering::SeqCst)
     }
 }
 
@@ -358,6 +1516,118 @@ impl ToolLoopExecutor for RecordingExecutor {
 
     fn has_web_evidence(&self) -> bool {
         self.web_evidence && self.calls.load(Ordering::SeqCst) > 0
+    }
+}
+
+impl ToolLoopExecutor for NameRecordingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.calls
+            .lock()
+            .expect("recorded tool calls")
+            .push(call.function.name.clone());
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "resourceId": "verification-read" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopExecutor for ChangeSetRecordingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.ordinary_calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { unreachable!("change calls must be frozen as a batch") })
+    }
+
+    fn request_change_set<'a>(
+        &'a self,
+        _run_id: &'a str,
+        calls: &'a [ToolCall],
+        _first_step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+        self.batches
+            .lock()
+            .expect("batch lock")
+            .push(calls.iter().map(|call| call.id.clone()).collect());
+        Box::pin(async { Ok(()) })
+    }
+}
+
+impl ToolLoopExecutor for ResourceTracingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let query_or_path = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+            .ok()
+            .and_then(|arguments| {
+                ["query", "path"].into_iter().find_map(|key| {
+                    arguments
+                        .get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+            })
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let resource_id = format!("{}:{query_or_path}", call.function.name);
+        self.calls.lock().expect("trace calls lock").push((
+            call.function.name.clone(),
+            query_or_path,
+            resource_id.clone(),
+        ));
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "resource_id": resource_id }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopExecutor for RepeatedFailureExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: false,
+                output: serde_json::json!({ "error": "transient test failure" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: Some("transient test failure".into()),
+            })
+        })
     }
 }
 
@@ -609,19 +1879,25 @@ async fn interrupted_visible_drafts_count_against_per_turn_and_cumulative_budget
             content: String::new(),
         };
         let policy = RunBudgetPolicy {
-            schema_version: 1,
+            schema_version: 2,
             profile: RunBudgetProfile::Standard,
             max_prompt_tokens: 1_000,
             max_completion_tokens: LIMIT as u32,
             max_turn_output_tokens: LIMIT as u32,
             max_model_turns: 2,
             max_tool_calls: 0,
+            max_local_tool_calls: 0,
+            max_network_tool_calls: 0,
+            max_external_read_tool_calls: 0,
+            max_runtime_tool_calls: 0,
+            max_confirmed_change_calls: 0,
             max_child_runs: 0,
             child_max_model_turns: 0,
             child_max_tool_calls: 0,
             child_input_tokens_per_turn: 0,
             child_output_tokens_per_turn: 0,
             post_confirmation_max_model_turns: 0,
+            post_confirmation_max_local_tool_calls: 0,
         };
 
         let result = AgentToolLoop::from_policy(&policy)
@@ -678,6 +1954,62 @@ fn web_tool_call() -> ToolCall {
             name: "web_search".into(),
             arguments: r#"{"query":"latest status"}"#.into(),
         },
+    }
+}
+
+fn tool_call_with_arguments(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        call_type: "function".into(),
+        function: FunctionCall {
+            name: name.into(),
+            arguments: arguments.to_string(),
+        },
+    }
+}
+
+fn scripted_tool_response(call: ToolCall) -> super::model_gateway::GatewayResponse {
+    scripted_tool_calls_response(vec![call])
+}
+
+fn scripted_tool_calls_response(calls: Vec<ToolCall>) -> super::model_gateway::GatewayResponse {
+    super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: calls,
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    }
+}
+
+fn scripted_final_response(content: &str) -> super::model_gateway::GatewayResponse {
+    super::model_gateway::GatewayResponse {
+        content: Some(content.into()),
+        tool_calls: Vec::new(),
+        usage: Default::default(),
+        finish_reason: "stop".into(),
+        reasoning_content: None,
+        continuation: None,
+    }
+}
+
+fn readonly_tool_spec(name: &str) -> ToolSpec {
+    ToolSpec {
+        name: name.into(),
+        description: format!("Test tool {name}"),
+        input_schema: serde_json::json!({ "type": "object" }),
+        access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+        requires_confirmation: false,
+        max_results: None,
+        capability_affinity: Vec::new(),
+    }
+}
+
+fn web_tool_spec() -> ToolSpec {
+    ToolSpec {
+        access_level: crate::ai_runtime::ToolAccessLevel::Network,
+        ..readonly_tool_spec("web_search")
     }
 }
 
@@ -782,6 +2114,91 @@ async fn internal_final_answer_submission_bypasses_executor_history_and_tool_bud
 }
 
 #[tokio::test]
+async fn invalid_structured_source_binding_gets_one_no_tool_repair_turn() {
+    let response = |source: &str| super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: vec![final_answer_tool_call(serde_json::json!({
+            "blocks": [{ "markdown": "已核实结论。", "sources": [source] }]
+        }))],
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([response("W8"), response("W1")])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &FinalSubmissionValidationExecutor,
+            "run-final-source-repair",
+            Vec::new(),
+            vec![final_answer_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("second structured submission is valid");
+
+    assert_eq!(outcome.content, "已核实结论。");
+    assert!(outcome.final_submission.is_some());
+    assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("repair transcript")
+        .iter()
+        .any(|message| {
+            message
+                .content
+                .text_content()
+                .contains("final_submission_validation_failed")
+        }));
+}
+
+#[tokio::test]
+async fn repeated_invalid_structured_source_binding_finishes_with_limitation() {
+    let invalid = || super::model_gateway::GatewayResponse {
+        content: None,
+        tool_calls: vec![final_answer_tool_call(serde_json::json!({
+            "blocks": [{ "markdown": "未获支持结论。", "sources": ["W8"] }]
+        }))],
+        usage: Default::default(),
+        finish_reason: "tool_calls".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([invalid(), invalid()])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &FinalSubmissionValidationExecutor,
+            "run-final-source-limitation",
+            Vec::new(),
+            vec![final_answer_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("invalid structured submission degrades safely");
+
+    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert!(outcome.final_submission.is_none());
+    assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn final_submission_retries_one_withheld_plain_draft() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
@@ -835,6 +2252,85 @@ async fn final_submission_retries_one_withheld_plain_draft() {
         .expect("repair messages lock")
         .iter()
         .all(|message| message.reasoning_content.is_none()));
+}
+
+#[tokio::test]
+async fn natural_answer_with_missing_source_binding_gets_one_no_tool_repair_turn() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_final_response("未绑定来源的草稿。"),
+            scripted_final_response("已绑定来源的答复。[W1]"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &SourceBindingExecutor,
+            "run-natural-source-repair",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a valid repaired natural answer completes");
+
+    assert_eq!(outcome.content, "已绑定来源的答复。[W1]");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("repair messages")
+        .iter()
+        .any(|message| message
+            .content
+            .text_content()
+            .contains("does not bind its factual claims")));
+}
+
+#[tokio::test]
+async fn required_web_draft_gets_one_tool_enabled_repair_before_completion() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_final_response("未核实的初稿。"),
+            scripted_tool_calls_response(vec![web_tool_call()]),
+            scripted_final_response("已通过本轮工具核实的答复。"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecoverableWebExecutor {
+        registered: AtomicBool::new(false),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-required-web-repair",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("the model may recover by using the existing Web surface");
+
+    assert_eq!(outcome.content, "已通过本轮工具核实的答复。");
+    assert_eq!(outcome.tool_calls, 1);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("repair messages")
+        .iter()
+        .any(|message| message
+            .content
+            .text_content()
+            .contains("requires current evidence")));
 }
 
 #[test]
@@ -995,6 +2491,229 @@ async fn successful_equivalent_tool_call_is_not_executed_twice() {
 }
 
 #[tokio::test]
+async fn hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "search-wide",
+                    "web_search",
+                    serde_json::json!({ "query": "组织治理" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "search-refined",
+                    "web_search",
+                    serde_json::json!({ "query": "组织治理 入门 读者" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("已基于第二轮的新资料完成回答。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = ResourceTracingExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-hr1-adaptive-search",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a refined search with a new resource must remain answerable");
+
+    let calls = executor.calls.lock().expect("trace calls lock");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, "web_search");
+    assert_eq!(calls[1].0, "web_search");
+    assert_ne!(calls[0].1, calls[1].1, "the second query must be refined");
+    assert_ne!(
+        calls[0].2, calls[1].2,
+        "the refinement must discover a new resource"
+    );
+    assert_eq!(outcome.content, "已基于第二轮的新资料完成回答。");
+}
+
+#[tokio::test]
+async fn hr1_local_multi_hop_reads_distinct_notes_without_web_access() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "search-local",
+                    "search_keyword",
+                    serde_json::json!({ "query": "责任认定" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "read-first",
+                    "read_note",
+                    serde_json::json!({ "path": "notes/first.md" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "read-second",
+                    "read_note",
+                    serde_json::json!({ "path": "notes/second.md" }),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("已综合两份本地笔记。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = ResourceTracingExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-hr1-local-multi-hop",
+            Vec::new(),
+            vec![
+                readonly_tool_spec("search_keyword"),
+                readonly_tool_spec("read_note"),
+            ],
+            &mut observer,
+        )
+        .await
+        .expect("local multi-hop research must remain answerable");
+
+    let calls = executor.calls.lock().expect("trace calls lock");
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        ["search_keyword", "read_note", "read_note"]
+    );
+    assert_ne!(
+        calls[1].2, calls[2].2,
+        "each note must retain its own identity"
+    );
+    assert!(calls.iter().all(|call| call.0 != "web_search"));
+    assert_eq!(outcome.content, "已综合两份本地笔记。");
+}
+
+#[tokio::test]
+async fn hr1_repeated_failed_tool_call_stops_after_two_real_executions() {
+    let repeated_call = |id| {
+        tool_call_with_arguments(
+            id,
+            "web_search",
+            serde_json::json!({ "query": "same failing query" }),
+        )
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![repeated_call("failed-first")],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![repeated_call("failed-second")],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![repeated_call("failed-third")],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("工具暂不可用，已说明限制。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RepeatedFailureExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-hr1-repeated-failure",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("the model should still be able to summarize the failed lookup");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(outcome.content, "工具暂不可用，已说明限制。");
+}
+
+#[tokio::test]
 async fn malformed_spawn_subagent_arguments_reach_the_bounded_executor() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
@@ -1111,21 +2830,31 @@ async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
 }
 
 #[tokio::test]
-async fn web_required_rejects_a_final_answer_without_registered_evidence() {
+async fn web_required_without_a_tool_surface_finishes_with_a_bounded_limitation() {
     let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
-            content: Some("unverified answer".into()),
-            tool_calls: Vec::new(),
-            usage: Default::default(),
-            finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
-        }])),
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: Some("unverified answer".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("still unverified".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
     };
     let mut observer = NoopObserver;
-    let error = standard_tool_loop()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &RequiredWebExecutor,
@@ -1135,15 +2864,78 @@ async fn web_required_rejects_a_final_answer_without_registered_evidence() {
             &mut observer,
         )
         .await
-        .expect_err("web-required must not silently finalize");
-    assert_eq!(error.to_string(), "agent_run_web_evidence_required");
+        .expect("a mismatched required-Web surface should degrade without showing a draft");
+    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
 }
 
 #[tokio::test]
-async fn external_required_rejects_a_final_answer_without_registered_evidence() {
+async fn empty_web_search_finishes_with_a_bounded_limitation_without_spending_a_useless_repair_turn(
+) {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "empty-search",
+                    "web_search",
+                    serde_json::json!({"query":"current fact"}),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("unsupported current claim [W1]".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &EmptyWebEvidenceExecutor,
+            "run-empty-web-evidence",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("an empty current Web result should complete safely");
+
+    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert_eq!(outcome.model_turns, 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn natural_clarification_is_a_single_source_free_question_only() {
+    assert!(is_natural_clarification(
+        "为了查询附近场次，请告诉我所在的城市或地区？"
+    ));
+    assert!(is_natural_clarification("Which city should I use?"));
+    assert!(!is_natural_clarification(
+        "上海今晚有多个场次，你在哪个城市？"
+    ));
+    assert!(!is_natural_clarification("请看 [W1] 后告诉我城市？"));
+    assert!(!is_natural_clarification(
+        "请看 https://example.test 后告诉我城市？"
+    ));
+}
+
+#[tokio::test]
+async fn web_required_accepts_a_natural_clarification_before_any_tool_dispatch() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
-            content: Some("unverified external answer".into()),
+            content: Some("为了查询附近场次，请告诉我所在的城市或地区？".into()),
             tool_calls: Vec::new(),
             usage: Default::default(),
             finish_reason: "stop".into(),
@@ -1154,7 +2946,73 @@ async fn external_required_rejects_a_final_answer_without_registered_evidence() 
         second_turn_messages: Mutex::new(Vec::new()),
     };
     let mut observer = NoopObserver;
-    let error = standard_tool_loop()
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &RequiredWebExecutor,
+            "run-required-web-clarification",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect("a natural clarification must complete without fabricated evidence");
+
+    assert_eq!(
+        outcome.content,
+        "为了查询附近场次，请告诉我所在的城市或地区？"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn web_required_accepts_a_natural_clarification_after_host_bootstrap() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([scripted_final_response(
+            "为了缩小范围，请告诉我你更关心哪一类信息？",
+        )])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &BootstrapWithoutEvidenceExecutor,
+            "run-required-web-bootstrap-clarification",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("necessary clarification must remain available after Host observation");
+
+    assert_eq!(
+        outcome.content,
+        "为了缩小范围，请告诉我你更关心哪一类信息？"
+    );
+    assert_eq!(outcome.tool_calls, 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn external_required_repairs_then_limits_an_answer_without_registered_evidence() {
+    let unverified = || super::model_gateway::GatewayResponse {
+        content: Some("unverified external answer".into()),
+        tool_calls: Vec::new(),
+        usage: Default::default(),
+        finish_reason: "stop".into(),
+        reasoning_content: None,
+        continuation: None,
+    };
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([unverified(), unverified()])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &RequiredExternalExecutor,
@@ -1164,8 +3022,9 @@ async fn external_required_rejects_a_final_answer_without_registered_evidence() 
             &mut observer,
         )
         .await
-        .expect_err("external-required must not silently finalize");
-    assert_eq!(error.to_string(), "agent_run_external_evidence_required");
+        .expect("external-required degrades to a safe limitation");
+    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -1465,6 +3324,57 @@ async fn oversized_web_tool_results_fail_closed_with_valid_json() {
 }
 
 #[tokio::test]
+async fn oversized_web_fetch_results_fail_closed_with_valid_json() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "call-web-fetch",
+                "web_fetch",
+                serde_json::json!({"urls":["https://example.test/article"]}),
+            )),
+            scripted_final_response("I cannot verify this from the returned evidence."),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    standard_tool_loop()
+        .execute(
+            &provider,
+            &OversizedWebResultExecutor,
+            "run-web-fetch-result-overflow",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "web_fetch".into(),
+                description: "Fetch selected Web pages".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::Network,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("overflow is presented as a valid failed fetch result");
+
+    let messages = provider
+        .second_turn_messages
+        .lock()
+        .expect("second turn messages lock");
+    let tool_payload = messages
+        .iter()
+        .find(|message| matches!(message.role, MessageRole::Tool))
+        .expect("tool result")
+        .content
+        .text_content();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&tool_payload).expect("web_fetch overflow must remain valid JSON");
+    assert_eq!(parsed["success"], false);
+    assert_eq!(parsed["error"], "web_evidence_pack_overflow");
+}
+
+#[tokio::test]
 async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
@@ -1483,19 +3393,25 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
         web_evidence: false,
     };
     let policy = RunBudgetPolicy {
-        schema_version: 1,
+        schema_version: 2,
         profile: RunBudgetProfile::Direct,
         max_prompt_tokens: 64_000,
         max_completion_tokens: 8_000,
         max_turn_output_tokens: 8_000,
         max_model_turns: 1,
         max_tool_calls: 0,
+        max_local_tool_calls: 0,
+        max_network_tool_calls: 0,
+        max_external_read_tool_calls: 0,
+        max_runtime_tool_calls: 0,
+        max_confirmed_change_calls: 0,
         max_child_runs: 0,
         child_max_model_turns: 0,
         child_max_tool_calls: 0,
         child_input_tokens_per_turn: 0,
         child_output_tokens_per_turn: 0,
         post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
     };
     let mut observer = NoopObserver;
 
@@ -1562,19 +3478,25 @@ async fn child_policy_reaches_every_provider_turn_with_gateway_token_limits() {
         web_evidence: false,
     };
     let policy = RunBudgetPolicy {
-        schema_version: 1,
+        schema_version: 2,
         profile: RunBudgetProfile::Delegated,
         max_prompt_tokens: 96_000,
         max_completion_tokens: 12_000,
         max_turn_output_tokens: 4_000,
         max_model_turns: 8,
         max_tool_calls: 24,
+        max_local_tool_calls: 12,
+        max_network_tool_calls: 6,
+        max_external_read_tool_calls: 6,
+        max_runtime_tool_calls: 4,
+        max_confirmed_change_calls: 6,
         max_child_runs: 3,
         child_max_model_turns: 2,
         child_max_tool_calls: 6,
         child_input_tokens_per_turn: 2_000,
         child_output_tokens_per_turn: 1_024,
         post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
     };
     let mut observer = NoopObserver;
 
@@ -1594,9 +3516,10 @@ async fn child_policy_reaches_every_provider_turn_with_gateway_token_limits() {
         provider.budgets.lock().expect("budget lock").as_slice(),
         [AgentModelTurnBudget {
             max_prompt_tokens: Some(2_000),
-            max_completion_tokens: Some(2_048),
+            max_completion_tokens: Some(1_024),
             max_turn_output_tokens: Some(1_024),
-        }]
+        }],
+        "the child keeps one output-sized synthesis reserve rather than spending all completion capacity on exploration"
     );
 }
 
@@ -1646,19 +3569,25 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
         web_evidence: false,
     };
     let policy = RunBudgetPolicy {
-        schema_version: 1,
+        schema_version: 2,
         profile: RunBudgetProfile::Delegated,
         max_prompt_tokens: 96_000,
         max_completion_tokens: 12_000,
         max_turn_output_tokens: 4_000,
         max_model_turns: 8,
         max_tool_calls: 24,
+        max_local_tool_calls: 12,
+        max_network_tool_calls: 6,
+        max_external_read_tool_calls: 6,
+        max_runtime_tool_calls: 4,
+        max_confirmed_change_calls: 6,
         max_child_runs: 3,
         child_max_model_turns: 2,
         child_max_tool_calls: 6,
         child_input_tokens_per_turn: 2_000,
         child_output_tokens_per_turn: 1_024,
         post_confirmation_max_model_turns: 0,
+        post_confirmation_max_local_tool_calls: 0,
     };
     let mut observer = NoopObserver;
 

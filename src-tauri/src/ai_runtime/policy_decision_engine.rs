@@ -565,6 +565,7 @@ mod tests {
             material_needs: Vec::new(),
             required_capabilities: Vec::new(),
             explicit_constraints: Vec::new(),
+            fresh_fact: Default::default(),
         }
     }
 

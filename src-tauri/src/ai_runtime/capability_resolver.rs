@@ -224,6 +224,7 @@ mod tests {
     fn target_state_supports_only_web_search_and_fetch() {
         assert!(is_supported_capability("web.search"));
         assert!(is_supported_capability("web.fetch"));
+        assert!(!is_supported_capability("web.domain.read"));
 
         for capability in [
             "web.to_markdown",

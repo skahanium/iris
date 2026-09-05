@@ -4,6 +4,12 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 pub struct ToolDispatchContext<'a> {
+    /// Database used by domain/evidence dispatch. `None` is reserved for
+    /// isolated unit tests that do not exercise provider execution.
+    pub db: Option<&'a Database>,
+    /// Currently selected Web provider, when known, used to break ties between
+    /// multiple healthy domain mappings.
+    pub selected_web_provider_id: Option<&'a str>,
     pub note_path: Option<&'a str>,
     pub file_id: Option<i64>,
     /// Owning Run. When present, every dispatch and irreversible commit must
@@ -12,11 +18,17 @@ pub struct ToolDispatchContext<'a> {
     /// Exact note selected by the user's explicit Apply action for this Run.
     /// Model-generated target arguments may never widen this boundary.
     pub write_target_path: Option<&'a str>,
+    /// Exact paths from a consumed frozen change set. This exists only during
+    /// deterministic post-confirmation dispatch and never widens a model turn.
+    pub confirmed_write_targets: Option<&'a [String]>,
     /// Immutable per-Run document policy evaluated before content can cross a
     /// tool boundary. `None` is reserved for isolated unit tests only.
     pub document_policy:
         Option<&'a crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine>,
     pub web_search_enabled: bool,
+    /// Current Run surface as exposed to the model. `capabilities_read` must
+    /// report only these tools; empty means no model-visible tools.
+    pub available_tool_names: &'a [String],
     pub max_web_fetches: usize,
     pub cold_start_packets: &'a [ContextPacket],
     pub retrieval_scope: &'a RetrievalScope,
@@ -38,12 +50,21 @@ impl<'a> ToolDispatchContext<'a> {
     }
 
     pub(crate) fn ensure_write_target_matches(&self, path: &str) -> AppResult<()> {
+        let actual = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
+            .map_err(|_| AppError::run(SafeRunErrorCode::WriteTargetViolation))?;
+        if let Some(targets) = self.confirmed_write_targets {
+            let matches_frozen_target = targets.iter().any(|target| {
+                crate::ai_runtime::retrieval_scope::normalize_note_path(target)
+                    .is_ok_and(|expected| expected == actual)
+            });
+            return matches_frozen_target
+                .then_some(())
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::WriteTargetViolation));
+        }
         let Some(expected) = self.write_target_path else {
             return Ok(());
         };
         let expected = crate::ai_runtime::retrieval_scope::normalize_note_path(expected)
-            .map_err(|_| AppError::run(SafeRunErrorCode::WriteTargetViolation))?;
-        let actual = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
             .map_err(|_| AppError::run(SafeRunErrorCode::WriteTargetViolation))?;
         if actual == expected {
             Ok(())

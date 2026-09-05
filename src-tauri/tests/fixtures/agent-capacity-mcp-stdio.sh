@@ -1,10 +1,12 @@
 #!/bin/sh
 # Deterministic MCP stdio peer used only by the Rust contract tests. It relies
-# exclusively on POSIX shell built-ins because Iris launches stdio MCP peers
-# with a cleared environment.
+# on POSIX shell built-ins plus an absolute date command because Iris launches
+# stdio MCP peers with a cleared environment.
 
 mode="$1"
 result_count="${2:-1}"
+fixture_timestamp=$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')
+fixture_date=${fixture_timestamp%%T*}
 
 json_id() {
   value=${1#*\"id\":}
@@ -30,7 +32,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"tools/list"'*)
       id=$(json_id "$line")
-      if [ "$mode" = "search-fetch" ]; then
+      if [ "$mode" = "domain-dto" ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}},{"name":"domain","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{},"additionalProperties":false}}]}}\n' "$id"
+      elif [ "$mode" = "search-fetch" ] || [ "$mode" = "fetch-rate-limit" ]; then
         printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}},{"name":"fetch","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":false}}]}}\n' "$id"
       else
         printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"],"additionalProperties":false}}]}}\n' "$id"
@@ -40,7 +44,22 @@ while IFS= read -r line; do
       id=$(json_id "$line")
       case "$line" in
         *'"name":"fetch"'*)
-          printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"fetch-result"}],"isError":false}}\n' "$id"
+          if [ "$mode" = "fetch-rate-limit" ]; then
+            printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"error\\\":\\\"Extract failed\\\",\\\"status\\\":429}\"}],\"isError\":false}}"
+            continue
+          fi
+          claims=''
+          requested_url=${line#*\"url\":\"}
+          requested_url=${requested_url%%\"*}
+          ordinal=1
+          while [ "$ordinal" -le 48 ]; do
+            claims="$claims fact-web-$ordinal=value-$ordinal"
+            ordinal=$((ordinal + 1))
+          done
+          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"url\\\":\\\"$requested_url\\\",\\\"raw_content\\\":\\\"fetch-result$claims date: $fixture_timestamp\\\"}\"}],\"isError\":false}}"
+          ;;
+        *'"name":"domain"'*)
+          printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"result":{"content":[{"type":"text","text":"domain-result"}],"structuredContent":{"records":[{"location":"上海","condition":"晴","temperature":"26","units":"C","observationTime":"'"$fixture_timestamp"'","issueTime":"'"$fixture_timestamp"'","title":"Synthetic title","publisher":"Synthetic Publisher","publishedAt":"'"$fixture_timestamp"'","topic":"synthetic","instrument":"AAPL","assetKind":"equity","currency":"USD","asOf":"'"$fixture_timestamp"'","delay":"0","value":"123.45","region":"上海","channel":"Synthetic Channel","date":"'"$fixture_date"'","checkedAt":"'"$fixture_timestamp"'","competition":"Synthetic League","participants":["A","B"],"startTime":"'"$fixture_timestamp"'","status":"scheduled","score":"1-0","sourceUrl":"https://source.invalid/domain","sourceTitle":"Synthetic Domain","observedAt":"'"$fixture_timestamp"'","evidenceId":"provider-supplied-id"}]},"isError":false}}'
           ;;
         *)
           if [ "$mode" = "search-empty" ]; then
@@ -52,6 +71,7 @@ while IFS= read -r line; do
               claims="$claims fact-web-$ordinal=value-$ordinal"
               ordinal=$((ordinal + 1))
             done
+            claims="$claims date: $fixture_timestamp"
             if [ "$result_count" -gt 1 ]; then
               results="[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\\n"
               index=2

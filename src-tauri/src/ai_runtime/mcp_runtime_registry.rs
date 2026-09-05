@@ -85,6 +85,7 @@ pub struct WebEvidenceProviderRuntimeSummary {
 #[serde(rename_all = "camelCase")]
 pub struct WebEvidenceProviderHealthSummary {
     pub provider_id: String,
+    pub capability: String,
     pub success_count: i64,
     pub failure_count: i64,
     pub consecutive_failures: i64,
@@ -127,6 +128,16 @@ fn validate_provider_identifier(label: &str, value: &str) -> AppResult<String> {
         )));
     }
     Ok(value.to_string())
+}
+
+fn validate_web_evidence_capability(value: &str) -> AppResult<&'static str> {
+    match value.trim() {
+        "web.search" => Ok("web.search"),
+        "web.fetch" => Ok("web.fetch"),
+        _ => Err(AppError::msg(
+            "web evidence health capability must be web.search or web.fetch",
+        )),
+    }
 }
 
 fn is_secretish_key(key: &str) -> bool {
@@ -581,11 +592,13 @@ pub fn record_web_evidence_provider_discovery(
 pub fn record_web_evidence_provider_call(
     db: &Database,
     provider_id: &str,
+    capability: &str,
     success: bool,
     latency_ms: u64,
     failure_code: Option<&str>,
 ) -> AppResult<()> {
     let provider_id = validate_provider_identifier("provider id", provider_id)?;
+    let capability = validate_web_evidence_capability(capability)?;
     let failure_code = failure_code
         .map(str::trim)
         .filter(|code| {
@@ -600,9 +613,9 @@ pub fn record_web_evidence_provider_call(
     db.with_conn(|conn| {
         conn.execute(
             "INSERT INTO web_evidence_provider_health
-             (provider_id, success_count, failure_count, consecutive_failures, latency_ewma_ms, success_ewma, last_failure_code, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
-             ON CONFLICT(provider_id) DO UPDATE SET
+             (provider_id, capability, success_count, failure_count, consecutive_failures, latency_ewma_ms, success_ewma, last_failure_code, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))
+             ON CONFLICT(provider_id, capability) DO UPDATE SET
                success_count = success_count + excluded.success_count,
                failure_count = failure_count + excluded.failure_count,
                consecutive_failures = CASE WHEN excluded.success_count = 1 THEN 0 ELSE consecutive_failures + 1 END,
@@ -610,15 +623,7 @@ pub fn record_web_evidence_provider_call(
                success_ewma = CASE WHEN success_ewma IS NULL THEN excluded.success_ewma ELSE success_ewma * 0.8 + excluded.success_ewma * 0.2 END,
                last_failure_code = excluded.last_failure_code,
                updated_at = datetime('now')",
-            params![provider_id, if success { 1 } else { 0 }, if success { 0 } else { 1 }, if success { 0 } else { 1 }, latency_ms as f64, if success { 1.0 } else { 0.0 }, failure_code.as_deref()],
-        )?;
-        conn.execute(
-            "UPDATE web_evidence_provider_runtime
-             SET status = CASE WHEN ?2 = 1 THEN 'ready' ELSE 'degraded' END,
-                 reason_code = CASE WHEN ?2 = 1 THEN 'call_succeeded' ELSE COALESCE(?3, 'call_failed') END,
-                 updated_at = datetime('now')
-             WHERE provider_id = ?1",
-            params![provider_id, if success { 1 } else { 0 }, failure_code.as_deref()],
+            params![provider_id, capability, if success { 1 } else { 0 }, if success { 0 } else { 1 }, if success { 0 } else { 1 }, latency_ms as f64, if success { 1.0 } else { 0.0 }, failure_code.as_deref()],
         )?;
         Ok(())
     })
@@ -639,12 +644,14 @@ pub fn web_evidence_provider_runtime(
 pub fn web_evidence_provider_health(
     db: &Database,
     provider_id: &str,
+    capability: &str,
 ) -> AppResult<Option<WebEvidenceProviderHealthSummary>> {
     let provider_id = validate_provider_identifier("provider id", provider_id)?;
+    let capability = validate_web_evidence_capability(capability)?;
     db.with_read_conn(|conn| conn.query_row(
-        "SELECT provider_id, success_count, failure_count, consecutive_failures, latency_ewma_ms, success_ewma, last_failure_code, updated_at FROM web_evidence_provider_health WHERE provider_id=?1",
-        [provider_id],
-        |row| Ok(WebEvidenceProviderHealthSummary { provider_id: row.get(0)?, success_count: row.get(1)?, failure_count: row.get(2)?, consecutive_failures: row.get(3)?, latency_ewma_ms: row.get(4)?, success_ewma: row.get(5)?, last_failure_code: row.get(6)?, updated_at: row.get(7)? }),
+        "SELECT provider_id, capability, success_count, failure_count, consecutive_failures, latency_ewma_ms, success_ewma, last_failure_code, updated_at FROM web_evidence_provider_health WHERE provider_id=?1 AND capability=?2",
+        [provider_id, capability.to_string()],
+        |row| Ok(WebEvidenceProviderHealthSummary { provider_id: row.get(0)?, capability: row.get(1)?, success_count: row.get(2)?, failure_count: row.get(3)?, consecutive_failures: row.get(4)?, latency_ewma_ms: row.get(5)?, success_ewma: row.get(6)?, last_failure_code: row.get(7)?, updated_at: row.get(8)? }),
     ).optional().map_err(Into::into))
 }
 
@@ -1130,24 +1137,37 @@ mod tests {
             "tool-schema-hash",
         )
         .unwrap();
-        record_web_evidence_provider_call(&db, "anysearch", true, 120, None).unwrap();
-        record_web_evidence_provider_call(&db, "anysearch", false, 240, Some("timeout")).unwrap();
+        record_web_evidence_provider_call(&db, "anysearch", "web.search", true, 120, None).unwrap();
+        record_web_evidence_provider_call(
+            &db,
+            "anysearch",
+            "web.fetch",
+            false,
+            240,
+            Some("timeout"),
+        )
+        .unwrap();
 
         let runtime = web_evidence_provider_runtime(&db, "anysearch")
             .unwrap()
             .unwrap();
         assert_eq!(runtime.protocol_version, "2025-11-25");
         assert_eq!(runtime.server_name, "AnySearch");
-        assert_eq!(runtime.status, "degraded");
-        assert_eq!(runtime.reason_code, "timeout");
-        let health = web_evidence_provider_health(&db, "anysearch")
+        assert_eq!(runtime.status, "ready");
+        assert_eq!(runtime.reason_code, "discovered");
+        let search_health = web_evidence_provider_health(&db, "anysearch", "web.search")
             .unwrap()
             .unwrap();
-        assert_eq!(health.success_count, 1);
-        assert_eq!(health.failure_count, 1);
-        assert_eq!(health.consecutive_failures, 1);
-        assert_eq!(health.last_failure_code.as_deref(), Some("timeout"));
-        assert!(health.latency_ewma_ms.is_some());
+        assert_eq!(search_health.success_count, 1);
+        assert_eq!(search_health.failure_count, 0);
+        let fetch_health = web_evidence_provider_health(&db, "anysearch", "web.fetch")
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetch_health.success_count, 0);
+        assert_eq!(fetch_health.failure_count, 1);
+        assert_eq!(fetch_health.consecutive_failures, 1);
+        assert_eq!(fetch_health.last_failure_code.as_deref(), Some("timeout"));
+        assert!(fetch_health.latency_ewma_ms.is_some());
 
         let mut changed = provider();
         changed.web_search_mapping_json = Some(r#"{"tool":"search_v2"}"#.into());
@@ -1155,7 +1175,7 @@ mod tests {
         assert!(web_evidence_provider_runtime(&db, "anysearch")
             .unwrap()
             .is_none());
-        assert!(web_evidence_provider_health(&db, "anysearch")
+        assert!(web_evidence_provider_health(&db, "anysearch", "web.search")
             .unwrap()
             .is_none());
     }

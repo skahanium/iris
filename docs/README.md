@@ -1,6 +1,6 @@
 # Iris 文档索引
 
-**v1.2.22** 为当前开发版本。版本排期唯一来源是 [ROADMAP.md](../ROADMAP.md)；已被实现替代的设计、审计和施工计划通过 Git 历史查阅，不在工作树中充当现行规范。
+**v1.3.0** 为当前开发版本。版本排期唯一来源是 [ROADMAP.md](../ROADMAP.md)；已被实现替代的设计、审计和施工计划默认通过 Git 历史查阅。Agent Harness 现行体系以 2026-09-05 / 审计起点 `70c929ac` 为事实基线，统一前材料另有受控归档，但不充当现行规范。
 
 ## 现行规范
 
@@ -21,14 +21,20 @@
 
 ## 当前施工资料
 
-| 文档                                                                                                   | 用途                                   |
-| ------------------------------------------------------------------------------------------------------ | -------------------------------------- |
-| [Agent Harness 可靠性重构](../refactor/README.md)                                                      | 当前差距、可靠性契约、实施顺序与验收   |
-| [MiniMax 协议与发布门禁加固计划](./superpowers/plans/2026-08-11-minimax-protocol-release-hardening.md) | 流式隐私、模型能力与发布门禁施工证据   |
-| [RSS 订阅资料库实施计划](./superpowers/plans/2026-08-11-rss-subscription-library.md)                   | 全周期阶段、测试先行任务与发布门禁     |
-| [RSS 订阅资料库人工清单](./testing/rss-subscription-library-manual-checklist.md)                       | 全尺寸、双平台、隐私、升级与回滚验收   |
-| [v1.2.19 自适应工作区实施计划](./superpowers/plans/2026-07-31-v1.2.19-adaptive-workspace.md)           | 测试先行任务、文件边界与交付顺序       |
-| [v1.2.19 自适应工作区人工清单](./testing/v1.2.19-adaptive-workspace-manual-checklist.md)               | 分辨率、主题、键盘、生命周期与真机验收 |
+| 文档                                                                                                                                         | 用途                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| [Agent Harness 现行建设文档](../agent-harness/README.md)                                                                                     | 唯一 Harness 当前事实、目标合同、HR 路线与验收入口 |
+| [Harness HR-1 回归基线实施计划](./superpowers/plans/2026-08-27-agent-harness-hr1-regression-baseline.md)                                     | HR-1 测试先行施工、受控目标夹具与验收记录          |
+| [Harness HR-2 渐进 Intake 实施计划](./superpowers/plans/2026-08-27-agent-harness-hr2-progressive-intake.md)                                  | HR-2 去领域化、渐进联网与兼容边界的施工证据        |
+| [Harness HR-4 回答与投影实施计划](./superpowers/plans/2026-08-30-agent-harness-hr4-answer-clarification-projection.md)                       | HR-4 测试先行、自然终局、澄清与投影收敛证据        |
+| [Harness HR-5 冻结变更集实施计划](./superpowers/plans/2026-08-30-agent-harness-hr5-frozen-change-set-and-verification.md)                    | HR-5 测试先行、有序确认、恢复与只读验证施工证据    |
+| [Harness HR-6 领域核心退役实施计划](./superpowers/plans/2026-08-31-agent-harness-hr6-domain-core-retirement.md)                              | HR-6 删除旧领域核心、兼容读取与安全终态化证据      |
+| [Harness HR-7 确定性质量与 Provider 矩阵计划](./superpowers/plans/2026-08-31-agent-harness-hr7-deterministic-quality-and-provider-matrix.md) | HR-7 通用评测、多协议 mock 与真实试点授权边界      |
+| [MiniMax 协议与发布门禁加固计划](./superpowers/plans/2026-08-11-minimax-protocol-release-hardening.md)                                       | 流式隐私、模型能力与发布门禁施工证据               |
+| [RSS 订阅资料库实施计划](./superpowers/plans/2026-08-11-rss-subscription-library.md)                                                         | 全周期阶段、测试先行任务与发布门禁                 |
+| [RSS 订阅资料库人工清单](./testing/rss-subscription-library-manual-checklist.md)                                                             | 全尺寸、双平台、隐私、升级与回滚验收               |
+| [v1.2.19 自适应工作区实施计划](./superpowers/plans/2026-07-31-v1.2.19-adaptive-workspace.md)                                                 | 测试先行任务、文件边界与交付顺序                   |
+| [v1.2.19 自适应工作区人工清单](./testing/v1.2.19-adaptive-workspace-manual-checklist.md)                                                     | 分辨率、主题、键盘、生命周期与真机验收             |
 
 ## 保留的评测资料
 
@@ -39,4 +45,4 @@
 1. 修改版本范围只更新 `ROADMAP.md`，并按需更新已完成事实的 CHANGELOG。
 2. 修改 IPC 时同步 Rust command、`src/types/ipc.ts`、`src/lib/ipc.ts`、测试和 IPC 参考。
 3. 修改 TipTap schema 或 Markdown 链路时同步 round-trip corpus 与 `markdown-export.md`。
-4. 当前文档不得链接历史设计目录，也不得描述不存在的模块、命令或事件。
+4. 当前文档不得把历史设计目录作为规范性依据，也不得描述不存在的模块、命令或事件；仅 `agent-harness/README.md` 可提供一次受控历史归档入口。Harness 当前事实、目标合同和实施状态必须分别落在对应现行文档中。

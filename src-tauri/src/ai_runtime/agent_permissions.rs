@@ -35,6 +35,10 @@ pub enum AgentPermissionAtom {
     VaultVersioning,
     #[serde(rename = "runtime.context.read")]
     RuntimeContextRead,
+    #[serde(rename = "harness.child_run")]
+    HarnessChildRun,
+    #[serde(rename = "harness.conclude")]
+    HarnessConclude,
     #[serde(rename = "fs.pick_file")]
     FsPickFile,
     #[serde(rename = "fs.pick_folder")]
@@ -63,6 +67,8 @@ pub enum AgentPermissionAtom {
     DocExtractCitations,
     #[serde(rename = "web.search")]
     WebSearch,
+    #[serde(rename = "web.domain.read")]
+    WebDomainRead,
     #[serde(rename = "web.fetch")]
     WebFetch,
     #[serde(rename = "web.to_markdown")]
@@ -131,6 +137,8 @@ impl AgentPermissionAtom {
             Self::VaultAssetsWrite => "vault.assets.write",
             Self::VaultVersioning => "vault.versioning",
             Self::RuntimeContextRead => "runtime.context.read",
+            Self::HarnessChildRun => "harness.child_run",
+            Self::HarnessConclude => "harness.conclude",
             Self::FsPickFile => "fs.pick_file",
             Self::FsPickFolder => "fs.pick_folder",
             Self::FsImportToVault => "fs.import_to_vault",
@@ -145,6 +153,7 @@ impl AgentPermissionAtom {
             Self::DocFixLinks => "doc.fix_links",
             Self::DocExtractCitations => "doc.extract_citations",
             Self::WebSearch => "web.search",
+            Self::WebDomainRead => "web.domain.read",
             Self::WebFetch => "web.fetch",
             Self::WebToMarkdown => "web.to_markdown",
             Self::WebDownloadToAssets => "web.download_to_assets",
@@ -318,15 +327,18 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
     use PermissionRiskLevel as Risk;
 
     let profile = match tool_name {
-        "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault" | "get_backlinks"
-        | "conclude_reasoning" | "spawn_subagent" => (vec![Atom::VaultSearch], Risk::Low, true),
+        "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault" | "get_backlinks" => {
+            (vec![Atom::VaultSearch], Risk::Low, true)
+        }
+        "spawn_subagent" => (vec![Atom::HarnessChildRun], Risk::Low, true),
+        "conclude_reasoning" => (vec![Atom::HarnessConclude], Risk::Low, true),
         "read_note" | "get_outline" | "get_regulation" | "get_context_packets" => {
             (vec![Atom::VaultRead], Risk::Low, true)
         }
         "system_time_now" | "app_context_read" | "capabilities_read" => {
             (vec![Atom::RuntimeContextRead], Risk::Low, true)
         }
-        "web_search" => (vec![Atom::WebSearch], Risk::Low, true),
+        "web_search" | "web_fetch" => (vec![Atom::WebSearch], Risk::Low, true),
         "insert_text_at_cursor" | "replace_selection" | "add_tags" => {
             (vec![Atom::VaultWritePatch], Risk::Medium, true)
         }
@@ -576,7 +588,7 @@ fn scope_summary(tool_name: &str, args: &serde_json::Value, skill_id: Option<&st
     if let Some(skill) = skill_id {
         return format!("skill={}", safe_fragment(skill));
     }
-    if tool_name == "web_search" {
+    if matches!(tool_name, "web_search" | "web_fetch") {
         return web_scope_summary(args);
     }
     for key in ["target_path", "path", "note_path"] {
@@ -785,6 +797,31 @@ mod tests {
             "mcp_runtime_profile_upsert",
             "mcp_runtime_profile_toggle",
             "mcp_runtime_profile_delete",
+        ] {
+            assert!(permission_profile_for_tool(name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn harness_tools_do_not_inherit_vault_search_permission() {
+        for name in ["spawn_subagent", "conclude_reasoning"] {
+            let profile = permission_profile_for_tool(name).expect("harness profile");
+            assert_ne!(
+                profile.atoms,
+                vec![AgentPermissionAtom::VaultSearch],
+                "{name} must not be authorized as vault.search"
+            );
+        }
+    }
+
+    #[test]
+    fn retired_current_fact_domain_tools_have_no_permission_profile() {
+        for name in [
+            "weather_lookup",
+            "news_lookup",
+            "finance_lookup",
+            "entertainment_lookup",
+            "sports_lookup",
         ] {
             assert!(permission_profile_for_tool(name).is_none(), "{name}");
         }

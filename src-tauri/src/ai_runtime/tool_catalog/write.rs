@@ -22,6 +22,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "replace_selection",
@@ -41,6 +42,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
     ]
 }

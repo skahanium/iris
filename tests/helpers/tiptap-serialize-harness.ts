@@ -1,96 +1,29 @@
-import CodeBlock from "@tiptap/extension-code-block";
-import Table from "@tiptap/extension-table";
-import TableCell from "@tiptap/extension-table-cell";
-import TableHeader from "@tiptap/extension-table-header";
-import TableRow from "@tiptap/extension-table-row";
-import TaskItem from "@tiptap/extension-task-item";
-import TaskList from "@tiptap/extension-task-list";
 import { Editor } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
 
-import { CalloutBlockquoteExtension } from "@/components/editor/extensions/CalloutBlockquoteExtension";
-import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtension";
-import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFoldExtension";
-import { ImageExtension } from "@/components/editor/extensions/ImageExtension";
-import { FindHighlightExtension } from "@/components/editor/extensions/FindHighlightExtension";
 import {
-  FootnoteDefExtension,
-  FootnoteRefExtension,
-} from "@/components/editor/extensions/FootnoteExtension";
-import { ImeCompositionGuardExtension } from "@/components/editor/extensions/ImeCompositionGuardExtension";
-import { IrisParagraphExtension } from "@/components/editor/extensions/IrisParagraphExtension";
-import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
-import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
-import { ListIndentKeymapExtension } from "@/components/editor/extensions/ListIndentKeymapExtension";
-import { PreserveBlockExtension } from "@/components/editor/extensions/PreserveBlockExtension";
-import { PreserveInlineExtension } from "@/components/editor/extensions/PreserveInlineExtension";
-import { WikiLinkExtension } from "@/components/editor/extensions/WikiLinkExtension";
-import { WikiMediaEmbedExtension } from "@/components/editor/extensions/WikiMediaEmbedExtension";
+  createProductionEditorExtensions,
+  createProductionEditorFromMarkdown,
+} from "@/lib/editor-roundtrip";
 import { editorDocToMarkdown } from "@/lib/editor-pm-serialize";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
-import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { markdownBodyToEditorHtml, parseNoteForEditor } from "@/lib/markdown";
 import { serializeOpenNote } from "@/lib/serialize-open-note";
 
-function productionExtensions(vaultPath: string | null = null) {
-  return [
-    IrisDocument,
-    StarterKit.configure({
-      document: false,
-      paragraph: false,
-      codeBlock: false,
-      blockquote: false,
-      heading: {
-        levels: [1, 2, 3, 4, 5, 6],
-        HTMLAttributes: { class: "iris-section-heading" },
-      },
-    }),
-    ImeCompositionGuardExtension,
-    IrisParagraphExtension,
-    ListIndentKeymapExtension,
-    FindHighlightExtension,
-    LinkExtension,
-    ImageExtension.configure({ vaultPath }),
-    WikiMediaEmbedExtension.configure({ vaultPath, mediaLoading: "visible" }),
-    TaskList,
-    TaskItem.configure({ nested: true }),
-    Table.configure({ resizable: true }),
-    TableRow,
-    TableHeader,
-    TableCell,
-    CodeBlock.configure({
-      HTMLAttributes: { class: "iris-code-block" },
-    }),
-    CalloutBlockquoteExtension,
-    HeadingFoldExtension,
-    PreserveBlockExtension,
-    PreserveInlineExtension,
-    FootnoteRefExtension,
-    FootnoteDefExtension,
-    AiStreamExtension,
-    WikiLinkExtension,
-  ];
-}
-
-/** Ingest via contract pipeline (preserve blocks, callouts, etc.). */
+/** Ingest via the same production contract pipeline used by the editor. */
 export function createProductionEditorFromIngestedBody(
   bodyMd: string,
   vaultPath: string | null = null,
 ): Editor {
-  const { tipTapHtml } = ingestMarkdownForEditor({ bodyMarkdown: bodyMd });
-  return new Editor({
-    extensions: productionExtensions(vaultPath),
-    content: tipTapHtml,
-    parseOptions: EDITOR_PARSE_OPTIONS,
-  });
+  return createProductionEditorFromMarkdown(bodyMd, vaultPath);
 }
 
+/** Legacy HTML-based ingest path; kept for contract tests only. */
 export function createProductionEditorFromBody(
   bodyMd: string,
   vaultPath: string | null = null,
 ): Editor {
   return new Editor({
-    extensions: productionExtensions(vaultPath),
+    extensions: createProductionEditorExtensions(vaultPath),
     content: markdownBodyToEditorHtml(bodyMd),
     parseOptions: EDITOR_PARSE_OPTIONS,
   });
@@ -101,7 +34,7 @@ export function createProductionEditorFromHtml(
   vaultPath: string | null = null,
 ): Editor {
   return new Editor({
-    extensions: productionExtensions(vaultPath),
+    extensions: createProductionEditorExtensions(vaultPath),
     content: html,
     parseOptions: EDITOR_PARSE_OPTIONS,
   });

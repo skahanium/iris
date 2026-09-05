@@ -92,6 +92,8 @@ fn normal_session_history_uses_only_opaque_keys() {
     assert_eq!(loaded[0].content, "first");
     assert_eq!(loaded[0].turn_id.as_deref(), Some("history-turn-1"));
     assert_eq!(loaded[1].turn_id.as_deref(), Some("history-turn-1"));
+    assert_eq!(loaded[0].evidence_refs, Some(Vec::new()));
+    assert_eq!(loaded[1].evidence_refs, Some(Vec::new()));
 
     NormalSessionRepository::rename(&db, &created.session_key, "renamed").expect("rename");
     let renamed = NormalSessionRepository::list(&db, 20, 0).expect("list renamed");
@@ -243,6 +245,7 @@ fn normal_session_history_restores_new_turn_metadata_and_defaults_legacy_rows_to
         .expect("load history");
     assert_eq!(messages[0].context_scope, serde_json::json!([]));
     assert!(messages[0].display_mentions.is_empty());
+    assert_eq!(messages[0].evidence_refs, None);
     assert_eq!(messages[1].context_scope["paths"][0], "notes/roadmap.md");
     assert_eq!(messages[1].display_mentions[0]["label"], "路线图");
 }

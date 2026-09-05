@@ -15,7 +15,7 @@ fn policy() -> ProvenancePolicy {
         current_run_local_evidence_ids: BTreeSet::from([11]),
         current_run_web_evidence_ids: BTreeSet::from([21]),
         current_run_external_evidence_ids: BTreeSet::from([31]),
-        strict_web: false,
+        strict_current_evidence: false,
     }
 }
 
@@ -119,7 +119,7 @@ fn historical_user_wording_cannot_be_backfilled_by_a_history_reference() {
 #[test]
 fn strict_web_requires_each_substantive_block_to_bind_current_run_web_evidence() {
     let mut strict_policy = policy();
-    strict_policy.strict_web = true;
+    strict_policy.strict_current_evidence = true;
     strict_policy.conversation_history_available = true;
     let output = FinalAnswerSubmission {
         blocks: vec![
@@ -136,14 +136,14 @@ fn strict_web_requires_each_substantive_block_to_bind_current_run_web_evidence()
 
     assert_eq!(
         validate_final_answer_submission(&output, &strict_policy).unwrap_err(),
-        ProvenanceValidationError::StrictWebBlockMissingCurrentRunEvidence { block: 2 }
+        ProvenanceValidationError::StrictCurrentEvidenceMissing { block: 2 }
     );
 }
 
 #[test]
 fn strict_web_allows_source_free_structural_heading_before_a_bound_fact_block() {
     let mut strict_policy = policy();
-    strict_policy.strict_web = true;
+    strict_policy.strict_current_evidence = true;
     let output = FinalAnswerSubmission {
         blocks: vec![
             FinalAnswerBlock {
@@ -165,6 +165,36 @@ fn strict_web_allows_source_free_structural_heading_before_a_bound_fact_block() 
         "## 结论\n\nHTTP 404 表示服务器找不到所请求的资源。 [W21]"
     );
     assert_eq!(validated.attribution[0].sources, Vec::<String>::new());
+}
+
+#[test]
+fn strict_current_fact_accepts_run_local_structured_external_evidence() {
+    let mut strict_policy = policy();
+    strict_policy.strict_current_evidence = true;
+    let output = FinalAnswerSubmission {
+        blocks: vec![FinalAnswerBlock {
+            markdown: "结构化当前事实已核实。".into(),
+            sources: vec!["E31".into()],
+        }],
+    };
+
+    validate_final_answer_submission(&output, &strict_policy)
+        .expect("a current-Run structured provider record is verified evidence");
+}
+
+#[test]
+fn bare_ledger_ids_are_never_valid_source_references() {
+    let output = FinalAnswerSubmission {
+        blocks: vec![FinalAnswerBlock {
+            markdown: "结构化当前事实已核实。".into(),
+            sources: vec!["31".into()],
+        }],
+    };
+
+    assert_eq!(
+        validate_final_answer_submission(&output, &policy()).unwrap_err(),
+        ProvenanceValidationError::UnknownOrUnauthorizedReference("31".to_string())
+    );
 }
 
 #[test]

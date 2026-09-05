@@ -2,11 +2,11 @@ use super::agent_evidence_repository::{
     AgentEvidenceRepository, ExternalToolEvidenceInput, LocalEvidenceInput, MaterialRole,
     WebEvidenceInput,
 };
-use super::agent_run_repository::{AcceptRunInput, AgentRunRepository};
+use super::agent_run_repository::{AcceptRunInput, AgentRunRepository, AppendRunEventInput};
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_contract::{
     ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed,
-    Modality, RiskClass, SecurityDomain, WebDecisionReason,
+    Modality, RiskClass, RunEventPayload, RunEventType, SecurityDomain, WebDecisionReason,
 };
 use crate::storage::db::Database;
 
@@ -50,6 +50,7 @@ fn accept_test_run(
                     kind: "no_implicit_context".to_string(),
                     value: None,
                 }],
+                fresh_fact: Default::default(),
             },
         },
     )
@@ -71,6 +72,60 @@ fn setup_run() -> (Database, i64, String) {
         "为证据账本建立可追溯运行",
     );
     (db, session_id, session_key)
+}
+
+fn cancel_test_run(db: &Database, run_id: &str) {
+    AgentRunRepository::append_event(
+        db,
+        AppendRunEventInput {
+            run_id: run_id.to_string(),
+            state_version: 0,
+            event_type: RunEventType::Cancelled,
+            payload: RunEventPayload::Cancelled {
+                reason: "test_fixture_finished".to_string(),
+            },
+        },
+    )
+    .expect("cancel the first run before accepting the next turn");
+}
+
+fn register_web_evidence(
+    db: &Database,
+    session_id: i64,
+    run_id: &str,
+    title: &str,
+    url: &str,
+) -> crate::ai_runtime::agent_evidence_repository::RegisteredEvidence {
+    AgentEvidenceRepository::register_web(
+        db,
+        WebEvidenceInput {
+            session_id,
+            run_id: run_id.to_string(),
+            message_seq_first: 1,
+            material_role: MaterialRole::Reference,
+            title: title.to_string(),
+            url: url.to_string(),
+            normalized_url: url.to_string(),
+            domain: url
+                .trim_start_matches("https://")
+                .split('/')
+                .next()
+                .unwrap_or("example.test")
+                .to_string(),
+            retrieved_at: "2026-07-13T00:00:00Z".to_string(),
+            provider_id: "official-web".to_string(),
+            provider_kind: "https".to_string(),
+            raw_result_hash: format!("web-result-{run_id}-{url}"),
+            extraction_method: "article_quote".to_string(),
+            bounded_excerpt: "bounded excerpt".to_string(),
+            retrieval_reason: Some("required_web_fact".to_string()),
+            score: Some(0.91),
+            source_rank: Some(1),
+            conflict_group: None,
+            failure_reason: None,
+        },
+    )
+    .expect("web evidence")
 }
 
 #[test]
@@ -195,6 +250,241 @@ fn web_evidence_persists_only_a_bounded_excerpt_and_returns_a_safe_reference() {
 }
 
 #[test]
+fn current_run_citation_links_exclude_foreign_and_retired_evidence() {
+    let (db, session_id, session_key) = setup_run();
+    let owned = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "Owned source",
+        "https://example.test/owned",
+    );
+    cancel_test_run(&db, "evidence-run");
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-second-client-request",
+        "evidence-second-run",
+        "evidence-second-turn",
+        "第二个运行",
+    );
+    let _foreign = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-second-run",
+        "Foreign source",
+        "https://example.test/foreign",
+    );
+
+    let links = AgentEvidenceRepository::list_current_run_web_citation_links(&db, "evidence-run")
+        .expect("Run-local citation links");
+    assert_eq!(links.len(), 1, "only the current Run evidence may be bound");
+    assert_eq!(links[0].url, "https://example.test/owned");
+
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE session_evidence SET retired_at = ?1 WHERE id = ?2",
+            rusqlite::params!["2026-07-14T00:00:00Z", owned.evidence_id],
+        )?;
+        Ok(())
+    })
+    .expect("retire current Run evidence");
+
+    let after_retire =
+        AgentEvidenceRepository::list_current_run_web_citation_links(&db, "evidence-run")
+            .expect("Run-local citation links after retirement");
+    assert!(
+        after_retire.is_empty(),
+        "retired evidence must never become an Exact/Normalized citation"
+    );
+}
+
+#[test]
+fn web_provenance_ordinals_restart_at_w1_for_each_run_with_high_ledger_ids() {
+    let (db, session_id, session_key) = setup_run();
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO sqlite_sequence(name, seq) VALUES ('session_evidence', 1000)",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("advance evidence ledger sequence");
+    let first = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "First Run source",
+        "https://example.test/first",
+    );
+    cancel_test_run(&db, "evidence-run");
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-second-client-request",
+        "evidence-second-run",
+        "evidence-second-turn",
+        "第二个运行",
+    );
+    let second = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-second-run",
+        "Second Run source",
+        "https://example.test/second",
+    );
+
+    assert_eq!((first.evidence_id, second.evidence_id), (1001, 1002));
+    for run_id in ["evidence-run", "evidence-second-run"] {
+        let policy = AgentEvidenceRepository::provenance_policy(&db, run_id, true)
+            .expect("Run-local provenance policy");
+        assert_eq!(
+            policy.current_run_web_evidence_ids,
+            std::collections::BTreeSet::from([1]),
+            "each Run must expose its first Web source as W1"
+        );
+    }
+}
+
+#[test]
+fn referenced_web_ordinals_resolve_to_only_their_run_ledger_ids() {
+    let (db, session_id, _) = setup_run();
+    let first = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "First",
+        "https://example.test/first",
+    );
+    let second = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "Second",
+        "https://example.test/second",
+    );
+    let third = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "Third",
+        "https://example.test/third",
+    );
+
+    let selected = AgentEvidenceRepository::current_run_web_evidence_ids_for_indices(
+        &db,
+        "evidence-run",
+        &[3, 1, 3],
+    )
+    .expect("referenced evidence ids");
+
+    assert_eq!(selected, vec![first.evidence_id, third.evidence_id]);
+    assert!(!selected.contains(&second.evidence_id));
+}
+
+#[test]
+fn hr1_same_session_runs_keep_w1_bound_to_their_own_evidence() {
+    let (db, session_id, session_key) = setup_run();
+    let first = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "First Run source",
+        "https://example.test/first-run",
+    );
+    cancel_test_run(&db, "evidence-run");
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-second-client-request",
+        "evidence-second-run",
+        "evidence-second-turn",
+        "第二个运行",
+    );
+    let second = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-second-run",
+        "Second Run source",
+        "https://example.test/second-run",
+    );
+
+    let first_links =
+        AgentEvidenceRepository::list_current_run_web_citation_links(&db, "evidence-run")
+            .expect("first Run citation links");
+    let second_links =
+        AgentEvidenceRepository::list_current_run_web_citation_links(&db, "evidence-second-run")
+            .expect("second Run citation links");
+    assert_eq!(
+        (first_links[0].label.as_str(), first_links[0].url.as_str()),
+        ("[W1]", "https://example.test/first-run")
+    );
+    assert_eq!(
+        (second_links[0].label.as_str(), second_links[0].url.as_str()),
+        ("[W1]", "https://example.test/second-run")
+    );
+    assert_ne!(first.evidence_id, second.evidence_id);
+    assert_eq!(
+        AgentEvidenceRepository::current_run_web_urls(&db, "evidence-second-run")
+            .expect("second Run source URLs"),
+        std::collections::BTreeSet::from(["https://example.test/second-run".to_string()]),
+        "the same W1 label must resolve only through the active Run's registrations"
+    );
+}
+
+#[test]
+fn current_run_fetch_urls_exclude_foreign_and_retired_web_evidence() {
+    let (db, session_id, session_key) = setup_run();
+    let owned = register_web_evidence(
+        &db,
+        session_id,
+        "evidence-run",
+        "Owned source",
+        "https://example.test/owned",
+    );
+    cancel_test_run(&db, "evidence-run");
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-second-client-request",
+        "evidence-second-run",
+        "evidence-second-turn",
+        "第二个运行",
+    );
+    register_web_evidence(
+        &db,
+        session_id,
+        "evidence-second-run",
+        "Foreign source",
+        "https://example.test/foreign",
+    );
+
+    assert_eq!(
+        AgentEvidenceRepository::current_run_web_urls(&db, "evidence-run")
+            .expect("owned fetch URLs"),
+        std::collections::BTreeSet::from(["https://example.test/owned".to_string()])
+    );
+
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE session_evidence SET retired_at = ?1 WHERE id = ?2",
+            rusqlite::params!["2026-07-14T00:00:00Z", owned.evidence_id],
+        )?;
+        Ok(())
+    })
+    .expect("retire current Run evidence");
+    assert!(
+        AgentEvidenceRepository::current_run_web_urls(&db, "evidence-run")
+            .expect("retired URLs excluded")
+            .is_empty()
+    );
+}
+
+#[test]
 fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
     let (db, session_id, session_key) = setup_run();
     let evidence = AgentEvidenceRepository::register_external_tool(
@@ -210,6 +500,9 @@ fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
             raw_result_hash: "result-hash".into(),
             retrieved_at: "2026-07-30T00:00:00Z".into(),
             bounded_excerpt: "bounded external result".into(),
+            url: None,
+            normalized_url: None,
+            domain: None,
         },
     )
     .expect("external evidence");
@@ -253,6 +546,7 @@ fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
     })
     .expect("external evidence metadata");
 
+    cancel_test_run(&db, "evidence-run");
     accept_test_run(
         &db,
         session_id,
@@ -275,6 +569,9 @@ fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
             raw_result_hash: "result-hash".into(),
             retrieved_at: "2026-07-30T00:01:00Z".into(),
             bounded_excerpt: "bounded external result".into(),
+            url: None,
+            normalized_url: None,
+            domain: None,
         },
     )
     .expect("second Run gets its own acquisition");
@@ -307,6 +604,9 @@ fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
             raw_result_hash: "result-hash-2".into(),
             retrieved_at: "2026-07-30T00:00:00Z".into(),
             bounded_excerpt: "must not persist".into(),
+            url: None,
+            normalized_url: None,
+            domain: None,
         },
     )
     .expect_err("different Run");

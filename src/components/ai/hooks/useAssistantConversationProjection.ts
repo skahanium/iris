@@ -22,14 +22,13 @@ import type {
   AssistantSessionRef,
   ClassifiedRunResultRequest,
 } from "@/types/ai";
+import type { AssistantAnswerReveal } from "./useAssistantAnswerReveal";
 
 export interface AssistantConversationProjectionOptions {
   run: AssistantRunEventState | null;
   presentation?: AssistantPresentationState | null;
-  /** Smoothed live answer; falls back to `presentation.answer` when omitted. */
-  presentationAnswer?: string;
-  /** True while the smoothed answer is still catching up to the live answer. */
-  presentationRevealing?: boolean;
+  /** Smoothed live answer scoped to a specific Run; must match `run.runId`. */
+  presentationReveal?: AssistantAnswerReveal;
   session?: AssistantSessionRef | null;
   messages: readonly ChatLine[];
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
@@ -50,8 +49,7 @@ export interface AssistantConversationProjectionOptions {
 export function useAssistantConversationProjection({
   run,
   presentation,
-  presentationAnswer,
-  presentationRevealing,
+  presentationReveal,
   session,
   messages,
   setMessages,
@@ -62,7 +60,7 @@ export function useAssistantConversationProjection({
   takeClassifiedResult,
 }: AssistantConversationProjectionOptions) {
   const appliedProjectionRef = useRef<string | null>(null);
-  const hydratedCitationRunsRef = useRef(new Set<string>());
+  const hydratedCompletedRunsRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (
@@ -70,34 +68,57 @@ export function useAssistantConversationProjection({
       run.state !== "completed" ||
       !session ||
       session.domain !== "normal" ||
-      hydratedCitationRunsRef.current.has(run.runId)
+      hydratedCompletedRunsRef.current.has(run.runId)
     ) {
       return;
     }
-    hydratedCitationRunsRef.current.add(run.runId);
+    hydratedCompletedRunsRef.current.add(run.runId);
     void assistantSessionLoad({ session, limit: 48 })
       .then((loaded) => {
         const persisted = loaded.find(
           (message) =>
-            message.role === "assistant" &&
-            message.runId === run.runId &&
-            Boolean(message.webCitations?.length),
+            message.role === "assistant" && message.runId === run.runId,
         );
-        if (!persisted?.webCitations?.length) return;
-        setMessages((previous) =>
-          patchRunMessage(previous, run.runId, {
+        if (!persisted) return;
+        setMessages((previous) => {
+          const current = previous.find(
+            (message) =>
+              message.role === "assistant" && message.runId === run.runId,
+          );
+          const processItems = persisted.processEvents?.length
+            ? ensureTerminalAnswerComplete(
+                projectAssistantProcessEvents(persisted.processEvents),
+                "completed",
+              )
+            : current?.processItems;
+          return upsertRunMessage(previous, run.runId, {
+            ...(current?.presentationStreaming
+              ? {}
+              : { content: persisted.content }),
+            turnId: persisted.turnId,
+            turnState: persisted.turnState,
+            seq: persisted.seq,
+            created_at: persisted.createdAt,
+            processItems,
             webCitations: persisted.webCitations,
             citationBinding: persisted.citationBinding,
             sourceSummary: persisted.sourceSummary,
-          }),
-        );
+          });
+        });
       })
-      .catch(() => hydratedCitationRunsRef.current.delete(run.runId));
+      .catch(() => hydratedCompletedRunsRef.current.delete(run.runId));
   }, [run, session, setMessages]);
 
   useEffect(() => {
     if (!run) return;
-    const outputting = deriveRunOutputting(run, presentation);
+    // The Run acceptance event can arrive before the conversation projection
+    // has appended its user/assistant placeholder. Do not mark the whole
+    // transcript streaming in that gap: the list would otherwise treat the
+    // previous assistant answer as the current streaming bubble.
+    const hasRunMessage = messages.some(
+      (message) => message.runId === run.runId,
+    );
+    const outputting = hasRunMessage && deriveRunOutputting(run, presentation);
     setStreaming(outputting);
     if (outputting) {
       setActivityHint(run.stage);
@@ -111,7 +132,7 @@ export function useAssistantConversationProjection({
         setActivityHint(null);
       }
     }
-  }, [presentation, run, setActivityHint, setStreaming]);
+  }, [messages, presentation, run, setActivityHint, setStreaming]);
 
   useEffect(() => {
     if (!run) return;
@@ -121,7 +142,7 @@ export function useAssistantConversationProjection({
     if (run.lastSeq === 0 && !hasLivePresentation) return;
     if (!messages.some((message) => message.runId === run.runId)) return;
 
-    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${presentationAnswer?.length ?? 0}:${presentationRevealing ? 1 : 0}`;
+    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${presentationReveal?.runId ?? ""}:${presentationReveal?.answer.length ?? 0}:${presentationReveal?.revealing ? 1 : 0}`;
     if (appliedProjectionRef.current === projectionKey) return;
     appliedProjectionRef.current = projectionKey;
 
@@ -150,17 +171,20 @@ export function useAssistantConversationProjection({
     const currentMessage = messages.find(
       (message) => message.role === "assistant" && message.runId === run.runId,
     );
+    const revealMatchesRun =
+      presentationReveal?.runId === run.runId &&
+      presentation?.runId === run.runId;
+    const visiblePresentationAnswer = revealMatchesRun
+      ? sanitizeAssistantVisibleText(presentationReveal.answer)
+      : "";
     const content = presentationOwnsContent
-      ? sanitizeAssistantVisibleText(
-          presentationAnswer ?? presentation?.answer ?? "",
-        ) ||
-        currentMessage?.content ||
-        ""
+      ? visiblePresentationAnswer
       : run.content.trim()
         ? run.content
         : (currentMessage?.content ?? "");
     const presentationStreaming =
-      presentationOwnsContent && (Boolean(presentationRevealing) || !terminal);
+      presentationOwnsContent &&
+      (Boolean(presentationReveal?.revealing) || !terminal);
     const fullContent = presentationOwnsContent
       ? sanitizeAssistantVisibleText(presentation?.answer ?? "")
       : run.content.trim()
@@ -185,8 +209,8 @@ export function useAssistantConversationProjection({
         (message) =>
           message.role === "assistant" && message.runId === run.runId,
       );
-      if (!current) return previous;
       if (
+        current &&
         current.content === content &&
         current.contentRef === nextContentRef &&
         current.presentationStreaming === presentationStreaming &&
@@ -194,7 +218,7 @@ export function useAssistantConversationProjection({
       ) {
         return previous;
       }
-      return patchRunMessage(previous, run.runId, {
+      return upsertRunMessage(previous, run.runId, {
         content,
         contentRef: nextContentRef,
         processItems,
@@ -221,7 +245,7 @@ export function useAssistantConversationProjection({
         })
           .then((content) =>
             setMessages((previous) =>
-              patchRunMessage(previous, run.runId, { content }),
+              upsertRunMessage(previous, run.runId, { content }),
             ),
           )
           .catch(() => setError("涉密回答已失效；请重新附带当前文档后重试。"));
@@ -254,8 +278,7 @@ export function useAssistantConversationProjection({
     classifiedContextRef,
     messages,
     presentation,
-    presentationAnswer,
-    presentationRevealing,
+    presentationReveal,
     run,
     setActivityHint,
     setError,
@@ -265,7 +288,7 @@ export function useAssistantConversationProjection({
   ]);
 }
 
-function patchRunMessage(
+function upsertRunMessage(
   messages: ChatLine[],
   runId: string,
   patch: Partial<ChatLine>,
@@ -273,9 +296,26 @@ function patchRunMessage(
   const index = messages.findIndex(
     (message) => message.role === "assistant" && message.runId === runId,
   );
-  if (index < 0) return messages;
+  if (index >= 0) {
+    const next = messages.slice();
+    next[index] = { ...messages[index]!, ...patch };
+    return next;
+  }
+  const userIndex = messages.findIndex(
+    (message) => message.role === "user" && message.runId === runId,
+  );
+  if (userIndex < 0) return messages;
+  const user = messages[userIndex]!;
+  const assistant: ChatLine = {
+    role: "assistant",
+    content: "",
+    runId,
+    turnId: user.turnId,
+    clientRequestId: user.clientRequestId,
+    ...patch,
+  };
   const next = messages.slice();
-  next[index] = { ...messages[index]!, ...patch };
+  next.splice(userIndex + 1, 0, assistant);
   return next;
 }
 
@@ -288,10 +328,17 @@ function appendCancellationNotice(
   );
   const target = messages[index];
   if (!target) {
-    return [
-      ...messages,
-      { role: "system", content: "本次回答已停止。发送继续可接着生成。" },
-    ];
+    const userIndex = messages.findIndex(
+      (message) => message.role === "user" && message.runId === runId,
+    );
+    if (userIndex < 0) return messages;
+    const next = messages.slice();
+    next.splice(userIndex + 1, 0, {
+      role: "system",
+      content: "本次回答已取消。",
+      runId,
+    });
+    return next;
   }
   if (!target.content.trim()) {
     const next = messages.slice();

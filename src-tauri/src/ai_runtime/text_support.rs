@@ -313,64 +313,6 @@ const META_ANALYSIS_ZH_PREFIXES: [&str; 9] = [
     "根据系统提示",
 ];
 
-/// Normalize the small set of model-visible phrases that can incorrectly turn
-/// evidence or execution metadata into user testimony on an uncalibrated
-/// source-group route. The source footer still carries the actual provenance;
-/// this text pass keeps the ordinary answer natural without inventing a
-/// per-block binding that the route has not earned.
-const SOURCE_GROUP_VISIBLE_TEXT_REPLACEMENTS: [(&str, &str); 29] = [
-    ("根据你之前提供的", "根据前文中的"),
-    ("根据你提供的", "根据可用的"),
-    ("依据你提供的", "依据可用的"),
-    ("按你提供的", "按可用的"),
-    ("你提供的网页", "查到的网页"),
-    ("你提供的网络", "查到的网络"),
-    ("你提供的外部", "查到的外部"),
-    ("你提供的", "现有的"),
-    ("你给出的", "现有的"),
-    ("你发来的", "现有的"),
-    ("本轮 web 证据", "查到的网页资料"),
-    ("本轮 Web 证据", "查到的网页资料"),
-    ("本轮网页证据", "查到的网页资料"),
-    ("本次 web 证据", "查到的网页资料"),
-    ("本次 Web 证据", "查到的网页资料"),
-    ("上一轮已涉及", "前文已提到"),
-    ("上一轮讨论过", "前文讨论过"),
-    ("本轮 Run", "这次回答"),
-    (
-        "based on the information you provided",
-        "based on the available information",
-    ),
-    (
-        "based on the material you provided",
-        "based on the available material",
-    ),
-    (
-        "based on the materials you provided",
-        "based on the available material",
-    ),
-    ("the information you provided", "the available information"),
-    ("the material you provided", "the available material"),
-    ("the current run's web evidence", "the web evidence found"),
-    ("this run's web evidence", "the web evidence found"),
-    ("current-run web evidence", "the web evidence found"),
-    ("the previous turn", "the earlier conversation"),
-    ("previous turn", "earlier conversation"),
-    ("you provided", "available"),
-];
-
-pub(crate) fn normalize_source_group_visible_text(text: &str) -> String {
-    let mut normalized = text.to_string();
-    for (from, to) in SOURCE_GROUP_VISIBLE_TEXT_REPLACEMENTS {
-        normalized = if from.is_ascii() {
-            replace_ascii_case_insensitive(&normalized, from, to)
-        } else {
-            normalized.replace(from, to)
-        };
-    }
-    normalize_model_visible_text(&normalized)
-}
-
 /// Remove a model-authored source appendix from any user-visible answer.
 ///
 /// Source lists are rendered solely from the evidence ledger by the controlled
@@ -466,13 +408,6 @@ fn is_markdown_https_link(value: &str) -> bool {
         .is_some_and(|(_, url)| url.starts_with("https://") && url.ends_with(')'))
 }
 
-/// Return only the stable normalized prefix for a source-group stream. A
-/// phrase such as `根据你提…` is held until it can be neutralized as a whole,
-/// preventing an unsafe partial attribution from flashing in the UI.
-pub(crate) fn normalize_source_group_visible_text_for_stream(text: &str) -> String {
-    normalize_source_group_visible_text(trim_partial_visible_text_suffix(text))
-}
-
 /// Return the stable visible prefix for every streamed answer.
 ///
 /// A trailing source heading is held until the following tokens prove whether
@@ -504,39 +439,10 @@ pub(crate) fn is_title_only_visible_answer(content: &str) -> bool {
             .any(|character| matches!(character, '。' | '！' | '？' | '.' | '!' | '?'))
 }
 
-/// The smallest safe unit that can become visible in an incremental answer.
-pub(crate) fn has_complete_visible_answer_unit(content: &str) -> bool {
-    !is_title_only_visible_answer(content)
-        && content
-            .chars()
-            .any(|character| matches!(character, '。' | '！' | '？' | '.' | '!' | '?'))
-}
-
 fn trim_partial_visible_text_suffix(text: &str) -> &str {
     let mut trim_at = text.len();
     if let Some(start) = trailing_source_appendix_heading_candidate_start(text) {
         trim_at = trim_at.min(start);
-    }
-    for start in text.char_indices().map(|(index, _)| index) {
-        let suffix = &text[start..];
-        let suffix_chars = suffix.chars().count();
-        if SOURCE_GROUP_VISIBLE_TEXT_REPLACEMENTS
-            .iter()
-            .map(|(phrase, _)| *phrase)
-            .any(|phrase| {
-                let phrase_chars = phrase.chars().count();
-                let minimum_partial_chars = if phrase.is_ascii() { 3 } else { 2 };
-                suffix_chars >= minimum_partial_chars
-                    && suffix_chars < phrase_chars
-                    && (phrase.starts_with(suffix)
-                        || (suffix.is_ascii()
-                            && phrase
-                                .to_ascii_lowercase()
-                                .starts_with(&suffix.to_ascii_lowercase())))
-            })
-        {
-            trim_at = trim_at.min(start);
-        }
     }
     if trim_at == text.len() {
         text
@@ -571,22 +477,6 @@ fn normalize_partial_model_source_heading(candidate: &str) -> String {
         .trim_end_matches(['*', '_', ':', '：'])
         .trim()
         .to_ascii_lowercase()
-}
-
-fn replace_ascii_case_insensitive(text: &str, from: &str, to: &str) -> String {
-    let lowercase = text.to_ascii_lowercase();
-    let needle = from.to_ascii_lowercase();
-    let mut result = String::with_capacity(text.len());
-    let mut cursor = 0usize;
-    while let Some(relative_start) = lowercase[cursor..].find(&needle) {
-        let start = cursor + relative_start;
-        let end = start + needle.len();
-        result.push_str(&text[cursor..start]);
-        result.push_str(to);
-        cursor = end;
-    }
-    result.push_str(&text[cursor..]);
-    result
 }
 
 #[cfg(test)]
@@ -667,89 +557,6 @@ mod tests {
         assert_eq!(
             sanitize_meta_analysis_prefix(meta),
             "请提供可验证材料后我再回答。"
-        );
-    }
-
-    #[test]
-    fn source_group_visible_text_neutralizes_user_attribution_and_lifecycle_jargon() {
-        let visible = normalize_source_group_visible_text(
-            "根据你提供的信息，本轮 web 证据显示该版本已发布；上一轮已涉及的背景仅作补充。",
-        );
-
-        assert_eq!(
-            visible,
-            "根据可用的信息，查到的网页资料显示该版本已发布；前文已提到的背景仅作补充。"
-        );
-        assert!(!visible.contains("你提供"));
-        assert!(!visible.contains("本轮"));
-        assert!(!visible.contains("上一轮"));
-    }
-
-    #[test]
-    fn source_group_stream_filter_withholds_a_partial_user_attribution() {
-        assert_eq!(
-            normalize_source_group_visible_text_for_stream("结论：根据你提"),
-            "结论："
-        );
-        assert_eq!(
-            normalize_source_group_visible_text_for_stream("结论：根据你提供的信息，已发布。"),
-            "结论：根据可用的信息，已发布。"
-        );
-    }
-
-    #[test]
-    fn source_group_stream_filter_withholds_partial_lifecycle_jargon() {
-        assert_eq!(
-            normalize_source_group_visible_text_for_stream("结论：本轮"),
-            "结论："
-        );
-        assert_eq!(
-            normalize_source_group_visible_text_for_stream("结论：本轮 web 证据显示已发布。"),
-            "结论：查到的网页资料显示已发布。"
-        );
-    }
-
-    #[test]
-    fn source_group_visible_text_neutralizes_english_lifecycle_jargon() {
-        assert_eq!(
-            normalize_source_group_visible_text_for_stream("Conclusion: the current run"),
-            "Conclusion:"
-        );
-        assert_eq!(
-            normalize_source_group_visible_text_for_stream(
-                "Conclusion: the current run's web evidence supports the release; the previous turn supplied context.",
-            ),
-            "Conclusion: the web evidence found supports the release; the earlier conversation supplied context."
-        );
-    }
-
-    #[test]
-    fn source_group_visible_text_strips_a_trailing_model_authored_source_appendix() {
-        let visible = normalize_source_group_visible_text(
-            "特朗普近期新闻可概括为三项政策动向。\n\n## 资料来源\n- [新闻一](https://example.test/one)\n- [新闻二](https://example.test/two)",
-        );
-
-        assert_eq!(visible, "特朗普近期新闻可概括为三项政策动向。");
-    }
-
-    #[test]
-    fn source_group_visible_text_keeps_a_normal_discussion_of_source_quality() {
-        let answer = "判断资料来源时，应优先查看原始公告和完整上下文。";
-
-        assert_eq!(normalize_source_group_visible_text(answer), answer);
-    }
-
-    #[test]
-    fn source_group_stream_withholds_a_possible_trailing_source_appendix() {
-        assert_eq!(
-            normalize_source_group_visible_text_for_stream("结论已经给出。\n\n## 资料来源"),
-            "结论已经给出。"
-        );
-        assert_eq!(
-            normalize_source_group_visible_text_for_stream(
-                "结论已经给出。\n\n## 资料来源\n- [新闻](https://example.test/news)",
-            ),
-            "结论已经给出。"
         );
     }
 

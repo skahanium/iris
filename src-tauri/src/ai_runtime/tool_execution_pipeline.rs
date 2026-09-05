@@ -193,6 +193,7 @@ mod tests {
                     material_needs: vec![],
                     required_capabilities: vec![CapabilityId::new("web.search")],
                     explicit_constraints: vec![],
+                    fresh_fact: Default::default(),
                 },
             },
         )

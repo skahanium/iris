@@ -1,9 +1,9 @@
 use super::run_contract::{
-    AssistantRunControlRequest, AssistantRunStartRequest, AssistantTurnDraft, ContextMode,
-    DisplayMention, DisplayMentionKind, DisplayMentionRange, Effect, Effort, ExplicitAction,
-    ExplicitTarget, Freshness, RiskClass, RunControlAction, RunEventPayload, RunEventType,
-    RunRecoveryKind, RunState, SecurityDomain, SelectionSnapshot, VerificationRequirement,
-    WebDecisionReason,
+    AssistantRunControlRequest, AssistantRunRetryRequest, AssistantRunStartRequest,
+    AssistantTurnDraft, ContextMode, DisplayMention, DisplayMentionKind, DisplayMentionRange,
+    Effect, Effort, ExplicitAction, ExplicitTarget, Freshness, RiskClass, RunControlAction,
+    RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain, SelectionSnapshot,
+    VerificationRequirement, WebDecisionReason,
 };
 use super::run_engine::RunEventSink;
 use super::run_intake::RunIntake;
@@ -11,6 +11,8 @@ use super::{
     agent_run_repository::{AgentRunRepository, AppendRunEventInput, DurableApplyCheckpointStage},
     frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput},
 };
+use std::sync::Arc;
+
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
@@ -169,6 +171,8 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
         read_only: true,
         user_trusted: true,
         attested_binding_config_hash: String::new(),
+        domain_operation: None,
+        output_mapping: None,
     };
     let reviewed = review_discovered_tool(
         &binding_input.mcp_tool_name,
@@ -364,6 +368,8 @@ fn provider_config_drift_rolls_back_run_acceptance() {
         read_only: true,
         user_trusted: true,
         attested_binding_config_hash: String::new(),
+        domain_operation: None,
+        output_mapping: None,
     };
     let reviewed = review_discovered_tool(
         &binding_input.mcp_tool_name,
@@ -475,6 +481,93 @@ impl RunEventSink for RecordingSink {
             .push(serde_json::to_value(event)?);
         Ok(())
     }
+}
+
+#[test]
+fn accepted_retry_does_not_spawn_again() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("make source run retryable");
+    let sink = RecordingSink::default();
+    let retry = AssistantRunRetryRequest {
+        session: accepted.session.clone(),
+        source_run_id: accepted.run_id.clone(),
+        client_request_id: "retry-replay-once".into(),
+    };
+
+    let first = RunIntake::retry_with_sink_outcome(&db, retry.clone(), &sink).expect("first retry");
+    let second =
+        RunIntake::retry_with_sink_outcome(&db, retry, &sink).expect("idempotent retry replay");
+
+    assert!(first.is_new, "the first retry must win execution");
+    assert!(
+        !second.is_new,
+        "an idempotent retry replay must not win execution again"
+    );
+    assert_eq!(first.accepted.run_id, second.accepted.run_id);
+    assert_eq!(
+        sink.0.lock().expect("sink lock").len(),
+        1,
+        "an idempotent retry replay must not emit a duplicate accepted event"
+    );
+}
+
+#[test]
+fn concurrent_retry_starts_executor_once() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let db =
+        Arc::new(Database::open(&directory.path().join("concurrent-retry.db")).expect("database"));
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("make source run retryable");
+    let sink = Arc::new(RecordingSink::default());
+    let retry = AssistantRunRetryRequest {
+        session: accepted.session.clone(),
+        source_run_id: accepted.run_id.clone(),
+        client_request_id: "concurrent-retry-once".into(),
+    };
+
+    let mut new_count = 0;
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let db = Arc::clone(&db);
+            let sink = Arc::clone(&sink);
+            let retry = retry.clone();
+            handles.push(scope.spawn(move || {
+                RunIntake::retry_with_sink_outcome(&db, retry, &*sink)
+                    .expect("concurrent retry accepted")
+            }));
+        }
+        for handle in handles {
+            if handle.join().expect("retry thread").is_new {
+                new_count += 1;
+            }
+        }
+    });
+
+    assert_eq!(
+        new_count, 1,
+        "two concurrent retries must produce exactly one execution owner"
+    );
+    assert_eq!(
+        sink.0.lock().expect("sink lock").len(),
+        1,
+        "concurrent retries must emit only one accepted notification"
+    );
 }
 
 struct RejectingSink;
@@ -906,6 +999,31 @@ fn intake_event_delivery_failure_does_not_strand_or_duplicate_the_run() {
 }
 
 #[test]
+fn control_event_delivery_failure_keeps_the_committed_terminal_state() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+
+    let outcome = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: accepted.session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: accepted.state_version,
+            action: RunControlAction::Cancel,
+        },
+        &RejectingSink,
+    )
+    .expect("durable control survives notification loss");
+
+    assert_eq!(outcome, super::run_intake::NormalRunControlOutcome::Applied);
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Cancelled);
+    crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
+}
+
+#[test]
 fn concurrent_intake_replays_converge_on_one_run() {
     let directory = tempfile::tempdir().expect("temporary database directory");
     let db = Database::open(&directory.path().join("concurrent.sqlite3")).expect("database");
@@ -968,34 +1086,11 @@ fn intake_scoped_get_does_not_expose_a_run_to_another_session() {
 fn reconnect_lookup_returns_only_the_owner_latest_nonterminal_run() {
     let db = Database::open_in_memory().expect("database");
     let first = RunIntake::start(&db, request()).expect("first accepted run");
-    let mut second_request = request();
-    second_request.client_request_id = "latest-active-client-request".to_string();
-    second_request.session = Some(first.session.clone());
-    let second = RunIntake::start(&db, second_request).expect("second accepted run");
 
     let recovered = RunIntake::get_latest_active(&db, &first.session)
         .expect("recover latest")
         .expect("active run");
-    assert_eq!(recovered.run.run_id, second.run_id);
-
-    RunIntake::control(
-        &db,
-        AssistantRunControlRequest {
-            session: first.session.clone(),
-            run_id: second.run_id.clone(),
-            expected_state_version: 0,
-            action: RunControlAction::Cancel,
-        },
-    )
-    .expect("cancel latest run");
-    assert_eq!(
-        RunIntake::get_latest_active(&db, &first.session)
-            .expect("recover remaining active")
-            .expect("first run remains active")
-            .run
-            .run_id,
-        first.run_id
-    );
+    assert_eq!(recovered.run.run_id, first.run_id);
 
     RunIntake::control(
         &db,
@@ -1010,8 +1105,17 @@ fn reconnect_lookup_returns_only_the_owner_latest_nonterminal_run() {
     assert!(RunIntake::get_latest_active(&db, &first.session)
         .expect("recover with no active run")
         .is_none());
+
+    let mut second_request = request();
+    second_request.client_request_id = "latest-active-client-request".to_string();
+    second_request.session = Some(first.session.clone());
+    let second = RunIntake::start(&db, second_request).expect("second accepted run");
+    let recovered = RunIntake::get_latest_active(&db, &first.session)
+        .expect("recover replacement run")
+        .expect("replacement active run");
+    assert_eq!(recovered.run.run_id, second.run_id);
+
     crate::ai_runtime::model_gateway::clear_abort(&first.run_id);
-    crate::ai_runtime::model_gateway::clear_abort(&second.run_id);
 }
 
 #[test]
@@ -1205,7 +1309,7 @@ fn envelope_resolver_applies_security_action_and_web_rules_without_scene_inferen
 }
 
 #[test]
-fn envelope_resolver_uses_user_constraints_before_explicit_apply_action() {
+fn envelope_resolver_keeps_explicit_local_only_boundary_before_apply_action() {
     let mut constrained = request();
     constrained.client_request_id = "constrained-action".into();
     constrained.turn.message = "只用本地资料，不要修改文件；请继续创作小说。".into();
@@ -1221,19 +1325,19 @@ fn envelope_resolver_uses_user_constraints_before_explicit_apply_action() {
     assert_eq!(resolved.effect, Effect::Answer);
     assert_eq!(resolved.context, ContextMode::ExplicitScope);
     assert_eq!(resolved.freshness, Freshness::Offline);
-    assert_eq!(resolved.effort, Effort::Direct);
+    assert_eq!(resolved.effort, Effort::ToolLoop);
     assert!(resolved.material_needs.is_empty());
 }
 
 #[test]
-fn envelope_resolver_keeps_novel_writing_in_conversation_without_implicit_retrieval() {
+fn new_writing_run_does_not_get_a_domain_specific_conversation_mode() {
     let mut novel = request();
     novel.client_request_id = "novel-conversation".into();
     novel.turn.message = "请继续创作这部小说的下一章。".into();
 
     let resolved = RunIntake::resolve_envelope(&novel).expect("resolve envelope");
 
-    assert_eq!(resolved.context, ContextMode::Conversation);
+    assert_eq!(resolved.context, ContextMode::None);
     assert_eq!(resolved.freshness, Freshness::Offline);
     assert!(resolved.material_needs.is_empty());
 }
@@ -1287,6 +1391,103 @@ fn minimal_intake_resolves_a_direct_offline_answer_envelope() {
         RunIntake::start(&db, request()).unwrap().state,
         RunState::Accepted
     );
+}
+
+#[test]
+fn input_submission_resumes_the_same_run_and_replay_is_noop() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted run");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在查询".into(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("running");
+    let required = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: running.state_version(),
+            event_type: RunEventType::InputRequired,
+            payload: RunEventPayload::InputRequired {
+                input_id: "location-test".into(),
+                input_kind: "location".into(),
+                fields: vec!["city".into()],
+                prompt: "请告诉我城市".into(),
+            },
+        },
+    )
+    .expect("input request");
+    let session = accepted.session.clone();
+    let mut values = std::collections::BTreeMap::new();
+    values.insert("city".into(), "上海".into());
+    let outcome = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: required.state_version(),
+            action: RunControlAction::SubmitInput {
+                input_id: "location-test".into(),
+                values: values.clone(),
+            },
+        },
+        &RecordingSink::default(),
+    )
+    .expect("input submission");
+    assert_eq!(
+        outcome,
+        super::run_intake::NormalRunControlOutcome::InputProvided
+    );
+    let replay = RunIntake::control_with_sink(
+        &db,
+        AssistantRunControlRequest {
+            session: session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: required.state_version(),
+            action: RunControlAction::SubmitInput {
+                input_id: "location-test".into(),
+                values,
+            },
+        },
+        &RecordingSink::default(),
+    )
+    .expect("replayed input");
+    assert_eq!(replay, super::run_intake::NormalRunControlOutcome::Noop);
+    let snapshot = RunIntake::get(&db, &session, &accepted.run_id)
+        .expect("snapshot")
+        .expect("run exists");
+    assert_eq!(snapshot.run.state, RunState::Preparing);
+    assert!(snapshot.run.pending_input.is_none());
+    assert!(snapshot.events.iter().any(|event| {
+        matches!(
+            event.payload(),
+            RunEventPayload::InputProvided { values, .. }
+                if values == &std::collections::BTreeMap::from([("city".to_string(), "上海".to_string())])
+        )
+    }));
 }
 
 #[test]
@@ -1437,7 +1638,7 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
 }
 
 #[test]
-fn rejection_consumes_the_owned_frozen_plan_without_dispatching_it() {
+fn rejected_confirmation_cancels_without_write() {
     let (db, accepted, confirmation_id, awaiting_state_version) =
         accepted_run_awaiting_frozen_change_confirmation();
 
@@ -1457,20 +1658,29 @@ fn rejection_consumes_the_owned_frozen_plan_without_dispatching_it() {
     let rejected = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("get rejected run")
         .expect("rejected run exists");
-    assert_eq!(rejected.run.state, RunState::Running);
+    assert_eq!(rejected.run.state, RunState::Cancelled);
     assert!(rejected.run.pending_confirmation.is_none());
+    assert!(rejected.run.final_message_id.is_none());
     assert_eq!(
-        serde_json::to_value(rejected.events.last().expect("resumed event"))
-            .expect("serialize resumed event")["type"],
-        "resumed"
+        serde_json::to_value(rejected.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["type"],
+        "cancelled"
+    );
+    assert_eq!(
+        serde_json::to_value(rejected.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["payload"]["reason"],
+        "user_rejected_change"
     );
     db.with_read_conn(|conn| {
-        let status: String = conn.query_row(
-            "SELECT status FROM agent_run_confirmations WHERE confirmation_id = ?1",
+        let (status, assistant_messages): (String, i64) = conn.query_row(
+            "SELECT c.status,
+                    (SELECT COUNT(*) FROM session_messages WHERE role = 'assistant')
+             FROM agent_run_confirmations c WHERE c.confirmation_id = ?1",
             [&confirmation_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         assert_eq!(status, "rejected");
+        assert_eq!(assistant_messages, 0);
         Ok(())
     })
     .expect("confirmation rejected atomically");
@@ -1675,7 +1885,7 @@ fn event_state_version(event: &super::run_contract::AssistantRunEvent) -> u64 {
 }
 
 #[test]
-fn web_enabled_pure_rewrite_remains_direct_while_the_toggle_owns_web_authority() {
+fn web_enabled_rewrite_keeps_the_generic_preferred_web_surface_available() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -1683,8 +1893,8 @@ fn web_enabled_pure_rewrite_remains_direct_while_the_toggle_owns_web_authority()
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.effort, Effort::Direct);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
     assert!(envelope
         .required_capabilities
         .iter()
@@ -1707,6 +1917,66 @@ fn web_enabled_time_sensitive_movie_question_enters_tool_loop() {
 }
 
 #[test]
+fn completed_conversation_accepts_a_third_current_movie_turn() {
+    use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
+
+    let db = Database::open_in_memory().expect("database");
+    upsert_web_evidence_provider(
+        &db,
+        &WebEvidenceProviderInput {
+            id: "generic-search".into(),
+            name: "Generic Search".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
+            transport_config_json: r#"{"command":"/bin/true"}"#.into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(r#"{"tool":"web_search"}"#.into()),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .expect("generic Web provider");
+    let mut first = request();
+    first.client_request_id = "three-turn-first".into();
+    first.turn.message = "你好？".into();
+    let first = RunIntake::start(&db, first).expect("first turn accepted");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE run_id = ?1",
+            [&first.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("complete first turn");
+
+    let mut second = request();
+    second.client_request_id = "three-turn-second".into();
+    second.session = Some(first.session.clone());
+    second.turn.message = "今天是几月几日？".into();
+    let second = RunIntake::start(&db, second).expect("second turn accepted");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE run_id = ?1",
+            [&second.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("complete second turn");
+
+    let mut third = request();
+    third.client_request_id = "three-turn-third".into();
+    third.session = Some(first.session);
+    third.web_enabled = true;
+    third.turn.message = "最近有什么好看的电影上映吗？".into();
+
+    let accepted = RunIntake::start(&db, third).expect("third turn accepted");
+    let persisted = AgentRunRepository::get(&db, &accepted.run_id)
+        .expect("load third Run")
+        .expect("third Run persisted");
+    assert_eq!(persisted.run.state, RunState::Accepted);
+}
+
+#[test]
 fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
     let mut request = request();
     request.web_enabled = false;
@@ -1718,7 +1988,7 @@ fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.context, ContextMode::ImplicitVault);
     assert_eq!(envelope.effort, Effort::ToolLoop);
-    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+    assert_eq!(envelope.web_reason, WebDecisionReason::UserDisabled);
     assert_eq!(
         envelope.verification_requirement,
         VerificationRequirement::None
@@ -1796,6 +2066,88 @@ fn web_enabled_external_question_persists_the_web_capability_contract() {
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "context.read"));
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "vault.read"));
+}
+
+#[test]
+fn tool_loop_does_not_grant_local_context_without_a_user_material_scope() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "请联网核实 HTTP 状态码 404 的含义，并引用公开网页来源。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| { matches!(capability.as_str(), "context.read" | "vault.read") }));
+}
+
+#[test]
+fn hr2_new_runs_never_grant_domain_capabilities_or_freeze_domain_plans() {
+    for message in [
+        "上海未来一周天气",
+        "今天有什么重要新闻",
+        "上海正在上映什么电影",
+        "苹果现在股价多少",
+        "今晚湖人比赛几点",
+    ] {
+        let mut request = request();
+        request.web_enabled = true;
+        request.turn.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_eq!(envelope.fresh_fact, Default::default(), "{message}");
+        assert!(
+            !envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.domain.read"),
+            "{message} must not carry a domain-only capability"
+        );
+        assert!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message} must carry web.search"
+        );
+        assert!(
+            !envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "external.read"),
+            "{message} must not grant external.read"
+        );
+    }
+}
+
+#[test]
+fn web_disabled_current_fact_does_not_add_domain_capability() {
+    let mut request = request();
+    request.web_enabled = false;
+    request.turn.message = "上海未来一周天气".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.domain.read"));
+    assert_eq!(envelope.fresh_fact, Default::default());
 }
 
 #[test]
@@ -1826,18 +2178,18 @@ fn web_toggle_is_the_only_authority_that_grants_web_search() {
 }
 
 #[test]
-fn web_enabled_external_fact_without_temporal_keywords_requires_current_run_evidence() {
+fn ordinary_external_fact_without_strong_temporal_or_risk_signal_is_web_preferred() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "2026美加墨世界杯的四强分别是谁？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
-    assert_eq!(envelope.web_reason, WebDecisionReason::StrictExternalFact);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
     assert_eq!(
         envelope.verification_requirement,
-        super::run_contract::VerificationRequirement::CurrentRunWeb
+        super::run_contract::VerificationRequirement::None
     );
     assert!(envelope
         .required_capabilities
@@ -1867,15 +2219,15 @@ fn rejecting_local_notes_as_a_factual_source_still_requires_web_verification() {
 }
 
 #[test]
-fn creative_copy_request_remains_offline_when_it_does_not_ask_for_external_facts() {
+fn creative_copy_request_uses_generic_webpreferred_when_authorized() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "请写一个三句式的产品发布开场白。".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.web_reason, WebDecisionReason::CreativeGeneration);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
     assert_eq!(
         envelope.verification_requirement,
         super::run_contract::VerificationRequirement::None
@@ -1883,20 +2235,17 @@ fn creative_copy_request_remains_offline_when_it_does_not_ask_for_external_facts
 }
 
 #[test]
-fn temporal_verification_matrix_requires_current_run_web_evidence_in_all_24_variants() {
+fn strong_temporal_and_high_risk_requests_require_current_run_web_evidence() {
     let cases = [
-        "2026美加墨世界杯的四强分别是谁？",
-        "世界杯决赛结果是什么？",
-        "Who won the World Cup final?",
-        "现任法国总统是谁？",
+        "今天世界杯决赛结果是什么？",
+        "Who won the World Cup final today?",
+        "现任法国总统是谁？请核实后回答。",
         "What is the current share price?",
         "今天发生了哪些重要新闻？",
-        "这场比赛赛后谁被评为最佳球员？",
-        "请纠正上一轮关于赛果的说法。",
-        "这两条来源对冠军归属冲突，哪条是真的？",
-        "2026年该奖项最终由谁获得？",
+        "这场比赛的当前比分是多少？",
+        "请联网核实这个赛事的最终结果。",
         "本周的监管规则是否已经生效？",
-        "请核实这个刚结束的赛事结果。",
+        "请给出当前用药建议。",
     ];
 
     for message in cases {
@@ -1932,7 +2281,247 @@ fn temporal_verification_matrix_requires_current_run_web_evidence_in_all_24_vari
 }
 
 #[test]
-fn explicit_file_reference_answer_stays_direct_when_it_is_local_only() {
+fn ordinary_volatile_fact_does_not_inherit_corroboration_without_explicit_request() {
+    let mut ordinary = request();
+    ordinary.web_enabled = true;
+    ordinary.turn.message = "近期有什么正在热映的电影？".into();
+    let ordinary_envelope = RunIntake::resolve_envelope(&ordinary).expect("ordinary envelope");
+    assert_eq!(
+        ordinary_envelope.web_reason,
+        WebDecisionReason::VolatileExternalFact
+    );
+    assert!(!ordinary_envelope
+        .explicit_constraints
+        .iter()
+        .any(|constraint| constraint.kind == "corroborated_web_evidence"));
+
+    let mut cross_checked = ordinary;
+    cross_checked.turn.message = "近期有什么正在热映的电影？请用两个独立来源交叉核验。".into();
+    let cross_checked_envelope =
+        RunIntake::resolve_envelope(&cross_checked).expect("cross-checked envelope");
+    assert!(cross_checked_envelope
+        .explicit_constraints
+        .iter()
+        .any(|constraint| constraint.kind == "corroborated_web_evidence"));
+}
+
+/// HR-2 regression: ordinary external questions use the progressive route.
+#[test]
+fn ordinary_external_questions_use_webpreferred_without_strict_finalization() {
+    for message in [
+        "推荐三本理解组织治理的入门书，并说明适合什么读者。",
+        "比较两种常见的知识管理方法，各自适合什么场景？",
+        "帮我梳理公开可得的 Markdown 写作建议。",
+    ] {
+        let mut request = request();
+        request.web_enabled = true;
+        request.turn.message = message.into();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_eq!(
+            envelope.freshness,
+            Freshness::WebPreferred,
+            "HR-2-target: ordinary external question should be progressive: {message}"
+        );
+        assert_eq!(
+            envelope.verification_requirement,
+            VerificationRequirement::None,
+            "HR-2-target: ordinary external question should not require current Run Web evidence: {message}"
+        );
+    }
+}
+
+#[test]
+fn hr2_task_matrix_uses_task_contracts_instead_of_fresh_fact_domains() {
+    struct Case {
+        name: &'static str,
+        request: AssistantRunStartRequest,
+        effect: Effect,
+        freshness: Freshness,
+        verification: VerificationRequirement,
+        effort: Effort,
+        web_capability: bool,
+    }
+
+    let mut ask_notes = request();
+    ask_notes.client_request_id = "hr2-ask-notes".into();
+    ask_notes.turn.message = "请根据附带笔记概述要点。".into();
+    ask_notes.turn.explicit_references = vec![valid_reference()];
+    ask_notes.turn.retrieval_scope.path_prefixes = vec!["notes/".into()];
+    ask_notes.web_enabled = true;
+
+    let mut research = request();
+    research.client_request_id = "hr2-research".into();
+    research.turn.message = "比较两种常见的知识管理方法，各自适合什么场景？".into();
+    research.web_enabled = true;
+
+    let mut citation_check = request();
+    citation_check.client_request_id = "hr2-citation-check".into();
+    citation_check.turn.message =
+        "请联网核实 https://example.com/release-notes 的当前版本。".into();
+    citation_check.web_enabled = true;
+
+    let mut draft = request();
+    draft.client_request_id = "hr2-draft".into();
+    draft.turn.message = "将这段话润色成正式通知。".into();
+    draft.explicit_action = Some(ExplicitAction {
+        effect: Effect::Draft,
+        target: None,
+        selection_snapshot: None,
+    });
+
+    let mut apply = request();
+    apply.client_request_id = "hr2-apply".into();
+    apply.turn.message = "将附带笔记的标题改得更清晰。".into();
+    apply.turn.explicit_references = vec![valid_reference()];
+    apply.explicit_action = Some(ExplicitAction {
+        effect: Effect::Apply,
+        target: Some(ExplicitTarget {
+            reference_id: "reference".into(),
+            content_hash: valid_content_hash(),
+        }),
+        selection_snapshot: None,
+    });
+
+    let mut chat = request();
+    chat.client_request_id = "hr2-chat".into();
+    chat.turn.message = "你好！".into();
+    chat.web_enabled = true;
+
+    let cases = [
+        Case {
+            name: "chat",
+            request: chat,
+            effect: Effect::Answer,
+            freshness: Freshness::WebPreferred,
+            verification: VerificationRequirement::None,
+            effort: Effort::ToolLoop,
+            web_capability: true,
+        },
+        Case {
+            name: "ask-notes",
+            request: ask_notes,
+            effect: Effect::Answer,
+            freshness: Freshness::WebPreferred,
+            verification: VerificationRequirement::None,
+            effort: Effort::ToolLoop,
+            web_capability: true,
+        },
+        Case {
+            name: "research",
+            request: research,
+            effect: Effect::Answer,
+            freshness: Freshness::WebPreferred,
+            verification: VerificationRequirement::None,
+            effort: Effort::ToolLoop,
+            web_capability: true,
+        },
+        Case {
+            name: "citation-check",
+            request: citation_check,
+            effect: Effect::Answer,
+            freshness: Freshness::WebRequired,
+            verification: VerificationRequirement::CurrentRunWeb,
+            effort: Effort::ToolLoop,
+            web_capability: true,
+        },
+        Case {
+            name: "draft",
+            request: draft,
+            effect: Effect::Draft,
+            freshness: Freshness::Offline,
+            verification: VerificationRequirement::None,
+            effort: Effort::Direct,
+            web_capability: false,
+        },
+        Case {
+            name: "apply",
+            request: apply,
+            effect: Effect::Apply,
+            freshness: Freshness::Offline,
+            verification: VerificationRequirement::None,
+            effort: Effort::Durable,
+            web_capability: false,
+        },
+    ];
+
+    for case in cases {
+        let envelope = RunIntake::resolve_envelope(&case.request).expect(case.name);
+        assert_eq!(envelope.effect, case.effect, "{} effect", case.name);
+        assert_eq!(
+            envelope.freshness, case.freshness,
+            "{} freshness",
+            case.name
+        );
+        assert_eq!(
+            envelope.verification_requirement, case.verification,
+            "{} verification",
+            case.name
+        );
+        assert_eq!(envelope.effort, case.effort, "{} effort", case.name);
+        assert_eq!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            case.web_capability,
+            "{} web capability",
+            case.name
+        );
+        assert_eq!(
+            envelope.fresh_fact,
+            Default::default(),
+            "{} fresh plan",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn strict_web_boundaries_remain_required_in_the_hr1_baseline() {
+    for message in [
+        "请联网核实 https://example.com/release-notes 的当前版本。",
+        "今天该证券的最新收盘价格是多少？",
+        "当前这项法规是否已经生效？请核实后回答。",
+    ] {
+        let mut online = request();
+        online.web_enabled = true;
+        online.turn.message = message.into();
+
+        let online_envelope = RunIntake::resolve_envelope(&online).expect("online envelope");
+        assert_eq!(
+            online_envelope.freshness,
+            Freshness::WebRequired,
+            "{message}"
+        );
+        assert_eq!(
+            online_envelope.verification_requirement,
+            VerificationRequirement::CurrentRunWeb,
+            "{message}"
+        );
+
+        let mut offline = online;
+        offline.web_enabled = false;
+        let offline_envelope = RunIntake::resolve_envelope(&offline).expect("offline envelope");
+        assert_eq!(offline_envelope.freshness, Freshness::Offline, "{message}");
+        assert_eq!(
+            offline_envelope.verification_requirement,
+            VerificationRequirement::CurrentRunWeb,
+            "{message}"
+        );
+        assert!(
+            !offline_envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn explicit_file_reference_keeps_the_generic_preferred_web_surface_available() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -1957,12 +2546,12 @@ fn explicit_file_reference_answer_stays_direct_when_it_is_local_only() {
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
     assert_eq!(envelope.context, ContextMode::ExplicitReferences);
-    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(
         envelope.verification_requirement,
         VerificationRequirement::None
     );
-    assert_eq!(envelope.effort, Effort::Direct);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
 }
 
 #[test]
@@ -2017,7 +2606,79 @@ fn web_enabled_trusted_runtime_questions_remain_offline() {
 }
 
 #[test]
-fn web_enabled_conversation_meta_questions_never_trigger_search() {
+fn today_date_question_uses_trusted_runtime_without_freezing_a_domain_plan() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "你好，今天是几月几日？".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.fresh_fact, Default::default());
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.web_reason, WebDecisionReason::TrustedRuntimeFact);
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn broad_recent_question_is_webrequired_and_enters_the_generic_tool_loop() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "最近有什么好看的电影".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(
+        envelope.verification_requirement,
+        VerificationRequirement::CurrentRunWeb
+    );
+    assert_eq!(envelope.fresh_fact, Default::default());
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn web_disabled_new_runs_keep_no_domain_plan_and_only_strict_tasks_keep_evidence_obligations() {
+    for (message, verification_requirement) in [
+        ("上海未来一周天气", VerificationRequirement::CurrentRunWeb),
+        ("今天有什么重要新闻", VerificationRequirement::CurrentRunWeb),
+        (
+            "最近有什么好看的电影",
+            VerificationRequirement::CurrentRunWeb,
+        ),
+        ("苹果现在股价多少", VerificationRequirement::CurrentRunWeb),
+        ("今晚湖人比赛几点", VerificationRequirement::CurrentRunWeb),
+    ] {
+        let mut request = request();
+        request.web_enabled = false;
+        request.turn.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_eq!(envelope.fresh_fact, Default::default(), "{message}");
+        assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
+        assert!(
+            !envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message}"
+        );
+        assert_eq!(
+            envelope.verification_requirement, verification_requirement,
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn web_enabled_conversation_followups_keep_the_generic_web_tool_surface_available() {
     for message in [
         "这么简单的问题你还联网搜索？",
         "刚刚问你为什么简单问题也联网搜索，你就坏掉了？",
@@ -2030,13 +2691,40 @@ fn web_enabled_conversation_meta_questions_never_trigger_search() {
 
         let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-        assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
-        assert_eq!(
-            envelope.web_reason,
-            WebDecisionReason::ConversationMeta,
+        assert_eq!(envelope.freshness, Freshness::WebPreferred, "{message}");
+        assert_eq!(envelope.effort, Effort::ToolLoop, "{message}");
+        assert!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
             "{message}"
         );
     }
+}
+
+#[test]
+fn explicit_reverification_of_a_prior_answer_outranks_conversation_meta_heuristics() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.session = Some(crate::ai_runtime::run_contract::AssistantSessionRef {
+        domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
+        session_key: "session-reverify".to_string(),
+    });
+    request.turn.message = "请联网核实你刚才关于这个事实的回答，不要再凭记忆编造。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(
+        envelope.verification_requirement,
+        VerificationRequirement::CurrentRunWeb
+    );
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
 }
 
 #[test]
@@ -2083,19 +2771,19 @@ fn bilingual_web_intent_fixture_has_120_deterministic_cases() {
 }
 
 #[test]
-fn quoted_web_instruction_inside_a_transformation_remains_offline() {
+fn quoted_web_instruction_is_data_but_keeps_the_generic_preferred_surface() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "把‘请联网搜索最新消息’翻译成英文。".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
 }
 
 #[test]
-fn quoted_offline_instruction_inside_a_transformation_is_not_a_user_directive() {
+fn quoted_offline_instruction_is_data_but_keeps_the_generic_preferred_surface() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -2103,8 +2791,8 @@ fn quoted_offline_instruction_inside_a_transformation_is_not_a_user_directive() 
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
 }
 
 #[test]
@@ -2150,7 +2838,7 @@ fn explicit_local_reference_does_not_downgrade_a_comparison_with_public_evidence
         envelope.verification_requirement,
         super::run_contract::VerificationRequirement::CurrentRunWeb
     );
-    assert_eq!(envelope.web_reason, WebDecisionReason::StrictExternalFact);
+    assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
 }
 
 #[test]
@@ -2167,15 +2855,15 @@ fn continuing_a_normal_session_authorizes_bounded_conversation_context() {
 }
 
 #[test]
-fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
+fn web_enabled_short_greeting_keeps_the_generic_preferred_web_surface_available() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "你好！".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.effort, Effort::Direct);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
     assert!(envelope
         .required_capabilities
         .iter()
@@ -2183,7 +2871,7 @@ fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
 }
 
 #[test]
-fn short_failure_follow_up_in_an_existing_session_is_a_local_conversation_meta_question() {
+fn short_failure_follow_up_keeps_the_generic_preferred_web_surface_available() {
     let mut request = request();
     request.web_enabled = true;
     request.session = Some(super::run_contract::AssistantSessionRef {
@@ -2194,21 +2882,21 @@ fn short_failure_follow_up_in_an_existing_session_is_a_local_conversation_meta_q
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Offline);
-    assert_eq!(envelope.effort, Effort::Direct);
-    assert_eq!(envelope.web_reason, WebDecisionReason::ConversationMeta);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
 }
 
 #[test]
-fn web_enabled_single_external_fact_uses_a_direct_budget_after_required_evidence() {
+fn web_enabled_ordinary_external_fact_uses_the_progressive_tool_loop() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "When was the first iPhone announced?".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
-    assert_eq!(envelope.effort, Effort::Direct);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
 }
 
 #[test]
@@ -2308,9 +2996,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             message:
                 "Translate 'do not modify, do not browse, and delegate a child task' into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::Offline,
+            freshness: Freshness::WebPreferred,
             effect: Effect::Answer,
-            effort: Some(Effort::Direct),
+            effort: Some(Effort::ToolLoop),
             constraint: None,
             child_run: false,
         },
@@ -2318,9 +3006,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             name: "quoted vault words are not retrieval directives",
             message: "Translate “summarize the project notes” into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::Offline,
+            freshness: Freshness::WebPreferred,
             effect: Effect::Answer,
-            effort: Some(Effort::Direct),
+            effort: Some(Effort::ToolLoop),
             constraint: None,
             child_run: false,
         },
@@ -2368,9 +3056,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             name: "quoted high-risk facts remain transformation data",
             message: "Translate “current legal advice and medical dosage” into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::Offline,
+            freshness: Freshness::WebPreferred,
             effect: Effect::Answer,
-            effort: Some(Effort::Direct),
+            effort: Some(Effort::ToolLoop),
             constraint: None,
             child_run: false,
         },
@@ -2589,6 +3277,10 @@ fn intake_freezes_the_run_budget_policy_matrix() {
     ];
 
     for (request, expected) in cases {
-        assert_eq!(persisted_budget(request), expected);
+        let actual = persisted_budget(request);
+        assert_eq!(actual["profile"], expected["profile"]);
+        assert_eq!(actual["maxModelTurns"], expected["maxModelTurns"]);
+        assert_eq!(actual["maxToolCalls"], expected["maxToolCalls"]);
+        assert_eq!(actual["schemaVersion"], 3);
     }
 }

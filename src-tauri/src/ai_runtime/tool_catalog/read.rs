@@ -1,6 +1,18 @@
 use crate::ai_runtime::ToolAccessLevel;
 
-use super::{ToolCatalogEntry, ToolImplementationStatus};
+use super::{ToolCatalogEntry, ToolExecutionMetadata, ToolImplementationStatus};
+
+const LOCAL_RESULTS: ToolExecutionMetadata = ToolExecutionMetadata {
+    cost_class: "local",
+    output_policy: "bounded_results",
+    evidence_policy: "current_run_local",
+};
+
+const LOCAL_NOTE_SPAN: ToolExecutionMetadata = ToolExecutionMetadata {
+    cost_class: "local",
+    output_policy: "bounded_note_span",
+    evidence_policy: "current_run_local",
+};
 
 pub(super) fn tools() -> Vec<ToolCatalogEntry> {
     vec![
@@ -19,6 +31,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(20),
+            execution_metadata: Some(LOCAL_RESULTS),
         },
         ToolCatalogEntry {
             name: "search_semantic",
@@ -36,6 +49,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(20),
+            execution_metadata: Some(LOCAL_RESULTS),
         },
         ToolCatalogEntry {
             name: "search_keyword",
@@ -53,6 +67,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(20),
+            execution_metadata: Some(LOCAL_RESULTS),
         },
         ToolCatalogEntry {
             name: "get_regulation",
@@ -71,6 +86,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(1),
+            execution_metadata: Some(LOCAL_NOTE_SPAN),
         },
         ToolCatalogEntry {
             name: "get_context_packets",
@@ -84,6 +100,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "read_note",
@@ -101,6 +118,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: None,
+            execution_metadata: Some(LOCAL_NOTE_SPAN),
         },
         ToolCatalogEntry {
             name: "list_vault",
@@ -117,6 +135,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(100),
+            execution_metadata: Some(LOCAL_RESULTS),
         },
         ToolCatalogEntry {
             name: "get_outline",
@@ -133,6 +152,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: None,
+            execution_metadata: Some(LOCAL_NOTE_SPAN),
         },
         ToolCatalogEntry {
             name: "get_backlinks",
@@ -149,6 +169,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(50),
+            execution_metadata: Some(LOCAL_RESULTS),
         },
         ToolCatalogEntry {
             name: "conclude_reasoning",
@@ -165,6 +186,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::HarnessOnly,
             default_enabled_without_skill: true,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "spawn_subagent",
@@ -234,6 +256,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::HarnessOnly,
             default_enabled_without_skill: true,
             max_results: None,
+            execution_metadata: None,
         },
     ]
 }

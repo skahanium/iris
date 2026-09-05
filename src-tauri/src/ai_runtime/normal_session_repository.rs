@@ -46,6 +46,9 @@ pub(crate) struct NormalSessionMessage {
     pub(crate) web_citations: Vec<crate::ai_types::WebCitationEntry>,
     pub(crate) citation_binding: Option<crate::ai_types::CitationBinding>,
     pub(crate) source_summary: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
+    /// Exact final evidence selection. `Some([])` is a modern explicit empty
+    /// selection; `None` identifies a legacy row that predates this contract.
+    pub(crate) evidence_refs: Option<Vec<i64>>,
     pub(crate) created_at: String,
 }
 
@@ -141,6 +144,7 @@ impl NormalSessionRepository {
             let mut statement = conn.prepare(
                 "SELECT m.seq, m.role, m.content, m.content_parts, m.tool_calls, m.created_at, m.turn_id,
                         m.context_scope_json, m.display_mentions_json, m.citation_map_json,
+                        m.evidence_refs_json,
                         (SELECT r.run_id FROM agent_runs r
                          WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id
                          ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1),
@@ -174,9 +178,9 @@ impl NormalSessionRepository {
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         created_at: row.get(5)?,
                         turn_id: row.get(6)?,
-                        run_id: row.get(10)?,
-                        turn_state: row.get(11)?,
-                        retryable: row.get::<_, i64>(12)? != 0,
+                        run_id: row.get(11)?,
+                        turn_state: row.get(12)?,
+                        retryable: row.get::<_, i64>(13)? != 0,
                         context_scope: parse_json_value_or_empty_array(row.get(7)?),
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
                         web_citations:
@@ -190,6 +194,7 @@ impl NormalSessionRepository {
                         source_summary: crate::ai_runtime::citation_linkify::parse_source_summary(
                             row.get::<_, Option<String>>(9)?.as_deref(),
                         ),
+                        evidence_refs: parse_optional_evidence_refs(row.get(10)?),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -208,7 +213,7 @@ impl NormalSessionRepository {
             let mut statement = conn.prepare(
                 "SELECT m.seq, m.role, m.content, m.content_parts, m.tool_calls, m.created_at, m.turn_id,
                         m.context_scope_json, m.display_mentions_json, m.citation_map_json,
-                        NULL, NULL, 0
+                        m.evidence_refs_json, NULL, NULL, 0
                  FROM session_messages m
                  WHERE m.session_id = ?1
                    AND (m.turn_id IS NULL
@@ -246,9 +251,9 @@ impl NormalSessionRepository {
                         .and_then(|value| serde_json::from_str(&value).ok()),
                     created_at: row.get(5)?,
                     turn_id: row.get(6)?,
-                    run_id: row.get(10)?,
-                    turn_state: row.get(11)?,
-                    retryable: row.get::<_, i64>(12)? != 0,
+                    run_id: row.get(11)?,
+                    turn_state: row.get(12)?,
+                    retryable: row.get::<_, i64>(13)? != 0,
                     context_scope: parse_json_value_or_empty_array(row.get(7)?),
                     display_mentions: parse_json_array_or_empty(row.get(8)?),
                     web_citations: crate::ai_runtime::citation_linkify::parse_web_citation_entries(
@@ -261,6 +266,7 @@ impl NormalSessionRepository {
                     source_summary: crate::ai_runtime::citation_linkify::parse_source_summary(
                         row.get::<_, Option<String>>(9)?.as_deref(),
                     ),
+                    evidence_refs: parse_optional_evidence_refs(row.get(10)?),
                 })
             })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -280,7 +286,7 @@ impl NormalSessionRepository {
             let mut statement = conn.prepare(
                 "SELECT m.seq, m.role, m.content, m.content_parts, m.tool_calls, m.created_at, m.turn_id,
                         m.context_scope_json, m.display_mentions_json, m.citation_map_json,
-                        NULL, NULL, 0
+                        m.evidence_refs_json, NULL, NULL, 0
                  FROM session_messages m
                  WHERE m.session_id = ?1 AND m.seq < ?2 AND m.role IN ('user', 'assistant')
                    AND (m.turn_id IS NULL
@@ -319,9 +325,9 @@ impl NormalSessionRepository {
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         created_at: row.get(5)?,
                         turn_id: row.get(6)?,
-                        run_id: row.get(10)?,
-                        turn_state: row.get(11)?,
-                        retryable: row.get::<_, i64>(12)? != 0,
+                        run_id: row.get(11)?,
+                        turn_state: row.get(12)?,
+                        retryable: row.get::<_, i64>(13)? != 0,
                         context_scope: parse_json_value_or_empty_array(row.get(7)?),
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
                         web_citations:
@@ -335,6 +341,7 @@ impl NormalSessionRepository {
                         source_summary: crate::ai_runtime::citation_linkify::parse_source_summary(
                             row.get::<_, Option<String>>(9)?.as_deref(),
                         ),
+                        evidence_refs: parse_optional_evidence_refs(row.get(10)?),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -468,4 +475,8 @@ fn parse_json_array_or_empty(value: Option<String>) -> Vec<serde_json::Value> {
         .as_deref()
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default()
+}
+
+fn parse_optional_evidence_refs(value: Option<String>) -> Option<Vec<i64>> {
+    value.map(|json| serde_json::from_str(&json).unwrap_or_default())
 }

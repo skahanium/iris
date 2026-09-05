@@ -43,6 +43,7 @@ export type {
   AssistantSessionRetractRequest,
   AssistantSessionSummary,
 } from "@/types/ai";
+export type { DomainOperation, DomainOutputMapping } from "@/types/ipc";
 import type {
   AppUpdateInfo,
   AppUpdatePreflightResult,
@@ -53,6 +54,8 @@ import type {
   CacheDomainId,
   CacheSummary,
   BacklinkEntry,
+  DomainOperation,
+  DomainOutputMapping,
   ClassifiedFileTakenEvent,
   ClassifiedFileEntry,
   ClassifiedStatus,
@@ -906,6 +909,10 @@ export interface McpCapabilityBindingSummary {
     maxModelChars: number;
     maxEvidenceChars: number;
   };
+  /** @deprecated 仅为删除或展示历史 binding 保留；新 Run 不会授权。 */
+  domainOperation?: DomainOperation;
+  /** @deprecated 仅为删除或展示历史 binding 保留；新 Run 不会授权。 */
+  outputMapping?: DomainOutputMapping;
   providerConfigHash: string;
   bindingConfigHash: string;
   providerEnabled: boolean;

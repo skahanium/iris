@@ -14,6 +14,19 @@ the Markdown contract layer, and the TipTap/ProseMirror editor.
 The user `.md` file remains the source of truth. Editor-only state must either
 round-trip to a documented Markdown representation or remain transient.
 
+## Contract & Production Alignment
+
+The Markdown contract layer now uses the same production paths as the editor:
+
+- `renderMarkdownWithProfile("editor_ingest")` delegates to
+  `ingestMarkdownForEditorSafely`.
+- `renderMarkdownWithProfile("editor_export")` delegates to
+  `markdownToMarkdownViaProductionEditor`, which creates a real TipTap editor
+  and serializes with `editorDocToMarkdown`.
+
+This removes the previous divergence where contract tests exercised a different
+Turndown pipeline than the production save path.
+
 Current ingress is Preserve-aware `editor-ingest`. It still uses an isolated
 Marked renderer to prepare TipTap HTML for the current custom schema; this is
 an import implementation detail, not a write fallback. A direct ProseMirror
@@ -79,13 +92,23 @@ callout Markdown form. Plain blockquotes remain CommonMark blockquotes.
 ## Preserve-Only Content
 
 `preserveBlock` writes `originalRaw` back exactly for unsupported block-level
-syntax. Safe inline raw HTML such as `<kbd>Ctrl</kbd>` is represented by
-`preserveInline` and written back from `originalRaw`.
+syntax. Inline raw HTML elements (including `span`, `kbd`, `mark`, `sub`,
+`sup`, etc.) are represented by `preserveInline` and written back from
+`originalRaw` as a single byte-for-byte fragment. Block-level elements such as
+`div`, `section`, and `pre` remain `preserveBlock`.
+
+## Stylesheet Loading
+
+`markdown-prose.css` is loaded after `globals.css` in `src/main.tsx`. It is
+plain CSS (no `@layer components` wrapper) so Tailwind preflight cannot reset
+editor heading sizes. The build contract test in `tests/prose-tokens.test.ts`
+verifies this import order.
 
 ## Related Tests
 
 - `tests/editor-pm-serialize.test.ts`
-- `tests/editor-list-indent-keymap.test.ts`
-- `tests/markdown-spacing.test.ts`
-- `tests/markdown-wiki-link-roundtrip.test.ts`
+- `tests/markdown-contract/editor-export-consistency.test.ts`
+- `tests/markdown-contract/editor-roundtrip-advanced.test.ts`
+- `tests/markdown-contract/serialization-boundaries.test.ts`
+- `tests/markdown-list-bold.test.ts`
 - `tests/prose-tokens.test.ts`

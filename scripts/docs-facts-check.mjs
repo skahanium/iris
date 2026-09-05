@@ -6,6 +6,32 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
+const activeHarnessRoot = path.join(root, "agent-harness");
+const harnessArchiveRoot = path.join(activeHarnessRoot, "archive");
+const activeHarnessRelativeFiles = [
+  "README.md",
+  "01-authority-and-invariants.md",
+  "02-current-state-and-debt.md",
+  "03-target-architecture.md",
+  "04-adaptive-agent-loop-and-tool-contracts.md",
+  "05-implementation-roadmap.md",
+  "06-evaluation-performance-and-acceptance.md",
+  "appendices/A-status-and-test-traceability.md",
+  "appendices/B-task-capability-and-risk-matrix.md",
+  "appendices/C-decisions-and-deferred.md",
+];
+const activeHarnessFiles = activeHarnessRelativeFiles.map((relativePath) =>
+  path.join(activeHarnessRoot, relativePath),
+);
+const retiredHarnessFiles = [
+  "04-research-and-tool-contracts.md",
+  "appendices/B-current-fact-contract-matrix.md",
+].map((relativePath) => path.join(activeHarnessRoot, relativePath));
+const harnessStatusHeader = [
+  "**文档状态**：现行",
+  "**文档类型**：",
+  "**事实基线**：2026-09-05，审计起点 `70c929ac`",
+];
 
 // ── CLI ────────────────────────────────────────────────────
 
@@ -253,17 +279,173 @@ function checkMigrationCount() {
     );
   }
 }
-function checkDocLinks() {
-  const indexContent = readFileSync(
-    path.join(root, "docs", "README.md"),
-    "utf8",
-  );
-  const linkRe = /\]\(\.\/([^)]+)\)/g;
+function validateMarkdownLinks(filePath) {
+  const content = readFileSync(filePath, "utf8");
+  const linkRe = /\]\(([^)]+)\)/g;
   let match;
-  while ((match = linkRe.exec(indexContent)) !== null) {
-    const target = path.join(root, "docs", match[1]);
+  while ((match = linkRe.exec(content)) !== null) {
+    const rawTarget = match[1].trim().replace(/^<|>$/g, "");
+    if (
+      rawTarget.startsWith("#") ||
+      /^(?:https?:|mailto:|app:)/i.test(rawTarget)
+    ) {
+      continue;
+    }
+    const relativeTarget = rawTarget.split("#", 1)[0];
+    const target = path.resolve(path.dirname(filePath), relativeTarget);
     if (!existsSync(target)) {
-      fail(`docs/README.md links to missing file: ./${match[1]}`);
+      fail(
+        `${path.relative(root, filePath)} links to missing path: ${rawTarget}`,
+      );
+    }
+  }
+}
+
+function checkDocLinks() {
+  validateMarkdownLinks(path.join(root, "docs", "README.md"));
+  for (const filePath of activeHarnessFiles.filter(existsSync)) {
+    validateMarkdownLinks(filePath);
+  }
+}
+
+function checkAgentHarnessDocumentation() {
+  const docsIndexPath = path.join(root, "docs", "README.md");
+  const docsIndex = readFileSync(docsIndexPath, "utf8");
+  if (!docsIndex.includes("../agent-harness/README.md")) {
+    fail("docs/README.md must link the active Agent Harness entry");
+  }
+
+  for (const required of activeHarnessFiles) {
+    if (!existsSync(required)) {
+      fail(
+        `active Agent Harness document is missing: ${path.relative(root, required)}`,
+      );
+    }
+  }
+
+  for (const retired of retiredHarnessFiles) {
+    if (existsSync(retired)) {
+      fail(
+        `retired active Agent Harness document still exists: ${path.relative(root, retired)}`,
+      );
+    }
+  }
+
+  for (const filePath of activeHarnessFiles.filter(existsSync)) {
+    const content = readFileSync(filePath, "utf8");
+    const header = content.split("\n").slice(0, 8).join("\n");
+    for (const required of harnessStatusHeader) {
+      if (!header.includes(required)) {
+        fail(
+          `${path.relative(root, filePath)} is missing Harness status header: ${required}`,
+        );
+      }
+    }
+  }
+
+  const expectedActiveFiles = new Set(activeHarnessFiles);
+  const discoveredActiveFiles = [
+    activeHarnessRoot,
+    path.join(activeHarnessRoot, "appendices"),
+  ]
+    .filter(existsSync)
+    .flatMap((directory) =>
+      readdirSync(directory)
+        .map((entry) => path.join(directory, entry))
+        .filter(
+          (entryPath) =>
+            statSync(entryPath).isFile() && entryPath.endsWith(".md"),
+        ),
+    );
+  for (const filePath of discoveredActiveFiles) {
+    if (!expectedActiveFiles.has(filePath)) {
+      fail(
+        `unregistered active Agent Harness document exists: ${path.relative(root, filePath)}`,
+      );
+    }
+  }
+
+  for (const retired of ["refactor", "structured-tools", "REFACTOR.md"]) {
+    if (existsSync(path.join(root, retired))) {
+      fail(`retired root Agent Harness path still exists: ${retired}`);
+    }
+  }
+  for (const entry of readdirSync(root)) {
+    if (/^(?:agent[-_]?harness|harness)(?!$)/i.test(entry)) {
+      fail(`parallel root Agent Harness path is forbidden: ${entry}`);
+    }
+  }
+
+  for (const archived of [
+    path.join(harnessArchiveRoot, "2026-08-pre-unification", "MANIFEST.md"),
+    path.join(harnessArchiveRoot, "2026-08-pre-unification", "refactor"),
+    path.join(
+      harnessArchiveRoot,
+      "2026-08-pre-unification",
+      "structured-tools",
+    ),
+    path.join(harnessArchiveRoot, "2026-08-pre-unification", "REFACTOR.md"),
+  ]) {
+    if (!existsSync(archived)) {
+      fail(
+        `Agent Harness archive is incomplete: ${path.relative(root, archived)}`,
+      );
+    }
+  }
+
+  const historyLink = "archive/2026-08-pre-unification/MANIFEST.md";
+  for (const filePath of activeHarnessFiles.filter(existsSync)) {
+    const content = readFileSync(filePath, "utf8");
+    if (/\]\((?:\.\.\/)*(?:refactor|structured-tools)\//.test(content)) {
+      fail(`${path.relative(root, filePath)} links a retired root document`);
+    }
+    if (
+      filePath !== activeHarnessFiles[0] &&
+      /\]\([^)]*archive\//.test(content)
+    ) {
+      fail(
+        `${path.relative(root, filePath)} treats the archive as an active reference`,
+      );
+    }
+  }
+  const harnessReadme = readFileSync(activeHarnessFiles[0], "utf8");
+  const historyLinkCount = harnessReadme.split(historyLink).length - 1;
+  if (historyLinkCount !== 1) {
+    fail(
+      `agent-harness/README.md must contain exactly one archive history entry, found ${historyLinkCount}`,
+    );
+  }
+  if (!harnessReadme.includes("../ROADMAP.md")) {
+    fail("agent-harness/README.md must link the ROADMAP authority");
+  }
+  const roadmap = readFileSync(path.join(root, "ROADMAP.md"), "utf8");
+  if (!roadmap.includes("./agent-harness/README.md")) {
+    fail("ROADMAP.md must link the active Agent Harness direction");
+  }
+
+  const withdrawnClaimPatterns = [
+    /AH-2[^\n]{0,48}(?:已验证|已完成)/,
+    /AH-3[^\n]{0,48}(?:已验证|已完成)/,
+    /EvidenceGap[^\n]{0,48}(?:闭集|驱动|核心|必需|必须|统一事实源)/,
+    /(?:11 个 operation|11 个领域 operation|六类领域能力)[^\n]{0,48}(?:作为|成为|保留为|目标为|已验证为|已完成)[^\n]{0,24}(?:核心|主路径|默认工具面)/,
+    /普通(?:事实|回答)[^\n]{0,32}(?:必须|一律|统一强制|默认强制)[^\n]{0,32}(?:终局|最终提交)/,
+    /(?:已验证|已完成|目标)[^\n]{0,48}普通(?:事实|回答)[^\n]{0,48}(?:严格|结构化)[^\n]{0,24}(?:终局|最终提交)/,
+  ];
+  const withdrawalContext =
+    /(?:旧|历史|此前|撤回|取代|不再|退出|错误|曾经|删除|移除|禁止|不实现|重构)/;
+  for (const filePath of activeHarnessFiles.filter(existsSync)) {
+    const lines = readFileSync(filePath, "utf8").split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      for (const pattern of withdrawnClaimPatterns) {
+        if (
+          pattern.test(lines[index]) &&
+          !withdrawalContext.test(lines[index])
+        ) {
+          fail(
+            `${path.relative(root, filePath)}:${index + 1} states a withdrawn Harness direction as current`,
+          );
+        }
+      }
     }
   }
 }
@@ -324,7 +506,10 @@ function checkForbiddenPhrases() {
   const rootMdFiles = walk(
     root,
     (f) => f.endsWith(".md"),
-    (_full, entry) => !excludedRootDirectories.has(entry),
+    (full, entry) =>
+      !excludedRootDirectories.has(entry) &&
+      full !== harnessArchiveRoot &&
+      !full.startsWith(`${harnessArchiveRoot}${path.sep}`),
   );
 
   const allFiles = [...docFiles, ...rootMdFiles];
@@ -411,6 +596,7 @@ checkReleaseDocumentationFacts();
 checkRagFixtureContract();
 checkMigrationCount();
 checkDocLinks();
+checkAgentHarnessDocumentation();
 checkRetiredArchitectureReferences();
 checkForbiddenPhrases();
 checkIpcIndex();

@@ -1,11 +1,12 @@
-//! Bounded model-driven Web evidence for normal-domain Runs.
+//! Bounded model-driven Web discovery and fetch for normal-domain Runs.
 //!
-//! This module owns the `web_search` tool path used by `NormalRunToolExecutor`: policy/audit
-//! gates, bounded evidence registration, and deferred `CapabilityDegraded` emission when an
-//! authorized Web search fails without usable evidence. Runs without `web.search` never enable
-//! the tool.
+//! This module owns the separate `web_search` and `web_fetch` paths used by
+//! `NormalRunToolExecutor`: policy/audit gates, candidate-to-body promotion,
+//! bounded evidence registration, and deferred `CapabilityDegraded` emission
+//! when an authorized Web operation fails without usable evidence. Runs
+//! without `web.search` never enable either tool.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -22,7 +23,8 @@ use crate::ai_runtime::agent_run_repository::{
     DurableApplyCheckpointStage,
 };
 use crate::ai_runtime::agent_tool_loop::{
-    AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
+    AgentToolLoop, RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
+    MAX_WEB_TOOL_RESULT_CHARS,
 };
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
@@ -39,32 +41,32 @@ use crate::ai_runtime::tool_execution_pipeline::{
     ToolExecutionGate,
 };
 use crate::ai_runtime::tool_executor::ToolRegistry;
-use crate::ai_runtime::{LlmMessage, MessageRole, ToolCallResult};
+use crate::ai_runtime::{FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult};
 use crate::ai_types::WebSourceRank;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use sha2::{Digest, Sha256};
 
-const WEB_TOOL_NAME: &str = "web_search";
+const WEB_SEARCH_TOOL_NAME: &str = "web_search";
+const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
+const HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX: &str = "host-bootstrap-web-";
 const MAX_WEB_EVIDENCE_PER_RUN: usize = 12;
+const MAX_WEB_CANDIDATES_PER_RUN: usize = 8;
+const MAX_WEB_CANDIDATES_PER_DISCOVERY: usize = 4;
 /// Required-run and diagnostic search limit. Keeping this shared prevents a one-row smoke probe
 /// from passing while the actual evidence request exceeds a provider's output budget.
 pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 8;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
-/// A strict answer may make an initial search, an independent supplement, and
-/// one retry for a transient or oversize provider response. The shared time
-/// budget remains the hard wall across all of them.
-const MAX_WEB_PROVIDER_ATTEMPTS_PER_RUN: u32 = 3;
-/// Model-requested follow-up searches retain their own bounded interaction budget.
-const MODEL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(20);
+/// One concrete Web dispatch has a bounded provider interaction window.
+const WEB_TOOL_CALL_DEADLINE: Duration = Duration::from_secs(20);
 /// Minimum remaining budget required before retrying a failed web search attempt.
 /// Spawning a fresh MCP stdio process commonly takes 3-5s; retrying with less
 /// than this budget just burns time before the outer timeout fires.
 const MIN_RETRY_BUDGET: Duration = Duration::from_secs(5);
-/// Internal control-flow signal: the Run was durably moved to confirmation,
-/// so the model loop must stop without terminalizing it.
-pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
+/// Compatibility export for call sites that historically imported this signal
+/// from the normal Run executor.
+pub(crate) use crate::ai_runtime::agent_tool_loop::CONFIRMATION_PENDING_ERROR;
 const CHANGE_CONFIRMATION_TTL_MS: i64 = 10 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +88,7 @@ struct McpFailoverEvent {
 fn mcp_failover_events(
     snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     winner_provider_id: &str,
+    capability: &str,
 ) -> Vec<McpFailoverEvent> {
     let Some(winner_index) = snapshots
         .iter()
@@ -100,7 +103,10 @@ fn mcp_failover_events(
         .map(|(index, pair)| McpFailoverEvent {
             from_provider_id: pair[0].id.clone(),
             provider_id: pair[1].id.clone(),
-            model_id: mcp_mapping_tool_name(pair[1].web_search_mapping_json.as_deref()),
+            model_id: mcp_mapping_tool_name(match capability {
+                "web.fetch" => pair[1].web_fetch_mapping_json.as_deref(),
+                _ => pair[1].web_search_mapping_json.as_deref(),
+            }),
             reason_code: "mcp_provider_failed".into(),
             attempt: (index + 2) as u32,
         })
@@ -155,27 +161,60 @@ const fn failure_reason_for_code(code: SafeRunErrorCode) -> WebEvidenceFailureRe
     }
 }
 
-#[derive(Debug, Default)]
-struct RunWebBudget {
-    started: Mutex<Option<Instant>>,
-}
-
-impl RunWebBudget {
-    fn started(&self) -> AppResult<Instant> {
-        let mut started = self
-            .started
-            .lock()
-            .map_err(|_| AppError::msg("agent_run_web_budget_lock_failed"))?;
-        Ok(*started.get_or_insert_with(Instant::now))
-    }
-}
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RunWebEvidenceState {
     evidence_ids: Vec<i64>,
+    candidate_urls: BTreeSet<String>,
     domains: BTreeSet<String>,
     has_official_source: bool,
     slots_in_use: usize,
+    max_evidence: usize,
+    unverified_leads: Vec<UnverifiedWebLead>,
+}
+
+#[derive(Debug, Clone)]
+struct UnverifiedWebLead {
+    title: String,
+    domain: String,
+    url: String,
+}
+
+impl Default for RunWebEvidenceState {
+    fn default() -> Self {
+        Self {
+            evidence_ids: Vec::new(),
+            candidate_urls: BTreeSet::new(),
+            domains: BTreeSet::new(),
+            has_official_source: false,
+            slots_in_use: 0,
+            max_evidence: MAX_WEB_EVIDENCE_PER_RUN,
+            unverified_leads: Vec::new(),
+        }
+    }
+}
+
+fn remember_candidate_urls(
+    state: &mut RunWebEvidenceState,
+    urls: impl IntoIterator<Item = String>,
+) -> AppResult<(usize, usize)> {
+    let mut new_resources = 0_usize;
+    let mut duplicate_resources = 0_usize;
+    for url in urls {
+        let normalized = normalize_fetch_url(&url);
+        if !normalized.starts_with("https://") {
+            continue;
+        }
+        if state.candidate_urls.contains(&normalized) {
+            duplicate_resources = duplicate_resources.saturating_add(1);
+            continue;
+        }
+        if state.candidate_urls.len() >= MAX_WEB_CANDIDATES_PER_RUN {
+            break;
+        }
+        state.candidate_urls.insert(normalized);
+        new_resources = new_resources.saturating_add(1);
+    }
+    Ok((new_resources, duplicate_resources))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,7 +240,7 @@ impl WebEvidenceReservation {
             let mut state = shared
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
-            let remaining = MAX_WEB_EVIDENCE_PER_RUN.saturating_sub(state.slots_in_use);
+            let remaining = state.max_evidence.saturating_sub(state.slots_in_use);
             let capacity = remaining.min(INITIAL_WEB_SEARCH_RESULTS);
             if capacity == 0 {
                 return Ok(None);
@@ -259,6 +298,12 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     accepted: &'a AssistantRunAccepted,
     context: &'a RunContext,
     authorized_capabilities: Vec<CapabilityId>,
+    /// Exact model-visible tool surface frozen for this Run. Empty denies all
+    /// model-selected tool calls; confirmed execution uses its dedicated path.
+    allowed_tool_names: Vec<String>,
+    /// Set only for post-confirmation verification. It narrows the ordinary
+    /// local-read dispatch path to exact frozen targets.
+    verification_targets: Option<BTreeSet<String>>,
     /// The exact cached Skill plan selected before this Run entered the model.
     /// It is inherited by ChildRuns only as a scope restriction; Skill bodies
     /// never become tools or a second authorization path.
@@ -274,7 +319,6 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     run_web_evidence: Arc<Mutex<RunWebEvidenceState>>,
     web_failure: Arc<Mutex<Option<WebFailure>>>,
     web_attempt_count: Arc<Mutex<u32>>,
-    web_budget: Arc<RunWebBudget>,
     web_degradation_emitted: Arc<Mutex<bool>>,
     required_web_provider_snapshots:
         Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
@@ -315,6 +359,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             accepted,
             context,
             authorized_capabilities,
+            allowed_tool_names: Vec::new(),
+            verification_targets: None,
             skill_activation_plan: None,
             sink,
             retrieval_scope: context.retrieval_scope.clone(),
@@ -331,7 +377,6 @@ impl<'a> NormalRunToolExecutor<'a> {
             run_web_evidence: Arc::new(Mutex::new(RunWebEvidenceState::default())),
             web_failure: Arc::new(Mutex::new(None)),
             web_attempt_count: Arc::new(Mutex::new(0)),
-            web_budget: Arc::new(RunWebBudget::default()),
             web_degradation_emitted: Arc::new(Mutex::new(false)),
             required_web_provider_snapshots,
             web_preferred_provider_id: Arc::new(Mutex::new(None)),
@@ -360,6 +405,26 @@ impl<'a> NormalRunToolExecutor<'a> {
         plan: Option<crate::ai_types::SkillActivationPlanSummary>,
     ) -> Self {
         self.skill_activation_plan = plan;
+        self
+    }
+
+    /// Freeze the exact model-visible tool surface for this Run. The executor
+    /// rejects any model tool call that is not on this list, closing the gap
+    /// between prompt tool specs and runtime dispatch.
+    /// Freeze the exact tool names from a resolved `ToolSurfacePlan`. This is
+    /// the production entry used after the orchestrator has filled the plan's
+    /// `tool_names` from the authorized registry and Run context.
+    pub(crate) fn with_allowed_tool_names(mut self, tool_names: &[String]) -> Self {
+        self.allowed_tool_names = tool_names.to_vec();
+        self
+    }
+
+    /// Restrict a verification pass to exact plan targets and the `read_note`
+    /// catalog tool. The normal executor still owns all argument, policy and
+    /// audit checks.
+    pub(crate) fn with_verification_targets(mut self, targets: &[String]) -> Self {
+        self.allowed_tool_names = vec!["read_note".to_string()];
+        self.verification_targets = Some(targets.iter().cloned().collect());
         self
     }
 
@@ -416,121 +481,149 @@ impl<'a> NormalRunToolExecutor<'a> {
         self.run_web_evidence = Arc::clone(&parent.run_web_evidence);
         self.web_failure = Arc::clone(&parent.web_failure);
         self.web_attempt_count = Arc::clone(&parent.web_attempt_count);
-        self.web_budget = Arc::clone(&parent.web_budget);
         self.web_degradation_emitted = Arc::clone(&parent.web_degradation_emitted);
         self.web_preferred_provider_id = Arc::clone(&parent.web_preferred_provider_id);
         self.external_evidence_ids = Arc::clone(&parent.external_evidence_ids);
         self
     }
 
-    async fn execute_web_search(
+    async fn execute_web_tool(
         &self,
+        tool_name: &str,
         args: &serde_json::Value,
         state_version: u64,
+        user_authored_bootstrap: bool,
     ) -> AppResult<ToolCallResult> {
-        let query = args
-            .get("query")
-            .and_then(serde_json::Value::as_str)
-            .filter(|query| !query.trim().is_empty())
-            .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
-        let automatic_local_materials = self
-            .context
-            .materials
-            .iter()
-            .filter(|material| {
-                matches!(
-                    material.origin,
-                    crate::ai_runtime::domain_executor::DomainMaterialOrigin::LocalRetrieval { .. }
-                )
-            })
-            .map(|material| material.content.clone())
-            .collect::<Vec<_>>();
-        let query_contains_automatic_local_material = record_web_query_taint_witness(
-            &self.state.db,
-            &self.accepted.run_id,
-            u32::try_from(state_version).unwrap_or(u32::MAX),
-            query,
-            automatic_local_materials,
-        )?;
-        if query_contains_automatic_local_material {
-            self.set_web_failure(Some(WebFailure::with_reason(
-                SafeRunErrorCode::WebEvidenceInvalid,
-                false,
-                WebEvidenceFailureReason::LocalMaterialQueryBlocked,
-            )))?;
-            return Ok(failed_tool_call(
-                WEB_TOOL_NAME,
-                "web_query_local_material_blocked",
-            ));
-        }
-        let urls = args
-            .get("urls")
-            .and_then(serde_json::Value::as_array)
-            .map(|urls| {
-                urls.iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let Some(evidence_reservation) =
-            WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
-        else {
-            self.set_web_failure(Some(WebFailure::new(
-                SafeRunErrorCode::WebEvidenceInvalid,
-                false,
-            )))?;
-            return Ok(failed_tool_call(
-                WEB_TOOL_NAME,
-                "web_evidence_budget_exhausted",
-            ));
+        let discovery_only = tool_name == WEB_SEARCH_TOOL_NAME;
+        let query = if discovery_only {
+            args.get("query")
+                .and_then(serde_json::Value::as_str)
+                .filter(|query| !query.trim().is_empty())
+                .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?
+                .to_string()
+        } else {
+            self.context.user_message.clone()
         };
-        let remaining = evidence_reservation.capacity();
-        // Model web calls share MODEL_WEB_EVIDENCE_DEADLINE (20s). MCP search alone
-        // commonly takes ~4s; scheduling deep page fetches (WEB_FETCH_TURN_BUDGET=8s)
-        // after that exceeds the outer timeout and discards already-usable search
-        // snippets. Prefer registering search snippets first.
+        if discovery_only {
+            let automatic_local_materials = if user_authored_bootstrap {
+                Vec::new()
+            } else {
+                self.context
+                        .materials
+                        .iter()
+                        .filter(|material| {
+                            matches!(
+                                material.origin,
+                                crate::ai_runtime::context_materials::ContextMaterialOrigin::LocalRetrieval { .. }
+                            )
+                        })
+                        .map(|material| material.content.clone())
+                        .collect::<Vec<_>>()
+            };
+            let query_contains_automatic_local_material = record_web_query_taint_witness(
+                &self.state.db,
+                &self.accepted.run_id,
+                u32::try_from(state_version).unwrap_or(u32::MAX),
+                &query,
+                automatic_local_materials,
+            )?;
+            if query_contains_automatic_local_material {
+                self.set_web_failure(Some(WebFailure::with_reason(
+                    SafeRunErrorCode::WebEvidenceInvalid,
+                    false,
+                    WebEvidenceFailureReason::LocalMaterialQueryBlocked,
+                )))?;
+                return Ok(failed_tool_call(
+                    tool_name,
+                    "web_query_local_material_blocked",
+                ));
+            }
+        }
+        let requested_urls = if discovery_only {
+            Vec::new()
+        } else {
+            args.get("urls")
+                .and_then(serde_json::Value::as_array)
+                .map(|urls| {
+                    urls.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|urls| !urls.is_empty())
+                .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?
+        };
+        let mut current_run_urls =
+            AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?
+                .into_iter()
+                .map(|url| normalize_fetch_url(&url))
+                .collect::<BTreeSet<_>>();
+        current_run_urls.extend(explicit_user_urls(&self.context.user_message));
+        current_run_urls.extend(
+            self.run_web_evidence
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
+                .candidate_urls
+                .iter()
+                .cloned(),
+        );
+        let urls = validate_current_run_fetch_urls(&requested_urls, &current_run_urls)?;
+        if discovery_only && !urls.is_empty() {
+            return Err(AppError::msg("tool_arguments_invalid"));
+        }
+        let max_fetches = urls.len();
+        let evidence_reservation = if discovery_only {
+            None
+        } else {
+            let Some(reservation) =
+                WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
+            else {
+                self.set_web_failure(Some(WebFailure::new(
+                    SafeRunErrorCode::WebEvidenceInvalid,
+                    false,
+                )))?;
+                return Ok(failed_tool_call(tool_name, "web_evidence_budget_exhausted"));
+            };
+            Some(reservation)
+        };
+        let remaining = evidence_reservation
+            .as_ref()
+            .map(WebEvidenceReservation::capacity)
+            .unwrap_or(MAX_WEB_CANDIDATES_PER_DISCOVERY);
+        // A single Web dispatch is bounded, while cross-call exploration is
+        // governed exclusively by the generic network category budget.
         let provider_snapshots = self.ordered_web_provider_snapshots();
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
-            query: query.to_owned(),
-            urls,
+            query: query.clone(),
+            urls: urls.clone(),
             enabled: self.has_capability("web.search"),
-            max_search_results: web_search_result_limit(remaining, 1),
-            max_fetches: 0,
+            max_search_results: web_result_limit(discovery_only, remaining, 1),
+            max_fetches,
             provider_snapshots: provider_snapshots.clone(),
             provider_selection_frozen: true,
         };
-        let budget_started = self.web_budget.started()?;
         let call_started = Instant::now();
         let mut attempts_for_search = 0_u32;
         let output =
             loop {
                 attempts_for_search = attempts_for_search.saturating_add(1);
-                let Some(attempt_count) = self.reserve_web_attempt()? else {
-                    let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
-                    self.set_web_failure(Some(failure))?;
-                    return Ok(failed_web_tool_call(
-                        failure,
-                        self.web_attempt_count(),
-                        call_started.elapsed(),
-                        remaining_model_web_budget_ms(budget_started.elapsed()),
-                    ));
-                };
-                let remaining_time =
-                    MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
+                let attempt_count = self.record_web_attempt()?;
+                let remaining_time = WEB_TOOL_CALL_DEADLINE.saturating_sub(call_started.elapsed());
                 if remaining_time.is_zero() {
                     let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
                     self.set_web_failure(Some(failure))?;
                     return Ok(failed_web_tool_call(
+                        tool_name,
                         failure,
                         attempt_count,
                         call_started.elapsed(),
-                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                        remaining_web_tool_budget_ms(call_started.elapsed()),
                     ));
                 }
                 let mut attempt_input = broker_input.clone();
                 attempt_input.max_search_results =
-                    web_search_result_limit(remaining, attempts_for_search);
+                    web_result_limit(discovery_only, remaining, attempts_for_search);
+                attempt_input.max_fetches = max_fetches;
                 let failure = match tokio::time::timeout(
                 remaining_time,
                 crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
@@ -540,45 +633,160 @@ impl<'a> NormalRunToolExecutor<'a> {
             )
             .await
             {
-                Ok(Ok(output)) if output.items.iter().any(|item| item.conflict_group.is_some()) => {
-                    WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+                Ok(Ok(output)) => {
+                    if output.items.iter().any(|item| item.conflict_group.is_some()) {
+                        WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+                    } else if web_output_has_usable_result(&output, discovery_only) {
+                        break output;
+                    } else {
+                        classify_web_evidence_output_failure(&output)
+                    }
                 }
-                Ok(Ok(output)) if web_output_has_usable_evidence(&output) => break output,
-                Ok(Ok(output)) => classify_web_evidence_output_failure(&output),
                 Ok(Err(error)) => classify_web_failure(&error),
                 Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
             };
                 let adaptive_oversize_retry =
                     failure.reason == WebEvidenceFailureReason::ProviderOutputTooLarge;
-                if attempts_for_search < 2
+                let retry_is_eligible = attempts_for_search < 2
                     && (failure.retryable || adaptive_oversize_retry)
-                    && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
-                        < MODEL_WEB_EVIDENCE_DEADLINE
-                {
+                    && call_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
+                        < WEB_TOOL_CALL_DEADLINE;
+                if retry_is_eligible {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     continue;
                 }
                 self.set_web_failure(Some(failure))?;
                 return Ok(failed_web_tool_call(
+                    tool_name,
                     failure,
                     attempt_count,
                     call_started.elapsed(),
-                    remaining_model_web_budget_ms(budget_started.elapsed()),
+                    remaining_web_tool_budget_ms(call_started.elapsed()),
                 ));
             };
         self.remember_web_provider_winner(&output.usage)?;
         self.emit_mcp_failover_events(&provider_snapshots, &output.usage)?;
+        if discovery_only {
+            let previously_known_urls = self
+                .run_web_evidence
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
+                .candidate_urls
+                .clone();
+            let candidates = pack_web_candidates_for_model(
+                &output.items,
+                &previously_known_urls,
+                MAX_WEB_CANDIDATES_PER_DISCOVERY,
+            );
+            let previously_seen_count = output
+                .items
+                .iter()
+                .map(|item| normalize_fetch_url(&item.canonical_url))
+                .filter(|url| previously_known_urls.contains(url))
+                .collect::<BTreeSet<_>>()
+                .len();
+            if candidates.is_empty() {
+                let failure = classify_web_evidence_output_failure(&output);
+                self.set_web_failure(Some(failure))?;
+                return Ok(failed_web_tool_call(
+                    tool_name,
+                    failure,
+                    self.web_attempt_count(),
+                    call_started.elapsed(),
+                    remaining_web_tool_budget_ms(call_started.elapsed()),
+                ));
+            }
+            let proposed_urls = candidates
+                .iter()
+                .map(|item| item.canonical_url.clone())
+                .collect::<Vec<_>>();
+            let (new_resource_count, duplicate_resource_count, admitted_urls) = {
+                let mut state = self
+                    .run_web_evidence
+                    .lock()
+                    .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
+                let (new_resources, duplicate_resources) =
+                    remember_candidate_urls(&mut state, proposed_urls)?;
+                state.unverified_leads = candidates
+                    .iter()
+                    .filter(|item| state.candidate_urls.contains(&item.canonical_url))
+                    .take(MAX_WEB_CANDIDATES_PER_DISCOVERY)
+                    .map(|item| UnverifiedWebLead {
+                        title: item.title.clone(),
+                        domain: item.domain.clone(),
+                        url: item.canonical_url.clone(),
+                    })
+                    .collect();
+                (
+                    new_resources,
+                    duplicate_resources.saturating_add(previously_seen_count),
+                    state.candidate_urls.clone(),
+                )
+            };
+            let observations = candidates
+                .iter()
+                .filter(|item| admitted_urls.contains(&item.canonical_url))
+                .map(|item| {
+                    serde_json::json!({
+                        "title": item.title,
+                        "url": item.url,
+                        "canonicalUrl": item.canonical_url,
+                        "domain": item.domain,
+                        "snippet": item.snippet,
+                        "observationDepth": "search_snippet",
+                    })
+                })
+                .collect::<Vec<_>>();
+            let canonical_urls = observations
+                .iter()
+                .filter_map(|item| item.get("canonicalUrl").and_then(serde_json::Value::as_str))
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            self.set_web_failure(None)?;
+            return Ok(ToolCallResult {
+                tool_name: tool_name.to_string(),
+                success: true,
+                output: serde_json::json!({
+                    "results": observations,
+                    "canonicalUrls": canonical_urls,
+                    "evidenceIds": [],
+                    "count": observations.len(),
+                    "newResourceCount": new_resource_count,
+                    "duplicateResourceCount": duplicate_resource_count,
+                    "observationDepth": "search_snippet",
+                    "requiresFetchForCitation": true,
+                    "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
+                    "webUsage": output.usage,
+                }),
+                duration_ms: bounded_duration_ms(call_started.elapsed()),
+                tokens_used: None,
+                error: None,
+            });
+        }
+        let selected_urls = urls.iter().cloned().collect::<BTreeSet<_>>();
+        let selected_items = output
+            .items
+            .iter()
+            .filter(|item| selected_urls.contains(&normalize_fetch_url(&item.canonical_url)))
+            .filter(|item| {
+                item.fetched_excerpt
+                    .as_deref()
+                    .is_some_and(|excerpt| !excerpt.trim().is_empty())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         let packed_items =
-            match pack_web_evidence_for_model(query, &output.items, remaining, &output.usage) {
+            match pack_web_evidence_for_model(&query, &selected_items, remaining, &output.usage) {
                 Ok(items) if !items.is_empty() => items,
                 Ok(_) | Err(_) => {
                     let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
                     self.set_web_failure(Some(failure))?;
                     return Ok(failed_web_tool_call(
+                        tool_name,
                         failure,
                         self.web_attempt_count(),
                         call_started.elapsed(),
-                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                        remaining_web_tool_budget_ms(call_started.elapsed()),
                     ));
                 }
             };
@@ -595,10 +803,11 @@ impl<'a> NormalRunToolExecutor<'a> {
             let failure = classify_web_evidence_output_failure(&output);
             self.set_web_failure(Some(failure))?;
             return Ok(failed_web_tool_call(
+                tool_name,
                 failure,
                 self.web_attempt_count(),
                 call_started.elapsed(),
-                remaining_model_web_budget_ms(budget_started.elapsed()),
+                remaining_web_tool_budget_ms(call_started.elapsed()),
             ));
         }
         self.set_web_failure(None)?;
@@ -606,22 +815,41 @@ impl<'a> NormalRunToolExecutor<'a> {
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
             .extend(evidence_ids.iter().copied());
-        evidence_reservation.commit(&evidence_ids)?;
+        evidence_reservation
+            .expect("selected URL fetch reserves evidence capacity")
+            .commit(&evidence_ids)?;
         self.record_web_evidence_quality(&packed_items)?;
+        let failed_urls = failed_fetch_urls(&urls, &packed_items);
+        let remaining_evidence_requirement = if self.has_web_evidence() {
+            serde_json::Value::Null
+        } else if self.requires_corroborated_web_evidence() {
+            serde_json::json!("official_source_or_second_independent_domain")
+        } else {
+            serde_json::json!("one_fetched_body")
+        };
         let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
-            query,
+            &query,
             &packed_items,
             MAX_WEB_EXCERPT_CHARS,
         );
+        let resource_ids = packets
+            .iter()
+            .map(|packet| packet.id.clone())
+            .collect::<Vec<_>>();
         Ok(ToolCallResult {
-            tool_name: WEB_TOOL_NAME.to_string(),
+            tool_name: tool_name.to_string(),
             success: true,
             output: serde_json::json!({
                 "results": packets,
+                "resourceIds": resource_ids,
                 "evidenceIds": evidence_ids,
                 "count": evidence_ids.len(),
+                "failedUrls": failed_urls,
+                "remainingEvidenceRequirement": remaining_evidence_requirement,
+                "observationDepth": "fetched_body",
+                "requiresFetchForCitation": false,
                 "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
-                "remainingBudgetMs": remaining_model_web_budget_ms(budget_started.elapsed()),
+                "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
                 "webUsage": output.usage,
             }),
             duration_ms: bounded_duration_ms(call_started.elapsed()),
@@ -663,63 +891,73 @@ impl<'a> NormalRunToolExecutor<'a> {
         entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
         args: &serde_json::Value,
     ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangePlan> {
-        let relative_paths = frozen_relative_paths(entry.name, args, self.context);
-        let base_content_hashes = frozen_base_content_hashes(args, self.context, &relative_paths);
-        let expected_post_content_hashes = expected_post_content_hashes(
-            self.state.as_ref(),
-            entry.name,
-            args,
-            &relative_paths,
-            &base_content_hashes,
-        )?;
+        let operation = self.freeze_change_operation(call, entry, args, &mut BTreeMap::new())?;
         let vault_id = self
             .state
             .vault_path()
             .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
             .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
-        crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze(
-            crate::ai_runtime::frozen_change_plan::FrozenChangePlanInput {
+        crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
+            crate::ai_runtime::frozen_change_plan::FrozenChangeSetInput {
                 confirmation_id: uuid::Uuid::new_v4().to_string(),
                 run_id: self.accepted.run_id.clone(),
                 session_id: self.context.session_id,
                 request_id: self.accepted.run_id.clone(),
-                tool_call_id: call.id.clone(),
                 vault_id,
-                affected_file_count: relative_paths.len(),
-                relative_paths,
-                operation: entry.name.to_string(),
-                base_content_hashes,
-                expected_post_content_hashes,
-                change: args.clone(),
-                rollback_summary: rollback_summary(entry.name),
+                operations: vec![operation],
                 expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
                     + CHANGE_CONFIRMATION_TTL_MS,
             },
         )
     }
 
-    /// Dispatch one previously approved, hash-bound plan without contacting the model.
-    pub(crate) async fn execute_confirmed_frozen_change(
+    fn freeze_change_operation(
+        &self,
+        call: &crate::ai_runtime::ToolCall,
+        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
+        args: &serde_json::Value,
+        virtual_documents: &mut BTreeMap<String, String>,
+    ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput> {
+        let relative_paths = frozen_relative_paths(entry.name, args, self.context);
+        let mut base_content_hashes =
+            frozen_base_content_hashes(args, self.context, &relative_paths);
+        let expected_post_content_hashes = expected_post_content_hashes(
+            self.state.as_ref(),
+            entry.name,
+            args,
+            &relative_paths,
+            &mut base_content_hashes,
+            virtual_documents,
+        )?;
+        Ok(
+            crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput {
+                tool_call_id: call.id.clone(),
+                relative_paths,
+                operation: entry.name.to_string(),
+                base_content_hashes,
+                expected_post_content_hashes,
+                change: args.clone(),
+                rollback_summary: rollback_summary(entry.name),
+            },
+        )
+    }
+
+    /// Execute each operation from one consumed change set in its frozen order.
+    /// A failed or drifted operation stops the suffix; completed prefixes are
+    /// preserved and reported to the caller rather than being silently retried.
+    pub(crate) async fn execute_confirmed_frozen_change_set(
         &self,
         plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
-    ) -> AppResult<ToolCallResult> {
+    ) -> AppResult<Vec<ToolCallResult>> {
         if plan.run_id() != self.accepted.run_id || plan.session_id() != self.context.session_id {
             return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
         plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
-        let entry = catalog_find(plan.operation())
-            .filter(|entry| {
-                entry.requires_confirmation
-                    && entry.implementation
-                        == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable
-            })
-            .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
-        let args = plan.change();
-        let actual_paths = frozen_relative_paths(entry.name, args, self.context);
-        if actual_paths != plan.relative_paths() {
-            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
-        }
-        revalidate_frozen_base_hashes(self.state.as_ref(), plan)?;
+        AgentRunRepository::validate_durable_apply_checkpoint_binding(
+            &self.state.db,
+            &self.accepted.run_id,
+            plan,
+        )?;
         let snapshot = AgentRunRepository::get_for_session(
             &self.state.db,
             &self.accepted.session.session_key,
@@ -729,83 +967,128 @@ impl<'a> NormalRunToolExecutor<'a> {
         if snapshot.run.state != crate::ai_runtime::run_contract::RunState::Running {
             return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
-        let gate = ToolExecutionGate {
-            run_id: &self.accepted.run_id,
-            session_id: Some(self.context.session_id),
-            run_step: 1,
-            entry,
-            args,
-            authorized_capabilities: &self.authorized_capabilities,
-            skill_id: None,
-            subagent_depth: 0,
-        };
-        let gate_outcome = evaluate_tool_execution(&self.state.db, gate)?;
-        let result = if let Some(result) = gate_outcome.tool_result {
-            result
-        } else {
-            AgentRunRepository::validate_durable_apply_checkpoint_binding(
-                &self.state.db,
-                &self.accepted.run_id,
-                plan,
-            )?;
-            AgentRunRepository::append_checkpoint_step(
-                &self.state.db,
-                AppendRunCheckpointInput {
-                    run_id: self.accepted.run_id.clone(),
-                    state_version: snapshot.run.state_version,
-                    checkpoint: durable_apply_checkpoint(
-                        plan,
-                        DurableApplyCheckpointStage::Dispatching,
-                    )?,
-                },
-            )?;
-            let result = self.dispatch_non_web_tool(entry.name, args).await;
-            if result.success {
-                AgentRunRepository::append_checkpoint_step(
-                    &self.state.db,
-                    AppendRunCheckpointInput {
-                        run_id: self.accepted.run_id.clone(),
-                        state_version: snapshot.run.state_version,
-                        checkpoint: durable_apply_checkpoint(
-                            plan,
-                            DurableApplyCheckpointStage::Applied,
-                        )?,
-                    },
-                )?;
-            }
-            result
-        };
-        audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
-        append_model_tool_completed(
+        let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(
             &self.state.db,
-            self.accepted,
-            snapshot.run.state_version,
-            self.sink,
-            entry.name,
-            plan.tool_call_id(),
-            if result.success {
-                "已执行已确认的变更"
+            &self.accepted.run_id,
+        )?
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
+        let start = checkpoint.next_operation_index();
+        let mut checkpoint_stage = checkpoint.stage();
+        let mut results = Vec::new();
+        for (index, operation) in plan.operations().iter().enumerate().skip(start) {
+            let entry = catalog_find(operation.operation())
+                .filter(|entry| entry.requires_confirmation
+                    && entry.implementation == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
+            if frozen_relative_paths(entry.name, operation.change(), self.context)
+                != operation.relative_paths()
+            {
+                return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
+            }
+            let gate = ToolExecutionGate {
+                run_id: &self.accepted.run_id,
+                session_id: Some(self.context.session_id),
+                run_step: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                entry,
+                args: operation.change(),
+                authorized_capabilities: &self.authorized_capabilities,
+                skill_id: None,
+                subagent_depth: 0,
+            };
+            let gate_outcome = evaluate_tool_execution(&self.state.db, gate)?;
+            let result = if let Some(result) = gate_outcome.tool_result {
+                result
+            } else if revalidate_frozen_hash_pairs(
+                self.state.as_ref(),
+                operation.base_content_hashes(),
+            )
+            .is_err()
+            {
+                failed_tool_call(entry.name, "frozen_change_base_hash_drift")
             } else {
-                "已确认的变更未执行"
-            },
-            result.duration_ms,
-            result.success,
-        )?;
-        Ok(result)
+                if checkpoint_stage != DurableApplyCheckpointStage::Dispatching {
+                    AgentRunRepository::append_checkpoint_step(
+                        &self.state.db,
+                        AppendRunCheckpointInput {
+                            run_id: self.accepted.run_id.clone(),
+                            state_version: snapshot.run.state_version,
+                            checkpoint: durable_apply_checkpoint(
+                                plan,
+                                DurableApplyCheckpointStage::Dispatching,
+                                index,
+                            )?,
+                        },
+                    )?;
+                    checkpoint_stage = DurableApplyCheckpointStage::Dispatching;
+                }
+                let result = self
+                    .dispatch_non_web_tool(
+                        entry.name,
+                        operation.change(),
+                        Some(plan.relative_paths()),
+                    )
+                    .await;
+                if result.success {
+                    AgentRunRepository::append_checkpoint_step(
+                        &self.state.db,
+                        AppendRunCheckpointInput {
+                            run_id: self.accepted.run_id.clone(),
+                            state_version: snapshot.run.state_version,
+                            checkpoint: durable_apply_checkpoint(
+                                plan,
+                                DurableApplyCheckpointStage::Applied,
+                                index + 1,
+                            )?,
+                        },
+                    )?;
+                    checkpoint_stage = DurableApplyCheckpointStage::Applied;
+                }
+                result
+            };
+            audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+            append_model_tool_completed(
+                &self.state.db,
+                self.accepted,
+                snapshot.run.state_version,
+                self.sink,
+                entry.name,
+                operation.tool_call_id(),
+                if result.success {
+                    "已执行已确认的变更"
+                } else {
+                    "已确认的变更未执行"
+                },
+                result.duration_ms,
+                result.success,
+            )?;
+            let succeeded = result.success;
+            results.push(result);
+            if !succeeded {
+                break;
+            }
+        }
+        Ok(results)
     }
 
     async fn dispatch_non_web_tool(
         &self,
         tool_name: &str,
         args: &serde_json::Value,
+        confirmed_write_targets: Option<&[String]>,
     ) -> ToolCallResult {
         let dispatch_context = ToolDispatchContext {
+            db: Some(&self.state.db),
+
+            selected_web_provider_id: None,
+
             note_path: None,
             file_id: None,
             run_id: Some(&self.accepted.run_id),
             write_target_path: self.context.write_target_path.as_deref(),
+            confirmed_write_targets,
             document_policy: Some(&self.context.document_policy),
             web_search_enabled: self.has_capability("web.search"),
+            available_tool_names: &self.allowed_tool_names,
             max_web_fetches: 5,
             cold_start_packets: &self.cold_start_packets,
             retrieval_scope: &self.retrieval_scope,
@@ -1001,6 +1284,59 @@ fn local_evidence_input_from_packet(value: &serde_json::Value) -> Option<LocalEv
 /// provider must never be asked for that many raw search bodies in one strict
 /// prefetch. A response that exceeds the host cap gets exactly one smaller
 /// retry; this preserves the cap rather than hiding an unbounded payload.
+fn validate_current_run_fetch_urls(
+    urls: &[String],
+    current_run_urls: &BTreeSet<String>,
+) -> AppResult<Vec<String>> {
+    urls.iter()
+        .map(|url| {
+            let normalized = normalize_fetch_url(url);
+            if !normalized.starts_with("https://") || !current_run_urls.contains(&normalized) {
+                return Err(AppError::msg("web_url_not_in_current_run"));
+            }
+            Ok(normalized)
+        })
+        .collect()
+}
+
+fn normalize_fetch_url(url: &str) -> String {
+    let trimmed = url.trim();
+    let Ok(mut normalized) = reqwest::Url::parse(trimmed) else {
+        return trimmed.to_string();
+    };
+    normalized.set_fragment(None);
+    if matches!(
+        (normalized.scheme(), normalized.port()),
+        ("https", Some(443)) | ("http", Some(80))
+    ) {
+        let _ = normalized.set_port(None);
+    }
+    normalized.to_string()
+}
+
+fn failed_fetch_urls(
+    requested_urls: &[String],
+    fetched_items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+) -> Vec<String> {
+    let fetched_urls = fetched_items
+        .iter()
+        .map(|item| normalize_fetch_url(&item.canonical_url))
+        .collect::<BTreeSet<_>>();
+    requested_urls
+        .iter()
+        .filter(|url| !fetched_urls.contains(*url))
+        .cloned()
+        .collect()
+}
+
+fn explicit_user_urls(message: &str) -> BTreeSet<String> {
+    message
+        .split_whitespace()
+        .filter(|part| part.trim().starts_with("https://"))
+        .map(normalize_fetch_url)
+        .collect()
+}
+
 fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
     let first_attempt = remaining.clamp(1, INITIAL_WEB_SEARCH_RESULTS);
     if attempt_count >= 2 {
@@ -1010,7 +1346,57 @@ fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
     }
 }
 
+fn web_result_limit(discovery_only: bool, remaining: usize, attempt_count: u32) -> usize {
+    if discovery_only {
+        web_search_result_limit(remaining, attempt_count)
+    } else {
+        0
+    }
+}
+
 impl NormalRunToolExecutor<'_> {
+    /// Best-effort persistent closure for a batch that never reached a frozen
+    /// confirmation. A sink may fail after `ToolStarted` has been committed;
+    /// keep that delivery fault from leaving an orphaned tool lifecycle.
+    fn close_unconfirmed_change_set_lifecycles(&self, lifecycles: &[(String, String)]) {
+        for (capability, tool_call_id) in lifecycles {
+            let result = (|| -> AppResult<()> {
+                let snapshot = AgentRunRepository::get_for_session(
+                    &self.state.db,
+                    &self.accepted.session.session_key,
+                    &self.accepted.run_id,
+                )?
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+                let event = AgentRunRepository::append_event(
+                    &self.state.db,
+                    AppendRunEventInput {
+                        run_id: self.accepted.run_id.clone(),
+                        state_version: snapshot.run.state_version,
+                        event_type: RunEventType::ToolCompleted,
+                        payload: RunEventPayload::ToolCompleted {
+                            capability: capability.clone(),
+                            tool_call_id: tool_call_id.clone(),
+                            summary: "确认请求未建立，未执行变更".to_string(),
+                            duration_ms: None,
+                            success: Some(false),
+                            subagent_batch_report: None,
+                        },
+                    },
+                )?;
+                self.sink.emit(&event)
+            })();
+            if let Err(error) = result {
+                tracing::warn!(
+                    run_id = self.accepted.run_id,
+                    capability,
+                    tool_call_id,
+                    error = %error,
+                    "Unable to close an unconfirmed change-set tool lifecycle"
+                );
+            }
+        }
+    }
+
     fn external_snapshot(
         &self,
         tool_name: &str,
@@ -1153,6 +1539,9 @@ impl NormalRunToolExecutor<'_> {
                                             raw_result_hash,
                                             retrieved_at: chrono::Utc::now().to_rfc3339(),
                                             bounded_excerpt: excerpt,
+                                            url: None,
+                                            normalized_url: None,
+                                            domain: None,
                                         },
                                     ) {
                                         Err(_) => failed_tool_call_with_duration(
@@ -1161,6 +1550,7 @@ impl NormalRunToolExecutor<'_> {
                                             started.elapsed(),
                                         ),
                                         Ok(evidence) => {
+                                            let source_ref = format!("E{}", evidence.evidence_id);
                                             self.local_external_evidence_ids
                                                 .lock()
                                                 .map_err(|_| {
@@ -1180,7 +1570,10 @@ impl NormalRunToolExecutor<'_> {
                                             ToolCallResult {
                                                 tool_name: call.function.name.clone(),
                                                 success: true,
-                                                output: serde_json::Value::String(output),
+                                                output: serde_json::json!({
+                                                    "content": output,
+                                                    "sourceRef": source_ref,
+                                                }),
                                                 duration_ms: bounded_duration_ms(started.elapsed()),
                                                 tokens_used: None,
                                                 error: None,
@@ -1258,6 +1651,121 @@ fn safe_external_tool_failure(error: &AppError) -> &'static str {
 }
 
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
+    fn required_web_bootstrap_action_count(&self) -> u32 {
+        u32::from(
+            self.requires_web_evidence()
+                && self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == WEB_SEARCH_TOOL_NAME)
+                && self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == WEB_FETCH_TOOL_NAME),
+        ) * 2
+    }
+
+    fn conversation_memory_compaction_request(
+        &self,
+    ) -> AppResult<
+        Option<crate::ai_runtime::conversation_memory::ConversationMemoryCompactionRequest>,
+    > {
+        let Some(session) =
+            crate::ai_runtime::normal_session_repository::NormalSessionRepository::get(
+                &self.state.db,
+                &self.accepted.session.session_key,
+            )?
+        else {
+            return Ok(None);
+        };
+        crate::ai_runtime::conversation_memory::ConversationMemory::pending_model_compaction(
+            &self.state.db,
+            session.session_id,
+        )
+    }
+
+    fn apply_conversation_memory_compaction(
+        &self,
+        request: &crate::ai_runtime::conversation_memory::ConversationMemoryCompactionRequest,
+        output: Option<&str>,
+    ) -> AppResult<Option<crate::ai_runtime::conversation_memory::ConversationMemory>> {
+        crate::ai_runtime::conversation_memory::ConversationMemory::apply_model_compaction(
+            &self.state.db,
+            request,
+            output,
+        )
+    }
+
+    fn bootstrap_required_web_observation<'a>(
+        &'a self,
+        run_id: &'a str,
+        remaining_tool_calls: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<Option<RequiredWebBootstrapObservation>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            if !self.requires_web_evidence()
+                || remaining_tool_calls < 2
+                || !self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == WEB_SEARCH_TOOL_NAME)
+                || !self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == WEB_FETCH_TOOL_NAME)
+            {
+                return Ok(None);
+            }
+
+            let search_call = ToolCall {
+                id: "host-bootstrap-web-search".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: WEB_SEARCH_TOOL_NAME.into(),
+                    arguments: serde_json::json!({ "query": self.context.user_message })
+                        .to_string(),
+                },
+            };
+            let search = self.execute(run_id, &search_call, 1).await?;
+            let urls = search
+                .output
+                .get("canonicalUrls")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .take(2)
+                .collect::<Vec<_>>();
+            let fetch = if urls.is_empty() {
+                None
+            } else {
+                let fetch_call = ToolCall {
+                    id: "host-bootstrap-web-fetch".into(),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: WEB_FETCH_TOOL_NAME.into(),
+                        arguments: serde_json::json!({ "urls": urls }).to_string(),
+                    },
+                };
+                Some(self.execute(run_id, &fetch_call, 2).await?)
+            };
+            let tool_calls = if fetch.is_some() { 2 } else { 1 };
+            let observation = serde_json::json!({
+                "kind": "host_web_bootstrap",
+                "search": search.output,
+                "fetch": fetch.as_ref().map(|result| &result.output),
+                "note": "Host executed this required search and selected-body fetch before this answer turn. Treat fetched bodies as current-Run observations; failed URLs are not evidence."
+            })
+            .to_string();
+            Ok(Some(RequiredWebBootstrapObservation {
+                tool_calls,
+                network_tool_calls: tool_calls,
+                observation: truncate_web_field(&observation, MAX_WEB_TOOL_RESULT_CHARS),
+            }))
+        })
+    }
+
     fn execute<'a>(
         &'a self,
         run_id: &'a str,
@@ -1265,6 +1773,16 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         Box::pin(async move {
+            if !self
+                .allowed_tool_names
+                .iter()
+                .any(|name| name == &call.function.name)
+            {
+                return Ok(failed_tool_call(
+                    &call.function.name,
+                    "tool_not_in_run_surface",
+                ));
+            }
             if self.external_snapshot(&call.function.name).is_some() {
                 let arguments =
                     match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
@@ -1300,6 +1818,17 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     ));
                 }
             };
+            if let Some(targets) = &self.verification_targets {
+                let requested_path = args.get("path").and_then(serde_json::Value::as_str);
+                if call.function.name != "read_note"
+                    || !requested_path.is_some_and(|path| targets.contains(path))
+                {
+                    return Ok(failed_tool_call(
+                        &call.function.name,
+                        "post_confirmation_verification_out_of_scope",
+                    ));
+                }
+            }
             let gate = ToolExecutionGate {
                 run_id,
                 session_id: Some(self.context.session_id),
@@ -1376,10 +1905,20 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 return Err(AppError::msg(CONFIRMATION_PENDING_ERROR));
             } else if !gate_outcome.decision.can_execute_now() {
                 failed_tool_call(&call.function.name, "tool_confirmation_required")
-            } else if call.function.name == WEB_TOOL_NAME {
-                self.execute_web_search(&args, state_version).await?
+            } else if matches!(
+                call.function.name.as_str(),
+                WEB_SEARCH_TOOL_NAME | WEB_FETCH_TOOL_NAME
+            ) {
+                self.execute_web_tool(
+                    &call.function.name,
+                    &args,
+                    state_version,
+                    call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX),
+                )
+                .await?
             } else {
-                self.dispatch_non_web_tool(&call.function.name, &args).await
+                self.dispatch_non_web_tool(&call.function.name, &args, None)
+                    .await
             };
             audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
             self.register_local_tool_evidence(run_id, &call.function.name, &args, &result)?;
@@ -1407,7 +1946,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     result.success,
                 )?;
             }
-            if call.function.name == WEB_TOOL_NAME {
+            if matches!(
+                call.function.name.as_str(),
+                WEB_SEARCH_TOOL_NAME | WEB_FETCH_TOOL_NAME
+            ) {
                 let failure = self.web_failure();
                 tracing::info!(
                     run_id,
@@ -1422,6 +1964,154 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 );
             }
             Ok(result)
+        })
+    }
+
+    fn request_change_set<'a>(
+        &'a self,
+        run_id: &'a str,
+        calls: &'a [crate::ai_runtime::ToolCall],
+        first_step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+        Box::pin(async move {
+            if run_id != self.accepted.run_id || calls.is_empty() {
+                return Err(AppError::msg("mixed_confirmation_batch"));
+            }
+            let mut prepared = Vec::with_capacity(calls.len());
+            let mut operations = Vec::with_capacity(calls.len());
+            let mut virtual_documents = BTreeMap::new();
+            for (offset, call) in calls.iter().enumerate() {
+                if !self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == &call.function.name)
+                {
+                    return Err(AppError::msg("mixed_confirmation_batch"));
+                }
+                let entry = catalog_find(&call.function.name)
+                    .filter(|entry| entry.requires_confirmation
+                        && entry.implementation == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
+                    .ok_or_else(|| AppError::msg("mixed_confirmation_batch"))?;
+                let args = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .ok()
+                    .filter(serde_json::Value::is_object)
+                    .ok_or_else(|| AppError::msg("mixed_confirmation_batch"))?;
+                let step = first_step.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX));
+                let gate = ToolExecutionGate {
+                    run_id,
+                    session_id: Some(self.context.session_id),
+                    run_step: step,
+                    entry,
+                    args: &args,
+                    authorized_capabilities: &self.authorized_capabilities,
+                    skill_id: None,
+                    subagent_depth: self.subagent_depth,
+                };
+                let outcome = evaluate_tool_execution(&self.state.db, gate)
+                    .map_err(|_| AppError::msg("tool_permission_check_failed"))?;
+                if outcome.tool_result.is_some()
+                    || (!entry.requires_confirmation && !outcome.decision.can_execute_now())
+                {
+                    return Err(AppError::msg("mixed_confirmation_batch"));
+                }
+                operations.push(self.freeze_change_operation(
+                    call,
+                    entry,
+                    &args,
+                    &mut virtual_documents,
+                )?);
+                prepared.push((call, entry, args, step));
+            }
+            let vault_id = self
+                .state
+                .vault_path()
+                .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
+                .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
+            let plan = crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
+                crate::ai_runtime::frozen_change_plan::FrozenChangeSetInput {
+                    confirmation_id: uuid::Uuid::new_v4().to_string(),
+                    run_id: self.accepted.run_id.clone(),
+                    session_id: self.context.session_id,
+                    request_id: self.accepted.run_id.clone(),
+                    vault_id,
+                    operations,
+                    expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
+                        + CHANGE_CONFIRMATION_TTL_MS,
+                },
+            )?;
+            let mut state_version = None;
+            let mut started_lifecycles = Vec::with_capacity(prepared.len());
+            for (call, entry, args, step) in prepared {
+                started_lifecycles.push((entry.name.to_string(), call.id.clone()));
+                let started = match append_model_tool_started(
+                    &self.state.db,
+                    self.accepted,
+                    self.sink,
+                    entry.name,
+                    &call.id,
+                ) {
+                    Ok(version) => version,
+                    Err(error) => {
+                        self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                        return Err(error);
+                    }
+                };
+                let gate = ToolExecutionGate {
+                    run_id,
+                    session_id: Some(self.context.session_id),
+                    run_step: step,
+                    entry,
+                    args: &args,
+                    authorized_capabilities: &self.authorized_capabilities,
+                    skill_id: None,
+                    subagent_depth: self.subagent_depth,
+                };
+                let outcome = match evaluate_tool_execution(&self.state.db, gate) {
+                    Ok(outcome) => outcome,
+                    Err(_) => {
+                        self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                        return Err(AppError::msg("tool_permission_check_failed"));
+                    }
+                };
+                if outcome.tool_result.is_some() || !entry.requires_confirmation {
+                    self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                    return Err(AppError::msg("mixed_confirmation_batch"));
+                }
+                if let Err(error) =
+                    audit_tool_confirmation_requested(&self.state.db, &gate, &outcome.decision)
+                {
+                    self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                    return Err(error);
+                }
+                state_version = Some(started);
+            }
+            let state_version =
+                state_version.ok_or_else(|| AppError::msg("mixed_confirmation_batch"))?;
+            let summary = format!(
+                "等待确认：将按顺序修改 {} 个目标并执行 {} 项操作",
+                plan.relative_paths().len(),
+                plan.operations().len(),
+            );
+            let event = match AgentRunRepository::request_frozen_confirmation(
+                &self.state.db,
+                &plan,
+                state_version,
+                &summary,
+            ) {
+                Ok(event) => event,
+                Err(error) => {
+                    self.close_unconfirmed_change_set_lifecycles(&started_lifecycles);
+                    return Err(error);
+                }
+            };
+            if let Err(error) = self.sink.emit(&event) {
+                tracing::warn!(
+                    run_id = self.accepted.run_id,
+                    error = %error,
+                    "Frozen confirmation was persisted but could not be delivered to the event sink"
+                );
+            }
+            Ok(())
         })
     }
 
@@ -1457,7 +2147,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 
     fn has_web_evidence(&self) -> bool {
         // This vector is populated only after this executor's successful
-        // `web_search` call has persisted a Run-level evidence association.
+        // `web_fetch` call has persisted a Run-level evidence association.
         // It deliberately cannot be satisfied by session history or a prior
         // Run's citations.
         if self
@@ -1501,6 +2191,58 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         self.external_evidence_ids
             .lock()
             .is_ok_and(|ids| !ids.is_empty())
+    }
+
+    fn requires_natural_source_binding(&self) -> bool {
+        self.requires_web_evidence()
+    }
+
+    fn natural_source_binding_is_valid(&self, content: &str) -> bool {
+        let citations = AgentEvidenceRepository::list_current_run_web_citation_links(
+            &self.state.db,
+            &self.accepted.run_id,
+        );
+        citations.is_ok_and(|citations| {
+            crate::ai_runtime::citation_linkify::bind_strict_current_run_citations(
+                content, &citations,
+            )
+            .is_ok()
+        })
+    }
+
+    fn evidence_limited_response(&self) -> String {
+        let leads = self
+            .run_web_evidence
+            .lock()
+            .map(|state| state.unverified_leads.clone())
+            .unwrap_or_default();
+        if leads.is_empty() {
+            return "本轮未取得足够的可核验来源正文来可靠支持具体结论；联网检索也没有取得可用候选。你可以稍后通过“重试”再次执行本轮。".into();
+        }
+        let items = leads
+            .into_iter()
+            .take(MAX_WEB_CANDIDATES_PER_DISCOVERY)
+            .map(|lead| format!("- {}（{}）\n  {}", lead.title, lead.domain, lead.url))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "本轮未取得足够的可核验来源正文来可靠支持具体结论。以下是未核实线索；它们不能作为具体结论的依据。你可以通过“重试”再次抓取，或选择其中一个链接继续核验。\n\n{items}"
+        )
+    }
+
+    fn final_submission_is_valid(
+        &self,
+        submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
+    ) -> bool {
+        AgentEvidenceRepository::provenance_policy(
+            &self.state.db,
+            &self.accepted.run_id,
+            self.requires_web_evidence() || self.requires_external_evidence(),
+        )
+        .is_ok_and(|policy| {
+            crate::ai_runtime::provenance::validate_final_answer_submission(submission, &policy)
+                .is_ok()
+        })
     }
 
     fn emit_deferred_web_degradation_if_needed(
@@ -1553,9 +2295,9 @@ impl NormalRunToolExecutor<'_> {
     }
 
     fn requires_corroborated_web_evidence(&self) -> bool {
-        matches!(
+        corroborated_web_evidence_required(
             self.context.envelope.web_reason,
-            WebDecisionReason::VolatileExternalFact | WebDecisionReason::HighStakesCurrentFact
+            &self.context.envelope.explicit_constraints,
         )
     }
 
@@ -1784,6 +2526,10 @@ impl NormalRunToolExecutor<'_> {
             .filter(|tool| spec.allowed_tools.contains(&tool.name))
             .cloned()
             .collect::<Vec<_>>();
+        let child_tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
         let messages = vec![
             LlmMessage {
                 role: MessageRole::System,
@@ -1814,6 +2560,7 @@ impl NormalRunToolExecutor<'_> {
             self.sink,
             self.required_web_provider_snapshots.clone(),
         )
+        .with_allowed_tool_names(&child_tool_names)
         .with_skill_activation_plan(self.skill_activation_plan.clone())
         .with_parent_run_web_state(self)
         .at_subagent_depth(1)
@@ -1933,12 +2680,47 @@ impl NormalRunToolExecutor<'_> {
         if self.subagent_depth > 0 {
             return Ok(());
         }
-        let Some(winner) = usage.providers.iter().find_map(|provider| {
+        let search_winner = usage.providers.iter().find_map(|provider| {
             (provider.successful_search_requests > 0).then_some(provider.provider_id.as_str())
-        }) else {
-            return Ok(());
-        };
-        for event in mcp_failover_events(provider_snapshots, winner) {
+        });
+        if let Some(winner) = search_winner {
+            self.emit_mcp_failover_events_for_capability(provider_snapshots, winner, "web.search")?;
+        }
+
+        let fetch_origin = search_winner.or_else(|| {
+            provider_snapshots
+                .first()
+                .map(|snapshot| snapshot.id.as_str())
+        });
+        let mut fetch_snapshots = provider_snapshots.to_vec();
+        if let Some(fetch_origin) = fetch_origin {
+            if let Some(index) = fetch_snapshots
+                .iter()
+                .position(|snapshot| snapshot.id == fetch_origin)
+            {
+                let origin = fetch_snapshots.remove(index);
+                fetch_snapshots.insert(0, origin);
+            }
+        }
+        if let Some(fetch_winner) = usage.providers.iter().find_map(|provider| {
+            (provider.successful_page_fetches > 0).then_some(provider.provider_id.as_str())
+        }) {
+            self.emit_mcp_failover_events_for_capability(
+                &fetch_snapshots,
+                fetch_winner,
+                "web.fetch",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn emit_mcp_failover_events_for_capability(
+        &self,
+        provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+        winner: &str,
+        capability: &str,
+    ) -> AppResult<()> {
+        for event in mcp_failover_events(provider_snapshots, winner, capability) {
             let snapshot = AgentRunRepository::get_for_session(
                 &self.state.db,
                 &self.accepted.session.session_key,
@@ -1952,7 +2734,7 @@ impl NormalRunToolExecutor<'_> {
                     state_version: snapshot.run.state_version,
                     event_type: RunEventType::ProviderSwitched,
                     payload: RunEventPayload::ProviderSwitched {
-                        capability: "web.search".into(),
+                        capability: capability.into(),
                         from_provider_id: event.from_provider_id,
                         provider_id: event.provider_id,
                         // MCP web mappings name tools rather than models.
@@ -1999,33 +2781,13 @@ impl NormalRunToolExecutor<'_> {
         self.web_failure.lock().ok().and_then(|failure| *failure)
     }
 
-    /// Return the sanitized state of the deterministic evidence stage. This
-    /// crosses the service boundary only as stable UI/event fields; raw search
-    /// errors remain inside the executor.
-    pub(crate) fn web_verification_failure_details(
-        &self,
-    ) -> (SafeRunErrorCode, WebEvidenceFailureReason, bool, u32) {
-        let failure = self
-            .web_failure()
-            .unwrap_or_else(|| WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false));
-        (
-            failure.code,
-            failure.reason,
-            failure.retryable,
-            self.web_attempt_count().max(1),
-        )
-    }
-
-    fn reserve_web_attempt(&self) -> AppResult<Option<u32>> {
+    fn record_web_attempt(&self) -> AppResult<u32> {
         let mut attempts = self
             .web_attempt_count
             .lock()
             .map_err(|_| AppError::msg("agent_run_web_attempt_lock_failed"))?;
-        if *attempts >= MAX_WEB_PROVIDER_ATTEMPTS_PER_RUN {
-            return Ok(None);
-        }
         *attempts = attempts.saturating_add(1);
-        Ok(Some(*attempts))
+        Ok(*attempts)
     }
 
     fn web_attempt_count(&self) -> u32 {
@@ -2051,19 +2813,22 @@ impl NormalRunToolExecutor<'_> {
 fn durable_apply_checkpoint(
     plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
     stage: DurableApplyCheckpointStage,
+    next_operation_index: usize,
 ) -> AppResult<DurableApplyCheckpoint> {
-    DurableApplyCheckpoint::new(
+    DurableApplyCheckpoint::new_change_set(
         plan.confirmation_id(),
         plan.plan_hash(),
         stage,
-        plan.base_content_hashes()
+        plan.all_base_content_hashes()
             .iter()
             .map(|(_, hash)| hash.clone())
             .collect(),
-        plan.expected_post_content_hashes()
+        plan.all_expected_post_content_hashes()
             .iter()
             .map(|(_, hash)| hash.clone())
             .collect(),
+        next_operation_index,
+        plan.operations().len(),
         Vec::new(),
     )
 }
@@ -2090,10 +2855,21 @@ fn frozen_relative_paths(
     }
     if paths.is_empty() {
         let target = match tool_name {
-            "memory_write" => args
-                .get("key")
-                .and_then(serde_json::Value::as_str)
-                .map(|key| format!("application://memory/{key}")),
+            "memory_write" => {
+                if args.get("operation").and_then(serde_json::Value::as_str) == Some("clear_scope")
+                {
+                    Some(format!(
+                        "application://memory-scope/{}",
+                        args.get("scope")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("global")
+                    ))
+                } else {
+                    args.get("key")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|key| format!("application://memory/{key}"))
+                }
+            }
             "scheduled_task_create" => Some("application://scheduled-tasks/new".to_string()),
             "scheduled_task_delete" => args
                 .get("id")
@@ -2136,17 +2912,14 @@ fn expected_post_content_hashes(
     tool_name: &str,
     args: &serde_json::Value,
     relative_paths: &[String],
-    base_content_hashes: &[(String, String)],
+    base_content_hashes: &mut [(String, String)],
+    virtual_documents: &mut BTreeMap<String, String>,
 ) -> AppResult<Vec<(String, String)>> {
     if !matches!(tool_name, "insert_text_at_cursor" | "replace_selection") {
         return Ok(Vec::new());
     }
     let path = relative_paths
         .first()
-        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    let base_hash = base_content_hashes
-        .iter()
-        .find_map(|(candidate, hash)| (candidate == path).then_some(hash))
         .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     let range = args
         .get("range")
@@ -2172,21 +2945,36 @@ fn expected_post_content_hashes(
         .and_then(serde_json::Value::as_str)
         .or_else(|| args.get("selection").and_then(serde_json::Value::as_str))
         .unwrap_or("");
-    let vault = state
-        .vault_path()
-        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    let resolved = crate::storage::paths::resolve_vault_path(&vault, path)
-        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    let current = std::fs::read_to_string(resolved)
-        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    if crate::cas::hash::content_hash_str(&current) != *base_hash {
+    let current = if let Some(current) = virtual_documents.get(path) {
+        let current = current.clone();
+        let current_hash = crate::cas::hash::content_hash_str(&current);
+        let (_, frozen_hash) = base_content_hashes
+            .iter_mut()
+            .find(|(candidate, _)| candidate == path)
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+        *frozen_hash = current_hash;
+        current
+    } else {
+        let vault = state
+            .vault_path()
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+        let resolved = crate::storage::paths::resolve_vault_path(&vault, path)
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+        std::fs::read_to_string(resolved)
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?
+    };
+    let effective_base_hash = base_content_hashes
+        .iter()
+        .find_map(|(candidate, hash)| (candidate == path).then_some(hash.as_str()))
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+    if crate::cas::hash::content_hash_str(&current) != effective_base_hash {
         return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
     }
     let applied = crate::cas::patch::apply_patch(
         &crate::ai_types::PatchProposal {
             id: "frozen-change-preview".to_string(),
             target_path: path.clone(),
-            base_content_hash: base_hash.clone(),
+            base_content_hash: effective_base_hash.to_string(),
             range,
             original_text: original_text.to_string(),
             replacement_text: replacement_text.to_string(),
@@ -2198,10 +2986,9 @@ fn expected_post_content_hashes(
         &current,
     )
     .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-    Ok(vec![(
-        path.clone(),
-        crate::cas::hash::content_hash_str(&applied),
-    )])
+    let expected_hash = crate::cas::hash::content_hash_str(&applied);
+    virtual_documents.insert(path.clone(), applied);
+    Ok(vec![(path.clone(), expected_hash)])
 }
 
 fn rollback_summary(tool_name: &str) -> String {
@@ -2254,17 +3041,17 @@ fn sanitize_child_run_error(error: &AppError) -> &'static str {
     }
 }
 
-fn revalidate_frozen_base_hashes(
+fn revalidate_frozen_hash_pairs(
     state: &AppState,
-    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+    base_content_hashes: &[(String, String)],
 ) -> AppResult<()> {
-    if plan.base_content_hashes().is_empty() {
+    if base_content_hashes.is_empty() {
         return Ok(());
     }
     let vault = state
         .vault_path()
         .map_err(|_| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
-    for (path, expected_hash) in plan.base_content_hashes() {
+    for (path, expected_hash) in base_content_hashes {
         if path.starts_with("application://") {
             continue;
         }
@@ -2283,6 +3070,16 @@ fn failed_tool_call(tool_name: &str, code: &str) -> ToolCallResult {
     failed_tool_call_with_duration(tool_name, code, Duration::ZERO)
 }
 
+fn corroborated_web_evidence_required(
+    reason: WebDecisionReason,
+    constraints: &[crate::ai_runtime::run_contract::ExplicitConstraint],
+) -> bool {
+    reason == WebDecisionReason::HighStakesCurrentFact
+        || constraints
+            .iter()
+            .any(|constraint| constraint.kind == "corroborated_web_evidence")
+}
+
 fn failed_tool_call_with_duration(
     tool_name: &str,
     code: &str,
@@ -2299,16 +3096,17 @@ fn failed_tool_call_with_duration(
 }
 
 fn failed_web_tool_call(
+    tool_name: &str,
     failure: WebFailure,
     attempt_count: u32,
     duration: Duration,
     remaining_budget_ms: u64,
 ) -> ToolCallResult {
     ToolCallResult {
-        tool_name: WEB_TOOL_NAME.to_string(),
+        tool_name: tool_name.to_string(),
         success: false,
         output: serde_json::json!({
-            "capability": "web.search",
+            "capability": if tool_name == WEB_FETCH_TOOL_NAME { "web.fetch" } else { "web.search" },
             "error": failure.code.as_str(),
             "retryable": failure.retryable,
             "attemptCount": attempt_count,
@@ -2468,7 +3266,7 @@ fn register_model_web_evidence(
                 raw_result_hash: item.raw_result_hash,
                 extraction_method: item.extraction_method,
                 bounded_excerpt: item.excerpt,
-                retrieval_reason: Some(WEB_TOOL_NAME.to_string()),
+                retrieval_reason: Some(WEB_FETCH_TOOL_NAME.to_string()),
                 score: None,
                 source_rank: None,
                 conflict_group: item.conflict_group,
@@ -2502,8 +3300,8 @@ fn bounded_duration_ms(duration: Duration) -> u64 {
     }
 }
 
-fn remaining_model_web_budget_ms(elapsed: Duration) -> u64 {
-    bounded_duration_ms(MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(elapsed))
+fn remaining_web_tool_budget_ms(elapsed: Duration) -> u64 {
+    bounded_duration_ms(WEB_TOOL_CALL_DEADLINE.saturating_sub(elapsed))
 }
 
 fn web_duration_bucket(duration: Duration) -> &'static str {
@@ -2513,7 +3311,7 @@ fn web_duration_bucket(duration: Duration) -> &'static str {
         "under_1s"
     } else if duration < Duration::from_secs(3) {
         "1s_to_3s"
-    } else if duration < MODEL_WEB_EVIDENCE_DEADLINE {
+    } else if duration < WEB_TOOL_CALL_DEADLINE {
         "3s_to_10s"
     } else {
         "budget_exhausted"
@@ -2672,6 +3470,40 @@ fn pack_web_evidence_for_model(
     Ok(packed)
 }
 
+fn pack_web_candidates_for_model(
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    excluded_urls: &BTreeSet<String>,
+    limit: usize,
+) -> Vec<crate::ai_runtime::web_evidence_broker::WebEvidenceItem> {
+    let mut seen = BTreeSet::new();
+    let mut packed = Vec::new();
+    for item in items {
+        if item.failure_reason.is_some()
+            || !item.url.starts_with("https://")
+            || !item.canonical_url.starts_with("https://")
+            || item.snippet.trim().is_empty()
+        {
+            continue;
+        }
+        let canonical_url = normalize_fetch_url(&truncate_web_field(&item.canonical_url, 512));
+        if excluded_urls.contains(&canonical_url) || !seen.insert(canonical_url.clone()) {
+            continue;
+        }
+        let mut item = item.clone();
+        item.title = truncate_web_field(&item.title, 256);
+        item.url = truncate_web_field(&item.url, 512);
+        item.canonical_url = canonical_url;
+        item.domain = truncate_web_field(&item.domain, 255);
+        item.snippet = truncate_web_field(&item.snippet, 800);
+        item.fetched_excerpt = None;
+        packed.push(item);
+        if packed.len() >= limit {
+            break;
+        }
+    }
+    packed
+}
+
 fn serialized_web_tool_payload_chars(
     query: &str,
     items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
@@ -2713,8 +3545,7 @@ fn bounded_page_evidence(
         .fetched_excerpt
         .as_deref()
         .filter(|excerpt| !excerpt.trim().is_empty())
-        .unwrap_or(item.snippet.as_str())
-        .trim();
+        .map(str::trim)?;
     if excerpt.is_empty() {
         return None;
     }
@@ -2863,14 +3694,19 @@ fn classify_web_evidence_output_failure(
     classify_web_failure(&AppError::msg(reasons.join("; ")))
 }
 
-fn web_output_has_usable_evidence(
+fn web_output_has_usable_result(
     output: &crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput,
+    discovery_only: bool,
 ) -> bool {
     output.items.iter().any(|item| {
         item.failure_reason.is_none()
             && item.url.starts_with("https://")
             && item.canonical_url.starts_with("https://")
-            && bounded_page_evidence(item).is_some()
+            && if discovery_only {
+                !item.snippet.trim().is_empty()
+            } else {
+                bounded_page_evidence(item).is_some()
+            }
     })
 }
 
@@ -2880,7 +3716,7 @@ fn corroborated_source_threshold_met(has_official: bool, independent_domains: us
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2888,10 +3724,13 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        append_model_tool_completed_with_report, append_model_tool_started,
-        corroborated_source_threshold_met, emit_deferred_web_degradation,
-        expected_post_content_hashes, mcp_failover_events, web_search_result_limit,
-        DeferredWebDegradationInput, McpFailoverEvent, NormalRunToolExecutor, RunWebBudget,
+        append_model_tool_completed_with_report, append_model_tool_started, bounded_page_evidence,
+        corroborated_source_threshold_met, corroborated_web_evidence_required,
+        emit_deferred_web_degradation, expected_post_content_hashes, failed_fetch_urls,
+        mcp_failover_events, normalize_fetch_url, pack_web_candidates_for_model,
+        remember_candidate_urls, validate_current_run_fetch_urls, web_output_has_usable_result,
+        web_result_limit, web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
+        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -2900,7 +3739,7 @@ mod tests {
     use crate::ai_runtime::run_contract::{
         AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, ContextMode,
         ExternalToolGrantRef, RunBudgetPolicy, RunEventPayload, RunEventType, RunState,
-        SafeRunErrorCode, SecurityDomain,
+        SafeRunErrorCode, SecurityDomain, WebDecisionReason,
     };
     use crate::ai_runtime::run_engine::{RunEngine, RunEventSink};
     use crate::ai_runtime::run_intake::RunIntake;
@@ -2911,7 +3750,7 @@ mod tests {
         SkillActivationPlanSummary,
     };
     use crate::app::AppState;
-    use crate::error::AppResult;
+    use crate::error::{AppError, AppResult};
     use crate::storage::db::Database;
     use tokio::sync::Barrier;
 
@@ -2930,6 +3769,17 @@ mod tests {
         }
     }
 
+    struct FailToolStartedSink;
+
+    impl RunEventSink for FailToolStartedSink {
+        fn emit(&self, event: &AssistantRunEvent) -> AppResult<()> {
+            if matches!(event.payload(), RunEventPayload::ToolStarted { .. }) {
+                return Err(AppError::msg("tool_started_sink_failed"));
+            }
+            Ok(())
+        }
+    }
+
     #[test]
     fn frozen_note_patch_precomputes_expected_post_hash_without_writing() {
         let directory = tempfile::tempdir().expect("temporary directory");
@@ -2941,6 +3791,7 @@ mod tests {
         state.set_vault(vault).expect("activate vault");
         let base_hash = crate::cas::hash::content_hash_str("base");
 
+        let mut base_hashes = vec![("note.md".into(), crate::cas::hash::content_hash_str("base"))];
         let hashes = expected_post_content_hashes(
             &state,
             "replace_selection",
@@ -2951,7 +3802,8 @@ mod tests {
                 "replacement": "after"
             }),
             &["note.md".into()],
-            &[("note.md".into(), crate::cas::hash::content_hash_str("base"))],
+            &mut base_hashes,
+            &mut BTreeMap::new(),
         )
         .expect("precompute expected hash");
 
@@ -2966,6 +3818,60 @@ mod tests {
             std::fs::read_to_string(note).expect("note remains readable"),
             "base",
             "freezing the plan must not apply the write"
+        );
+    }
+
+    #[test]
+    fn frozen_change_set_chains_repeated_note_patches_in_memory_without_writing() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let note = vault.join("note.md");
+        std::fs::write(&note, "base").expect("base note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault).expect("activate vault");
+        let mut virtual_documents = BTreeMap::new();
+
+        let mut first_base = vec![("note.md".into(), crate::cas::hash::content_hash_str("base"))];
+        let first = expected_post_content_hashes(
+            &state,
+            "replace_selection",
+            &serde_json::json!({
+                "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                "range": { "start": 0, "end": 4 },
+                "original_text": "base",
+                "replacement": "after"
+            }),
+            &["note.md".into()],
+            &mut first_base,
+            &mut virtual_documents,
+        )
+        .expect("freeze first patch");
+        let mut second_base = vec![("note.md".into(), crate::cas::hash::content_hash_str("base"))];
+        let second = expected_post_content_hashes(
+            &state,
+            "replace_selection",
+            &serde_json::json!({
+                "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                "range": { "start": 0, "end": 5 },
+                "original_text": "after",
+                "replacement": "final"
+            }),
+            &["note.md".into()],
+            &mut second_base,
+            &mut virtual_documents,
+        )
+        .expect("freeze chained patch");
+
+        assert_eq!(first[0].1, crate::cas::hash::content_hash_str("after"));
+        assert_eq!(
+            second_base[0].1,
+            crate::cas::hash::content_hash_str("after")
+        );
+        assert_eq!(second[0].1, crate::cas::hash::content_hash_str("final"));
+        assert_eq!(
+            std::fs::read_to_string(note).expect("note remains readable"),
+            "base"
         );
     }
 
@@ -3021,9 +3927,13 @@ mod tests {
                 .and_then(|message| message.content.as_str())
                 .unwrap_or_default()
                 .to_string();
+            // A bounded loop may append a system synthesis instruction after
+            // the tool result. The transcript still represents the same
+            // continuation; do not make this protocol double depend on the
+            // final message being the tool role.
             let is_continuation = messages
-                .last()
-                .is_some_and(|message| matches!(&message.role, MessageRole::Tool));
+                .iter()
+                .any(|message| matches!(&message.role, MessageRole::Tool));
             self.provider_run_ids
                 .lock()
                 .expect("provider run ids")
@@ -3266,7 +4176,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn external_read_tool_crosses_transport_and_persists_only_bounded_safe_artifacts() {
+    async fn tool_diagnostics_never_expose_raw_arguments() {
         let directory = tempfile::tempdir().expect("temporary app directory");
         let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
@@ -3302,6 +4212,8 @@ mod tests {
             read_only: true,
             user_trusted: true,
             attested_binding_config_hash: String::new(),
+            domain_operation: None,
+            output_mapping: None,
         };
         let discovery_options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
             request_timeout: Duration::from_secs(20),
@@ -3410,8 +4322,9 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
-        let private_query = "external-query-body-must-not-persist";
+        )
+        .with_allowed_tool_names(std::slice::from_ref(&snapshot.exposed_name));
+        let private_query = "note-body-must-not-persist api_key=sentinel-secret";
         let provider_output = "fact-web-1=value-1";
         let private_call_id = "provider-call-id-must-not-persist";
         let result = executor
@@ -3429,8 +4342,18 @@ mod tests {
         assert!(result.success, "external result: {result:?}");
         assert!(result
             .output
-            .as_str()
+            .get("content")
+            .and_then(serde_json::Value::as_str)
             .is_some_and(|output| output.contains(provider_output)));
+        assert!(result
+            .output
+            .get("sourceRef")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|source_ref| {
+                source_ref
+                    .strip_prefix('E')
+                    .is_some_and(|id| id.parse::<i64>().is_ok_and(|id| id > 0))
+            }));
 
         let (
             evidence_count,
@@ -3515,7 +4438,7 @@ mod tests {
         assert!(!evidence_hash.trim().is_empty());
         assert_eq!(run_evidence_count, 1);
         assert_eq!(audit_arguments, "shape=object, keys=1");
-        assert_eq!(audit_result, "shape=string");
+        assert_eq!(audit_result, "shape=object, keys=2");
         assert!(!event_payloads.contains(private_query));
         assert!(!event_payloads.contains(provider_output));
         assert!(!event_payloads.contains(private_call_id));
@@ -3724,6 +4647,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
         executor
             .run_web_evidence
@@ -3901,6 +4825,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
 
         let provider_call_id = format!("{}{}", "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz");
@@ -4230,7 +5155,8 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
+        )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()]);
         let denied = denied_executor
             .execute(
                 &accepted.run_id,
@@ -4317,6 +5243,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
         let result = executor
             .execute(
@@ -4415,7 +5342,7 @@ mod tests {
                 transport_kind: "https".into(),
                 provider_config_hash: "config-a".into(),
                 web_search_mapping_json: Some(r#"{"tool":"primary_search"}"#.into()),
-                web_fetch_mapping_json: None,
+                web_fetch_mapping_json: Some(r#"{"tool":"primary_fetch"}"#.into()),
             },
             crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
                 id: "backup".into(),
@@ -4423,11 +5350,11 @@ mod tests {
                 transport_kind: "https".into(),
                 provider_config_hash: "config-b".into(),
                 web_search_mapping_json: Some(r#"{"tool":"backup_search"}"#.into()),
-                web_fetch_mapping_json: None,
+                web_fetch_mapping_json: Some(r#"{"tool":"backup_fetch"}"#.into()),
             },
         ];
 
-        let events = mcp_failover_events(&snapshots, "backup");
+        let events = mcp_failover_events(&snapshots, "backup", "web.search");
 
         assert!(matches!(
             events.as_slice(),
@@ -4438,26 +5365,24 @@ mod tests {
                     && reason_code == "mcp_provider_failed"
                     && *attempt == 2
         ));
-        assert!(mcp_failover_events(&snapshots, "primary").is_empty());
+        assert!(mcp_failover_events(&snapshots, "primary", "web.search").is_empty());
+        let fetch_events = mcp_failover_events(&snapshots, "backup", "web.fetch");
+        assert!(matches!(
+            fetch_events.as_slice(),
+            [McpFailoverEvent { model_id, .. }] if model_id == "backup_fetch"
+        ));
     }
 
     #[test]
-    fn model_web_calls_share_one_run_budget_start() {
-        let budget = RunWebBudget::default();
-        let first = budget.started().expect("first budget start");
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        let second = budget.started().expect("second budget start");
-
-        assert_eq!(first, second);
-    }
-
-    #[test]
-    fn strict_web_search_retries_an_oversize_provider_with_two_results() {
+    fn search_retries_with_fewer_candidates_while_fetch_never_runs_discovery() {
         assert_eq!(web_search_result_limit(12, 1), 8);
         assert_eq!(web_search_result_limit(12, 2), 2);
         assert_eq!(web_search_result_limit(4, 1), 4);
         assert_eq!(web_search_result_limit(1, 1), 1);
         assert_eq!(web_search_result_limit(1, 2), 1);
+        assert_eq!(web_result_limit(true, 12, 1), 8);
+        assert_eq!(web_result_limit(false, 12, 1), 0);
+        assert_eq!(web_result_limit(false, 12, 2), 0);
     }
 
     #[test]
@@ -4465,6 +5390,25 @@ mod tests {
         assert!(corroborated_source_threshold_met(true, 1));
         assert!(corroborated_source_threshold_met(false, 2));
         assert!(!corroborated_source_threshold_met(false, 1));
+    }
+
+    #[test]
+    fn ordinary_volatile_fact_accepts_one_body_but_high_risk_and_explicit_cross_check_do_not() {
+        assert!(!corroborated_web_evidence_required(
+            WebDecisionReason::VolatileExternalFact,
+            &[],
+        ));
+        assert!(corroborated_web_evidence_required(
+            WebDecisionReason::HighStakesCurrentFact,
+            &[],
+        ));
+        assert!(corroborated_web_evidence_required(
+            WebDecisionReason::ExplicitWebRequest,
+            &[crate::ai_runtime::run_contract::ExplicitConstraint {
+                kind: "corroborated_web_evidence".into(),
+                value: None,
+            }],
+        ));
     }
 
     #[test]
@@ -4617,7 +5561,11 @@ mod tests {
         .with_skill_activation_plan(Some(plan));
 
         let result = executor
-            .dispatch_non_web_tool("read_note", &serde_json::json!({"path": "blocked.md"}))
+            .dispatch_non_web_tool(
+                "read_note",
+                &serde_json::json!({"path": "blocked.md"}),
+                None,
+            )
             .await;
         assert!(!result.success);
         assert!(result
@@ -4625,6 +5573,810 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("outside the confirmed Skill scope"));
+    }
+
+    #[tokio::test]
+    async fn executor_rejects_model_call_outside_frozen_surface() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        std::fs::write(vault.join("allowed.md"), "allowed").expect("allowed note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let allowed_tool_names = vec!["system_time_now".to_string()];
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&allowed_tool_names);
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "outside-surface-call",
+                    "read_note",
+                    r#"{"path":"allowed.md"}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn post_confirmation_verification_rejects_other_targets_and_non_read_tools() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        std::fs::write(vault.join("confirmed.md"), "confirmed").expect("confirmed note");
+        std::fs::write(vault.join("other.md"), "other").expect("other note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let targets = vec!["confirmed.md".to_string()];
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("note.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_verification_targets(&targets);
+
+        let outside_target = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("verify-other", "read_note", r#"{"path":"other.md"}"#),
+                1,
+            )
+            .await
+            .expect("out-of-scope read returns a normal tool result");
+        assert!(!outside_target.success);
+        assert_eq!(
+            outside_target.error.as_deref(),
+            Some("post_confirmation_verification_out_of_scope")
+        );
+        let write_attempt = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "verify-write",
+                    "replace_selection",
+                    r#"{"target_path":"confirmed.md","replacement":"unexpected"}"#,
+                ),
+                2,
+            )
+            .await
+            .expect("write attempt returns a normal tool result");
+        assert!(!write_attempt.success);
+        assert_eq!(
+            write_attempt.error.as_deref(),
+            Some("tool_not_in_run_surface")
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_tool_surface_rejects_forged_tool_call() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("forged-call", "system_time_now", "{}"),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn retired_domain_tool_forged_call_is_rejected_by_empty_surface() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "forged-domain-call",
+                    "weather_lookup",
+                    r#"{"operation":"weather.current","location":"北京"}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn internal_web_execution_keeps_the_frozen_search_and_fetch_surface_exact() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![
+                CapabilityId::new("web.search"),
+                CapabilityId::new("runtime.read"),
+            ],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string(), "web_fetch".to_string()]);
+
+        assert_eq!(executor.allowed_tool_names, ["web_search", "web_fetch"]);
+        let forged = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("forged-prefetch-call", "system_time_now", "{}"),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+        assert_eq!(forged.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[test]
+    fn fetch_urls_must_belong_to_the_current_run() {
+        let allowed = BTreeSet::from(["https://example.com/current".to_string()]);
+        let urls = vec!["https://foreign.example/article".to_string()];
+
+        assert_eq!(
+            validate_current_run_fetch_urls(&urls, &allowed)
+                .expect_err("foreign URL must be rejected")
+                .to_string(),
+            "web_url_not_in_current_run"
+        );
+    }
+
+    #[test]
+    fn discovery_candidates_are_bounded_without_consuming_evidence_slots() {
+        let mut state = RunWebEvidenceState::default();
+        let candidates = (0..12).map(|index| format!("https://example.com/{index}"));
+
+        let (new_resources, duplicate_resources) =
+            remember_candidate_urls(&mut state, candidates).expect("candidate observation");
+
+        assert_eq!(new_resources, 8);
+        assert_eq!(duplicate_resources, 0);
+        assert_eq!(state.candidate_urls.len(), 8);
+        assert_eq!(state.slots_in_use, 0);
+        assert!(state.evidence_ids.is_empty());
+    }
+
+    #[test]
+    fn a_candidate_selected_by_the_model_becomes_fetchable_without_becoming_evidence() {
+        let mut state = RunWebEvidenceState::default();
+        remember_candidate_urls(
+            &mut state,
+            ["https://example.com/chosen", "https://example.com/other"].map(str::to_string),
+        )
+        .expect("candidate observation");
+
+        let urls = validate_current_run_fetch_urls(
+            &["https://example.com/chosen".to_string()],
+            &state.candidate_urls,
+        )
+        .expect("current Run candidate may be fetched");
+
+        assert_eq!(urls, ["https://example.com/chosen"]);
+        assert!(state.evidence_ids.is_empty());
+        assert_eq!(state.slots_in_use, 0);
+    }
+
+    #[test]
+    fn partial_fetch_observation_preserves_the_failed_url_for_model_recovery() {
+        let requested = vec![
+            "https://example.com/ok".to_string(),
+            "https://example.net/blocked".to_string(),
+        ];
+        let fetched = vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: requested[0].clone(),
+            canonical_url: requested[0].clone(),
+            title: "Fetched article".into(),
+            domain: "example.com".into(),
+            snippet: "candidate".into(),
+            fetched_excerpt: Some("usable fetched body".into()),
+            provider_id: "search-provider".into(),
+            provider_kind: "mcp".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "body-hash".into(),
+            extraction_method: "mcp_fetch_raw_content".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.fetch".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        }];
+
+        assert_eq!(
+            failed_fetch_urls(&requested, &fetched),
+            [requested[1].clone()]
+        );
+    }
+
+    #[test]
+    fn search_snippet_never_becomes_registered_page_evidence() {
+        let item = crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: "https://example.com/article".into(),
+            canonical_url: "https://example.com/article".into(),
+            title: "Article".into(),
+            domain: "example.com".into(),
+            snippet: "search snippet only".into(),
+            fetched_excerpt: None,
+            provider_id: "search-provider".into(),
+            provider_kind: "mcp".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        };
+        let output = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
+            items: vec![item.clone()],
+            usage: Default::default(),
+        };
+
+        assert!(bounded_page_evidence(&item).is_none());
+        assert!(web_output_has_usable_result(&output, true));
+        assert!(!web_output_has_usable_result(&output, false));
+    }
+
+    #[test]
+    fn fetch_url_normalization_preserves_case_sensitive_path_and_query() {
+        assert_eq!(
+            normalize_fetch_url("HTTPS://Example.COM/Article/ABC?sig=XyZ#section"),
+            "https://example.com/Article/ABC?sig=XyZ"
+        );
+    }
+
+    #[test]
+    fn discovery_candidate_limit_is_applied_after_canonical_url_deduplication() {
+        let item = |url: &str| crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: url.to_string(),
+            canonical_url: url.to_string(),
+            title: format!("title {url}"),
+            domain: "example.com".into(),
+            snippet: format!("snippet {url}"),
+            fetched_excerpt: None,
+            provider_id: "test".into(),
+            provider_kind: "test".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        };
+        let items = vec![
+            item("https://example.com/a"),
+            item("https://example.com/a#fragment"),
+            item("https://example.com/b"),
+            item("https://example.com/c"),
+            item("https://example.com/d"),
+            item("https://example.com/e"),
+        ];
+
+        let packed = pack_web_candidates_for_model(&items, &BTreeSet::new(), 4);
+
+        assert_eq!(packed.len(), 4);
+        assert_eq!(
+            packed
+                .iter()
+                .map(|candidate| candidate.canonical_url.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "https://example.com/a",
+                "https://example.com/b",
+                "https://example.com/c",
+                "https://example.com/d",
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_candidates_skip_previously_seen_urls_before_applying_the_batch_limit() {
+        let item = |url: &str| crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: url.to_string(),
+            canonical_url: url.to_string(),
+            title: format!("title {url}"),
+            domain: "example.com".into(),
+            snippet: format!("snippet {url}"),
+            fetched_excerpt: None,
+            provider_id: "test".into(),
+            provider_kind: "test".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        };
+        let items =
+            ["a", "b", "c", "d", "e"].map(|suffix| item(&format!("https://example.com/{suffix}")));
+        let known = ["a", "b", "c", "d"]
+            .map(|suffix| format!("https://example.com/{suffix}"))
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+
+        let packed = pack_web_candidates_for_model(&items, &known, 4);
+
+        assert_eq!(packed.len(), 1);
+        assert_eq!(packed[0].canonical_url, "https://example.com/e");
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_memory_mutation_is_not_persisted() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试记忆确认门".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running");
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+
+        let error = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "memory-clear-request",
+                    "memory_write",
+                    r#"{"operation":"clear_scope","scope":"global"}"#,
+                ),
+                1,
+            )
+            .await
+            .expect_err("memory mutation must pause for confirmation");
+        assert_eq!(error.to_string(), CONFIRMATION_PENDING_ERROR);
+        let memory_count: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))?)
+            })
+            .expect("memory count");
+        assert_eq!(memory_count, 0);
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::AwaitingConfirmation);
+    }
+
+    #[tokio::test]
+    async fn failed_confirmation_batch_closes_started_tool_lifecycle_without_pending_plan() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let setup_sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &setup_sink,
+        )
+        .expect("preparing state");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试确认批次失败闭环".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running state");
+        let sink = FailToolStartedSink;
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+        let call = ToolCall::new(
+            "failed-confirmation-call",
+            "memory_write",
+            r#"{"operation":"clear_scope","scope":"global"}"#,
+        );
+
+        let error = ToolLoopExecutor::request_change_set(
+            &executor,
+            &accepted.run_id,
+            std::slice::from_ref(&call),
+            1,
+        )
+        .await
+        .expect_err("started lifecycle sink failure must stop the batch");
+        assert_eq!(error.to_string(), "tool_started_sink_failed");
+
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::Running);
+        assert!(replay.run.pending_confirmation.is_none());
+        let lifecycle = replay
+            .events
+            .iter()
+            .filter_map(|event| match event.payload() {
+                RunEventPayload::ToolStarted { tool_call_id, .. }
+                | RunEventPayload::ToolCompleted { tool_call_id, .. }
+                    if tool_call_id == "failed-confirmation-call" =>
+                {
+                    Some(event.payload())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            lifecycle.as_slice(),
+            [
+                RunEventPayload::ToolStarted { .. },
+                RunEventPayload::ToolCompleted {
+                    success: Some(false),
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[tokio::test]
+    async fn normal_executor_freezes_one_ordered_confirmation_batch_and_rejects_a_seventh_call() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing state");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试确认批次冻结".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running state");
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+        let calls = vec![
+            ToolCall::new(
+                "confirmation-a",
+                "memory_write",
+                r#"{"operation":"clear_scope","scope":"global"}"#,
+            ),
+            ToolCall::new(
+                "confirmation-b",
+                "memory_write",
+                r#"{"operation":"clear_scope","scope":"vault"}"#,
+            ),
+        ];
+
+        ToolLoopExecutor::request_change_set(&executor, &accepted.run_id, &calls, 1)
+            .await
+            .expect("two confirmation calls freeze as one batch");
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::AwaitingConfirmation);
+        let confirmation = replay
+            .run
+            .pending_confirmation
+            .as_ref()
+            .expect("one pending confirmation");
+        let plan_json = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT plan_json FROM agent_run_confirmations
+                     WHERE run_id = ?1 AND confirmation_id = ?2 AND status = 'pending'",
+                    rusqlite::params![accepted.run_id, confirmation.confirmation_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("pending frozen plan");
+        let plan =
+            crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
+                &plan_json,
+            )
+            .expect("frozen batch plan");
+        assert_eq!(plan.operations().len(), 2);
+        assert_eq!(
+            plan.operations()
+                .iter()
+                .map(|operation| operation.tool_call_id())
+                .collect::<Vec<_>>(),
+            ["confirmation-a", "confirmation-b"]
+        );
+        let started_ids = replay
+            .events
+            .iter()
+            .filter_map(|event| match event.payload() {
+                RunEventPayload::ToolStarted { tool_call_id, .. } => Some(tool_call_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(started_ids, ["confirmation-a", "confirmation-b"]);
+        let memory_count: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))?)
+            })
+            .expect("memory count");
+        assert_eq!(
+            memory_count, 0,
+            "confirmation must not mutate before approval"
+        );
+
+        let independent_state = AppState::new(directory.path().join("limit-data"))
+            .expect("independent application state");
+        let independent_accepted =
+            RunIntake::start(&independent_state.db, request()).expect("independent run");
+        let independent_context = RunContextAssembler::assemble(
+            &independent_state.db,
+            None,
+            &independent_accepted.session.session_key,
+            &independent_accepted.run_id,
+        )
+        .expect("independent context");
+        let independent_sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &independent_state.db,
+            &independent_accepted.session,
+            &independent_accepted.run_id,
+            &independent_sink,
+        )
+        .expect("independent preparing");
+        AgentRunRepository::append_event(
+            &independent_state.db,
+            AppendRunEventInput {
+                run_id: independent_accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试确认操作上限".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("independent running");
+        let independent_executor = NormalRunToolExecutor::new(
+            &independent_state,
+            None,
+            &independent_accepted,
+            &independent_context,
+            vec![CapabilityId::new("memory.write")],
+            RunBudgetPolicy::for_envelope(&independent_context.envelope),
+            &independent_sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["memory_write".to_string()]);
+        let too_many_calls = (0..7)
+            .map(|index| {
+                ToolCall::new(
+                    format!("confirmation-{index}"),
+                    "memory_write",
+                    r#"{"operation":"clear_scope","scope":"global"}"#,
+                )
+            })
+            .collect::<Vec<_>>();
+        let error = ToolLoopExecutor::request_change_set(
+            &independent_executor,
+            &independent_accepted.run_id,
+            &too_many_calls,
+            1,
+        )
+        .await
+        .expect_err("the seventh frozen operation must be rejected");
+        assert_eq!(
+            error.to_string(),
+            SafeRunErrorCode::InvalidChangePlan.as_str()
+        );
+        let independent_replay = RunIntake::get(
+            &independent_state.db,
+            &independent_accepted.session,
+            &independent_accepted.run_id,
+        )
+        .expect("independent replay")
+        .expect("independent run");
+        assert_eq!(independent_replay.run.state, RunState::Running);
+        assert!(independent_replay.run.pending_confirmation.is_none());
+        assert!(!independent_replay
+            .events
+            .iter()
+            .any(|event| { matches!(event.payload(), RunEventPayload::ToolStarted { .. }) }));
     }
 
     #[tokio::test]
@@ -4709,7 +6461,8 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
+        )
+        .with_allowed_tool_names(&["read_note".to_string(), "search_keyword".to_string()]);
 
         let result = executor
             .execute(

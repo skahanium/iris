@@ -579,39 +579,38 @@ export function McpProfilesPanel({
       ) : null}
 
       {detailProvider ? (
-        <>
-          <McpProviderDetail
-            provider={detailProvider}
-            diagnostics={diagnostics[detailProvider.id]}
-            credentialConfiguredByService={credentialConfiguredByService}
-            saving={saving}
-            persisted={!(draft && draft.id === detailProvider.id)}
-            onSave={saveProvider}
-            onToggle={(enabled) => {
-              if (draft && draft.id === detailProvider.id) {
-                invalidateDiagnostics();
-                setDraft((current) =>
-                  current ? { ...current, enabled } : current,
-                );
-                return;
-              }
-              void toggleProvider(detailProvider.id, enabled);
-            }}
-            onDelete={() => {
-              if (draft && draft.id === detailProvider.id) {
-                invalidateDiagnostics();
-                setDraft(null);
-                setSelectedProvider(null);
-                return;
-              }
-              void deleteProvider(detailProvider.id).then(() =>
-                setSelectedProvider(null),
+        <McpProviderDetail
+          provider={detailProvider}
+          diagnostics={diagnostics[detailProvider.id]}
+          credentialConfiguredByService={credentialConfiguredByService}
+          saving={saving}
+          persisted={!(draft && draft.id === detailProvider.id)}
+          onSave={saveProvider}
+          onToggle={(enabled) => {
+            if (draft && draft.id === detailProvider.id) {
+              invalidateDiagnostics();
+              setDraft((current) =>
+                current ? { ...current, enabled } : current,
               );
-            }}
-            onClearCredential={clearCredential}
-            onDiagnostics={() => void runDiagnostics(detailProvider.id)}
-            onConfigurationChanged={invalidateDiagnostics}
-          />
+              return;
+            }
+            void toggleProvider(detailProvider.id, enabled);
+          }}
+          onDelete={() => {
+            if (draft && draft.id === detailProvider.id) {
+              invalidateDiagnostics();
+              setDraft(null);
+              setSelectedProvider(null);
+              return;
+            }
+            void deleteProvider(detailProvider.id).then(() =>
+              setSelectedProvider(null),
+            );
+          }}
+          onClearCredential={clearCredential}
+          onDiagnostics={() => void runDiagnostics(detailProvider.id)}
+          onConfigurationChanged={invalidateDiagnostics}
+        >
           {!(draft && draft.id === detailProvider.id) ? (
             <div
               className="space-y-3 rounded-md border border-border/60 p-3"
@@ -646,7 +645,10 @@ export function McpProfilesPanel({
                   <div>
                     <p className="font-medium">{binding.mcpToolName}</p>
                     <p className="text-muted-foreground">
-                      external.read · 参数同名映射 ·{" "}
+                      {binding.domainOperation || binding.outputMapping
+                        ? "已退役的旧领域映射 · 仅兼容读取，不可用于新 Run"
+                        : "external.read · 参数同名映射"}{" "}
+                      ·{" "}
                       {binding.providerEnabled && binding.configMatches
                         ? "诊断通过"
                         : "配置已漂移或提供方停用"}
@@ -672,26 +674,59 @@ export function McpProfilesPanel({
                 return (
                   <div
                     key={tool.name}
-                    className="flex items-center justify-between gap-3 text-xs"
+                    data-testid={`mcp-external-read-tool-${tool.name}`}
+                    className="space-y-3 rounded-md border border-border-subtle bg-surface-inset/20 p-3 text-xs"
                   >
-                    <span>{tool.name}</span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={externalToolsBusy || bound}
-                      onClick={() =>
-                        void bindReadOnlyTool(detailProvider.id, tool)
-                      }
-                    >
-                      {bound ? "已绑定" : "审核并信任为只读"}
-                    </Button>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium">{tool.name}</p>
+                        <p className="text-muted-foreground">
+                          {bound
+                            ? "已有 binding；若为旧领域映射，请先删除后重新审核为 external.read"
+                            : "可审核为逐 Run external.read；不会创建领域路由或自动授权"}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        data-testid={`mcp-external-bind-${tool.name}`}
+                        disabled={externalToolsBusy || bound}
+                        onClick={() =>
+                          void bindReadOnlyTool(detailProvider.id, tool)
+                        }
+                      >
+                        {bound ? "已绑定" : "审核并信任为只读"}
+                      </Button>
+                    </div>
+                    <details className="space-y-2 border-t border-border-subtle pt-3">
+                      <summary
+                        data-testid={`mcp-external-advanced-${tool.name}`}
+                        className="cursor-pointer text-xs text-muted-foreground"
+                      >
+                        高级：只读 schema 与哈希
+                      </summary>
+                      <div className="space-y-2 pt-2">
+                        <pre
+                          data-testid={`mcp-external-schema-${tool.name}`}
+                          className="max-h-48 overflow-auto rounded-md bg-surface-inset/40 p-2 text-[11px] text-muted-foreground"
+                        >
+                          {JSON.stringify(tool.inputSchema, null, 2)}
+                        </pre>
+                        <p className="text-muted-foreground">
+                          Provider config hash：{tool.providerConfigHash}
+                        </p>
+                        <p className="text-muted-foreground">
+                          Binding config hash：{tool.bindingConfigHash}
+                        </p>
+                      </div>
+                    </details>
                   </div>
                 );
               })}
             </div>
           ) : null}
-        </>
+        </McpProviderDetail>
       ) : activeDetailId ? (
         <div className="space-y-2 rounded-md border border-border/55 bg-background/60 p-3 text-xs text-muted-foreground">
           <p>找不到该 MCP 提供方，可能已被删除。</p>

@@ -24,7 +24,11 @@ pub(crate) fn capabilities_read_tool(
     state: &AppState,
     ctx: &ToolDispatchContext<'_>,
 ) -> AppResult<serde_json::Value> {
-    let tools = runtime_context::all_catalog_tools_as_specs();
+    let all_tools = runtime_context::all_catalog_tools_as_specs();
+    let tools = all_tools
+        .into_iter()
+        .filter(|tool| ctx.available_tool_names.contains(&tool.name))
+        .collect::<Vec<_>>();
     serde_json::to_value(runtime_context::capability_snapshot(
         &state.db,
         ctx.web_search_enabled,
@@ -50,7 +54,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_context_tools_return_structured_readonly_state() {
+    async fn capabilities_read_empty_surface_returns_no_tools() {
         let (state, _dir) = test_state();
         let mut routing = crate::llm::config::deepseek_defaults();
         routing.providers.insert(
@@ -63,12 +67,18 @@ mod tests {
         crate::llm::config::save(&state.db, &routing).expect("save enabled model pool");
         let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
         let ctx = ToolDispatchContext {
+            db: None,
+
+            selected_web_provider_id: None,
+
             note_path: Some("notes/test.md"),
             file_id: Some(7),
             run_id: None,
             write_target_path: None,
+            confirmed_write_targets: None,
             document_policy: None,
             web_search_enabled: true,
+            available_tool_names: &[],
             max_web_fetches: 3,
             cold_start_packets: &[],
             retrieval_scope: &retrieval_scope,
@@ -115,8 +125,52 @@ mod tests {
             }));
         assert!(capabilities.output["tools"]
             .as_array()
-            .unwrap()
-            .iter()
-            .any(|tool| tool["name"] == "system_time_now"));
+            .expect("capabilities tools")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn capabilities_read_reports_current_surface_only() {
+        let (state, _dir) = test_state();
+        let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+        let available_tool_names = vec!["system_time_now".to_string()];
+        let ctx = ToolDispatchContext {
+            db: None,
+
+            selected_web_provider_id: None,
+
+            note_path: None,
+            file_id: None,
+            run_id: None,
+            write_target_path: None,
+            confirmed_write_targets: None,
+            document_policy: None,
+            web_search_enabled: false,
+            available_tool_names: &available_tool_names,
+            max_web_fetches: 0,
+            cold_start_packets: &[],
+            retrieval_scope: &retrieval_scope,
+            runtime_documents: &[],
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+        };
+
+        let capabilities =
+            dispatch_tool(&state, &ctx, "capabilities_read", &serde_json::json!({})).await;
+        assert!(capabilities.success, "{:?}", capabilities.error);
+        assert_eq!(capabilities.output["web_search_enabled"], false);
+
+        let tools = capabilities.output["tools"]
+            .as_array()
+            .expect("capabilities_read tools array");
+        assert!(
+            !tools.iter().any(|tool| tool["name"] == "web_search"),
+            "capabilities_read must not advertise web_search when web is disabled"
+        );
+        assert!(
+            !tools.iter().any(|tool| tool["name"] == "search_hybrid"),
+            "capabilities_read must not advertise vault search without a current Run surface"
+        );
     }
 }

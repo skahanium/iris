@@ -1,4 +1,6 @@
-use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
+use super::frozen_change_plan::{
+    FrozenChangeOperationInput, FrozenChangePlan, FrozenChangePlanInput, FrozenChangeSetInput,
+};
 
 fn input(diff: serde_json::Value) -> FrozenChangePlanInput {
     FrozenChangePlanInput {
@@ -74,10 +76,10 @@ fn persisted_plan_recomputes_the_hash_and_rejects_tampered_arguments() {
     let persisted = plan.persisted_plan_json().expect("serialize plan");
     let restored = FrozenChangePlan::from_persisted_plan_json(&persisted).expect("restore plan");
     assert_eq!(restored.plan_hash(), plan.plan_hash());
-    assert_eq!(restored.operation(), "note.apply_patch");
-    assert_eq!(restored.change()["replacement"], "approved");
+    assert_eq!(restored.operations()[0].operation(), "note.apply_patch");
+    assert_eq!(restored.operations()[0].change()["replacement"], "approved");
     assert_eq!(
-        restored.expected_post_content_hashes(),
+        restored.operations()[0].expected_post_content_hashes(),
         &[("notes/a.md".to_string(), "hash-after".to_string())]
     );
 
@@ -88,4 +90,116 @@ fn persisted_plan_recomputes_the_hash_and_rejects_tampered_arguments() {
     )
     .expect("parse tampered plan");
     assert_ne!(tampered.plan_hash(), plan.plan_hash());
+}
+
+fn operation(
+    tool_call_id: &str,
+    path: &str,
+    base_hash: &str,
+    expected_hash: &str,
+) -> FrozenChangeOperationInput {
+    FrozenChangeOperationInput {
+        tool_call_id: tool_call_id.to_string(),
+        operation: "insert_text_at_cursor".to_string(),
+        relative_paths: vec![path.to_string()],
+        base_content_hashes: vec![(path.to_string(), base_hash.to_string())],
+        expected_post_content_hashes: vec![(path.to_string(), expected_hash.to_string())],
+        change: serde_json::json!({"target_path": path, "text": "updated"}),
+        rollback_summary: "可通过版本历史撤销".to_string(),
+    }
+}
+
+fn set_input(operations: Vec<FrozenChangeOperationInput>) -> FrozenChangeSetInput {
+    FrozenChangeSetInput {
+        confirmation_id: "confirmation-set-1".to_string(),
+        run_id: "run-set-1".to_string(),
+        session_id: 42,
+        request_id: "request-set-1".to_string(),
+        vault_id: "vault-set-1".to_string(),
+        operations,
+        expires_at_unix_ms: i64::MAX,
+    }
+}
+
+#[test]
+fn frozen_change_set_preserves_operation_order_and_limits_operations_and_targets() {
+    let plan = FrozenChangePlan::freeze_set(set_input(vec![
+        operation("tool-1", "notes/a.md", "a0", "a1"),
+        operation("tool-2", "notes/b.md", "b0", "b1"),
+    ]))
+    .expect("freeze ordered set");
+
+    assert_eq!(plan.operations().len(), 2);
+    assert_eq!(plan.operations()[0].tool_call_id(), "tool-1");
+    assert_eq!(plan.operations()[1].tool_call_id(), "tool-2");
+    assert_eq!(plan.relative_paths(), ["notes/a.md", "notes/b.md"]);
+
+    let too_many_operations = (0..7)
+        .map(|index| {
+            operation(
+                &format!("tool-{index}"),
+                "notes/a.md",
+                &format!("a{index}"),
+                &format!("a{}", index + 1),
+            )
+        })
+        .collect();
+    assert_eq!(
+        FrozenChangePlan::freeze_set(set_input(too_many_operations))
+            .expect_err("seven operations must be rejected")
+            .to_string(),
+        "agent_run_invalid_change_plan"
+    );
+
+    let too_many_targets = vec![FrozenChangeOperationInput {
+        tool_call_id: "too-many-targets".to_string(),
+        operation: "insert_text_at_cursor".to_string(),
+        relative_paths: (0..7).map(|index| format!("notes/{index}.md")).collect(),
+        base_content_hashes: (0..7)
+            .map(|index| (format!("notes/{index}.md"), format!("h{index}")))
+            .collect(),
+        expected_post_content_hashes: (0..7)
+            .map(|index| (format!("notes/{index}.md"), format!("p{index}")))
+            .collect(),
+        change: serde_json::json!({"target_path": "notes/0.md", "text": "updated"}),
+        rollback_summary: "可通过版本历史撤销".to_string(),
+    }];
+    assert_eq!(
+        FrozenChangePlan::freeze_set(set_input(too_many_targets))
+            .expect_err("seven files must be rejected")
+            .to_string(),
+        "agent_run_invalid_change_plan"
+    );
+
+    assert_eq!(
+        FrozenChangePlan::freeze_set(set_input(vec![
+            operation("duplicate", "notes/a.md", "a0", "a1"),
+            operation("duplicate", "notes/b.md", "b0", "b1"),
+        ]))
+        .expect_err("duplicate tool call IDs must be rejected")
+        .to_string(),
+        "agent_run_invalid_change_plan"
+    );
+}
+
+#[test]
+fn frozen_change_set_requires_a_hash_chain_when_an_operation_revisits_a_target() {
+    let chained = FrozenChangePlan::freeze_set(set_input(vec![
+        operation("tool-1", "notes/a.md", "a0", "a1"),
+        operation("tool-2", "notes/a.md", "a1", "a2"),
+    ]));
+    assert!(
+        chained.is_ok(),
+        "the second base hash must see the first output"
+    );
+
+    assert_eq!(
+        FrozenChangePlan::freeze_set(set_input(vec![
+            operation("tool-1", "notes/a.md", "a0", "a1"),
+            operation("tool-2", "notes/a.md", "a0", "a2"),
+        ]))
+        .expect_err("stale second operation must be rejected")
+        .to_string(),
+        "agent_run_invalid_change_plan"
+    );
 }

@@ -13,7 +13,7 @@ These adapters remain until a separately announced, reversible migration boundar
 
 ## Markdown document boundary
 
-The persisted boundary is `Markdown file -> frontmatter/title separation -> Preserve-aware editor ingest -> TipTap/ProseMirror document -> ProseMirror Markdown serializer -> Markdown file`. Unsupported syntax becomes a Preserve node carrying its original source. A serializer failure is recoverable and does not fall back to HTML/Turndown or overwrite committed Markdown.
+The persisted boundary is `Markdown file -> frontmatter/title separation -> Preserve-aware editor ingest -> TipTap/ProseMirror document -> ProseMirror Markdown serializer -> Markdown file`. Unsupported syntax becomes a Preserve node carrying its original source. A serializer failure is recoverable and does not fall back to HTML/Turndown or overwrite committed Markdown. The `editor_ingest` / `editor_export` contract profiles reuse the same production ingest and PM serializer paths so contract tests match actual editor behavior.
 
 The current editor ingress still uses its isolated Marked renderer internally to prepare TipTap HTML; it is not a second persistence path. `marked` also serves AI messages and read-only Markdown display. The editor persistence path does not call `getHTML()` or Turndown. Replacing editor ingress with a ProseMirror MarkdownParser requires a complete custom-node parser and corpus migration before it can be claimed as complete.
 
@@ -53,7 +53,15 @@ React 19 UI
 
 normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `assistant_run_get` 执行、控制和回放。每个 normal-domain Run 在 accepted 后持久化，再进行策略、上下文、路由与 provider 调度；`assistant:run_event` 是唯一的前端生命周期事件，断流使用 `assistant_run_get` 回放。
 
-`agent_run_events` 是追加式、安全的过程回放日志，而不是可据以重建全部 Run 的执行日志：事件不包含工具参数或原始输出，只保存稳定 capability、调用 ID、受限摘要、状态和安全错误码。`assistant_run_get` 的回放仅恢复安全快照与过程展示；Direct 与 ToolLoop 不支持进程级续跑，进程中断后不会从事件重新执行模型或工具。只有 Durable Run 才具有暂停与检查点语义，且其可恢复写入闭环仍须通过冻结计划、确认和内容 hash 复核。
+有任一只读工具时，模型进入唯一 `AgentToolLoop`。Standard 预算为 8 次模型、24 次总工具，并受 local 12、network 6、external-read 6、runtime 4 分类上限约束。每个模型回合最多执行 2 个 catalog 标记的发现调用；超出的独立发现动作返回 `deferred_for_feedback`，不消耗额度。每次工具批次结束后必须把有界观察返回模型，Host 不自动规划后续搜索。进展只由新资源、正文深度、内容 hash、revision、首次错误类别或终局修复等机械事实计算。
+
+新 Normal Run 的普通回答（包括要求本轮 Web 证据的普通事实）以自然正文完成；Run Engine 仍核验当前 Run evidence，并只从最终正文实际引用且验证通过的账本记录投影受控来源区。普通时效事实取得一份与核心结论相关的当前 Run 网页正文并精确引用即可完成；高风险当前事实、CitationCheck、显式交叉核实、`CurrentRunExternal` 以及含非空历史 `FreshFactPolicy` 的兼容 Run 才要求官方来源或两个独立域名，并在需要时使用既有结构化终局。普通地点、范围、偏好等缺参由模型在未调用工具前以一条无来源的自然问题结束当前 Run；下一条用户消息创建新 Run 并从会话历史承接。`AwaitingInput` 与 `submit_input` 仅保留旧 Run 读取/恢复兼容，不是新普通对话的路径。
+
+`agent_run_events` 是追加式、安全的过程回放日志，而不是可据以重建全部 Run 的执行日志：事件不包含工具参数或原始输出，只保存稳定 capability、调用 ID、受限摘要、状态和安全错误码。`assistant_run_get` 的回放仅恢复安全快照与过程展示；Direct 与 ToolLoop 不支持进程级续跑，进程中断后不会从事件重新执行模型或工具。只有 Durable Run 才具有暂停与检查点语义：新计划冻结至多 6 个有序操作和 6 个目标，一次确认后按无正文游标逐项重验和执行；重启只恢复未执行后缀，hash 漂移保留已完成前缀并停止后缀。确认后若 Provider 可用，最多以目标限定的 `read_note` 做 2 次模型/4 次本地只读核对；不可用时保留 Host 的执行事实报告，绝不重放写入或开放新工具。
+
+模型路由把空正文且无工具调用视为无效响应。在尚无可见正文、工具调用、continuation 或副作用时，瞬态/无效响应先重试同一 Provider 一次，再切换同工具能力候选；已有动作后不跨 Provider 隐式续接。尝试、错误类别和切换决定以有界脱敏对象追加到现有 route summary，不保存请求、响应或凭证正文。最近失败 Run 只向下一轮提供请求、终态、安全错误、模型/工具是否开始、尝试与切换计数，不提供失败草稿或旧来源。
+
+真实质量评测不改变生产 Run 预算或工具循环。评测层的只减不增内存上限与生产单 Run 形状对齐：双路 4 Run Canary 最多 32 个模型轮次、24 个 Web 逻辑动作；通过后，双路 Campaign 才可使用全局最多 12 Run、96 个模型轮次和 72 个 Web 逻辑动作，两条匿名路由各自保留连续会话。`agent-live-pilot-v4` 只声明终态、授权、search→fetch、Run-local 引用、安全、连续性和预算等机械轨迹，最终回答与有限来源摘录进入 Git 忽略的匿名审阅包；报告、审阅包哈希和 session 由本机评测密钥共同认证。人工评分是事实/语义质量的唯一放行依据，旧 v1/v2/v3 live 报告仅供诊断，不得进入 `product-gate.json`。INC-HR-010 的公共记忆准备与未覆盖历史标记已接入；完整 v4 逐 Run 执行事实、生产组合验收与真实质量门仍未放行。
 
 会话通过不透明 `AssistantSessionRef` 寻址，并按 normal/classified 安全域物理隔离。涉密 Run 仅在当前进程内易失执行：解锁文档、prompt 与模型输出以 `Zeroizing` 保存，不拥有 SQLite 或 CEF Run 句柄；`assistant_run_get` 仅可在同一进程内按显式 run ID 读取无正文的易失快照与安全事件，不支持省略 run ID 的活动 Run 查询、持久化断流回放或进程级恢复。完成正文只能由 `assistant_classified_run_take_result` 一次性取走。已持久化的涉密 Markdown 与会话数据继续构成 CEF 加密持久化边界，普通 SQLite 会话表不承载其正文。当前编辑器、活动 tab、scene、intent、旧 task ID 和笔记正文不进入隐式请求上下文；只有用户明确提交的引用和一次性 action snapshot 可以进入 Run。`Apply` 还必须把确认计划、模型工具参数和真实写入绑定到同一个显式目标与基准 hash；取消信号会进入 provider、工具调度和写盘前提交检查。
 
@@ -63,15 +71,34 @@ normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `as
 
 普通搜索和 AI 检索均在 Rust 侧执行。Run 仅按显式引用和获授权范围请求材料；显式材料在读取/送模前、工具读取在打开文件前、Markdown 提交在写盘前都会复核文档策略。检索结果通过证据 ID 与安全展示元数据进入账本，不将证据正文作为系统指令。
 
-模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。
+模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。模型可见面使用两个单一职责动作：`web_search { query }` 只发现候选，`web_fetch { urls }` 只读取当前 Run 候选或用户显式 URL；两者共享同一授权、network 预算、Broker 与冻结 Provider 顺序。搜索每次最多返回 4 个有界候选、每 Run 最多保存 8 个；候选只标记为 `search_snippet`，不写 evidence ledger。只有 `web_fetch` 得到 `fetched_body` 的选中页面才登记为可引用 evidence。未选候选和失败抓取不能生成 `Wn`。
+
+MCP fetch 的成功语义由 `WebEvidenceBroker` 独占：它只拆 transport 信封和 `content[].text` 中可完整解析的一层 JSON 载荷，并要求请求 URL 与返回条目 canonicalize 后一致且正文不是错误信封、空文本、标题重复或搜索结果包装。当前候选来源优先，失败后按 Intake 冻结的 `web.fetch` 有序候选、再既有 native safe fetch 切换；单候选最多 5 秒、整批最多 18 秒、外层工具调用最多 20 秒。migration 073 只重建既有 `web_evidence_provider_health`，以 `(provider_id, capability)` 区分 `web.search` 与 `web.fetch`；runtime discovery 仅表示能力发现，不受业务调用结果覆盖。`run_tool_loop` 不能把 snippet 升级为 evidence。
+
+`CurrentRunWeb` 在首个模型回答前通过同一 `NormalRunToolExecutor` 完成一项最小 Host Observation：原用户问题搜索并抓取最多两个不同候选正文。它复用冻结授权、network 预算、审计、事件和 evidence ledger，但以显式 Host 数据进入模型上下文，不伪造 assistant tool-call，也不隐藏后续 Web 工具。模型工具提议先经 Host 判定；只有实际派发才进入 assistant/tool transcript、消耗预算并绑定同 Provider 续轮。普通 rejected/deferred 提议只构成受控反馈，不能虚构“已抓取”或阻止无可见动作的模型 failover。
+
+要求 `CurrentRunWeb`、`CurrentRunExternal` 或结构化严格终局的 Run 在 `bind_validated_content` 前密封模型正文；来源/终局 repair 仍使用同一 ToolLoop 的一次修复额度。通过后只发布最终正文一次，失败则发布无 citation map、无 source summary 的限制说明。`AnswerReset` 不由新的严格 Run 产生，只保留旧事件回放兼容；Direct 与非严格 ToolLoop 继续实时流式。
+
+会话消息的 `evidence_refs_json` 是现代来源选择事实：显式空数组表示最终消息无来源，非空数组只允许投影这些当前 Run evidence；只有字段缺失的旧消息可以按历史 `SourceGroupFallback` 读取。数据库中同 Run 的其他候选或已登记 evidence 不会在重载时自动重新挂到现代消息。
 
 Feed 与 AI 网页抓取的 URL 读取使用同一逐跳安全网门：每跳重新校验 HTTPS、解析并拒绝任一私网地址；直连固定到已验证地址，HTTP CONNECT/SOCKS5 也只发送固定 IP 目标，同时 TLS SNI、证书校验与 Host 保持原域名。它消费唯一的 `follow_system_proxy` 设置；PAC、HTTPS-to-proxy 或认证代理稳定失败且不会回退直连。
 
-通用 MCP 只开放另一条独立的 `external.read` 边界：`readOnlyHint=true` 只是服务端声明，不是 Iris 对第三方实现的证明；管理中心还会审查名称和递归输入 Schema，并要求用户对精确 provider/tool/schema 显式确认信任后才创建白名单 binding。Composer 必须为每个 normal-domain Run 显式选择 binding，Accept 事务会冻结用户信任位、binding hash、provider hash、transport/config、Schema、参数映射与输出策略。模型不能直接消费 discovery，也不能自行增权；classified、local-only、Skills 和隐式关键词均不能获得 `external.read`。运行中只执行冻结配置，并用 live provider hash/enablement 作撤销检查。输出仅接受最多 8,000 字符的文本或 JSON，证据摘录最多 2,000 字符；事件、审计和 checkpoint 不保存参数或原始输出。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现其声明。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
+通用 MCP 只开放另一条独立的 `external.read` 边界：`readOnlyHint=true` 只是服务端声明，不是 Iris 对第三方实现的证明；管理中心还会审查名称和递归输入 Schema，并要求用户对精确 provider/tool/schema 显式确认信任后才创建白名单 binding。Composer 必须为每个 normal-domain Run 显式选择 binding，Accept 事务会冻结用户信任位、binding hash、provider hash、transport/config、Schema、参数映射与输出策略。模型不能直接消费 discovery，也不能自行增权；classified、local-only、Skills 和隐式关键词均不能获得 `external.read`。运行中只执行冻结配置，并用 live provider hash/enablement 作撤销检查。成功输出向模型返回正文和账本来源引用 `E{id}`，最终结构化提交只能引用本 Run 实际采用的 `E{id}`；输出正文仍仅接受最多 8,000 字符的文本或 JSON，证据摘录最多 2,000 字符。事件、审计和 checkpoint 不保存参数或原始输出。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现其声明。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
+
+## 当前事实领域只读能力
+
+天气、新闻、金融、影视和体育的五个规范化 DTO 工具（`weather_lookup`、`news_lookup`、
+`finance_lookup`、`entertainment_lookup`、`sports_lookup`）以及 `web.domain.read` 仍保留，
+仅用于 migration 072 与历史 Run 的兼容读取/恢复。新的 Normal Run 不再由 Intake 冻结领域、
+operation、城市输入或 `web.domain.read`；它们通过通用 `web.search` 按任务合同进入工具面。
+
+保留的 provider 输出仍按白名单 output mapping 缩略并确定性验证；原始 provider JSON 不进入
+事件、审计、错误或评测报告。未来若有真实结构化 Provider 需求，必须经统一 catalog/MCP/
+capability 接入，不得重新引入领域前置路由或完成门禁。
 
 ## 凭据安全
 
-API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解密值由 `Zeroizing` 持有。日志、错误、事件、Run checkpoint 和诊断不包含 API Key、token、笔记正文或涉密路径。完整策略见 [SECURITY.md](./SECURITY.md)。
+API Key 使用本地 AES-256-GCM 加密存储，主密钥存于平台配置目录、密文存于应用数据目录（不使用操作系统凭据管理器，避免系统密码弹窗打断用户流畅度）；解密值由 `Zeroizing` 持有。日志、错误、事件、Run checkpoint 和诊断不包含 API Key、token、笔记正文或涉密路径。完整策略见 [SECURITY.md](./SECURITY.md)。
 
 ## CAS 版本快照加密
 
@@ -81,7 +108,7 @@ API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解�
 
 ## SQLite 与迁移
 
-当前共有 **70 组**增量迁移（`001` 至 `070`）。
+当前共有 **73 组**增量迁移（`001` 至 `073`）。
 
 Schema 只允许通过带 up/down 的增量迁移变更。`051_agent_harness_cutover` 使用 copy-transform-swap 将旧会话、任务、trace 和审计外键迁移到统一 Run 模型；运行中或暂停的旧任务被安全归档为 `cancelled` 并带 `cancelled_legacy` 原因。迁移不要求用户删除数据库重建。
 

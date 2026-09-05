@@ -76,15 +76,15 @@ describe("editor round-trip: callout / admonition blocks", () => {
     expect(out).toContain("Second body");
   });
 
-  it("[GAP] callout body with nested GFM loses list and code on round-trip", () => {
+  it("[BASELINE] callout body with nested GFM preserves list and code on round-trip", () => {
     const md = ["> [!info] Rich Callout", "> - list item", "> `code`"].join(
       "\n",
     );
     const out = bodyRoundTrip(md);
     expect(out).toContain("Rich Callout");
     expect(out).toContain("[!info]");
-    expect(out).not.toContain("list item");
-    expect(out).not.toContain("`code`");
+    expect(out).toContain("list item");
+    expect(out).toContain("`code`");
   });
 });
 
