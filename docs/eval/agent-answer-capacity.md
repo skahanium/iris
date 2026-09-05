@@ -111,7 +111,7 @@ binding 都匹配；即便两个配置具有相同 capability fingerprint，替�
 Run-local 来源、引用绑定、安全、连续性与预算后才标记 `live_trace_executed`；它只表示
 可以进入人工语义审阅，不表示事实正确或产品质量通过。
 
-`agent:eval` 还要求两份不同匿名 `routeCommitment`、同一 Campaign 的 v3 轨迹和一份逐场景人工评分文件；随机 `profileId` 和文件名不同都不能冒充路由不同。进入评分前，Rust 严格验证器会重新检查固定六场景集合、逐项机械轨迹/telemetry、全局 12/48/36 预算与报告—审阅包哈希绑定。人工量表为意图遵循、事实与来源、相关性与完整性、纠正与连续性四项；单项至少 4/5、总平均至少 4.2。contract、两条 live 路由和人工复核全部通过后，脚本才原子生成 `target/agent-eval/product-gate.json`。
+`agent:eval` 还要求两份不同匿名 `routeCommitment`、同一 Campaign 的 v4 轨迹和一份逐场景人工评分文件；随机 `profileId` 和文件名不同都不能冒充路由不同。进入评分前，Rust 严格验证器会重新检查固定六场景集合、逐项机械轨迹/telemetry、全局 12/96/72 预算与报告—审阅包哈希绑定；Canary 采用 4/32/24 生产等价上限。人工量表为意图遵循、事实与来源、相关性与完整性、纠正与连续性四项；单项至少 4/5、总平均至少 4.2。contract、两条 live 路由和人工复核全部通过后，脚本才原子生成 `target/agent-eval/product-gate.json`。
 若评测器自身在某个案例的准备或取分阶段出错，该案例会以闭集
 `agent_run_evaluation_inconclusive` 记录为失败，剩余案例仍会继续并写出完整报告；
 原始错误不进入结果文件，标准错误流只输出固定 reason code 供本地诊断。
@@ -347,4 +347,4 @@ tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` �
 记录。每份 live 报告还必须携带由受约束 Rust live 执行路径生成、本机私有评测密钥绑定 session 与精确报告字节的认证旁证；最终门用同一 SHA-256 快照完成认证、严格校验和 JSON 判定，禁止复制后改写报告或在校验期间替换文件。只有 MiniMax-M3 与 MiMo v2.5 都完成获批的试运行，且所有 hard
 admission 与人格门槛均通过后，才可以将对应路由加入严格结构化终局校准表。
 
-INC-HR-008 撤回旧 live v2 的质量结论：它将 404/fixture 误作公开事实 oracle，并按每路由 24/18 而非全局 48/36 处理预算。v3 只将真实回答标记为待人工审阅，输出带有限来源摘录的签名审阅包；新的双路 Campaign 尚未执行，任何文档不得将确定性演练或旧结果写成真实质量通过。
+INC-HR-010 撤回旧 live v2/v3 的质量结论：它们将 404/fixture 误作公开事实 oracle，或使用低于生产上限的平均切割。v4 只将真实回答标记为待人工审阅，输出带有限来源摘录的签名审阅包；新的双路 Campaign 尚未执行，任何文档不得将确定性演练或旧结果写成真实质量通过。

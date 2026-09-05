@@ -402,8 +402,22 @@ impl AgentRunRepository {
                 let context_scope_json = serde_json::to_string(&input.context_scope)?;
                 let display_mentions_json = serde_json::to_string(&input.display_mentions)?;
                 let envelope_json = serde_json::to_string(&input.envelope)?;
-                let budget_policy_json =
-                    serde_json::to_string(&RunBudgetPolicy::for_envelope(&input.envelope))?;
+                // The Direct memory shape is selected once from the already
+                // persisted session history while the Run is accepted. It is
+                // never inferred later from a changing session: once frozen
+                // it remains a two-model, zero-tool ceiling even if the
+                // conversation grows further.
+                let session_history_count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1",
+                    [session_id],
+                    |row| row.get(0),
+                )?;
+                let budget_policy_json = serde_json::to_string(
+                    &RunBudgetPolicy::for_accepted_envelope(
+                        &input.envelope,
+                        session_history_count >= 24,
+                    ),
+                )?;
                 let explicit_action_json = input
                     .explicit_action
                     .as_ref()
@@ -2154,6 +2168,7 @@ fn materialize_budget_policy(
     let envelope: ExecutionEnvelope = serde_json::from_str(envelope_json)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
     let canonical_policy = RunBudgetPolicy::for_envelope(&envelope);
+    let direct_memory_policy = RunBudgetPolicy::for_accepted_envelope(&envelope, true);
     let normalized = serde_json::to_string(&canonical_policy)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
     if stored_policy == "{}" {
@@ -2162,6 +2177,12 @@ fn materialize_budget_policy(
     if let Ok(stored_policy) = serde_json::from_str::<RunBudgetPolicy>(stored_policy) {
         if stored_policy.schema_version == canonical_policy.schema_version {
             if stored_policy != canonical_policy {
+                if stored_policy == direct_memory_policy
+                    && stored_policy.is_direct_memory_compaction_shape()
+                {
+                    let normalized = stored_policy_json(&stored_policy)?;
+                    return Ok((stored_policy, normalized));
+                }
                 let legacy_expected = legacy_post_confirmation_zero_policy(&canonical_policy);
                 if stored_policy == legacy_expected {
                     let normalized = stored_policy_json(&stored_policy)?;

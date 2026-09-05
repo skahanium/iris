@@ -176,12 +176,29 @@ impl RunEngine {
     ///
     /// Provider and policy errors normally terminalize themselves. This guard is
     /// deliberately idempotent and only covers unexpected orchestration exits.
-    /// It records a safe persistence failure instead of exposing the underlying
-    /// error, which may include provider or user-derived data.
     pub(crate) fn fail_active_with_sink(
         db: &Database,
         session: &AssistantSessionRef,
         run_id: &str,
+        sink: &impl RunEventSink,
+    ) -> AppResult<bool> {
+        Self::fail_active_with_code_and_sink(
+            db,
+            session,
+            run_id,
+            SafeRunErrorCode::InternalExecutionFailed,
+            sink,
+        )
+    }
+
+    /// Terminalize an active Run without erasing the already-classified safe
+    /// execution reason. Only callers that actually failed a database write
+    /// should pass `PersistenceFailed`.
+    pub(crate) fn fail_active_with_code_and_sink(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        code: SafeRunErrorCode,
         sink: &impl RunEventSink,
     ) -> AppResult<bool> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
@@ -195,13 +212,7 @@ impl RunEngine {
             return Ok(false);
         }
         if snapshot.run.state == RunState::Accepted {
-            Self::fail_before_dispatch_with_sink(
-                db,
-                session,
-                run_id,
-                SafeRunErrorCode::PersistenceFailed,
-                sink,
-            )?;
+            Self::fail_before_dispatch_with_sink(db, session, run_id, code, sink)?;
             return Ok(true);
         }
         let failed = AgentRunRepository::append_event(
@@ -211,8 +222,8 @@ impl RunEngine {
                 state_version: snapshot.run.state_version,
                 event_type: RunEventType::Failed,
                 payload: RunEventPayload::Failed {
-                    code: SafeRunErrorCode::PersistenceFailed,
-                    message: safe_failure_message(SafeRunErrorCode::PersistenceFailed).to_string(),
+                    code,
+                    message: safe_failure_message(code).to_string(),
                 },
             },
         )?;
@@ -402,6 +413,7 @@ impl RunEngine {
             provider,
             sink,
             None,
+            None,
         )
         .await
     }
@@ -428,6 +440,37 @@ impl RunEngine {
             provider,
             sink,
             Some(telemetry),
+            None,
+        )
+        .await
+    }
+
+    /// Evaluation-only direct path that forwards the campaign's only-decreasing
+    /// effective policy to the same Gateway request used by production.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_direct_streaming_with_eval_telemetry_and_policy(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        provider: &impl ToolLoopProvider,
+        sink: &impl RunEventSink,
+        telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+        effective_budget_policy: crate::ai_runtime::run_contract::RunBudgetPolicy,
+    ) -> AppResult<()> {
+        let message = user_message_for_run(db, &session.session_key, run_id)?;
+        let messages = [direct_user_message(&message)];
+        Self::execute_direct_streaming_with_messages_and_sink(
+            db,
+            session,
+            run_id,
+            &messages,
+            &[],
+            None,
+            provider,
+            sink,
+            Some(telemetry),
+            Some(effective_budget_policy),
         )
         .await
     }
@@ -452,6 +495,7 @@ impl RunEngine {
             None,
             provider,
             sink,
+            None,
             None,
         )
         .await
@@ -479,12 +523,14 @@ impl RunEngine {
             provider,
             sink,
             None,
+            None,
         )
         .await
     }
 
     /// Evaluation-only direct path with the same messages, evidence, verifier,
     /// Gateway and finalization stages as production.
+    #[cfg(not(test))]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_eval_telemetry(
         db: &Database,
@@ -497,6 +543,36 @@ impl RunEngine {
         sink: &impl RunEventSink,
         telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
     ) -> AppResult<()> {
+        Self::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_eval_telemetry_and_policy(
+            db,
+            session,
+            run_id,
+            messages,
+            evidence_ids,
+            material_plan,
+            provider,
+            sink,
+            telemetry,
+            None,
+        )
+        .await
+    }
+
+    /// Evaluation-only direct path that consumes the exact effective campaign
+    /// policy instead of reconstructing the persisted default limits.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_eval_telemetry_and_policy(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        messages: &[crate::ai_runtime::LlmMessage],
+        evidence_ids: &[i64],
+        material_plan: &crate::ai_runtime::context_materials::ContextMaterialPlan,
+        provider: &impl ToolLoopProvider,
+        sink: &impl RunEventSink,
+        telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+        effective_budget_policy: Option<crate::ai_runtime::run_contract::RunBudgetPolicy>,
+    ) -> AppResult<()> {
         Self::execute_direct_streaming_with_messages_and_sink(
             db,
             session,
@@ -507,6 +583,7 @@ impl RunEngine {
             provider,
             sink,
             Some(telemetry),
+            effective_budget_policy,
         )
         .await
     }
@@ -538,6 +615,7 @@ impl RunEngine {
             provider,
             executor,
             sink,
+            None,
             None,
             None,
             false,
@@ -576,15 +654,18 @@ impl RunEngine {
             sink,
             None,
             Some(AgentToolLoop::from_post_confirmation_policy(&policy)),
+            None,
             true,
             false,
         )
         .await
     }
 
-    /// Evaluation-only tool-loop entry; only observation is added.
+    /// Evaluation runs may tighten a persisted budget, never expand it. The
+    /// resulting effective policy is passed into the same production loop as
+    /// the executor so the two sides cannot observe different limits.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn execute_tool_loop_with_eval_telemetry(
+    pub(crate) async fn execute_tool_loop_with_eval_telemetry_and_policy(
         db: &Database,
         session: &AssistantSessionRef,
         run_id: &str,
@@ -596,6 +677,7 @@ impl RunEngine {
         executor: &impl ToolLoopExecutor,
         sink: &impl RunEventSink,
         telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+        effective_budget_policy: Option<crate::ai_runtime::run_contract::RunBudgetPolicy>,
     ) -> AppResult<()> {
         Self::execute_tool_loop_with_sink_internal(
             db,
@@ -610,6 +692,7 @@ impl RunEngine {
             sink,
             Some(telemetry),
             None,
+            effective_budget_policy,
             false,
             true,
         )
@@ -630,6 +713,7 @@ impl RunEngine {
         sink: &impl RunEventSink,
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
         tool_loop_override: Option<AgentToolLoop>,
+        budget_policy_override: Option<crate::ai_runtime::run_contract::RunBudgetPolicy>,
         resume_running: bool,
         fail_on_error: bool,
     ) -> AppResult<()> {
@@ -641,9 +725,13 @@ impl RunEngine {
             }
             return Err(AppError::run(SafeRunErrorCode::TerminalState));
         }
-        let budget_policy =
-            AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+        let budget_policy = match budget_policy_override {
+            Some(policy) => policy,
+            None => {
+                AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
+            }
+        };
         let preparing_version = match snapshot.run.state {
             RunState::Running if resume_running => snapshot.run.state_version,
             RunState::Preparing => snapshot.run.state_version,
@@ -760,11 +848,17 @@ impl RunEngine {
                     }
                 }
                 let code = classify_tool_loop_failure(&error);
+                let current =
+                    AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
+                        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+                if current.run.state.is_terminal() {
+                    return Err(AppError::run(code));
+                }
                 let failed = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {
                         run_id: run_id.to_string(),
-                        state_version: running_state_version,
+                        state_version: current.run.state_version,
                         event_type: RunEventType::Failed,
                         payload: RunEventPayload::Failed {
                             code,
@@ -1135,6 +1229,7 @@ impl RunEngine {
         provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+        budget_policy_override: Option<crate::ai_runtime::run_contract::RunBudgetPolicy>,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
@@ -1144,9 +1239,13 @@ impl RunEngine {
             }
             return Err(AppError::run(SafeRunErrorCode::TerminalState));
         }
-        let budget_policy =
-            AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+        let budget_policy = match budget_policy_override {
+            Some(policy) => policy,
+            None => {
+                AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
+            }
+        };
         let turn_budget = AgentModelTurnBudget {
             max_prompt_tokens: Some(budget_policy.max_prompt_tokens),
             max_completion_tokens: Some(budget_policy.max_completion_tokens),

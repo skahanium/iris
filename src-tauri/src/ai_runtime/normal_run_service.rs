@@ -391,8 +391,13 @@ async fn execute_normal_run_internal(
             .flatten()
             .is_some_and(|response| !response.run.state.is_terminal());
         if still_active {
-            let _ =
-                RunEngine::fail_active_with_sink(&db, &accepted.session, &accepted.run_id, sink);
+            let _ = RunEngine::fail_active_with_code_and_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                safe_code,
+                sink,
+            );
         }
     }
 
@@ -627,7 +632,7 @@ async fn dispatch_normal_run_after_context(
         .with_skill_activation_plan(active_skills.plan.clone())
         .with_child_run_provider(&provider);
         return if let Some(telemetry) = telemetry {
-            RunEngine::execute_tool_loop_with_eval_telemetry(
+            RunEngine::execute_tool_loop_with_eval_telemetry_and_policy(
                 db,
                 &accepted.session,
                 &accepted.run_id,
@@ -639,6 +644,7 @@ async fn dispatch_normal_run_after_context(
                 &executor,
                 sink,
                 telemetry,
+                Some(budget_policy.clone()),
             )
             .await
         } else {
@@ -685,8 +691,76 @@ async fn dispatch_normal_run_after_context(
     } else {
         provider
     };
+    if budget_policy.is_direct_memory_compaction_shape() {
+        // This is not a second research loop: it is the same AgentToolLoop
+        // with an empty business surface and a frozen two-turn Direct budget.
+        // The executor may spend the first turn only on bounded memory
+        // compaction; otherwise the ordinary answer remains a single model
+        // call and retains Direct streaming behaviour.
+        let executor = NormalRunToolExecutor::new(
+            state,
+            app_handle,
+            accepted,
+            context,
+            authorized_capabilities.to_vec(),
+            budget_policy.clone(),
+            sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&[])
+        .with_skill_activation_plan(active_skills.plan.clone())
+        .with_child_run_provider(&provider);
+        return if let Some(telemetry) = telemetry {
+            RunEngine::execute_tool_loop_with_eval_telemetry_and_policy(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                messages,
+                Vec::new(),
+                &evidence_ids,
+                Some(material_plan),
+                &provider,
+                &executor,
+                sink,
+                telemetry,
+                Some(budget_policy.clone()),
+            )
+            .await
+        } else {
+            RunEngine::execute_tool_loop_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                messages,
+                Vec::new(),
+                &evidence_ids,
+                Some(material_plan),
+                &provider,
+                &executor,
+                sink,
+            )
+            .await
+        };
+    }
+    #[cfg(test)]
     if let Some(telemetry) = telemetry {
-        RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_eval_telemetry(
+        return RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_eval_telemetry_and_policy(
+            db,
+            &accepted.session,
+            &accepted.run_id,
+            &messages,
+            &evidence_ids,
+            material_plan,
+            &provider,
+            sink,
+            telemetry,
+            Some(budget_policy.clone()),
+        )
+        .await;
+    }
+    #[cfg(not(test))]
+    if let Some(telemetry) = telemetry {
+        return RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_eval_telemetry(
             db,
             &accepted.session,
             &accepted.run_id,
@@ -697,20 +771,19 @@ async fn dispatch_normal_run_after_context(
             sink,
             telemetry,
         )
-        .await
-    } else {
-        RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_sink(
-            db,
-            &accepted.session,
-            &accepted.run_id,
-            &messages,
-            &evidence_ids,
-            material_plan,
-            &provider,
-            sink,
-        )
-        .await
+        .await;
     }
+    RunEngine::execute_direct_streaming_with_messages_evidence_and_context_material_plan_with_sink(
+        db,
+        &accepted.session,
+        &accepted.run_id,
+        &messages,
+        &evidence_ids,
+        material_plan,
+        &provider,
+        sink,
+    )
+    .await
 }
 
 /// Resolve one Provider route without widening the frozen Run capability set.

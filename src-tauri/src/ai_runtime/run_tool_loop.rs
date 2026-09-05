@@ -1651,6 +1651,20 @@ fn safe_external_tool_failure(error: &AppError) -> &'static str {
 }
 
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
+    fn required_web_bootstrap_action_count(&self) -> u32 {
+        u32::from(
+            self.requires_web_evidence()
+                && self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == WEB_SEARCH_TOOL_NAME)
+                && self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == WEB_FETCH_TOOL_NAME),
+        ) * 2
+    }
+
     fn conversation_memory_compaction_request(
         &self,
     ) -> AppResult<
@@ -1674,7 +1688,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         &self,
         request: &crate::ai_runtime::conversation_memory::ConversationMemoryCompactionRequest,
         output: Option<&str>,
-    ) -> AppResult<()> {
+    ) -> AppResult<Option<crate::ai_runtime::conversation_memory::ConversationMemory>> {
         crate::ai_runtime::conversation_memory::ConversationMemory::apply_model_compaction(
             &self.state.db,
             request,

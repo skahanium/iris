@@ -655,7 +655,7 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
   for (let index = 0; index < reports.length; index += 1) {
     const report = reports[index];
     if (
-      report?.schemaVersion !== "agent-live-pilot-v3" ||
+      report?.schemaVersion !== "agent-live-pilot-v4" ||
       typeof report.routeCommitment !== "string" ||
       !/^route-[a-f0-9]{64}$/.test(report.routeCommitment) ||
       !["Route A", "Route B"].includes(report.routeLabel) ||
@@ -670,8 +670,8 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
       typeof report.reviewPacketSha256 !== "string" ||
       !/^[a-f0-9]{64}$/.test(report.reviewPacketSha256) ||
       report.campaignBudget?.maxRuns !== 12 ||
-      report.campaignBudget?.maxModelTurns !== 48 ||
-      report.campaignBudget?.maxWebToolCalls !== 36 ||
+      report.campaignBudget?.maxModelTurns !== 96 ||
+      report.campaignBudget?.maxWebToolCalls !== 72 ||
       !Array.isArray(report.cases) ||
       report.cases.length !== 6
     ) {
@@ -711,7 +711,8 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
             item.mechanical?.runLocalSources !== "not_applicable" ||
             item.mechanical?.citationBinding !== "not_applicable")) ||
         !Number.isInteger(item.telemetry?.modelTurns) ||
-        !Number.isInteger(item.telemetry?.toolCalls)
+        !Number.isInteger(item.telemetry?.toolCalls) ||
+        !Number.isInteger(item.telemetry?.webToolCalls)
       ) {
         throw new Error("agent_eval_live_case_identity_invalid");
       }
@@ -719,8 +720,8 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
       observedCompleted += 1;
       observedPassed += 1;
       totalModelCalls += item.telemetry.modelTurns;
-      totalWebCalls += item.telemetry.toolCalls;
-      if (requiresWeb && item.telemetry.toolCalls < 2) {
+      totalWebCalls += item.telemetry.webToolCalls;
+      if (requiresWeb && item.telemetry.webToolCalls < 2) {
         throw new Error("agent_eval_live_loop_or_source_contract_failed");
       }
       expectedReviews.add(`${reportNames[index]}:${item.caseId}`);
@@ -743,7 +744,7 @@ export function validateProductQualityArtifacts(reports, review, reportNames) {
   if (totalRuns !== 12 || expectedReviews.size !== totalRuns) {
     throw new Error("agent_eval_live_run_budget_invalid");
   }
-  if (totalModelCalls > 48 || totalWebCalls > 36) {
+  if (totalModelCalls > 96 || totalWebCalls > 72) {
     throw new Error("agent_eval_live_call_budget_invalid");
   }
   if (

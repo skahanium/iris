@@ -66,7 +66,7 @@ fn context_assembly_failures_map_to_precise_safe_codes() {
     }
     assert_eq!(
         classify_context_assembly_failure(&crate::error::AppError::msg("database unavailable")),
-        SafeRunErrorCode::PersistenceFailed
+        SafeRunErrorCode::InternalExecutionFailed
     );
 }
 
@@ -1703,6 +1703,7 @@ fn prompt_keeps_explicit_context_without_expanding_the_authorized_surface() {
         local_retrieval_packets: vec![],
         recent_messages: vec![],
         conversation_memory: None,
+        conversation_history_coverage_incomplete: false,
         prompt_profile: Default::default(),
         previous_run_summary: None,
         interrupted_assistant_continue: false,

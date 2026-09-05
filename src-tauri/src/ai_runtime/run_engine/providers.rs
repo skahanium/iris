@@ -141,8 +141,48 @@ fn record_model_route_diagnostic(
 
 #[cfg(test)]
 mod llm_failover_guard_tests {
-    use super::may_failover_after_model_attempt;
-    use crate::ai_runtime::provider_router::ProviderFailure;
+    use super::{
+        may_failover_after_model_attempt, FailoverStreamingProvider, SelectedResponseContinuation,
+    };
+    use crate::ai_runtime::agent_tool_loop::ToolLoopProvider;
+    use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
+    use crate::ai_runtime::provider_router::{
+        ProviderFailure, ProviderRequirements, SecurityDomain,
+    };
+    use crate::ai_runtime::run_contract::AssistantSessionRef;
+    use crate::ai_types::{EndpointFamily, ResolvedReasoningRequest};
+    use crate::llm::config::{ResolvedLlmConfig, ResolvedModelPool};
+    use crate::storage::db::Database;
+
+    fn resolved() -> ResolvedLlmConfig {
+        ResolvedLlmConfig {
+            provider_id: "provider-a".to_string(),
+            model: "model-a".to_string(),
+            base_url: "https://example.invalid/v1".to_string(),
+            thinking: false,
+            reasoning: ResolvedReasoningRequest::disabled(),
+            input_budget: 8_192,
+            output_budget: 1_024,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: false,
+            supports_reasoning: false,
+        }
+    }
+
+    fn requirements() -> ProviderRequirements {
+        ProviderRequirements {
+            endpoint_family: None,
+            streaming: true,
+            tools: true,
+            vision: false,
+            reasoning: false,
+            min_input_budget_tokens: 1,
+            min_output_budget_tokens: 1,
+            security_domain: SecurityDomain::External,
+        }
+    }
 
     #[test]
     fn visible_partial_output_never_fails_over_to_a_second_model() {
@@ -160,6 +200,87 @@ mod llm_failover_guard_tests {
             false,
             true,
         ));
+    }
+
+    #[test]
+    fn rejected_follow_up_proposal_keeps_an_already_dispatched_continuation() {
+        let db = Database::open_in_memory().expect("database");
+        let session = AssistantSessionRef {
+            domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
+            session_key: "provider-continuation-test".to_string(),
+        };
+        let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+            resolved: resolved(),
+            failover_candidates: Vec::new(),
+        })
+        .expect("route");
+        let provider = FailoverStreamingProvider::new(
+            route,
+            requirements(),
+            &db,
+            &session,
+            &super::super::NoopRunEventSink,
+        );
+        let run_id = "provider-bound-run";
+        let accepted = SelectedResponseContinuation {
+            selected_index: 0,
+            continuation: crate::ai_runtime::model_gateway::ProviderContinuation::OpenAiResponses {
+                response_id: "accepted-response".to_string(),
+            },
+        };
+        provider
+            .continuations
+            .lock()
+            .expect("continuation lock")
+            .insert(run_id.to_string(), accepted.clone());
+        provider
+            .selected_indices
+            .lock()
+            .expect("index lock")
+            .insert(run_id.to_string(), 0);
+        provider
+            .tool_bound_runs
+            .lock()
+            .expect("bound lock")
+            .insert(run_id.to_string());
+        provider
+            .candidate_continuations
+            .lock()
+            .expect("candidate lock")
+            .insert(
+                run_id.to_string(),
+                SelectedResponseContinuation {
+                    selected_index: 0,
+                    continuation:
+                        crate::ai_runtime::model_gateway::ProviderContinuation::OpenAiResponses {
+                            response_id: "rejected-response".to_string(),
+                        },
+                },
+            );
+
+        provider
+            .on_tool_proposals_not_dispatched(run_id)
+            .expect("discard rejected proposal");
+
+        assert_eq!(
+            provider
+                .continuations
+                .lock()
+                .expect("continuation lock")
+                .get(run_id)
+                .map(|state| state.continuation.clone()),
+            Some(accepted.continuation),
+            "a rejected candidate must not erase the continuation created by an earlier dispatched tool"
+        );
+        assert!(
+            provider
+                .candidate_continuations
+                .lock()
+                .expect("candidate lock")
+                .get(run_id)
+                .is_none(),
+            "only the rejected response candidate may be discarded"
+        );
     }
 }
 
@@ -301,8 +422,14 @@ pub(crate) struct FailoverStreamingProvider<'a> {
     db: &'a Database,
     session: &'a AssistantSessionRef,
     sink: &'a dyn RunEventSink,
+    // A response that merely proposes tool calls is not yet part of the
+    // canonical transcript. Keep its continuation separately until the Host
+    // actually dispatches at least one call, otherwise a rejected proposal
+    // could erase a continuation established by an earlier real action.
     continuations: Mutex<HashMap<String, SelectedResponseContinuation>>,
     selected_indices: Mutex<HashMap<String, usize>>,
+    candidate_continuations: Mutex<HashMap<String, SelectedResponseContinuation>>,
+    candidate_indices: Mutex<HashMap<String, usize>>,
     tool_bound_runs: Mutex<HashSet<String>>,
     #[cfg(test)]
     test_streaming_client: Option<reqwest::Client>,
@@ -330,6 +457,8 @@ impl<'a> FailoverStreamingProvider<'a> {
             sink,
             continuations: Mutex::new(HashMap::new()),
             selected_indices: Mutex::new(HashMap::new()),
+            candidate_continuations: Mutex::new(HashMap::new()),
+            candidate_indices: Mutex::new(HashMap::new()),
             tool_bound_runs: Mutex::new(HashSet::new()),
             #[cfg(test)]
             test_streaming_client: None,
@@ -449,24 +578,26 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                             &from_provider_id,
                             &from_model_id,
                         );
-                        let mut continuations = self
-                            .continuations
-                            .lock()
-                            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?;
-                        if let Some(next) = response.continuation.clone() {
-                            continuations.insert(
-                                provider_state_key.to_string(),
-                                SelectedResponseContinuation {
-                                    selected_index,
-                                    continuation: next,
-                                },
-                            );
-                        } else {
-                            continuations.remove(provider_state_key);
-                        }
-                        drop(continuations);
                         if response.tool_calls.is_empty() {
+                            self.continuations
+                                .lock()
+                                .map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?
+                                .remove(provider_state_key);
                             self.selected_indices
+                                .lock()
+                                .map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?
+                                .remove(provider_state_key);
+                            self.candidate_continuations
+                                .lock()
+                                .map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?
+                                .remove(provider_state_key);
+                            self.candidate_indices
                                 .lock()
                                 .map_err(|_| {
                                     AppError::run(SafeRunErrorCode::ContinuationLockFailed)
@@ -479,7 +610,23 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                 })?
                                 .remove(provider_state_key);
                         } else {
-                            self.selected_indices
+                            let mut candidates =
+                                self.candidate_continuations.lock().map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?;
+                            if let Some(next) = response.continuation.clone() {
+                                candidates.insert(
+                                    provider_state_key.to_string(),
+                                    SelectedResponseContinuation {
+                                        selected_index,
+                                        continuation: next,
+                                    },
+                                );
+                            } else {
+                                candidates.remove(provider_state_key);
+                            }
+                            drop(candidates);
+                            self.candidate_indices
                                 .lock()
                                 .map_err(|_| {
                                     AppError::run(SafeRunErrorCode::ContinuationLockFailed)
@@ -620,6 +767,33 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
     }
 
     fn on_tool_call_dispatched(&self, run_id: &str) -> AppResult<()> {
+        let candidate = self
+            .candidate_continuations
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .remove(run_id);
+        if let Some(candidate) = candidate {
+            self.continuations
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+                .insert(run_id.to_string(), candidate);
+        } else {
+            self.continuations
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+                .remove(run_id);
+        }
+        let candidate_index = self
+            .candidate_indices
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .remove(run_id);
+        if let Some(candidate_index) = candidate_index {
+            self.selected_indices
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+                .insert(run_id.to_string(), candidate_index);
+        }
         self.tool_bound_runs
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
@@ -628,18 +802,29 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
     }
 
     fn on_tool_proposals_not_dispatched(&self, run_id: &str) -> AppResult<()> {
-        self.continuations
+        self.candidate_continuations
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
             .remove(run_id);
-        self.selected_indices
+        self.candidate_indices
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
             .remove(run_id);
-        self.tool_bound_runs
+        let is_bound = self
+            .tool_bound_runs
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
-            .remove(run_id);
+            .contains(run_id);
+        if !is_bound {
+            self.continuations
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+                .remove(run_id);
+            self.selected_indices
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+                .remove(run_id);
+        }
         Ok(())
     }
 }

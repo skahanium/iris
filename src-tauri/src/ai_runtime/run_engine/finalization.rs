@@ -199,11 +199,24 @@ pub(super) fn fail_finalization_with_sink(
 ) -> AppResult<()> {
     log_finalization_failure(run_id, failure.stage, failure.code);
     let _internal_reason = &failure.internal_reason;
+    // Tool execution and presentation events advance state_version while a
+    // Run is active. Finalization must append from the current durable fact,
+    // not from the version that happened to start the model turn.
+    let state_version = match AgentRunRepository::get(db, run_id)? {
+        Some(snapshot) if snapshot.run.state.is_terminal() => {
+            // Cancellation and another already-durable terminal decision win
+            // over a stale model/finalization callback. Do not append a
+            // second failure that rewrites the user-visible outcome.
+            return Err(AppError::run(SafeRunErrorCode::TerminalState));
+        }
+        Some(snapshot) => snapshot.run.state_version,
+        None => running_state_version,
+    };
     let append = AgentRunRepository::append_event(
         db,
         AppendRunEventInput {
             run_id: run_id.to_string(),
-            state_version: running_state_version,
+            state_version,
             event_type: RunEventType::Failed,
             payload: RunEventPayload::Failed {
                 code: failure.code,
@@ -226,7 +239,7 @@ pub(super) fn fail_finalization_with_sink(
             if let Ok(event) = crate::ai_runtime::run_contract::AssistantRunEvent::new(
                 run_id,
                 seq,
-                running_state_version.saturating_add(1),
+                state_version.saturating_add(1),
                 RunEventType::Failed,
                 chrono::Utc::now().to_rfc3339(),
                 RunEventPayload::Failed {
@@ -525,6 +538,7 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::StateVersionConflict
         | SafeRunErrorCode::ConfirmationExpired
         | SafeRunErrorCode::PersistenceFailed
+        | SafeRunErrorCode::InternalExecutionFailed
         | SafeRunErrorCode::InvalidChangePlan
         | SafeRunErrorCode::ContinuationLockFailed
         | SafeRunErrorCode::ControlNotAvailable
@@ -578,7 +592,7 @@ pub(super) fn classify_provider_failure(error: &AppError) -> SafeRunErrorCode {
         {
             SafeRunErrorCode::ProviderTimeout
         }
-        _ => SafeRunErrorCode::PersistenceFailed,
+        _ => SafeRunErrorCode::InternalExecutionFailed,
     }
 }
 

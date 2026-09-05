@@ -160,6 +160,41 @@ fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
 }
 
 #[test]
+fn long_direct_history_freezes_the_only_two_turn_zero_tool_memory_shape() {
+    let (db, session_id, session_key) = setup();
+    db.with_conn(|conn| {
+        for seq in 1..=24_i64 {
+            conn.execute(
+                "INSERT INTO session_messages (session_id, seq, role, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    session_id,
+                    seq,
+                    if seq % 2 == 0 { "assistant" } else { "user" },
+                    format!("history-{seq}"),
+                    format!("2026-09-05T00:05:{seq:02}Z"),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("seed completed history");
+
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accept long direct run");
+    let budget = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("read budget")
+        .expect("budget");
+
+    assert_eq!(budget.profile, RunBudgetProfile::Direct);
+    assert_eq!(budget.max_model_turns, 2);
+    assert_eq!(budget.max_tool_calls, 0);
+    assert_eq!(budget.max_local_tool_calls, 0);
+    assert_eq!(budget.max_network_tool_calls, 0);
+    assert!(budget.is_direct_memory_compaction_shape());
+}
+
+#[test]
 fn final_evidence_must_be_registered_by_the_exact_run_not_only_its_session() {
     let (db, session_id, session_key) = setup();
     AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))

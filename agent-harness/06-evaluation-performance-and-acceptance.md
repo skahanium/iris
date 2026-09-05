@@ -2,7 +2,7 @@
 
 > **文档状态**：现行
 > **文档类型**：验收规范
-> **事实基线**：2026-09-03，审计起点 `e30f47d1`
+> **事实基线**：2026-09-05，审计起点 `70c929ac`
 
 ## 1. 验收原则
 
@@ -119,7 +119,7 @@ INC-HR-009 继续收紧同一循环的执行接缝：`WebRequired` 在首次回�
 
 INC-HR-007 的确定性回归进一步拆开 `web_search { query }` 与 `web_fetch { urls }`，并把证据充分性分为普通时效事实和高风险/显式交叉核实两级。现代消息以显式 `evidence_refs_json` 作为最终来源投影事实，限制回答的空选择在即时投影与历史重载中都保持无来源。`agent-eval-summary-v2` 分开正常回答、预期安全拒绝和意外失败，full 命令必须核对明细与汇总后才返回零。这些仍不证明真实回答的事实质量。
 
-真实门禁已拆成三条命令：`agent:eval:contract` 是完整确定性合同；`agent:eval:live campaign` 在一次预检、一次成本确认后交替运行两条匿名路由的各 6 个连续 Run。`agent-live-pilot-v3` 只记录终态、授权、search→fetch、Run-local 来源、引用绑定、安全、连续性和全局预算，不再把非空回答或 fixture 关键词误写为事实正确。每条路由另生成本地忽略的审阅包：固定公开提示、最终可见回答、引用标签/标题/URL、抓取时间与有限摘录，以及工具、repair、停止和预算摘要；其中不含密钥、端点、隐藏推理、完整网页或用户笔记。审阅包哈希、报告精确字节和 session 由配置目录中权限受限的本机评测密钥共同认证。`agent:eval` 读取一次不可变字节快照，要求两份不同 `routeCommitment`、同一 campaign 的 v3 轨迹、对应审阅包哈希和逐场景人工评分；合计 12 Run 全部通过才原子生成六维产品报告。复制或修改报告、审阅包或评分绑定均不能获得通过。
+真实门禁已拆成三条命令：`agent:eval:contract` 是完整确定性合同；`agent:eval:live campaign` 在一次预检、一次成本确认后交替运行两条匿名路由的各 6 个连续 Run。`agent-live-pilot-v4` 只记录终态、授权、search→fetch、Run-local 来源、引用绑定、安全、连续性和全局预算，不再把非空回答或 fixture 关键词误写为事实正确。每条路由另生成本地忽略的审阅包：固定公开提示、最终可见回答、引用标签/标题/URL、抓取时间与有限摘录，以及工具、repair、停止和预算摘要；其中不含密钥、端点、隐藏推理、完整网页或用户笔记。审阅包哈希、报告精确字节和 session 由配置目录中权限受限的本机评测密钥共同认证。`agent:eval` 读取一次不可变字节快照，要求两份不同 `routeCommitment`、同一 campaign 的 v4 轨迹、对应审阅包哈希和逐场景人工评分；合计 12 Run 全部通过才原子生成六维产品报告。复制或修改报告、审阅包或评分绑定均不能获得通过。
 
 INC-HR-007 的有界真实校准已经用完 12 Run：MiniMax 6 Run 约 313 秒后未达到 `live_pilot_executed`，但旧 writer 在失败报告落盘前返回 `live_attestation_execution_invalid`；MiMo 6 Run 约 565 秒后触发 `live_pilot_call_budget_invalid`，也被旧 writer 在落盘前拒绝。这不是产品通过，也不能据此做人工语义评分。2026-09-02 的首个 INC-HR-008 v3 Campaign 又运行约 688 秒后触发 `campaign_budget_exhausted`：评测遥测错误计入模型提出却未被 Host 执行的调用，且顶层直接返回，故两份 v3 报告没有生成。这一事故已转为确定性回归：只在 Host 实际执行工具时递增 Campaign 业务调用账本，顶层预算失败也必须继续生成并签名两份失败轨迹，再由严格门拒绝。该次真实额度不得重跑；没有新报告或人工评分，真实质量状态继续为“实测未通过”。
 
@@ -150,7 +150,7 @@ git diff --check
 
 代码阶段由该阶段实施计划列出精确 Rust/Vitest/eval 子集；提交前再执行受影响语言的 format、lint、typecheck 和必要全量门禁。真实 Provider 测试不得绕过逐路由批准与成本确认。
 
-INC-HR-008 已将 INC-HR-007 暴露的旧 404 oracle、单路由 24/18 平均切割和失败工件缺口替换为先行双路 4 Run canary（16 次模型调用、12 次 Web 调用）和同一 Campaign 的全局 12 Run、48 次模型调用、36 次 Web 调用上限。第 48/36 次允许执行，下一次在派发前以 `campaign_budget_exhausted` 关闭；Provider 重试与切换另行记录，不计入模型语义轮次。授权不等于测试通过；任一路由失败、审阅包/评分哈希不一致或人工评分未完成时 HR-7 继续保持“实测未通过”。
+INC-HR-010 以生产等价额度替换旧的平均切割：双路 4 Run Canary 上限为 32 次模型轮次、24 次 Web 逻辑动作；同一 Campaign 的全局上限为 12 Run、96 次模型轮次、72 次 Web 逻辑动作。最后一个额度允许执行，下一次在派发前以 `campaign_budget_exhausted` 关闭；Provider 重试与切换另行记录，不计入模型逻辑轮次。授权不等于测试通过；任一路由失败、审阅包/评分哈希不一致或人工评分未完成时 HR-7 继续保持“实测未通过”。
 
 ```bash
 npm run agent:eval:smoke

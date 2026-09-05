@@ -61,7 +61,7 @@ normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `as
 
 模型路由把空正文且无工具调用视为无效响应。在尚无可见正文、工具调用、continuation 或副作用时，瞬态/无效响应先重试同一 Provider 一次，再切换同工具能力候选；已有动作后不跨 Provider 隐式续接。尝试、错误类别和切换决定以有界脱敏对象追加到现有 route summary，不保存请求、响应或凭证正文。最近失败 Run 只向下一轮提供请求、终态、安全错误、模型/工具是否开始、尝试与切换计数，不提供失败草稿或旧来源。
 
-真实质量评测不改变生产 Run 预算或工具循环。评测层先以双路 4 Run canary 注入最多 16 个模型轮次、12 个 Web 业务调用的只减不增内存上限；通过后，双路 Campaign 才可使用全局最多 12 Run、48 个模型轮次和 36 个 Web 业务调用，两条匿名路由各自保留连续会话。`agent-live-pilot-v3` 只声明终态、授权、search→fetch、Run-local 引用、安全、连续性和预算等机械轨迹，最终回答与有限来源摘录进入 Git 忽略的匿名审阅包；报告、审阅包哈希和 session 由本机评测密钥共同认证。人工评分是事实/语义质量的唯一放行依据，旧 v1/v2 live 报告仅供诊断，不得进入 `product-gate.json`。
+真实质量评测不改变生产 Run 预算或工具循环。评测层的只减不增内存上限与生产单 Run 形状对齐：双路 4 Run Canary 最多 32 个模型轮次、24 个 Web 逻辑动作；通过后，双路 Campaign 才可使用全局最多 12 Run、96 个模型轮次和 72 个 Web 逻辑动作，两条匿名路由各自保留连续会话。`agent-live-pilot-v4` 只声明终态、授权、search→fetch、Run-local 引用、安全、连续性和预算等机械轨迹，最终回答与有限来源摘录进入 Git 忽略的匿名审阅包；报告、审阅包哈希和 session 由本机评测密钥共同认证。人工评分是事实/语义质量的唯一放行依据，旧 v1/v2/v3 live 报告仅供诊断，不得进入 `product-gate.json`。INC-HR-010 的公共记忆准备与未覆盖历史标记已接入；完整 v4 逐 Run 执行事实、生产组合验收与真实质量门仍未放行。
 
 会话通过不透明 `AssistantSessionRef` 寻址，并按 normal/classified 安全域物理隔离。涉密 Run 仅在当前进程内易失执行：解锁文档、prompt 与模型输出以 `Zeroizing` 保存，不拥有 SQLite 或 CEF Run 句柄；`assistant_run_get` 仅可在同一进程内按显式 run ID 读取无正文的易失快照与安全事件，不支持省略 run ID 的活动 Run 查询、持久化断流回放或进程级恢复。完成正文只能由 `assistant_classified_run_take_result` 一次性取走。已持久化的涉密 Markdown 与会话数据继续构成 CEF 加密持久化边界，普通 SQLite 会话表不承载其正文。当前编辑器、活动 tab、scene、intent、旧 task ID 和笔记正文不进入隐式请求上下文；只有用户明确提交的引用和一次性 action snapshot 可以进入 Run。`Apply` 还必须把确认计划、模型工具参数和真实写入绑定到同一个显式目标与基准 hash；取消信号会进入 provider、工具调度和写盘前提交检查。
 

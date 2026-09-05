@@ -211,6 +211,14 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         Box::pin(async { Ok(None) })
     }
 
+    /// Number of logical Web actions this executor will deterministically
+    /// dispatch before the first model turn. Only executors that actually own
+    /// the Host bootstrap opt in; generic test/read-only executors retain the
+    /// ordinary model-driven Web contract.
+    fn required_web_bootstrap_action_count(&self) -> u32 {
+        0
+    }
+
     /// Request one bounded no-tool compression turn for the durable
     /// conversation summary. The default keeps non-normal executors free of
     /// session-memory concerns.
@@ -229,8 +237,8 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         &self,
         _request: &crate::ai_runtime::conversation_memory::ConversationMemoryCompactionRequest,
         _output: Option<&str>,
-    ) -> AppResult<()> {
-        Ok(())
+    ) -> AppResult<Option<crate::ai_runtime::conversation_memory::ConversationMemory>> {
+        Ok(None)
     }
 
     /// Persist one complete confirmation-bound change set. The default rejects
@@ -583,15 +591,23 @@ impl AgentToolLoop {
                     .ok()
                     .filter(|response| response.tool_calls.is_empty())
                     .and_then(|response| response.content.as_deref());
-                if let Err(error) =
-                    executor.apply_conversation_memory_compaction(&compaction, output)
-                {
-                    tracing::warn!(
-                        run_id,
-                        reason = "conversation_memory_compaction_persist_failed",
-                        error = %error,
-                        "conversation memory compaction was skipped"
-                    );
+                match executor.apply_conversation_memory_compaction(&compaction, output) {
+                    Ok(Some(updated_memory)) => {
+                        replace_conversation_memory_in_current_messages(
+                            &mut messages,
+                            compaction.prior_prompt_fragment(),
+                            &updated_memory.to_prompt_fragment(),
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            run_id,
+                            reason = "conversation_memory_compaction_persist_failed",
+                            error = %error,
+                            "conversation memory compaction was skipped"
+                        );
+                    }
                 }
                 if let Ok(response) = result {
                     let (turn_prompt, turn_completion, turn_total) =
@@ -612,15 +628,27 @@ impl AgentToolLoop {
         }
 
         if executor.requires_web_evidence() {
+            let bootstrap_actions = executor.required_web_bootstrap_action_count();
             let remaining = self.max_tool_calls.saturating_sub(tool_calls);
+            let network_used = tool_calls_by_class
+                .get(&ToolBudgetClass::Network)
+                .copied()
+                .unwrap_or_default();
+            let remaining_network = self
+                .tool_call_limit(ToolBudgetClass::Network)
+                .saturating_sub(network_used);
+            // A required-Web Run has a deterministic minimum observation:
+            // one search and one bounded fetch batch. Reject before invoking
+            // the executor when the frozen contract cannot afford both; doing
+            // so after a network side effect used to leave an unauditable
+            // half-bootstrap behind.
+            if remaining < bootstrap_actions || remaining_network < bootstrap_actions {
+                return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+            }
             if let Some(bootstrap) = executor
                 .bootstrap_required_web_observation(run_id, remaining)
                 .await?
             {
-                let network_used = tool_calls_by_class
-                    .get(&ToolBudgetClass::Network)
-                    .copied()
-                    .unwrap_or_default();
                 if bootstrap.tool_calls > remaining
                     || bootstrap.network_tool_calls > bootstrap.tool_calls
                     || network_used.saturating_add(bootstrap.network_tool_calls)
@@ -636,9 +664,7 @@ impl AgentToolLoop {
                     usage.tool_calls = tool_calls;
                 }
                 if let Some(telemetry) = telemetry {
-                    for _ in 0..bootstrap.tool_calls {
-                        telemetry.record_executed_tool_call();
-                    }
+                    telemetry.record_bootstrap_web_tool_calls(bootstrap.tool_calls);
                 }
                 web_search_attempted_without_evidence = true;
                 let position = messages
@@ -660,6 +686,32 @@ impl AgentToolLoop {
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
+            let is_final_model_turn = model_turns.saturating_add(1) >= self.max_model_turns;
+            let remaining_completion_tokens = self
+                .turn_budget
+                .max_completion_tokens
+                .map(|limit| limit.saturating_sub(completion_tokens));
+            let synthesis_output_reserve = match (
+                self.turn_budget.max_completion_tokens,
+                self.turn_budget.max_turn_output_tokens,
+            ) {
+                (Some(completion_limit), Some(turn_limit)) => completion_limit.min(turn_limit),
+                _ => 0,
+            };
+            // Do not let exploratory turns consume the final synthesis
+            // envelope. Once only that reserve remains, close business tools
+            // before building the Gateway request so the provider receives a
+            // real, enforceable output cap rather than a post-hoc rejection.
+            if !synthesis_required
+                && !source_binding_repair_required
+                && incomplete_final_draft.is_none()
+                && !is_final_model_turn
+                && remaining_completion_tokens
+                    .is_some_and(|remaining| remaining <= synthesis_output_reserve)
+            {
+                synthesis_required = true;
+                messages.push(tool_surface_closed_instruction());
+            }
             let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some()
                 || synthesis_required
                 || source_binding_repair_required
@@ -668,12 +720,32 @@ impl AgentToolLoop {
             } else {
                 &tools
             };
-            enforce_prompt_budget(&messages, active_tools, self.turn_budget)?;
-            if self
-                .turn_budget
-                .max_completion_tokens
-                .is_some_and(|limit| completion_tokens >= limit)
-            {
+            let mut model_turn_budget = self.turn_budget;
+            if let Some(remaining) = remaining_completion_tokens {
+                if remaining == 0 {
+                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+                }
+                let is_synthesis_turn = synthesis_required
+                    || source_binding_repair_required
+                    || incomplete_final_draft.is_some()
+                    || is_final_model_turn;
+                let allowed_output = if is_synthesis_turn {
+                    remaining
+                } else {
+                    remaining.saturating_sub(synthesis_output_reserve)
+                };
+                if allowed_output == 0 {
+                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+                }
+                model_turn_budget.max_completion_tokens = Some(allowed_output);
+                model_turn_budget.max_turn_output_tokens = Some(
+                    self.turn_budget
+                        .max_turn_output_tokens
+                        .map_or(allowed_output, |limit| limit.min(allowed_output)),
+                );
+            }
+            enforce_prompt_budget(&messages, active_tools, model_turn_budget)?;
+            if model_turn_budget.max_completion_tokens == Some(0) {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
             model_turns += 1;
@@ -685,7 +757,7 @@ impl AgentToolLoop {
                 provider_run_id,
                 &messages,
                 active_tools,
-                self.turn_budget,
+                model_turn_budget,
                 observer,
             );
             let response = match provider_turn.await {
@@ -701,8 +773,7 @@ impl AgentToolLoop {
                     incomplete_final_answer_repair_used = true;
                     let draft = visible_draft.expect("recovery guard requires a visible draft");
                     let draft_completion_tokens = estimate_tokens(&draft);
-                    let exceeds_turn_output = self
-                        .turn_budget
+                    let exceeds_turn_output = model_turn_budget
                         .max_turn_output_tokens
                         .is_some_and(|limit| draft_completion_tokens > limit);
                     let exceeds_run_completion =
@@ -732,15 +803,13 @@ impl AgentToolLoop {
             };
             let (turn_prompt_tokens, turn_completion_tokens, turn_total_tokens) =
                 resolved_turn_usage(&response, &messages, active_tools);
-            if self
-                .turn_budget
+            if model_turn_budget
                 .max_prompt_tokens
                 .is_some_and(|limit| turn_prompt_tokens > limit)
             {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
-            let exceeds_turn_output = self
-                .turn_budget
+            let exceeds_turn_output = model_turn_budget
                 .max_turn_output_tokens
                 .is_some_and(|limit| turn_completion_tokens > limit);
             let exceeds_run_completion =
@@ -780,7 +849,12 @@ impl AgentToolLoop {
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
                 }
-                let natural_clarification = tool_calls == 0 && is_natural_clarification(&content);
+                // A necessary clarification remains a normal completion even
+                // when the Host has already gathered a bounded observation.
+                // Bootstrap dispatches are not evidence that the missing user
+                // constraint was available, and must not turn a question into
+                // a misleading evidence-limited refusal.
+                let natural_clarification = is_natural_clarification(&content);
                 if executor.requires_web_evidence()
                     && !executor.has_web_evidence()
                     && !natural_clarification
@@ -1021,6 +1095,12 @@ impl AgentToolLoop {
             {
                 provider.on_tool_proposals_not_dispatched(provider_run_id)?;
                 messages.push(tool_proposal_feedback_instruction(&proposal_dispositions));
+                no_progress_rounds = no_progress_rounds.saturating_add(1);
+                if no_progress_rounds >= 2 || model_turns.saturating_add(1) >= self.max_model_turns
+                {
+                    synthesis_required = true;
+                    messages.push(tool_surface_closed_instruction());
+                }
                 continue;
             }
 
@@ -1085,7 +1165,7 @@ impl AgentToolLoop {
                                     usage.tool_calls = tool_calls;
                                 }
                                 if let Some(telemetry) = telemetry {
-                                    telemetry.record_executed_tool_call();
+                                    telemetry.record_executed_tool_call(&call.function.name);
                                 }
                                 provider.on_tool_call_dispatched(provider_run_id)?;
                                 let result = executor.execute(run_id, call, tool_calls).await?;
@@ -1444,6 +1524,29 @@ pub(crate) fn is_evidence_limited_response(content: &str) -> bool {
         .starts_with(EVIDENCE_LIMITED_RESPONSE_PREFIX)
 }
 
+/// Update the already-compiled system message after the bounded compaction
+/// turn succeeds. The final answer must see the same durable summary that was
+/// just persisted; deferring it until the next Run made the compression call
+/// consume budget without improving the active answer.
+fn replace_conversation_memory_in_current_messages(
+    messages: &mut [LlmMessage],
+    prior_fragment: &str,
+    updated_fragment: &str,
+) {
+    let Some(system_message) = messages
+        .iter_mut()
+        .find(|message| matches!(message.role, MessageRole::System))
+    else {
+        return;
+    };
+    let Some(content) = system_message.content.as_mut_str() else {
+        return;
+    };
+    if content.contains(prior_fragment) {
+        *content = content.replacen(prior_fragment, updated_fragment, 1);
+    }
+}
+
 fn enforce_prompt_budget(
     messages: &[LlmMessage],
     tools: &[ToolSpec],
@@ -1625,7 +1728,7 @@ fn tool_result_message(
     // reason over a partial, unverifiable result. The normal Web executor
     // packs its output below this limit; this branch is a fail-closed guard
     // for every other executor (including harness implementations).
-    if truncated && call.function.name == "web_search" {
+    if truncated && matches!(call.function.name.as_str(), "web_search" | "web_fetch") {
         let overflow = serde_json::json!({
             "success": false,
             "output": serde_json::Value::Null,
@@ -1659,7 +1762,7 @@ fn tool_result_message(
 }
 
 fn tool_result_char_budget(tool_name: &str) -> usize {
-    if tool_name == "web_search" {
+    if matches!(tool_name, "web_search" | "web_fetch") {
         MAX_WEB_TOOL_RESULT_CHARS
     } else {
         MAX_TOOL_RESULT_CHARS

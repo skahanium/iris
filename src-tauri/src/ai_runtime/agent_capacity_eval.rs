@@ -2354,6 +2354,7 @@ pub(crate) enum BudgetOutcome {
 struct EvaluationTelemetryState {
     model_turns: u32,
     tool_calls: u32,
+    web_tool_calls: u32,
     prompt_tokens: u64,
     completion_tokens: u64,
     total_tokens: u64,
@@ -2434,9 +2435,24 @@ impl EvaluationTelemetryTap {
     /// Record one Host-dispatched business tool action. Proposed, deferred, or
     /// rejected model calls are intentionally excluded: Campaign budgets meter
     /// real external work, not an untrusted response shape.
-    pub(crate) fn record_executed_tool_call(&self) {
+    pub(crate) fn record_executed_tool_call(&self, tool_name: &str) {
         if let Ok(mut state) = self.state.lock() {
             state.tool_calls = state.tool_calls.saturating_add(1);
+            if matches!(
+                tool_name,
+                "web_search" | "web_fetch" | "web.search" | "web.fetch"
+            ) {
+                state.web_tool_calls = state.web_tool_calls.saturating_add(1);
+            }
+        }
+    }
+
+    /// Record the fixed WebRequired Host bootstrap, whose actions are not
+    /// model-proposed tool calls but are still real Web logical actions.
+    pub(crate) fn record_bootstrap_web_tool_calls(&self, count: u32) {
+        if let Ok(mut state) = self.state.lock() {
+            state.tool_calls = state.tool_calls.saturating_add(count);
+            state.web_tool_calls = state.web_tool_calls.saturating_add(count);
         }
     }
 
@@ -2552,6 +2568,7 @@ impl EvaluationTelemetryTap {
         EvaluationTelemetrySummary {
             model_turns: state.model_turns,
             tool_calls: state.tool_calls,
+            web_tool_calls: state.web_tool_calls,
             prompt_tokens: state.prompt_tokens,
             completion_tokens: state.completion_tokens,
             total_tokens: state.total_tokens,
@@ -2620,6 +2637,7 @@ pub(crate) struct BudgetCounts {
 pub(crate) struct EvaluationTelemetrySummary {
     model_turns: u32,
     tool_calls: u32,
+    web_tool_calls: u32,
     prompt_tokens: u64,
     completion_tokens: u64,
     total_tokens: u64,
@@ -2639,6 +2657,10 @@ impl EvaluationTelemetrySummary {
 
     pub(crate) const fn tool_calls(&self) -> u32 {
         self.tool_calls
+    }
+
+    pub(crate) const fn web_tool_calls(&self) -> u32 {
+        self.web_tool_calls
     }
 
     pub(crate) const fn total_tokens(&self) -> u64 {
@@ -3687,6 +3709,7 @@ struct LivePilotTokenCounts {
 pub(crate) struct LivePilotTelemetry {
     pub(crate) model_turns: u32,
     pub(crate) tool_calls: u32,
+    pub(crate) web_tool_calls: u32,
     token_counts: Option<LivePilotTokenCounts>,
     first_visible_token_ms: Option<u64>,
     total_model_time_ms: u64,
@@ -3713,6 +3736,7 @@ impl From<&EvaluationTelemetrySummary> for LivePilotTelemetry {
         Self {
             model_turns: telemetry.model_turns,
             tool_calls: telemetry.tool_calls,
+            web_tool_calls: telemetry.web_tool_calls,
             token_counts,
             first_visible_token_ms: telemetry.first_visible_token_ms,
             total_model_time_ms: telemetry.total_model_time_ms,
@@ -3818,6 +3842,7 @@ struct LiveTraceMechanicalChecks {
 struct LiveTraceTelemetry {
     model_turns: u32,
     tool_calls: u32,
+    web_tool_calls: u32,
 }
 
 /// A test-only, only-decreasing cap injected by the real-evaluation campaign.
@@ -3886,7 +3911,7 @@ pub(crate) fn live_trace_result_from_pilot(
             } else {
                 "fail"
             };
-            let web_trace_ok = case.telemetry.tool_calls >= 2
+            let web_trace_ok = case.telemetry.web_tool_calls >= 2
                 && case
                     .summary
                     .runtime_evidence
@@ -3964,6 +3989,7 @@ pub(crate) fn live_trace_result_from_pilot(
                 telemetry: LiveTraceTelemetry {
                     model_turns: case.telemetry.model_turns,
                     tool_calls: case.telemetry.tool_calls,
+                    web_tool_calls: case.telemetry.web_tool_calls,
                 },
             }
         })
@@ -3980,7 +4006,7 @@ pub(crate) fn live_trace_result_from_pilot(
         .min(u32::MAX as usize) as u32;
     let case_count = cases.len().min(u32::MAX as usize) as u32;
     LiveTraceResult {
-        schema_version: "agent-live-pilot-v3",
+        schema_version: "agent-live-pilot-v4",
         route_commitment: result.route_commitment.clone(),
         route_label,
         campaign_id,
@@ -4046,7 +4072,7 @@ pub(crate) fn live_review_packet_from_pilot(
                             .collect()
                     })
                     .unwrap_or_default(),
-                search_fetch_observed: case.telemetry.tool_calls >= 2,
+                search_fetch_observed: case.telemetry.web_tool_calls >= 2,
                 // A long loop is not proof that a repair happened. The
                 // current runtime does not persist repair attempts separately,
                 // so keep this conservative until that observable exists.
@@ -4063,7 +4089,7 @@ pub(crate) fn live_review_packet_from_pilot(
         })
         .collect::<Result<Vec<_>, EvalContractError>>()?;
     Ok(LiveReviewPacket {
-        schema_version: "agent-live-review-packet-v1".to_string(),
+        schema_version: "agent-live-review-packet-v2".to_string(),
         campaign_id,
         route_label: route_label.to_string(),
         cases,
@@ -4526,6 +4552,7 @@ fn inconclusive_live_pilot_case_with_error(
         telemetry: EvaluationTelemetrySummary {
             model_turns: 0,
             tool_calls: 0,
+            web_tool_calls: 0,
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
@@ -4726,7 +4753,7 @@ pub(crate) async fn run_live_trace_campaign_with_prepared(
     routes: [&PreparedLivePilot; 2],
 ) -> Result<[LivePilotResult; 2], EvalContractError> {
     let scenarios = select_live_pilot_scenarios()?;
-    run_live_trace_with_prepared(routes, scenarios, 48, 36).await
+    run_live_trace_with_prepared(routes, scenarios, 96, 72).await
 }
 
 /// Run the two-route, four-Run canary before the larger calibration campaign.
@@ -4737,7 +4764,7 @@ pub(crate) async fn run_live_trace_canary_with_prepared(
     routes: [&PreparedLivePilot; 2],
 ) -> Result<[LivePilotResult; 2], EvalContractError> {
     let scenarios = select_live_canary_scenarios()?;
-    run_live_trace_with_prepared(routes, scenarios, 16, 12).await
+    run_live_trace_with_prepared(routes, scenarios, 32, 24).await
 }
 
 #[cfg(test)]
@@ -4783,7 +4810,7 @@ async fn run_live_trace_with_prepared(
                 .expect("closed campaign evaluator result")
         });
         used_model_turns = used_model_turns.saturating_add(result.telemetry.model_turns);
-        used_web_tool_calls = used_web_tool_calls.saturating_add(result.telemetry.tool_calls);
+        used_web_tool_calls = used_web_tool_calls.saturating_add(result.telemetry.web_tool_calls);
         executed[*route_index].push((1, result));
     }
     // A campaign-level overage is a failed, observable execution result, not
@@ -4942,7 +4969,7 @@ pub(crate) fn validate_serialized_live_pilot_result(
     if value
         .get("schemaVersion")
         .and_then(serde_json::Value::as_str)
-        == Some("agent-live-pilot-v3")
+        .is_some_and(|schema| matches!(schema, "agent-live-pilot-v3" | "agent-live-pilot-v4"))
     {
         return validate_serialized_live_trace_result_v3(&value);
     }
@@ -5145,7 +5172,10 @@ fn validate_serialized_live_trace_result_v3(
             "cases",
         ],
     )?;
-    live_pilot_exact_string(root.get("schemaVersion"), &["agent-live-pilot-v3"])?;
+    live_pilot_exact_string(
+        root.get("schemaVersion"),
+        &["agent-live-pilot-v3", "agent-live-pilot-v4"],
+    )?;
     validate_live_trace_identifier(root.get("routeCommitment"), "route-", 64)?;
     live_pilot_exact_string(root.get("routeLabel"), &["Route A", "Route B"])?;
     validate_live_trace_identifier(root.get("campaignId"), "campaign-", 64)?;
@@ -5185,9 +5215,9 @@ fn validate_serialized_live_trace_result_v3(
     let mut observed_completed = 0_u64;
     let mut observed_passed = 0_u64;
     let mut observed_model_turns = 0_u64;
-    let mut observed_tool_calls = 0_u64;
+    let mut observed_web_tool_calls = 0_u64;
     for case in cases {
-        let (case_id, completed, passed, model_turns, tool_calls) =
+        let (case_id, completed, passed, model_turns, web_tool_calls) =
             validate_live_trace_case_v3(case)?;
         if !expected.contains(&case_id) || !seen.insert(case_id) {
             return Err(EvalContractError::new("live_pilot_case_set_invalid"));
@@ -5195,7 +5225,7 @@ fn validate_serialized_live_trace_result_v3(
         observed_completed = observed_completed.saturating_add(u64::from(completed));
         observed_passed = observed_passed.saturating_add(u64::from(passed));
         observed_model_turns = observed_model_turns.saturating_add(model_turns);
-        observed_tool_calls = observed_tool_calls.saturating_add(tool_calls);
+        observed_web_tool_calls = observed_web_tool_calls.saturating_add(web_tool_calls);
     }
     if seen != expected
         || observed_completed != completed_case_count
@@ -5210,7 +5240,7 @@ fn validate_serialized_live_trace_result_v3(
     }
     if campaign_budget.0 < case_count
         || campaign_budget.1 < observed_model_turns
-        || campaign_budget.2 < observed_tool_calls
+        || campaign_budget.2 < observed_web_tool_calls
     {
         return Err(EvalContractError::new("live_pilot_call_budget_invalid"));
     }
@@ -5264,11 +5294,11 @@ fn validate_live_trace_campaign_budget(
         ],
     )?;
     let max_runs = live_pilot_bounded_u64(budget.get("maxRuns"), 12)?;
-    let max_model_turns = live_pilot_bounded_u64(budget.get("maxModelTurns"), 48)?;
-    let max_web_tool_calls = live_pilot_bounded_u64(budget.get("maxWebToolCalls"), 36)?;
+    let max_model_turns = live_pilot_bounded_u64(budget.get("maxModelTurns"), 96)?;
+    let max_web_tool_calls = live_pilot_bounded_u64(budget.get("maxWebToolCalls"), 72)?;
     if !matches!(
         (max_runs, max_model_turns, max_web_tool_calls),
-        (4, 16, 12) | (12, 48, 36)
+        (4, 32, 24) | (12, 96, 72)
     ) {
         return Err(EvalContractError::new("live_pilot_value_invalid"));
     }
@@ -5335,10 +5365,11 @@ fn validate_live_trace_case_v3(
     let telemetry = live_pilot_exact_object(
         case.get("telemetry")
             .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?,
-        &["modelTurns", "toolCalls"],
+        &["modelTurns", "toolCalls", "webToolCalls"],
     )?;
     let model_turns = live_pilot_bounded_u64(telemetry.get("modelTurns"), 8)?;
-    let tool_calls = live_pilot_bounded_u64(telemetry.get("toolCalls"), 24)?;
+    let _tool_calls = live_pilot_bounded_u64(telemetry.get("toolCalls"), 24)?;
+    let web_tool_calls = live_pilot_bounded_u64(telemetry.get("webToolCalls"), 24)?;
     let completed = mechanical
         .get("terminal")
         .and_then(serde_json::Value::as_str)
@@ -5347,7 +5378,7 @@ fn validate_live_trace_case_v3(
         && mechanical.values().all(|value| {
             value.as_str() == Some("pass") || value.as_str() == Some("not_applicable")
         });
-    Ok((case_id, completed, passed, model_turns, tool_calls))
+    Ok((case_id, completed, passed, model_turns, web_tool_calls))
 }
 
 #[cfg(test)]
@@ -5400,10 +5431,12 @@ fn validate_live_pilot_telemetry(
             "finishReasons",
             "truncations",
             "budgets",
+            "webToolCalls",
         ],
     )?;
     live_pilot_bounded_u64(object.get("modelTurns"), 1_000)?;
     live_pilot_bounded_u64(object.get("toolCalls"), 1_000)?;
+    live_pilot_bounded_u64(object.get("webToolCalls"), 1_000)?;
     match object.get("tokenCounts") {
         Some(serde_json::Value::Null) => {}
         Some(token_counts) => {
@@ -5585,8 +5618,10 @@ fn validate_live_review_packet(
     expected_route_label: &str,
     expected_campaign_id: &str,
 ) -> Result<(), EvalContractError> {
-    if packet.schema_version != "agent-live-review-packet-v1"
-        || packet.route_label != expected_route_label
+    if !matches!(
+        packet.schema_version.as_str(),
+        "agent-live-review-packet-v1" | "agent-live-review-packet-v2"
+    ) || packet.route_label != expected_route_label
         || packet.campaign_id != expected_campaign_id
         || !matches!(packet.route_label.as_str(), "Route A" | "Route B")
         || packet
@@ -5933,7 +5968,7 @@ pub(crate) fn write_attested_live_trace_result(
         )
         .map_err(|_| EvalContractError::new("live_attestation_write_failed"))?;
     let attestation = LiveResultAttestation {
-        schema_version: "agent-live-attestation-v3".to_string(),
+        schema_version: "agent-live-attestation-v4".to_string(),
         session_id: session_id.to_string(),
         report_sha256: hex::encode(Sha256::digest(&serialized)),
         review_packet_sha256: Some(result.review_packet_sha256.clone()),
@@ -6024,10 +6059,10 @@ pub(crate) fn verify_attested_live_pilot_result(
     let _ = session_suffix;
     let report_value: serde_json::Value = serde_json::from_slice(serialized)
         .map_err(|_| EvalContractError::new("live_attestation_invalid"))?;
-    let is_v3 = report_value
+    let is_trace = report_value
         .get("schemaVersion")
         .and_then(serde_json::Value::as_str)
-        == Some("agent-live-pilot-v3");
+        .is_some_and(|schema| matches!(schema, "agent-live-pilot-v3" | "agent-live-pilot-v4"));
     if attestation.session_id != session_id || attestation.report_sha256 != observed_sha256 {
         return Err(EvalContractError::new("live_attestation_invalid"));
     }
@@ -6041,7 +6076,7 @@ pub(crate) fn verify_attested_live_pilot_result(
     let key = live_attestation_key(config_root, false)?;
     let cipher = Aes256Gcm::new_from_slice(key.as_slice())
         .map_err(|_| EvalContractError::new("live_attestation_key_invalid"))?;
-    let aad = if is_v3 {
+    let aad = if is_trace {
         let route =
             route_suffix.ok_or_else(|| EvalContractError::new("live_attestation_invalid"))?;
         let packet_hash = attestation
@@ -6049,11 +6084,13 @@ pub(crate) fn verify_attested_live_pilot_result(
             .as_deref()
             .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .ok_or_else(|| EvalContractError::new("live_attestation_invalid"))?;
-        if attestation.schema_version != "agent-live-attestation-v3"
-            || report_value
-                .get("reviewPacketSha256")
-                .and_then(serde_json::Value::as_str)
-                != Some(packet_hash)
+        if !matches!(
+            attestation.schema_version.as_str(),
+            "agent-live-attestation-v3" | "agent-live-attestation-v4"
+        ) || report_value
+            .get("reviewPacketSha256")
+            .and_then(serde_json::Value::as_str)
+            != Some(packet_hash)
         {
             return Err(EvalContractError::new("live_attestation_invalid"));
         }
@@ -7904,7 +7941,9 @@ fn score_headless_run(
             .map_err(|_| EvalContractError::new("eval_messages_read_failed"))?
             .into_iter()
             .rev()
-            .find(|message| message.role == "assistant");
+            .find(|message| {
+                message.role == "assistant" && message.run_id.as_deref() == Some(&accepted.run_id)
+            });
     let final_answer = final_message
         .as_ref()
         .map_or_else(String::new, |message| message.content.clone());
@@ -11867,6 +11906,7 @@ fn aggregate_telemetry<'a>(
     let mut aggregate = EvaluationTelemetrySummary {
         model_turns: 0,
         tool_calls: 0,
+        web_tool_calls: 0,
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
@@ -11895,6 +11935,9 @@ fn aggregate_telemetry<'a>(
     for summary in summaries {
         aggregate.model_turns = aggregate.model_turns.saturating_add(summary.model_turns);
         aggregate.tool_calls = aggregate.tool_calls.saturating_add(summary.tool_calls);
+        aggregate.web_tool_calls = aggregate
+            .web_tool_calls
+            .saturating_add(summary.web_tool_calls);
         aggregate.prompt_tokens = aggregate
             .prompt_tokens
             .saturating_add(summary.prompt_tokens);
@@ -12195,6 +12238,7 @@ fn validate_telemetry_summary(value: Option<&serde_json::Value>) -> Result<(), E
         &[
             "modelTurns",
             "toolCalls",
+            "webToolCalls",
             "promptTokens",
             "completionTokens",
             "totalTokens",
@@ -12209,6 +12253,7 @@ fn validate_telemetry_summary(value: Option<&serde_json::Value>) -> Result<(), E
     )?;
     bounded_u64(object.get("modelTurns"), 1_000)?;
     bounded_u64(object.get("toolCalls"), 1_000)?;
+    bounded_u64(object.get("webToolCalls"), 1_000)?;
     for key in [
         "promptTokens",
         "completionTokens",

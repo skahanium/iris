@@ -65,6 +65,13 @@ struct MemoryMessage {
 #[derive(Debug, Clone)]
 pub(crate) struct ConversationMemoryCompactionRequest {
     session_id: i64,
+    /// The durable summary state observed before the no-tool compaction call.
+    /// Applying the result is conditional on this exact state so an older
+    /// request cannot overwrite a newer summary.
+    expected_seq_start: i64,
+    expected_seq_end: i64,
+    expected_content_hash: String,
+    prior_prompt_fragment: String,
     seq_start: i64,
     seq_end: i64,
     content_hash: String,
@@ -75,6 +82,15 @@ pub(crate) struct ConversationMemoryCompactionRequest {
 impl ConversationMemoryCompactionRequest {
     pub(crate) fn prompt(&self) -> &str {
         &self.prompt
+    }
+
+    pub(crate) fn prior_prompt_fragment(&self) -> &str {
+        &self.prior_prompt_fragment
+    }
+
+    #[cfg(test)]
+    pub(crate) fn covered_range(&self) -> (i64, i64) {
+        (self.seq_start, self.seq_end)
     }
 }
 
@@ -100,11 +116,24 @@ impl ConversationMemory {
         let seq_end = summarized.last().map(|msg| msg.seq).unwrap_or(seq_start);
         let memory = draft_for_messages(session_id, seq_start, seq_end, summarized);
         if let Some(existing) = Self::latest_for_session(db, session_id)? {
+            let existing_covered = messages
+                .iter()
+                .filter(|message| {
+                    message.seq >= existing.seq_start && message.seq <= existing.seq_end
+                })
+                .cloned()
+                .collect::<Vec<_>>();
             if existing.seq_start == memory.seq_start
-                && existing.seq_end == memory.seq_end
-                && existing.content_hash == memory.content_hash
+                && existing.seq_end <= memory.seq_end
                 && is_model_compacted(&existing)
+                && !existing_covered.is_empty()
+                && summarized_content_hash(&existing_covered) == existing.content_hash
             {
+                // A model summary may intentionally cover only a prefix when
+                // one compression input could not contain every old message.
+                // Preserve that verified prefix; pending_model_compaction()
+                // advances it on later Runs instead of silently replacing it
+                // with a fallback that claims an unprocessed range.
                 return Ok(Some(existing));
             }
         }
@@ -190,10 +219,9 @@ impl ConversationMemory {
         )
     }
 
-    /// Build one model compression request only when the current durable
-    /// summary still comes from the deterministic fallback. A successfully
-    /// compressed range is marked in the existing fields, so later Runs do not
-    /// spend a hidden extra model turn until the covered range actually moves.
+    /// Build one bounded model compression request for the next uncovered
+    /// prefix of older history. A request never claims to cover a message that
+    /// was not included in its complete model input.
     pub(crate) fn pending_model_compaction(
         db: &Database,
         session_id: i64,
@@ -201,23 +229,64 @@ impl ConversationMemory {
         let Some(memory) = Self::validated_for_session(db, session_id)? else {
             return Ok(None);
         };
-        if is_model_compacted(&memory) {
+        let messages = load_messages(db, session_id)?;
+        let target_end = messages
+            .len()
+            .checked_sub(DEFAULT_RECENT_MESSAGE_LIMIT + 1)
+            .and_then(|index| messages.get(index))
+            .map(|message| message.seq);
+        let Some(target_end) = target_end else {
+            return Ok(None);
+        };
+
+        if memory.seq_end > target_end {
             return Ok(None);
         }
-        let covered = load_messages(db, session_id)?
-            .into_iter()
-            .filter(|message| message.seq >= memory.seq_start && message.seq <= memory.seq_end)
+        if is_model_compacted(&memory) && memory.seq_end == target_end {
+            return Ok(None);
+        }
+
+        let incremental = if is_model_compacted(&memory) {
+            messages
+                .iter()
+                .filter(|message| message.seq > memory.seq_end && message.seq <= target_end)
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            messages
+                .iter()
+                .filter(|message| message.seq >= memory.seq_start && message.seq <= target_end)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let Some((prompt, included_count)) = model_compaction_prompt(&memory, &incremental) else {
+            return Ok(None);
+        };
+        let included = &incremental[..included_count];
+        let seq_start = memory.seq_start;
+        let seq_end = included
+            .last()
+            .map(|message| message.seq)
+            .unwrap_or(seq_start);
+        let covered = messages
+            .iter()
+            .filter(|message| message.seq >= seq_start && message.seq <= seq_end)
+            .cloned()
             .collect::<Vec<_>>();
-        if covered.is_empty() || summarized_content_hash(&covered) != memory.content_hash {
+        if covered.is_empty() {
             return Ok(None);
         }
-        let fallback = draft_for_messages(session_id, memory.seq_start, memory.seq_end, &covered);
-        let prompt = model_compaction_prompt(&memory, &covered);
+        let content_hash = summarized_content_hash(&covered);
+        let fallback = draft_for_messages(session_id, seq_start, seq_end, &covered);
         Ok(Some(ConversationMemoryCompactionRequest {
             session_id,
-            seq_start: memory.seq_start,
-            seq_end: memory.seq_end,
-            content_hash: memory.content_hash,
+            expected_seq_start: memory.seq_start,
+            expected_seq_end: memory.seq_end,
+            expected_content_hash: memory.content_hash.clone(),
+            prior_prompt_fragment: memory.to_prompt_fragment(),
+            seq_start,
+            seq_end,
+            content_hash,
             prompt,
             fallback,
         }))
@@ -230,15 +299,15 @@ impl ConversationMemory {
         db: &Database,
         request: &ConversationMemoryCompactionRequest,
         output: Option<&str>,
-    ) -> AppResult<()> {
+    ) -> AppResult<Option<Self>> {
         let Some(current) = Self::latest_for_session(db, request.session_id)? else {
-            return Ok(());
+            return Ok(None);
         };
-        if current.seq_start != request.seq_start
-            || current.seq_end != request.seq_end
-            || current.content_hash != request.content_hash
+        if current.seq_start != request.expected_seq_start
+            || current.seq_end != request.expected_seq_end
+            || current.content_hash != request.expected_content_hash
         {
-            return Ok(());
+            return Ok(None);
         }
         let draft = parse_model_compaction(output.unwrap_or_default())
             .map(|summary| MemoryDraft {
@@ -252,7 +321,8 @@ impl ConversationMemory {
                 open_threads_summary: mark_model_compaction(summary.open_threads_summary),
             })
             .unwrap_or_else(|| request.fallback.clone());
-        upsert_memory(db, draft)
+        upsert_memory(db, draft)?;
+        Self::latest_for_session(db, request.session_id)
     }
 }
 
@@ -400,7 +470,15 @@ fn draft_for_messages(
     }
 }
 
-fn model_compaction_prompt(memory: &ConversationMemory, messages: &[MemoryMessage]) -> String {
+/// Build a compression prompt from complete chronological messages only.
+///
+/// Returning the included count makes the persisted sequence range an exact
+/// statement about the model-visible input. In particular, do not slice a
+/// large message and then mark its whole row as summarized.
+fn model_compaction_prompt(
+    memory: &ConversationMemory,
+    messages: &[MemoryMessage],
+) -> Option<(String, usize)> {
     let prior = format!(
         "当前目标：{}\n最新约束与更正：{}\n已确认结果：{}\n未解决事项：{}",
         display_summary(&memory.goal_summary),
@@ -408,26 +486,29 @@ fn model_compaction_prompt(memory: &ConversationMemory, messages: &[MemoryMessag
         display_summary(&memory.decision_summary),
         display_summary(&memory.open_threads_summary),
     );
-    let mut remaining = MODEL_COMPACTION_INPUT_LIMIT;
-    let mut transcript = Vec::new();
-    for message in messages.iter().rev() {
-        if remaining == 0 {
-            break;
-        }
-        let cleaned = redact_sensitive(&message.content);
-        let excerpt = truncate_chars(&cleaned, remaining);
-        remaining = remaining.saturating_sub(excerpt.chars().count());
-        transcript.push(format!("{}: {}", message.role, excerpt));
-    }
-    transcript.reverse();
-    format!(
+    let header = format!(
         "将下列即将移出最近对话窗口的已提交消息压缩为 JSON 对象。\n\
          只输出 goal_summary、preference_summary、decision_summary、open_threads_summary 四个字符串字段。\n\
          保留最新用户纠正，区分已确认的工具/Host 结果与 assistant 的未核实说法；不要编造、不要保留来源 URL、不要输出解释。\n\
          四字段总计不超过 1500 个字符，每字段不超过 500 个字符。\n\n\
-         旧摘要：\n{prior}\n\n待压缩消息：\n{}",
-        transcript.join("\n")
-    )
+         旧摘要：\n{prior}\n\n待压缩消息：\n"
+    );
+    if header.chars().count() >= MODEL_COMPACTION_INPUT_LIMIT {
+        return None;
+    }
+    let mut prompt = header;
+    let mut included = 0_usize;
+    for message in messages {
+        let line = format!("{}: {}\n", message.role, redact_sensitive(&message.content));
+        if prompt.chars().count().saturating_add(line.chars().count())
+            > MODEL_COMPACTION_INPUT_LIMIT
+        {
+            break;
+        }
+        prompt.push_str(&line);
+        included = included.saturating_add(1);
+    }
+    (included > 0).then_some((prompt, included))
 }
 
 fn parse_model_compaction(raw: &str) -> Option<ModelCompactionSummary> {
@@ -681,7 +762,7 @@ fn redact_sensitive(text: &str) -> String {
 mod memory_extraction_tests {
     use super::{
         extract_summary, ConversationMemory, ConversationMemoryPolicy, MemoryMessage,
-        SummaryFallback, MODEL_COMPACTION_MARKER,
+        SummaryFallback, MODEL_COMPACTION_INPUT_LIMIT, MODEL_COMPACTION_MARKER,
     };
     use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
     use crate::storage::db::Database;
@@ -923,6 +1004,69 @@ mod memory_extraction_tests {
     }
 
     #[test]
+    fn model_compaction_advances_only_over_complete_messages_that_fit_its_input() {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        db.with_conn(|conn| {
+            for seq in 1..=28_i64 {
+                let content = match seq {
+                    1 | 2 => format!("完整消息-{seq}-{}", "甲".repeat(5_900)),
+                    _ => format!("message-{seq}"),
+                };
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        content,
+                        format!("2026-09-05T00:03:{seq:02}Z"),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed conversation");
+        ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+            .expect("fallback summary");
+
+        let first = ConversationMemory::pending_model_compaction(&db, session.session_id)
+            .expect("first pending request")
+            .expect("request");
+        assert_eq!(first.covered_range(), (1, 1));
+        assert!(first.prompt().chars().count() <= MODEL_COMPACTION_INPUT_LIMIT);
+        assert!(first.prompt().contains("完整消息-1-"));
+        assert!(
+            !first.prompt().contains("完整消息-2-"),
+            "a row must be either fully included or left for a later request"
+        );
+
+        ConversationMemory::apply_model_compaction(
+            &db,
+            &first,
+            Some(
+                r#"{"goal_summary":"第一段","preference_summary":"未记录","decision_summary":"未记录","open_threads_summary":"继续"}"#,
+            ),
+        )
+        .expect("persist first prefix");
+        let first_memory = ConversationMemory::latest_for_session(&db, session.session_id)
+            .expect("read")
+            .expect("memory");
+        assert_eq!((first_memory.seq_start, first_memory.seq_end), (1, 1));
+
+        let second = ConversationMemory::pending_model_compaction(&db, session.session_id)
+            .expect("second pending request")
+            .expect("request");
+        assert!(
+            second.covered_range().1 > first_memory.seq_end,
+            "the next Run must advance from the last actually covered message"
+        );
+        assert!(second.prompt().contains("完整消息-2-"));
+    }
+
+    #[test]
     fn summary_invalidates_when_covered_messages_change() {
         let db = Database::open_in_memory().expect("database");
         let session = NormalSessionRepository::create(&db).expect("session");
@@ -968,6 +1112,61 @@ mod memory_extraction_tests {
         assert_ne!(
             before.content_hash, after.content_hash,
             "a changed covered message must invalidate the old summary hash"
+        );
+    }
+
+    #[test]
+    fn changed_message_invalidates_a_model_compacted_prefix_before_reuse() {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        db.with_conn(|conn| {
+            for seq in 1..=27_i64 {
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("message-{seq}"),
+                        format!("2026-09-05T00:04:{seq:02}Z"),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed conversation");
+        ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+            .expect("fallback summary");
+        let request = ConversationMemory::pending_model_compaction(&db, session.session_id)
+            .expect("pending")
+            .expect("request");
+        ConversationMemory::apply_model_compaction(
+            &db,
+            &request,
+            Some(
+                r#"{"goal_summary":"model goal","preference_summary":"latest","decision_summary":"confirmed","open_threads_summary":"next"}"#,
+            ),
+        )
+        .expect("compaction");
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE session_messages SET content = 'changed model-covered message'
+                 WHERE session_id = ?1 AND seq = 1",
+                [session.session_id],
+            )?;
+            Ok(())
+        })
+        .expect("change covered message");
+
+        let refreshed =
+            ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+                .expect("refresh")
+                .expect("summary");
+        assert!(
+            !refreshed.goal_summary.starts_with(MODEL_COMPACTION_MARKER),
+            "a stale model summary must not survive a covered-message mutation"
         );
     }
 

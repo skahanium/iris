@@ -81,6 +81,10 @@ pub(crate) struct RunContext {
     pub(crate) recent_messages: Vec<NormalSessionMessage>,
     /// Existing durable memory summary, when one has already been built.
     pub(crate) conversation_memory: Option<ConversationMemory>,
+    /// True when the bounded recent window leaves an uncompressed historical
+    /// range after the durable-memory boundary. The prompt must make that
+    /// gap explicit instead of silently treating the context as complete.
+    pub(crate) conversation_history_coverage_incomplete: bool,
     /// User-owned prompt preferences loaded through the existing profile store.
     pub(crate) prompt_profile: PromptProfile,
     /// Sanitized prior-Run state; never contains user text or raw provider output.
@@ -189,6 +193,15 @@ impl RunContext {
             .conversation_memory
             .as_ref()
             .map(ConversationMemory::to_prompt_fragment);
+        let conversation_memory = conversation_memory.map(|fragment| {
+            if self.conversation_history_coverage_incomplete {
+                format!(
+                    "{fragment}\n\n历史覆盖边界：持久记忆与最近对话之间仍有一段历史未能在一次压缩中完整纳入。不要推断该区间中的事实、承诺或结论；若当前问题依赖它，请提出聚焦澄清。"
+                )
+            } else {
+                fragment
+            }
+        });
         PromptContractV3::compile(
             &self.system_prompt(),
             &self.prompt_profile,
@@ -262,7 +275,7 @@ pub(crate) fn classify_context_assembly_failure(error: &AppError) -> SafeRunErro
         "agent_run_local_reference_index_unavailable" => {
             SafeRunErrorCode::LocalReferenceIndexUnavailable
         }
-        _ => SafeRunErrorCode::PersistenceFailed,
+        _ => SafeRunErrorCode::InternalExecutionFailed,
     }
 }
 
@@ -310,6 +323,23 @@ fn select_bounded_recent_history(
         .into_iter()
         .flat_map(|(user, assistant)| [user, assistant])
         .collect()
+}
+
+/// A partial durable summary is useful, but it must not make the omitted
+/// middle of a long session appear to be present in the Provider context.
+/// The selected recent history is already the exact post-token-budget view,
+/// so its first sequence number is the only safe boundary to compare.
+fn history_coverage_is_incomplete(
+    memory: Option<&ConversationMemory>,
+    recent_messages: &[NormalSessionMessage],
+) -> bool {
+    let Some(memory) = memory else {
+        return false;
+    };
+    let Some(first_recent) = recent_messages.first() else {
+        return false;
+    };
+    memory.seq_end.saturating_add(1) < first_recent.seq
 }
 
 /// Return one transient history copy exactly as it will reach the Provider.
@@ -360,19 +390,48 @@ fn truncate_history_content_to_token_budget(content: &str, budget: u32) -> Strin
     if crate::ai_runtime::text_support::estimate_tokens(content) <= budget as usize {
         return content.to_string();
     }
+    const ELISION: &str = "\n[历史内容已省略]\n";
+    let elision = if crate::ai_runtime::text_support::estimate_tokens(ELISION) <= budget as usize {
+        ELISION
+    } else {
+        "…"
+    };
+    if crate::ai_runtime::text_support::estimate_tokens(elision) > budget as usize {
+        return String::new();
+    }
     let char_count = content.chars().count();
-    let mut lower = 0;
-    let mut upper = char_count;
+    let mut lower = 0_usize;
+    let mut upper = char_count.max(1);
     while lower < upper {
-        let middle = lower.saturating_add(upper.saturating_sub(lower).saturating_add(1) / 2);
-        let candidate = content.chars().take(middle).collect::<String>();
+        let kept = lower.saturating_add(upper.saturating_sub(lower).saturating_add(1) / 2);
+        let head_len = kept / 2;
+        let tail_len = kept.saturating_sub(head_len);
+        let candidate = format!(
+            "{}{}{}",
+            content.chars().take(head_len).collect::<String>(),
+            elision,
+            content
+                .chars()
+                .skip(char_count.saturating_sub(tail_len))
+                .collect::<String>()
+        );
         if crate::ai_runtime::text_support::estimate_tokens(&candidate) <= budget as usize {
-            lower = middle;
+            lower = kept;
         } else {
-            upper = middle.saturating_sub(1);
+            upper = kept.saturating_sub(1);
         }
     }
-    content.chars().take(lower.max(1)).collect()
+    let head_len = lower / 2;
+    let tail_len = lower.saturating_sub(head_len);
+    format!(
+        "{}{}{}",
+        content.chars().take(head_len).collect::<String>(),
+        elision,
+        content
+            .chars()
+            .skip(char_count.saturating_sub(tail_len))
+            .collect::<String>()
+    )
 }
 
 fn is_coherent_conversation_pair(
@@ -465,6 +524,7 @@ mod history_selection_tests {
             local_retrieval_packets: Vec::new(),
             recent_messages,
             conversation_memory: None,
+            conversation_history_coverage_incomplete: false,
             prompt_profile: PromptProfile::default(),
             previous_run_summary: None,
             interrupted_assistant_continue: false,
@@ -496,6 +556,32 @@ mod history_selection_tests {
         assert_eq!(selected.len(), 2, "history may not skip an older gap");
         assert_eq!(selected[0].turn_id.as_deref(), Some("newest"));
         assert!(is_coherent_conversation_pair(&selected[0], &selected[1]));
+    }
+
+    #[test]
+    fn oversized_history_projection_keeps_the_latest_correction_visible() {
+        let content = format!(
+            "{}最新更正：只回答已核实的当前信息。",
+            "早期背景。".repeat(20_000)
+        );
+        let projected = truncate_history_content_to_token_budget(&content, 128);
+
+        assert!(projected.contains("[历史内容已省略]"));
+        assert!(projected.contains("最新更正：只回答已核实的当前信息。"));
+        assert!(
+            crate::ai_runtime::text_support::estimate_tokens(&projected) <= 128,
+            "the visible projection must remain inside its frozen token budget"
+        );
+    }
+
+    #[test]
+    fn oversized_history_projection_never_exceeds_a_tiny_budget() {
+        let projected = truncate_history_content_to_token_budget(&"早期背景。".repeat(200), 2);
+
+        assert!(
+            crate::ai_runtime::text_support::estimate_tokens(&projected) <= 2,
+            "an omission marker must not silently overrun the frozen budget"
+        );
     }
 
     #[test]
@@ -543,6 +629,53 @@ mod history_selection_tests {
             "provider-facing history must stay inside the frozen 8k token budget"
         );
     }
+
+    #[test]
+    fn partial_memory_marks_an_omitted_middle_range_for_the_model() {
+        let memory = ConversationMemory {
+            id: 1,
+            session_id: 1,
+            seq_start: 1,
+            seq_end: 4,
+            content_hash: "covered".into(),
+            goal_summary: "早期目标".into(),
+            preference_summary: String::new(),
+            decision_summary: String::new(),
+            open_threads_summary: String::new(),
+            created_at: "2026-09-05T00:00:00Z".into(),
+            updated_at: "2026-09-05T00:00:00Z".into(),
+        };
+        let recent = pair(11, "recent", 10);
+        assert!(history_coverage_is_incomplete(Some(&memory), &recent));
+
+        let mut context = context_with_history(recent);
+        context.conversation_memory = Some(memory);
+        context.conversation_history_coverage_incomplete = true;
+        let messages =
+            context.messages_with_context_material_plan(&context.context_material_plan());
+        assert!(messages[0].content.text_content().contains("历史覆盖边界"));
+    }
+
+    #[test]
+    fn contiguous_memory_and_recent_history_do_not_claim_a_gap() {
+        let memory = ConversationMemory {
+            id: 1,
+            session_id: 1,
+            seq_start: 1,
+            seq_end: 4,
+            content_hash: "covered".into(),
+            goal_summary: String::new(),
+            preference_summary: String::new(),
+            decision_summary: String::new(),
+            open_threads_summary: String::new(),
+            created_at: "2026-09-05T00:00:00Z".into(),
+            updated_at: "2026-09-05T00:00:00Z".into(),
+        };
+        assert!(!history_coverage_is_incomplete(
+            Some(&memory),
+            &pair(5, "recent", 10)
+        ));
+    }
 }
 
 impl RunContextAssembler {
@@ -579,6 +712,8 @@ impl RunContextAssembler {
             )?;
         let recent_messages = select_bounded_recent_history(recent_message_candidates);
         let conversation_memory = ConversationMemory::validated_for_session(db, input.session_id)?;
+        let conversation_history_coverage_incomplete =
+            history_coverage_is_incomplete(conversation_memory.as_ref(), &recent_messages);
         // v2 Runs must retain the identity configuration accepted with their
         // user turn. Legacy rows have no snapshot and remain read-compatible.
         let prompt_profile = input
@@ -763,6 +898,7 @@ impl RunContextAssembler {
             local_retrieval_packets,
             recent_messages,
             conversation_memory,
+            conversation_history_coverage_incomplete,
             prompt_profile,
             previous_run_summary,
             interrupted_assistant_continue,

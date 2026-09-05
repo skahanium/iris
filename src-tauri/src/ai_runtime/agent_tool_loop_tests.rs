@@ -120,7 +120,7 @@ async fn post_confirmation_loop_allows_only_four_local_calls_and_reserves_the_se
 }
 
 #[tokio::test]
-async fn parent_turn_reuses_one_frozen_budget_for_every_provider_call() {
+async fn parent_turn_keeps_the_frozen_ceiling_while_reserving_final_synthesis() {
     let provider = MultiTurnBudgetRecordingProvider {
         responses: Mutex::new(VecDeque::from([
             super::model_gateway::GatewayResponse {
@@ -166,22 +166,70 @@ async fn parent_turn_reuses_one_frozen_budget_for_every_provider_call() {
             &mut observer,
         )
         .await
-        .expect("two turns complete with one immutable budget");
+        .expect("two turns complete within one immutable budget policy");
 
+    let budgets = provider.budgets.lock().expect("budget lock");
+    assert_eq!(budgets.len(), 2);
+    assert_eq!(budgets[0].max_prompt_tokens, Some(128_000));
+    assert_eq!(budgets[0].max_completion_tokens, Some(12_000));
+    assert_eq!(budgets[0].max_turn_output_tokens, Some(4_000));
+    assert_eq!(budgets[1].max_prompt_tokens, Some(128_000));
+    assert!(
+        budgets[1]
+            .max_completion_tokens
+            .is_some_and(|limit| limit <= 16_000),
+        "the final turn receives only the remaining frozen completion budget"
+    );
+    assert_eq!(budgets[1].max_turn_output_tokens, Some(4_000));
+}
+
+#[tokio::test]
+async fn exploration_reserves_final_output_capacity_before_calling_the_gateway() {
+    let provider = MultiTurnBudgetRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call()),
+            scripted_final_response("final answer"),
+        ])),
+        budgets: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_model_turns = 2;
+    policy.max_completion_tokens = 6_000;
+    policy.max_turn_output_tokens = 4_000;
+    let mut observer = NoopObserver;
+
+    AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-reserved-final-output",
+            Vec::new(),
+            vec![readonly_tool_spec("system_time_now")],
+            &mut observer,
+        )
+        .await
+        .expect("the final answer has a reserved output allowance");
+
+    let budgets = provider.budgets.lock().expect("budget lock");
     assert_eq!(
-        provider.budgets.lock().expect("budget lock").as_slice(),
-        [
-            AgentModelTurnBudget {
-                max_prompt_tokens: Some(128_000),
-                max_completion_tokens: Some(16_000),
-                max_turn_output_tokens: Some(4_000),
-            },
-            AgentModelTurnBudget {
-                max_prompt_tokens: Some(128_000),
-                max_completion_tokens: Some(16_000),
-                max_turn_output_tokens: Some(4_000),
-            },
-        ]
+        budgets[0],
+        AgentModelTurnBudget {
+            max_prompt_tokens: Some(128_000),
+            max_completion_tokens: Some(2_000),
+            max_turn_output_tokens: Some(2_000),
+        }
+    );
+    assert_eq!(budgets[1].max_prompt_tokens, Some(128_000));
+    assert_eq!(budgets[1].max_turn_output_tokens, Some(4_000));
+    assert!(
+        budgets[1]
+            .max_completion_tokens
+            .is_some_and(|remaining| (4_000..=6_000).contains(&remaining)),
+        "the synthesis turn receives the actual remaining allowance without exceeding the Run cap"
     );
 }
 
@@ -359,6 +407,37 @@ async fn required_web_run_receives_host_observation_before_a_model_can_skip_tool
 }
 
 #[tokio::test]
+async fn required_web_bootstrap_is_rejected_before_dispatch_when_two_network_actions_do_not_fit() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::new()),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = BootstrapWebExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_network_tool_calls = 1;
+    let mut observer = NoopObserver;
+
+    let error = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-required-web-bootstrap-insufficient-budget",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect_err("required bootstrap must not partially dispatch when its minimum cannot fit");
+
+    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn long_conversation_model_compaction_consumes_one_hidden_turn_and_never_streams_it() {
     let db = Database::open_in_memory().expect("database");
     let session =
@@ -387,6 +466,10 @@ async fn long_conversation_model_compaction_consumes_one_hidden_turn_and_never_s
         Default::default(),
     )
     .expect("deterministic summary");
+    let prior_memory =
+        super::conversation_memory::ConversationMemory::latest_for_session(&db, session.session_id)
+            .expect("memory")
+            .expect("summary");
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
             scripted_final_response(
@@ -407,13 +490,22 @@ async fn long_conversation_model_compaction_consumes_one_hidden_turn_and_never_s
             &provider,
             &executor,
             "memory-compaction-run",
-            vec![LlmMessage {
-                role: MessageRole::User,
-                content: "继续当前任务".into(),
-                tool_call_id: None,
-                tool_calls: None,
-                reasoning_content: None,
-            }],
+            vec![
+                LlmMessage {
+                    role: MessageRole::System,
+                    content: prior_memory.to_prompt_fragment().into(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                    reasoning_content: None,
+                },
+                LlmMessage {
+                    role: MessageRole::User,
+                    content: "继续当前任务".into(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                    reasoning_content: None,
+                },
+            ],
             Vec::new(),
             &mut observer,
         )
@@ -423,12 +515,15 @@ async fn long_conversation_model_compaction_consumes_one_hidden_turn_and_never_s
     assert_eq!(outcome.content, "正常答复");
     assert_eq!(outcome.model_turns, 2);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
-    assert!(provider
-        .second_turn_messages
-        .lock()
-        .expect("messages")
-        .iter()
-        .all(|message| !message.content.text_content().contains("current goal")));
+    assert!(
+        provider
+            .second_turn_messages
+            .lock()
+            .expect("messages")
+            .iter()
+            .any(|message| message.content.text_content().contains("current goal")),
+        "the active answer must receive the same summary that compaction persisted"
+    );
     let memory = super::conversation_memory::ConversationMemory::latest_for_session(
         &executor.db,
         session.session_id,
@@ -547,6 +642,47 @@ async fn network_category_cap_rejects_the_second_dispatch_without_calling_execut
 
     assert_eq!(outcome.content, "bounded final answer");
     assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn rejected_tool_proposals_close_the_business_surface_before_the_reserved_synthesis_turn() {
+    let provider = ToolSurfaceRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "not-exposed",
+                "not_exposed",
+                serde_json::json!({}),
+            )),
+            scripted_final_response("I can answer from the available context."),
+        ])),
+        surfaces: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_model_turns = 2;
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-rejected-proposal-synthesis",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("a rejected proposal still leaves the reserved synthesis turn");
+
+    assert_eq!(outcome.content, "I can answer from the available context.");
+    assert_eq!(
+        provider.surfaces.lock().expect("tool surfaces").as_slice(),
+        [vec!["web_search".to_string()], Vec::<String>::new()]
+    );
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -1030,6 +1166,8 @@ struct BootstrapWebExecutor {
     calls: AtomicU32,
 }
 
+struct BootstrapWithoutEvidenceExecutor;
+
 struct MemoryCompactingExecutor {
     db: Database,
     session_id: i64,
@@ -1058,7 +1196,7 @@ impl ToolLoopExecutor for MemoryCompactingExecutor {
         &self,
         request: &super::conversation_memory::ConversationMemoryCompactionRequest,
         output: Option<&str>,
-    ) -> AppResult<()> {
+    ) -> AppResult<Option<super::conversation_memory::ConversationMemory>> {
         super::conversation_memory::ConversationMemory::apply_model_compaction(
             &self.db, request, output,
         )
@@ -1066,6 +1204,10 @@ impl ToolLoopExecutor for MemoryCompactingExecutor {
 }
 
 impl ToolLoopExecutor for BootstrapWebExecutor {
+    fn required_web_bootstrap_action_count(&self) -> u32 {
+        2
+    }
+
     fn execute<'a>(
         &'a self,
         _run_id: &'a str,
@@ -1095,6 +1237,46 @@ impl ToolLoopExecutor for BootstrapWebExecutor {
                 tool_calls: 2,
                 network_tool_calls: 2,
                 observation: "Host Web observation: searched original request and fetched two selected bodies.".into(),
+            }))
+        })
+    }
+}
+
+impl ToolLoopExecutor for BootstrapWithoutEvidenceExecutor {
+    fn required_web_bootstrap_action_count(&self) -> u32 {
+        2
+    }
+
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("the test supplies the Host bootstrap directly") })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+
+    fn has_web_evidence(&self) -> bool {
+        false
+    }
+
+    fn bootstrap_required_web_observation<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _remaining_tool_calls: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<Option<RequiredWebBootstrapObservation>>> + Send + 'a>>
+    {
+        Box::pin(async {
+            Ok(Some(RequiredWebBootstrapObservation {
+                tool_calls: 2,
+                network_tool_calls: 2,
+                observation:
+                    "Host searched and fetched, but neither selected page supplied a usable body."
+                        .into(),
             }))
         })
     }
@@ -2784,6 +2966,37 @@ async fn web_required_accepts_a_natural_clarification_before_any_tool_dispatch()
 }
 
 #[tokio::test]
+async fn web_required_accepts_a_natural_clarification_after_host_bootstrap() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([scripted_final_response(
+            "为了缩小范围，请告诉我你更关心哪一类信息？",
+        )])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &BootstrapWithoutEvidenceExecutor,
+            "run-required-web-bootstrap-clarification",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("necessary clarification must remain available after Host observation");
+
+    assert_eq!(
+        outcome.content,
+        "为了缩小范围，请告诉我你更关心哪一类信息？"
+    );
+    assert_eq!(outcome.tool_calls, 2);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn external_required_repairs_then_limits_an_answer_without_registered_evidence() {
     let unverified = || super::model_gateway::GatewayResponse {
         content: Some("unverified external answer".into()),
@@ -3111,6 +3324,57 @@ async fn oversized_web_tool_results_fail_closed_with_valid_json() {
 }
 
 #[tokio::test]
+async fn oversized_web_fetch_results_fail_closed_with_valid_json() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "call-web-fetch",
+                "web_fetch",
+                serde_json::json!({"urls":["https://example.test/article"]}),
+            )),
+            scripted_final_response("I cannot verify this from the returned evidence."),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    standard_tool_loop()
+        .execute(
+            &provider,
+            &OversizedWebResultExecutor,
+            "run-web-fetch-result-overflow",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "web_fetch".into(),
+                description: "Fetch selected Web pages".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::Network,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("overflow is presented as a valid failed fetch result");
+
+    let messages = provider
+        .second_turn_messages
+        .lock()
+        .expect("second turn messages lock");
+    let tool_payload = messages
+        .iter()
+        .find(|message| matches!(message.role, MessageRole::Tool))
+        .expect("tool result")
+        .content
+        .text_content();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&tool_payload).expect("web_fetch overflow must remain valid JSON");
+    assert_eq!(parsed["success"], false);
+    assert_eq!(parsed["error"], "web_evidence_pack_overflow");
+}
+
+#[tokio::test]
 async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
@@ -3252,9 +3516,10 @@ async fn child_policy_reaches_every_provider_turn_with_gateway_token_limits() {
         provider.budgets.lock().expect("budget lock").as_slice(),
         [AgentModelTurnBudget {
             max_prompt_tokens: Some(2_000),
-            max_completion_tokens: Some(2_048),
+            max_completion_tokens: Some(1_024),
             max_turn_output_tokens: Some(1_024),
-        }]
+        }],
+        "the child keeps one output-sized synthesis reserve rather than spending all completion capacity on exploration"
     );
 }
 

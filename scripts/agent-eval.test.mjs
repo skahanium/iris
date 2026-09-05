@@ -371,6 +371,7 @@ test("product quality rejects legacy v2 live reports even when their counters lo
       telemetry: {
         modelTurns: caseId === 1 ? 1 : 3,
         toolCalls: caseId === 1 ? 0 : 2,
+        webToolCalls: caseId === 1 ? 0 : 2,
       },
     })),
   });
@@ -407,9 +408,9 @@ test("product quality rejects legacy v2 live reports even when their counters lo
   );
 });
 
-test("product quality accepts only v3 trace reports that are bound to human review packets", () => {
+test("product quality accepts only v4 trace reports that are bound to human review packets", () => {
   const report = (routeCommitment, routeLabel, packetHash) => ({
-    schemaVersion: "agent-live-pilot-v3",
+    schemaVersion: "agent-live-pilot-v4",
     routeCommitment,
     routeLabel,
     campaignId:
@@ -423,8 +424,8 @@ test("product quality accepts only v3 trace reports that are bound to human revi
     reviewPacketSha256: packetHash,
     campaignBudget: {
       maxRuns: 12,
-      maxModelTurns: 48,
-      maxWebToolCalls: 36,
+      maxModelTurns: 96,
+      maxWebToolCalls: 72,
       observedRuns: 12,
       observedModelTurns: 32,
       observedWebToolCalls: 20,
@@ -445,6 +446,7 @@ test("product quality accepts only v3 trace reports that are bound to human revi
       telemetry: {
         modelTurns: caseId === 1 ? 1 : 3,
         toolCalls: caseId === 1 ? 0 : 2,
+        webToolCalls: caseId === 1 ? 0 : 2,
       },
     })),
   });

@@ -320,12 +320,13 @@ fn live_v3_trace_report_is_semantic_review_pending_not_a_404_fact_oracle() {
                 "telemetry": {
                     "modelTurns": if case_id == 1 { 1 } else { 3 },
                     "toolCalls": if case_id == 1 { 0 } else { 2 },
+                    "webToolCalls": if case_id == 1 { 0 } else { 2 },
                 },
             })
         })
         .collect::<Vec<_>>();
     let report = serde_json::json!({
-        "schemaVersion": "agent-live-pilot-v3",
+        "schemaVersion": "agent-live-pilot-v4",
         "routeCommitment": format!("route-{}", "1".repeat(64)),
         "routeLabel": "Route A",
         "campaignId": format!("campaign-{}", "a".repeat(64)),
@@ -338,8 +339,8 @@ fn live_v3_trace_report_is_semantic_review_pending_not_a_404_fact_oracle() {
         "reviewPacketSha256": "b".repeat(64),
         "campaignBudget": {
             "maxRuns": 12,
-            "maxModelTurns": 48,
-            "maxWebToolCalls": 36,
+            "maxModelTurns": 96,
+            "maxWebToolCalls": 72,
             "observedRuns": 12,
             "observedModelTurns": 24,
             "observedWebToolCalls": 12,
@@ -392,7 +393,7 @@ async fn live_v3_review_packet_is_hash_bound_before_the_trace_is_attested() {
     let observed_web_tool_calls = result
         .cases
         .iter()
-        .map(|case| case.telemetry.tool_calls)
+        .map(|case| case.telemetry.web_tool_calls)
         .sum();
     let trace = super::agent_capacity_eval::live_trace_result_from_pilot(
         &result,
@@ -401,8 +402,8 @@ async fn live_v3_review_packet_is_hash_bound_before_the_trace_is_attested() {
         packet_hash,
         super::agent_capacity_eval::LiveCampaignBudget {
             max_runs: 12,
-            max_model_turns: 48,
-            max_web_tool_calls: 36,
+            max_model_turns: 96,
+            max_web_tool_calls: 72,
             observed_runs: 12,
             observed_model_turns,
             observed_web_tool_calls,
@@ -434,7 +435,7 @@ async fn live_v3_review_packet_is_hash_bound_before_the_trace_is_attested() {
     let packet_hash = super::agent_capacity_eval::write_live_review_packet(&packet_path, &packet)
         .expect("restore packet for failed trace");
     let mut invalid_trace = trace.clone();
-    invalid_trace.set_observed_web_tool_calls_for_test(37);
+    invalid_trace.set_observed_web_tool_calls_for_test(73);
     assert_eq!(
         super::agent_capacity_eval::write_attested_live_trace_result(
             &output,
@@ -514,8 +515,8 @@ async fn two_route_canary_shape_writes_review_and_trace_artifacts_before_validat
         packet_hash,
         super::agent_capacity_eval::LiveCampaignBudget {
             max_runs: 4,
-            max_model_turns: 16,
-            max_web_tool_calls: 12,
+            max_model_turns: 32,
+            max_web_tool_calls: 24,
             observed_runs: 4,
             observed_model_turns: result
                 .cases
@@ -525,7 +526,7 @@ async fn two_route_canary_shape_writes_review_and_trace_artifacts_before_validat
             observed_web_tool_calls: result
                 .cases
                 .iter()
-                .map(|case| case.telemetry.tool_calls)
+                .map(|case| case.telemetry.web_tool_calls)
                 .sum(),
         },
     );
@@ -2442,7 +2443,7 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
         },
         23,
     );
-    telemetry.record_executed_tool_call();
+    telemetry.record_executed_tool_call("read_note");
     telemetry.record_truncation(TruncationOutcome::ToolResultTruncated);
     telemetry.record_budget(BudgetOutcome::OutputBudgetReached);
 
@@ -2451,6 +2452,7 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
 
     assert_eq!(snapshot.model_turns(), 1);
     assert_eq!(snapshot.tool_calls(), 1);
+    assert_eq!(snapshot.web_tool_calls(), 0);
     assert_eq!(snapshot.total_tokens(), 18);
     assert_eq!(snapshot.first_visible_token_ms(), Some(23));
     assert_eq!(snapshot.total_model_time_ms(), 31);
@@ -4511,6 +4513,7 @@ async fn approved_live_pilot_executes_the_interaction_matrix_with_task2_local_do
                 "toolCalls",
                 "totalModelTimeMs",
                 "truncations",
+                "webToolCalls",
             ]
         );
         assert!(

@@ -416,6 +416,30 @@ impl RunBudgetPolicy {
         Self::for_profile(profile)
     }
 
+    /// Freeze the only additional Direct shape admitted for a conversation
+    /// whose committed history has crossed the bounded short-term window.
+    ///
+    /// This is still a Direct, zero-tool Run. It reuses the existing Standard
+    /// token envelope only to pay for one bounded no-tool memory compression
+    /// followed by the actual answer; it cannot gain a tool, ChildRun or
+    /// confirmation capability at execution time.
+    pub(crate) fn for_accepted_envelope(
+        envelope: &ExecutionEnvelope,
+        requires_memory_compaction: bool,
+    ) -> Self {
+        if envelope.effort == Effort::Direct && requires_memory_compaction {
+            Self::direct_memory_compaction()
+        } else {
+            Self::for_envelope(envelope)
+        }
+    }
+
+    /// Return whether this is the strictly recognized two-turn, zero-tool
+    /// Direct memory shape rather than an arbitrary expanded Direct policy.
+    pub(crate) fn is_direct_memory_compaction_shape(&self) -> bool {
+        *self == Self::direct_memory_compaction()
+    }
+
     /// Standard bounded policy for isolated evaluation harnesses without an accepted Run row.
     #[cfg(test)]
     pub(crate) fn standard() -> Self {
@@ -509,6 +533,26 @@ impl RunBudgetPolicy {
                 post_confirmation_max_local_tool_calls: 4,
             },
         }
+    }
+
+    fn direct_memory_compaction() -> Self {
+        let mut policy = Self::for_profile(RunBudgetProfile::Standard);
+        policy.profile = RunBudgetProfile::Direct;
+        policy.max_model_turns = 2;
+        policy.max_tool_calls = 0;
+        policy.max_local_tool_calls = 0;
+        policy.max_network_tool_calls = 0;
+        policy.max_external_read_tool_calls = 0;
+        policy.max_runtime_tool_calls = 0;
+        policy.max_confirmed_change_calls = 0;
+        policy.max_child_runs = 0;
+        policy.child_max_model_turns = 0;
+        policy.child_max_tool_calls = 0;
+        policy.child_input_tokens_per_turn = 0;
+        policy.child_output_tokens_per_turn = 0;
+        policy.post_confirmation_max_model_turns = 0;
+        policy.post_confirmation_max_local_tool_calls = 0;
+        policy
     }
 }
 
@@ -1533,6 +1577,10 @@ pub enum SafeRunErrorCode {
     /// A required persistence operation failed safely.
     #[serde(rename = "agent_run_persistence_failed")]
     PersistenceFailed,
+    /// The Host reached an unexpected execution state that is neither a
+    /// provider, permission nor persistence failure.
+    #[serde(rename = "agent_run_internal_execution_failed")]
+    InternalExecutionFailed,
     /// The Run was cancelled before completion.
     #[serde(rename = "agent_run_cancelled")]
     Cancelled,
@@ -1651,17 +1699,23 @@ impl std::fmt::Display for SafeRunErrorCode {
 
 impl SafeRunErrorCode {
     /// Extract the stable run error code carried by an `AppError`, when its
-    /// message is a known wire code; otherwise the persistence fallback is
+    /// message is a known wire code; otherwise an internal-execution fallback is
     /// returned. This is the single typed entry point replacing inline
     /// string-round-trip deserialization at call sites.
     pub(crate) fn from_app_error(error: &crate::error::AppError) -> Self {
         match error {
             crate::error::AppError::Message(message) => {
                 serde_json::from_value::<Self>(serde_json::Value::String(message.clone()))
-                    .unwrap_or(Self::PersistenceFailed)
+                    .unwrap_or(Self::InternalExecutionFailed)
             }
             crate::error::AppError::Run(code) => *code,
-            _ => Self::PersistenceFailed,
+            crate::error::AppError::Provider { kind, .. } => match kind {
+                crate::error::ProviderErrorKind::Timeout => Self::ProviderTimeout,
+                crate::error::ProviderErrorKind::Cancelled => Self::Cancelled,
+                _ => Self::ProviderUnavailable,
+            },
+            crate::error::AppError::Db(_) => Self::PersistenceFailed,
+            _ => Self::InternalExecutionFailed,
         }
     }
 
@@ -1696,6 +1750,7 @@ impl SafeRunErrorCode {
             Self::WebEvidenceInvalid => "agent_run_web_evidence_invalid",
             Self::WebVerificationRequired => "agent_run_web_verification_required",
             Self::PersistenceFailed => "agent_run_persistence_failed",
+            Self::InternalExecutionFailed => "agent_run_internal_execution_failed",
             Self::Cancelled => "agent_run_cancelled",
             Self::ClassifiedContextRequired => "agent_run_classified_context_required",
             Self::ClassifiedContextExpired => "agent_run_classified_context_expired",
@@ -1861,17 +1916,17 @@ mod tests {
     }
 
     #[test]
-    fn from_app_error_falls_back_for_unknown_or_typed_errors() {
+    fn from_app_error_preserves_provider_failures_and_uses_internal_fallbacks() {
         let unknown = AppError::msg("some unclassified failure");
         assert_eq!(
             SafeRunErrorCode::from_app_error(&unknown),
-            SafeRunErrorCode::PersistenceFailed
+            SafeRunErrorCode::InternalExecutionFailed
         );
 
         let structured = AppError::provider(ProviderErrorKind::Timeout, "upstream timeout");
         assert_eq!(
             SafeRunErrorCode::from_app_error(&structured),
-            SafeRunErrorCode::PersistenceFailed
+            SafeRunErrorCode::ProviderTimeout
         );
     }
 }

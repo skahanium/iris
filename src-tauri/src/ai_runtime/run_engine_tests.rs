@@ -707,6 +707,49 @@ async fn direct_streaming_enforces_the_frozen_run_budget_when_usage_is_missing_a
     }
 }
 
+#[tokio::test]
+async fn evaluation_direct_run_forwards_the_same_effective_budget_to_the_gateway() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, standard_tool_loop_request()).expect("accepted");
+    let sink = RecordingSink::default();
+    let telemetry = EvaluationTelemetryTap::default();
+    let mut effective = AgentRunRepository::budget_policy_for_session(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("stored policy")
+    .expect("policy");
+    effective.max_completion_tokens = 64;
+    effective.max_turn_output_tokens = 32;
+    let provider = MissingUsageStreamingProvider {
+        content: "已按评测预算完成。".to_string(),
+        budgets: std::sync::Mutex::new(Vec::new()),
+    };
+
+    RunEngine::execute_direct_streaming_with_eval_telemetry_and_policy(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+        &telemetry,
+        effective.clone(),
+    )
+    .await
+    .expect("evaluation direct run");
+
+    assert_eq!(
+        provider.budgets.lock().expect("budget lock").as_slice(),
+        [crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
+            max_prompt_tokens: Some(effective.max_prompt_tokens),
+            max_completion_tokens: Some(64),
+            max_turn_output_tokens: Some(32),
+        }],
+        "evaluation may tighten a Run, but the Gateway must receive that same effective policy"
+    );
+}
+
 #[test]
 fn direct_engine_strips_a_model_authored_source_appendix_before_persistence() {
     let db = Database::open_in_memory().expect("database");
@@ -1341,7 +1384,10 @@ fn background_failure_guard_terminalizes_a_running_run_without_exposing_its_caus
     let failed =
         serde_json::to_value(replay.events.last().expect("failed")).expect("serialize failed");
     assert_eq!(replay.run.state, RunState::Failed);
-    assert_eq!(failed["payload"]["code"], "agent_run_persistence_failed");
+    assert_eq!(
+        failed["payload"]["code"],
+        "agent_run_internal_execution_failed"
+    );
     assert!(!failed.to_string().contains("unexpected orchestration"));
 }
 
@@ -4241,7 +4287,11 @@ async fn streaming_provider_failure_persists_a_safe_failed_terminal_event() {
     .await
     .expect_err("provider failure");
 
-    assert_eq!(error.to_string(), "agent_run_provider_unavailable");
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::InternalExecutionFailed.as_str(),
+        "an unclassified Host error must not masquerade as a provider outage"
+    );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run exists");

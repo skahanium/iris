@@ -7,6 +7,7 @@ use super::agent_capacity_eval::{
 use super::agent_evidence_repository::AgentEvidenceRepository;
 use super::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
 use super::agent_tool_loop::ToolLoopExecutor;
+use super::conversation_memory::ConversationMemory;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
@@ -1781,7 +1782,7 @@ async fn evaluation_headless_entry_observes_the_real_normal_service_direct_path(
         response.run.state,
         RunState::Completed,
         "terminal payload: {:?}",
-        response.events.last().map(|event| event.payload())
+        response.events.last().map(|event| event.payload()),
     );
     let calls = tokio::time::timeout(std::time::Duration::from_secs(2), llm.finish())
         .await
@@ -1791,4 +1792,97 @@ async fn evaluation_headless_entry_observes_the_real_normal_service_direct_path(
     assert_eq!(calls.len(), 1);
     assert_eq!(snapshot.model_turns(), 1);
     assert_eq!(snapshot.final_output_successes(), 1);
+}
+
+#[tokio::test]
+async fn long_direct_conversation_uses_one_no_tool_compaction_then_answers_from_the_updated_summary(
+) {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let session = NormalSessionRepository::create(&state.db).expect("session");
+    state
+        .db
+        .with_conn(|conn| {
+            for seq in 1..=26_i64 {
+                conn.execute(
+                    "INSERT INTO session_messages (session_id, seq, role, content, created_at, turn_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("history-{seq}"),
+                        format!("2026-09-05T00:06:{seq:02}Z"),
+                        format!("history-turn-{}", (seq + 1) / 2),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed history");
+    ConversationMemory::refresh_for_session(&state.db, session.session_id, Default::default())
+        .expect("fallback memory");
+
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"goal_summary\\\":\\\"current-direct-goal\\\",\\\"preference_summary\\\":\\\"latest correction\\\",\\\"decision_summary\\\":\\\"confirmed\\\",\\\"open_threads_summary\\\":\\\"next\\\"}\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"来自更新摘要的正常答复\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "long-direct-model");
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "long-direct-memory-run".into();
+    request.session = Some(AssistantSessionRef {
+        domain: SecurityDomain::Normal,
+        session_key: session.session_key.clone(),
+    });
+    request.turn.message = "请承接此前目标并回答。".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
+    RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("long Direct context must assemble before provider dispatch");
+
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "terminal payload: {:?}",
+        response.events.last().map(|event| event.payload()),
+    );
+
+    let calls = tokio::time::timeout(Duration::from_secs(2), llm.finish())
+        .await
+        .expect("LLM double must complete")
+        .expect("LLM double completion");
+    assert_eq!(calls.len(), 2, "one compaction turn plus one answer turn");
+    let second_messages = calls[1].body["messages"]
+        .as_array()
+        .expect("second request messages");
+    assert!(second_messages.iter().any(|message| {
+        message
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|content| content.contains("current-direct-goal"))
+    }));
+    let budget = AgentRunRepository::budget_policy_for_session(
+        &state.db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("budget")
+    .expect("policy");
+    assert!(budget.is_direct_memory_compaction_shape());
 }
