@@ -5172,10 +5172,21 @@ fn validate_serialized_live_trace_result_v3(
             "cases",
         ],
     )?;
-    live_pilot_exact_string(
-        root.get("schemaVersion"),
-        &["agent-live-pilot-v3", "agent-live-pilot-v4"],
-    )?;
+    let schema_version = root
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?;
+    if !matches!(
+        schema_version,
+        "agent-live-pilot-v3" | "agent-live-pilot-v4"
+    ) {
+        return Err(EvalContractError::new("live_pilot_value_invalid"));
+    }
+    // v3 remains readable strictly as a historical diagnostic artifact. It
+    // predates the split between all dispatched tools and logical Web actions,
+    // so it must not be forced to fabricate the v4 field or enter the v4
+    // product gate.
+    let uses_v4_web_action_telemetry = schema_version == "agent-live-pilot-v4";
     validate_live_trace_identifier(root.get("routeCommitment"), "route-", 64)?;
     live_pilot_exact_string(root.get("routeLabel"), &["Route A", "Route B"])?;
     validate_live_trace_identifier(root.get("campaignId"), "campaign-", 64)?;
@@ -5199,6 +5210,7 @@ fn validate_serialized_live_trace_result_v3(
     let campaign_budget = validate_live_trace_campaign_budget(
         root.get("campaignBudget")
             .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?,
+        uses_v4_web_action_telemetry,
     )?;
     let cases = root
         .get("cases")
@@ -5218,7 +5230,7 @@ fn validate_serialized_live_trace_result_v3(
     let mut observed_web_tool_calls = 0_u64;
     for case in cases {
         let (case_id, completed, passed, model_turns, web_tool_calls) =
-            validate_live_trace_case_v3(case)?;
+            validate_live_trace_case_v3(case, uses_v4_web_action_telemetry)?;
         if !expected.contains(&case_id) || !seen.insert(case_id) {
             return Err(EvalContractError::new("live_pilot_case_set_invalid"));
         }
@@ -5281,6 +5293,7 @@ fn validate_live_trace_hash(value: Option<&serde_json::Value>) -> Result<(), Eva
 #[cfg(test)]
 fn validate_live_trace_campaign_budget(
     value: &serde_json::Value,
+    uses_v4_web_action_telemetry: bool,
 ) -> Result<(u64, u64, u64), EvalContractError> {
     let budget = live_pilot_exact_object(
         value,
@@ -5294,12 +5307,20 @@ fn validate_live_trace_campaign_budget(
         ],
     )?;
     let max_runs = live_pilot_bounded_u64(budget.get("maxRuns"), 12)?;
-    let max_model_turns = live_pilot_bounded_u64(budget.get("maxModelTurns"), 96)?;
-    let max_web_tool_calls = live_pilot_bounded_u64(budget.get("maxWebToolCalls"), 72)?;
-    if !matches!(
-        (max_runs, max_model_turns, max_web_tool_calls),
-        (4, 32, 24) | (12, 96, 72)
-    ) {
+    let max_model_turns = live_pilot_bounded_u64(
+        budget.get("maxModelTurns"),
+        if uses_v4_web_action_telemetry { 96 } else { 48 },
+    )?;
+    let max_web_tool_calls = live_pilot_bounded_u64(
+        budget.get("maxWebToolCalls"),
+        if uses_v4_web_action_telemetry { 72 } else { 36 },
+    )?;
+    let allowed_budgets = if uses_v4_web_action_telemetry {
+        &[(4, 32, 24), (12, 96, 72)][..]
+    } else {
+        &[(4, 16, 12), (12, 48, 36)][..]
+    };
+    if !allowed_budgets.contains(&(max_runs, max_model_turns, max_web_tool_calls)) {
         return Err(EvalContractError::new("live_pilot_value_invalid"));
     }
     let observed_runs = live_pilot_bounded_u64(budget.get("observedRuns"), u64::MAX)?;
@@ -5318,6 +5339,7 @@ fn validate_live_trace_campaign_budget(
 #[cfg(test)]
 fn validate_live_trace_case_v3(
     value: &serde_json::Value,
+    uses_v4_web_action_telemetry: bool,
 ) -> Result<(u32, bool, bool, u64, u64), EvalContractError> {
     let case = live_pilot_exact_object(
         value,
@@ -5362,14 +5384,26 @@ fn validate_live_trace_case_v3(
     for key in ["searchFetchTrace", "runLocalSources", "citationBinding"] {
         live_pilot_exact_string(mechanical.get(key), &["pass", "fail", "not_applicable"])?;
     }
+    let telemetry_fields = if uses_v4_web_action_telemetry {
+        &["modelTurns", "toolCalls", "webToolCalls"][..]
+    } else {
+        &["modelTurns", "toolCalls"][..]
+    };
     let telemetry = live_pilot_exact_object(
         case.get("telemetry")
             .ok_or_else(|| EvalContractError::new("live_pilot_shape_invalid"))?,
-        &["modelTurns", "toolCalls", "webToolCalls"],
+        telemetry_fields,
     )?;
     let model_turns = live_pilot_bounded_u64(telemetry.get("modelTurns"), 8)?;
-    let _tool_calls = live_pilot_bounded_u64(telemetry.get("toolCalls"), 24)?;
-    let web_tool_calls = live_pilot_bounded_u64(telemetry.get("webToolCalls"), 24)?;
+    let tool_calls = live_pilot_bounded_u64(telemetry.get("toolCalls"), 24)?;
+    let web_tool_calls = if uses_v4_web_action_telemetry {
+        live_pilot_bounded_u64(telemetry.get("webToolCalls"), 24)?
+    } else {
+        // v3 only recorded aggregate tool dispatches. Preserve its original
+        // budget semantics for diagnostic validation; never reinterpret it as
+        // v4-quality proof.
+        tool_calls
+    };
     let completed = mechanical
         .get("terminal")
         .and_then(serde_json::Value::as_str)

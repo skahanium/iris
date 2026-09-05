@@ -10,6 +10,9 @@ use std::pin::Pin;
 
 use crate::ai_runtime::final_answer_submission::{FinalAnswerSubmission, FINAL_ANSWER_TOOL_NAME};
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
+use crate::ai_runtime::run_context::{
+    conversation_memory_prompt_fragment, CONVERSATION_HISTORY_COVERAGE_WARNING,
+};
 use crate::ai_runtime::run_contract::RunBudgetPolicy;
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::run_engine::RunEventSink;
@@ -46,9 +49,10 @@ pub(crate) fn parent_run_id_for_provider_scope(run_id: &str) -> &str {
 
 /// Return whether a model response is a narrowly shaped, non-factual
 /// clarification rather than an answer that could evade a required-evidence
-/// contract. The host only accepts this before any tool dispatch and only as a
-/// single, source-free question; all other WebRequired output still needs
-/// current-Run evidence.
+/// contract. The host accepts it as a single, source-free question even after
+/// a bounded Host bootstrap: a search cannot supply a user constraint that is
+/// genuinely missing. All other WebRequired output still needs current-Run
+/// evidence.
 pub(crate) fn is_natural_clarification(content: &str) -> bool {
     let question = content.trim();
     let question_count = question
@@ -239,6 +243,18 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         _output: Option<&str>,
     ) -> AppResult<Option<crate::ai_runtime::conversation_memory::ConversationMemory>> {
         Ok(None)
+    }
+
+    /// Re-evaluate whether the exact short-term history selected for this Run
+    /// still leaves an uncovered range after a successful compaction. Generic
+    /// executors have no session context and therefore conservatively report
+    /// a complete block; the normal executor overrides this with its frozen
+    /// context snapshot.
+    fn conversation_history_coverage_is_incomplete(
+        &self,
+        _memory: &crate::ai_runtime::conversation_memory::ConversationMemory,
+    ) -> bool {
+        false
     }
 
     /// Persist one complete confirmation-bound change set. The default rejects
@@ -596,7 +612,11 @@ impl AgentToolLoop {
                         replace_conversation_memory_in_current_messages(
                             &mut messages,
                             compaction.prior_prompt_fragment(),
-                            &updated_memory.to_prompt_fragment(),
+                            &conversation_memory_prompt_fragment(
+                                &updated_memory,
+                                executor
+                                    .conversation_history_coverage_is_incomplete(&updated_memory),
+                            ),
                         );
                     }
                     Ok(None) => {}
@@ -1542,7 +1562,10 @@ fn replace_conversation_memory_in_current_messages(
     let Some(content) = system_message.content.as_mut_str() else {
         return;
     };
-    if content.contains(prior_fragment) {
+    let prior_block = format!("{prior_fragment}{CONVERSATION_HISTORY_COVERAGE_WARNING}");
+    if content.contains(&prior_block) {
+        *content = content.replacen(&prior_block, updated_fragment, 1);
+    } else if content.contains(prior_fragment) {
         *content = content.replacen(prior_fragment, updated_fragment, 1);
     }
 }

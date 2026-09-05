@@ -38,6 +38,10 @@ const MAX_TOTAL_MATERIAL_CHARS: usize = 32_000;
 const RECENT_CONVERSATION_CANDIDATE_LIMIT: u32 = 24;
 pub(crate) const MAX_RECENT_CONVERSATION_PAIRS: usize = 12;
 const MAX_RECENT_CONVERSATION_TOKENS: u32 = 8_000;
+/// A memory summary can cover only a verified prefix of an oversized history.
+/// Keep the corresponding Provider warning in one shared rendering contract so
+/// a successful in-Run compaction can replace the whole memory block safely.
+pub(crate) const CONVERSATION_HISTORY_COVERAGE_WARNING: &str = "\n\n历史覆盖边界：持久记忆与最近对话之间仍有一段历史未能在一次压缩中完整纳入。不要推断该区间中的事实、承诺或结论；若当前问题依赖它，请提出聚焦澄清。";
 
 /// Read-only RunSituation projection consumed by the production executor.
 ///
@@ -189,18 +193,11 @@ impl RunContext {
     }
 
     fn compile_prompt(&self, plan: &ContextMaterialPlan, activated_skills: &str) -> CompiledPrompt {
-        let conversation_memory = self
-            .conversation_memory
-            .as_ref()
-            .map(ConversationMemory::to_prompt_fragment);
-        let conversation_memory = conversation_memory.map(|fragment| {
-            if self.conversation_history_coverage_incomplete {
-                format!(
-                    "{fragment}\n\n历史覆盖边界：持久记忆与最近对话之间仍有一段历史未能在一次压缩中完整纳入。不要推断该区间中的事实、承诺或结论；若当前问题依赖它，请提出聚焦澄清。"
-                )
-            } else {
-                fragment
-            }
+        let conversation_memory = self.conversation_memory.as_ref().map(|memory| {
+            conversation_memory_prompt_fragment(
+                memory,
+                self.conversation_history_coverage_incomplete,
+            )
         });
         PromptContractV3::compile(
             &self.system_prompt(),
@@ -329,7 +326,7 @@ fn select_bounded_recent_history(
 /// middle of a long session appear to be present in the Provider context.
 /// The selected recent history is already the exact post-token-budget view,
 /// so its first sequence number is the only safe boundary to compare.
-fn history_coverage_is_incomplete(
+pub(crate) fn history_coverage_is_incomplete(
     memory: Option<&ConversationMemory>,
     recent_messages: &[NormalSessionMessage],
 ) -> bool {
@@ -340,6 +337,22 @@ fn history_coverage_is_incomplete(
         return false;
     };
     memory.seq_end.saturating_add(1) < first_recent.seq
+}
+
+/// Render the complete durable-memory block seen by the Provider for one
+/// context snapshot. The warning belongs to the block rather than to a later
+/// ad-hoc prompt append so an in-Run compaction can atomically replace stale
+/// coverage information before the answer turn.
+pub(crate) fn conversation_memory_prompt_fragment(
+    memory: &ConversationMemory,
+    coverage_incomplete: bool,
+) -> String {
+    let fragment = memory.to_prompt_fragment();
+    if coverage_incomplete {
+        format!("{fragment}{CONVERSATION_HISTORY_COVERAGE_WARNING}")
+    } else {
+        fragment
+    }
 }
 
 /// Return one transient history copy exactly as it will reach the Provider.

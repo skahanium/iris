@@ -1696,6 +1696,16 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         )
     }
 
+    fn conversation_history_coverage_is_incomplete(
+        &self,
+        memory: &crate::ai_runtime::conversation_memory::ConversationMemory,
+    ) -> bool {
+        crate::ai_runtime::run_context::history_coverage_is_incomplete(
+            Some(memory),
+            &self.context.recent_messages,
+        )
+    }
+
     fn bootstrap_required_web_observation<'a>(
         &'a self,
         run_id: &'a str,

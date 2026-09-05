@@ -300,7 +300,7 @@ fn live_public_web_oracle_uses_the_continuous_product_conversation() {
 }
 
 #[test]
-fn live_v3_trace_report_is_semantic_review_pending_not_a_404_fact_oracle() {
+fn live_v4_trace_report_is_semantic_review_pending_not_a_404_fact_oracle() {
     let cases = [1, 26, 28, 30, 32, 34]
         .into_iter()
         .map(|case_id| {
@@ -349,7 +349,59 @@ fn live_v3_trace_report_is_semantic_review_pending_not_a_404_fact_oracle() {
     });
 
     validate_serialized_live_pilot_result(&report.to_string())
-        .expect("v3 trace reports are mechanically validated without a synthetic fact oracle");
+        .expect("v4 trace reports are mechanically validated without a synthetic fact oracle");
+}
+
+#[test]
+fn legacy_live_v3_trace_remains_readable_without_v4_web_action_telemetry() {
+    let cases = [1, 26, 28, 30, 32, 34]
+        .into_iter()
+        .map(|case_id| {
+            serde_json::json!({
+                "caseId": case_id,
+                "repetition": 1,
+                "semanticStatus": "pending_human_review",
+                "mechanical": {
+                    "terminal": "pass",
+                    "authorization": "pass",
+                    "searchFetchTrace": if case_id == 1 { "not_applicable" } else { "pass" },
+                    "runLocalSources": if case_id == 1 { "not_applicable" } else { "pass" },
+                    "citationBinding": if case_id == 1 { "not_applicable" } else { "pass" },
+                    "safety": "pass",
+                    "continuity": "pass",
+                },
+                "telemetry": {
+                    "modelTurns": if case_id == 1 { 1 } else { 3 },
+                    "toolCalls": if case_id == 1 { 0 } else { 2 },
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    let report = serde_json::json!({
+        "schemaVersion": "agent-live-pilot-v3",
+        "routeCommitment": format!("route-{}", "1".repeat(64)),
+        "routeLabel": "Route A",
+        "campaignId": format!("campaign-{}", "a".repeat(64)),
+        "status": "live_trace_executed",
+        "caseCount": 6,
+        "requiredCaseCount": 6,
+        "completedCaseCount": 6,
+        "mechanicalPassed": 6,
+        "mechanicalFailed": 0,
+        "reviewPacketSha256": "b".repeat(64),
+        "campaignBudget": {
+            "maxRuns": 12,
+            "maxModelTurns": 48,
+            "maxWebToolCalls": 36,
+            "observedRuns": 12,
+            "observedModelTurns": 24,
+            "observedWebToolCalls": 12,
+        },
+        "cases": cases,
+    });
+
+    validate_serialized_live_pilot_result(&report.to_string())
+        .expect("a historical v3 trace remains readable for diagnosis only");
 }
 
 #[tokio::test]

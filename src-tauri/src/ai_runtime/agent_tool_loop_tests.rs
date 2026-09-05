@@ -10,6 +10,7 @@ use super::agent_tool_loop::{
     ToolLoopExecutor, ToolLoopProvider, EVIDENCE_LIMITED_RESPONSE,
 };
 use super::model_gateway::{StreamEventObserver, StreamSurface};
+use super::run_context::CONVERSATION_HISTORY_COVERAGE_WARNING;
 use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
 use crate::ai_runtime::{
     FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec,
@@ -493,7 +494,12 @@ async fn long_conversation_model_compaction_consumes_one_hidden_turn_and_never_s
             vec![
                 LlmMessage {
                     role: MessageRole::System,
-                    content: prior_memory.to_prompt_fragment().into(),
+                    content: format!(
+                        "{}{}",
+                        prior_memory.to_prompt_fragment(),
+                        CONVERSATION_HISTORY_COVERAGE_WARNING
+                    )
+                    .into(),
                     tool_call_id: None,
                     tool_calls: None,
                     reasoning_content: None,
@@ -523,6 +529,15 @@ async fn long_conversation_model_compaction_consumes_one_hidden_turn_and_never_s
             .iter()
             .any(|message| message.content.text_content().contains("current goal")),
         "the active answer must receive the same summary that compaction persisted"
+    );
+    assert!(
+        !provider
+            .second_turn_messages
+            .lock()
+            .expect("messages")
+            .iter()
+            .any(|message| message.content.text_content().contains("历史覆盖边界")),
+        "a compaction that closes the current context gap must remove the stale warning before the answer turn"
     );
     let memory = super::conversation_memory::ConversationMemory::latest_for_session(
         &executor.db,
