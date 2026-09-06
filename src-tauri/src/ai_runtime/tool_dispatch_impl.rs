@@ -162,7 +162,7 @@ async fn dispatch_tool_inner(
         "scheduled_task_delete" => schedule_impl::scheduled_task_delete_tool(state, args).await,
         "vault_create_note" => vault_impl::vault_create_note_tool(state, ctx, args),
         "vault_rename_move" => vault_impl::vault_rename_move_tool(state, ctx, args),
-        "vault_delete_to_trash" => vault_impl::vault_delete_to_trash_tool(state, args),
+        "vault_delete_to_trash" => vault_impl::vault_delete_to_trash_tool(state, ctx, args),
         "vault_asset_write" => vault_impl::vault_asset_write_tool(state, args),
         "vault_version_list" => vault_impl::vault_version_list_tool(state, args),
         "insert_text_at_cursor" | "replace_selection" => {
@@ -189,3 +189,7 @@ async fn dispatch_tool_inner(
 #[cfg(test)]
 #[path = "tool_dispatch/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tool_dispatch/write_contract_tests.rs"]
+mod write_contract_tests;

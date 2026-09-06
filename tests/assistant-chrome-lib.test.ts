@@ -79,8 +79,12 @@ describe("assistant chrome helpers", () => {
     expect(assistantChromeSnapshotsEqual(left, changed)).toBe(false);
   });
 
-  it("does not expose the removed block-links tool in the UI display map", () => {
+  it("uses Chinese names for current read tools and a generic Chinese fallback", () => {
+    expect(toolDisplayName("web_fetch")).toBe("读取网页");
+    expect(toolDisplayName("read_note")).toBe("读取笔记");
+    expect(toolDisplayName("get_outline")).toBe("文档大纲");
+    expect(toolDisplayName("get_backlinks")).toBe("反向链接");
     expect(TOOL_DISPLAY_NAMES).not.toHaveProperty("get_block_links");
-    expect(toolDisplayName("get_block_links")).toBe("get_block_links");
+    expect(toolDisplayName("get_block_links")).toBe("执行工具");
   });
 });

@@ -233,9 +233,7 @@ function isInternalPreparingStage(stage: string): boolean {
 }
 
 function displayCapability(capability: string): string {
-  const direct = toolDisplayName(capability);
-  if (direct !== capability) return direct;
-  return toolDisplayName(capability.replaceAll(".", "_"));
+  return toolDisplayName(capability);
 }
 
 function timestampMs(timestamp: string): number {

@@ -166,6 +166,42 @@ describe("useVaultFileActions", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it("部分反向链接待处理时仍提交移动事实并显示提示", async () => {
+    vi.mocked(fileRename).mockResolvedValueOnce({
+      entry: {
+        id: 1,
+        path: "policy/b.md",
+        title: "B",
+        updated_at: "",
+        word_count: 0,
+      },
+      contentHash: "h",
+      indexStatus: "synced",
+      operation: {
+        previousPath: "policy/a.md",
+        appliedPaths: ["policy/a.md", "policy/b.md"],
+        pendingPaths: ["policy/c.md"],
+        recoveryVersions: [["policy/c.md", 12]],
+      },
+    });
+    renderHook();
+
+    await act(async () => {
+      await apiRef.current?.rename({ kind: "file", file: NOTE_A }, "b", {
+        files: [NOTE_A],
+        fileTitle: (f) => f.title,
+      });
+    });
+
+    expect(callbacks.onFilePathChanged).toHaveBeenCalledWith(
+      "policy/a.md",
+      "policy/b.md",
+      "b",
+    );
+    expect(apiRef.current?.error).toBe("文件已移动，部分反向链接待处理");
+    expect(refresh).toHaveBeenCalled();
+  });
+
   it("重命名失败：对已开始迁移的路径逐个回执 failed，并设置错误", async () => {
     vi.mocked(fileRename).mockRejectedValueOnce(new Error("IO error"));
     renderHook();

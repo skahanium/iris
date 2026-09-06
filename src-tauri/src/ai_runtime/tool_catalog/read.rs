@@ -104,12 +104,14 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "read_note",
-            description: "读取指定笔记的 Markdown 全文（可截断）",
+            description: "按 UTF-8 字节位置读取指定笔记的有界 Markdown 内容，可用全文哈希安全续读",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
-                    "max_chars": {"type": "integer", "default": 12000}
+                    "start_byte": {"type": "integer", "minimum": 0, "default": 0},
+                    "content_hash": {"type": "string", "description": "可选的预期全文内容哈希；续读时用于拒绝已变化的笔记"},
+                    "max_chars": {"type": "integer", "minimum": 1, "maximum": 12000, "default": 12000}
                 },
                 "required": ["path"]
             }),

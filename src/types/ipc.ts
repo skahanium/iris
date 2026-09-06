@@ -89,6 +89,12 @@ export interface FileWriteResult {
   entry: FileEntry;
   contentHash: string;
   indexStatus: FileWriteIndexStatus;
+  operation?: {
+    previousPath: string;
+    appliedPaths: string[];
+    pendingPaths: string[];
+    recoveryVersions: Array<[string, number]>;
+  };
 }
 
 export type CredentialState = "available" | "missing";

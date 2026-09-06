@@ -87,7 +87,7 @@ export function webSearchStatusDetail(
   availability: WebSearchAvailability,
 ): string {
   if (!enabled) return "未开启";
-  if (!availability.canEnable) return availability.detail;
+  if (!availability.canEnable) return `已授权 · ${availability.detail}`;
   const providerName = availability.effectiveProvider?.name.trim();
   return providerName ? `已开启 · ${providerName}` : "已开启";
 }

@@ -32,15 +32,34 @@ pub(crate) struct FileWriteResult {
     pub entry: FileEntry,
     pub content_hash: String,
     pub index_status: FileWriteIndexStatus,
+    /// Present for operations affecting additional files. Never infer these from indexes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<FileOperationReceipt>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FileOperationReceipt {
+    pub previous_path: String,
+    pub applied_paths: Vec<String>,
+    pub pending_paths: Vec<String>,
+    pub recovery_versions: Vec<(String, i64)>,
 }
 
 /// The single persistence path for Markdown note bodies.
 pub(crate) struct NoteWriteService;
 
 impl NoteWriteService {
+    /// Reject a locked target before creating recovery material.
+    pub(crate) fn ensure_unlocked(state: &AppState, path: &str) -> AppResult<()> {
+        if is_note_locked(&state.db, path)? {
+            return Err(AppError::msg("note_locked"));
+        }
+        Ok(())
+    }
     /// Atomically persist a note body, then best-effort refresh its derived index.
     pub(crate) fn write(state: &AppState, path: &str, content: &str) -> AppResult<FileWriteResult> {
-        with_vault_move_lock(|| Self::write_body(state, path, content, false, false))
+        with_vault_move_lock(|| Self::write_body(state, path, content, false))
     }
 
     /// Atomically create a note body without replacing an existing Markdown file.
@@ -49,7 +68,16 @@ impl NoteWriteService {
         path: &str,
         content: &str,
     ) -> AppResult<FileWriteResult> {
-        with_vault_move_lock(|| Self::write_body(state, path, content, true, false))
+        with_vault_move_lock(|| Self::write_body(state, path, content, true))
+    }
+
+    /// No-overwrite create for a caller already holding the vault operation guard.
+    pub(crate) fn create_under_move_lock(
+        state: &AppState,
+        path: &str,
+        content: &str,
+    ) -> AppResult<FileWriteResult> {
+        Self::write_body(state, path, content, true)
     }
 
     /// Persist a note body when the caller already holds [`with_vault_move_lock`].
@@ -57,15 +85,13 @@ impl NoteWriteService {
     /// `VAULT_MOVE_LOCK` is not reentrant; rename/trash cascades must use this
     /// instead of [`Self::write`] to avoid deadlocking the coordinator.
     ///
-    /// When `bypass_lock` is true (wikilink cascade / system rewrite), a locked
-    /// note may still be updated. User-facing writes must keep `bypass_lock = false`.
+    /// Background edits obey the same document lock as ordinary saves.
     pub(crate) fn write_under_move_lock(
         state: &AppState,
         path: &str,
         content: &str,
-        bypass_lock: bool,
     ) -> AppResult<FileWriteResult> {
-        Self::write_body(state, path, content, false, bypass_lock)
+        Self::write_body(state, path, content, false)
     }
 
     /// Move an existing plain Markdown file into the vault, then refresh its derived index.
@@ -116,11 +142,8 @@ impl NoteWriteService {
         path: &str,
         content: &str,
         reject_existing: bool,
-        bypass_lock: bool,
     ) -> AppResult<FileWriteResult> {
-        // Create never checks lock (the path does not exist yet). Updates reject
-        // locked notes unless the caller explicitly bypasses (cascade rewrite).
-        if !reject_existing && !bypass_lock && is_note_locked(&state.db, path)? {
+        if is_note_locked(&state.db, path)? {
             return Err(AppError::msg("note_locked"));
         }
 
@@ -155,6 +178,7 @@ impl NoteWriteService {
                 entry: fallback_entry(path, content),
                 content_hash: hash,
                 index_status: FileWriteIndexStatus::Synced,
+                operation: None,
             });
         }
 
@@ -168,6 +192,7 @@ impl NoteWriteService {
                     entry,
                     content_hash: hash,
                     index_status: FileWriteIndexStatus::Synced,
+                    operation: None,
                 })
             }
             Err(_) => {
@@ -180,6 +205,7 @@ impl NoteWriteService {
                     entry: fallback_entry(path, content),
                     content_hash: hash,
                     index_status: FileWriteIndexStatus::Degraded,
+                    operation: None,
                 })
             }
         }
@@ -187,18 +213,48 @@ impl NoteWriteService {
 }
 
 fn ensure_note_parent(vault: &Path, path: &str) -> AppResult<()> {
-    let mut parent = PathBuf::from(vault);
+    // Validate every existing ancestor before any mkdir. In particular, never
+    // create directories through a symlink and reject only after the side effect.
+    let mut parent = vault.canonicalize()?;
     let relative_parent = Path::new(path).parent().unwrap_or_else(|| Path::new(""));
+    let mut missing = Vec::new();
     for component in relative_parent.components() {
         match component {
-            Component::Normal(part) => parent.push(part),
+            Component::Normal(part) => {
+                parent.push(part);
+                match std::fs::symlink_metadata(&parent) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        return Err(AppError::msg("note_path_alias_not_allowed"))
+                    }
+                    Ok(metadata) if !metadata.is_dir() => {
+                        return Err(AppError::msg("note_parent_not_directory"))
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        missing.push(parent.clone())
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err(AppError::msg("Path traversal is not allowed"));
             }
         }
     }
-    std::fs::create_dir_all(parent)?;
+    // Also reject a final-component symlink; its canonical path could bypass
+    // lock identity or enter metadata despite a harmless-looking lexical name.
+    let file_name = Path::new(path)
+        .file_name()
+        .ok_or_else(|| AppError::msg("Invalid path"))?;
+    if std::fs::symlink_metadata(parent.join(file_name))
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(AppError::msg("note_path_alias_not_allowed"));
+    }
+    for directory in missing {
+        std::fs::create_dir(directory)?;
+    }
     Ok(())
 }
 
@@ -245,6 +301,7 @@ pub(crate) fn noop_write_receipt(path: &str, content: &str) -> FileWriteResult {
         entry: fallback_entry(path, content),
         content_hash: hash,
         index_status: FileWriteIndexStatus::Synced,
+        operation: None,
     }
 }
 
@@ -261,7 +318,6 @@ fn schedule_index_repair_task(
             let absolute = resolve_vault_path(&vault, &path)?;
             db.with_conn(|conn| {
                 crate::indexer::scan::index_file(conn, &vault, &absolute)?;
-                crate::indexer::scan::prune_stale_file_indexes(conn, &vault)?;
                 Ok(())
             })?;
             scheduler.notify_index_committed();

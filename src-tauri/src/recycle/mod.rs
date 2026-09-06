@@ -158,7 +158,31 @@ pub fn discard_document(state: &AppState, path: &str) -> AppResult<()> {
 
 /// Move current note + all versions/finalized snapshots into recycle bin.
 pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
+    trash_with_receipt(state, path).map(|_| ())
+}
+
+/// Result of a recoverable deletion, independent of Agent/Run metadata.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TrashReceipt {
+    pub path: String,
+    pub trash_id: String,
+    pub content_hash: String,
+    pub metadata_pending: bool,
+}
+
+/// Trash via the shared file-operation guard.
+pub(crate) fn trash_with_receipt(state: &AppState, path: &str) -> AppResult<TrashReceipt> {
+    with_vault_move_lock(|| trash_locked(state, path))
+}
+
+/// Caller must hold the common file-operation guard.
+pub(crate) fn trash_locked(state: &AppState, path: &str) -> AppResult<TrashReceipt> {
+    crate::storage::note_write::NoteWriteService::ensure_unlocked(state, path)?;
     let vault = state.vault_path()?;
+    let absolute = crate::storage::paths::validate_user_note_relative_path(&vault, path)?;
+    let body = fs::read_to_string(&absolute)?;
+    let body_hash = crate::cas::hash::content_hash_str(&body);
     let trash_id = Uuid::new_v4().to_string();
     let bundle_dir = trash_root(&vault).join(&trash_id);
     let versions_dir = bundle_dir.join("versions");
@@ -199,17 +223,20 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
         Ok((title, metas))
     })?;
 
-    with_vault_move_lock(|| {
+    {
         fs::create_dir_all(&versions_dir)?;
-        let abs = resolve_vault_path(&vault, path)?;
         for meta in &mut version_metas {
             let dest = versions_dir.join(&meta.trash_file);
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
             }
-            if crate::version::is_cas_storage_path(&meta.storage_path) {
+            if crate::version::is_cas_storage_path(&meta.storage_path)
+                || meta.storage_path.starts_with("dif:")
+            {
                 match crate::version::read_version_content(state, &vault, &meta.storage_path) {
-                    Ok(content) => fs::write(&dest, content)?,
+                    Ok(content) => {
+                        crate::storage::atomic_write::atomic_write(&dest, content.as_bytes())?
+                    }
                     Err(error) => {
                         // 单个快照不可读（损坏/密钥缺失）只跳过该版本，不阻断删除：
                         // 内容已无法恢复，用户无需为此承担认知负担。
@@ -226,16 +253,11 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
             } else {
                 let src = versions_root(&vault).join(&meta.storage_path);
                 if src.is_file() {
-                    fs::rename(&src, &dest)?;
+                    fs::copy(&src, &dest)?;
                 }
             }
         }
-        if abs.is_file() {
-            fs::rename(&abs, bundle_dir.join("document.md"))?;
-        }
-        Ok(())
-    })?;
-
+    }
     let deleted_at = Utc::now();
     let expires_at = deleted_at + Duration::days(RECYCLE_RETENTION_DAYS);
     let manifest = TrashManifest {
@@ -245,13 +267,19 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
         expires_at: expires_at.to_rfc3339(),
         versions: version_metas,
     };
-    fs::write(
-        bundle_dir.join("manifest.json"),
-        serde_json::to_string_pretty(&manifest)?,
+    crate::storage::atomic_write::atomic_write(
+        &bundle_dir.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest)?.as_bytes(),
     )?;
 
+    crate::storage::atomic_write::move_file_no_replace_locked(
+        &absolute,
+        &bundle_dir.join("document.md"),
+    )?;
+    state.storage.write_guard.mark_removed(path);
+
     let trash_rel = format!(".iris/trash/{trash_id}");
-    state.db.with_conn(|conn| {
+    let metadata_pending = state.db.with_conn(|conn| {
         conn.execute(
             "INSERT INTO recycle_bin (id, original_path, title, deleted_at, expires_at, trash_rel_dir)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -265,9 +293,14 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
             ],
         )?;
         remove_file_index(conn, path)
-    })?;
+    }).is_err();
 
-    Ok(())
+    Ok(TrashReceipt {
+        path: path.into(),
+        trash_id,
+        content_hash: body_hash,
+        metadata_pending,
+    })
 }
 
 pub fn purge_bundle(vault: &Path, trash_rel_dir: &str) -> AppResult<u64> {
@@ -331,6 +364,7 @@ pub fn purge_expired(state: &AppState) -> AppResult<usize> {
 
 pub fn list_recycle(state: &AppState) -> AppResult<Vec<RecycleBinItem>> {
     let vault = state.vault_path()?;
+    reconcile_durable_trash(state, &vault)?;
     resume_deferred_restores(state, &vault);
     let rows: Vec<(String, String, String, String, String, String)> =
         state.db.with_conn(|conn| {
@@ -369,6 +403,44 @@ pub fn list_recycle(state: &AppState) -> AppResult<Vec<RecycleBinItem>> {
             },
         )
         .collect())
+}
+
+// Rebuild missing bookkeeping only for completed body moves. Prepared bundles
+// without document.md never authorize replay of a deletion or a restoration.
+fn reconcile_durable_trash(state: &AppState, vault: &Path) -> AppResult<()> {
+    with_vault_move_lock(|| {
+        let root = trash_root(vault);
+        if !root.is_dir() {
+            return Ok(());
+        }
+        for item in fs::read_dir(root)? {
+            let item = item?;
+            if !item.file_type()?.is_dir() {
+                continue;
+            }
+            let id = item.file_name().to_string_lossy().to_string();
+            if Uuid::parse_str(&id).is_err() || !item.path().join("document.md").is_file() {
+                continue;
+            }
+            let relative = format!(".iris/trash/{id}");
+            let Ok(manifest) = load_manifest(vault, &relative) else {
+                continue;
+            };
+            let Ok(original) = crate::storage::paths::validate_user_note_relative_path(
+                vault,
+                &manifest.original_path,
+            ) else {
+                continue;
+            };
+            state.db.with_conn(|conn| {
+                conn.execute("INSERT OR IGNORE INTO recycle_bin (id,original_path,title,deleted_at,expires_at,trash_rel_dir) VALUES (?1,?2,?3,?4,?5,?6)",
+                    rusqlite::params![id, manifest.original_path, manifest.title, manifest.deleted_at, manifest.expires_at, relative])?;
+                if !original.exists() { remove_file_index(conn, &manifest.original_path)?; }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    })
 }
 
 fn resume_deferred_restores(state: &AppState, vault: &Path) {
@@ -647,6 +719,37 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_trash_metadata_is_recovered_from_the_prepared_manifest() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        fs::write(vault.join("interrupted.md"), "recover me\n").unwrap();
+        state.db.with_conn(|conn| {
+            index_file(conn, &vault, &vault.join("interrupted.md"))?;
+            conn.execute_batch("CREATE TRIGGER fail_trash BEFORE INSERT ON recycle_bin BEGIN SELECT RAISE(ABORT, 'fault'); END;")?;
+            Ok(())
+        }).unwrap();
+        let _ = trash_document(&state, "interrupted.md");
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch("DROP TRIGGER fail_trash;")?;
+                Ok(())
+            })
+            .unwrap();
+        let items = list_recycle(&state).unwrap();
+        assert_eq!(
+            items.len(),
+            1,
+            "a durable trash bundle cannot disappear merely because bookkeeping failed"
+        );
+        restore_document(&state, &items[0].id).unwrap();
+        assert_eq!(
+            fs::read_to_string(vault.join("interrupted.md")).unwrap(),
+            "recover me\n"
+        );
+    }
+
+    #[test]
     fn restore_roundtrip_restores_body_and_versions() {
         let (_dir, state) = setup();
         let vault = state.vault_path().unwrap();
@@ -810,6 +913,53 @@ mod tests {
                 == snapshot_body
         );
         assert!(crate::version::is_cas_storage_path(&storage_path));
+    }
+
+    #[test]
+    fn trash_restore_materializes_diff_version_for_preview() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("diff-note.md");
+        fs::write(&note, "# Diff\n\nCurrent body").unwrap();
+        state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
+        let base = format!("{}\nline-a\n", "shared-prefix-".repeat(80));
+        let expected = format!("{}\nline-b\n", "shared-prefix-".repeat(80));
+        version_save_manual(&state, "diff-note.md", &base)
+            .unwrap()
+            .expect("base snapshot");
+        let delta = version_save_manual(&state, "diff-note.md", &expected)
+            .unwrap()
+            .expect("delta snapshot");
+        let storage_path: String = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [delta.id],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert!(
+            storage_path.starts_with("dif:"),
+            "precondition: {storage_path}"
+        );
+        let expected_preview = crate::version::version_preview(&state, delta.id).unwrap();
+
+        trash_document(&state, "diff-note.md").expect("trash diff-backed note");
+        let item = list_recycle(&state).unwrap().remove(0);
+        restore_document(&state, &item.id).expect("restore diff-backed note");
+
+        let versions = crate::version::version_list(&state, "diff-note.md").unwrap();
+        let restored = versions
+            .iter()
+            .find(|entry| entry.version_no == delta.version_no)
+            .expect("restored delta version");
+        assert_eq!(
+            crate::version::version_preview(&state, restored.id).unwrap(),
+            expected_preview
+        );
     }
 
     #[test]

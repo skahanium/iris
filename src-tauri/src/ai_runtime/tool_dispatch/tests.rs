@@ -202,7 +202,102 @@ async fn read_note_truncation_keeps_full_file_hash_and_span() {
         crate::cas::hash::content_hash_str(full_content)
     );
     assert_eq!(result["sourceSpan"]["start"], 0);
-    assert_eq!(result["sourceSpan"]["end"], full_content.len());
+    assert_eq!(result["sourceSpan"]["end"], 6);
+    assert_eq!(result["nextStartByte"], 6);
+}
+
+#[tokio::test]
+async fn read_note_continues_from_a_utf8_byte_boundary_and_validates_hash() {
+    let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
+    let full_content = "# Test\nHello world";
+    let hash = crate::cas::hash::content_hash_str(full_content);
+    let result = note_impl::read_note(
+        &state,
+        &ctx,
+        &serde_json::json!({
+            "path": "notes/test.md",
+            "start_byte": 7,
+            "content_hash": hash,
+            "max_chars": 5
+        }),
+    )
+    .await
+    .expect("continue read");
+
+    assert_eq!(result["content"], "Hello");
+    assert_eq!(
+        result["sourceSpan"],
+        serde_json::json!({"start": 7, "end": 12})
+    );
+    assert_eq!(result["nextStartByte"], 12);
+    assert_eq!(result["truncated"], true);
+
+    let changed = note_impl::read_note(
+        &state,
+        &ctx,
+        &serde_json::json!({
+            "path": "notes/test.md",
+            "start_byte": 7,
+            "content_hash": "stale"
+        }),
+    )
+    .await
+    .expect_err("stale continuation hash must fail closed");
+    assert!(changed.to_string().contains("content hash"));
+}
+
+#[tokio::test]
+async fn read_note_rejects_non_utf8_start_and_clamps_max_chars() {
+    let (state, dir) = test_state();
+    let vault = dir.path().join("vault");
+    std::fs::write(vault.join("notes/utf8.md"), "甲乙丙丁").unwrap();
+    let ctx = dispatch_context_with_plan(None);
+    let invalid = note_impl::read_note(
+        &state,
+        &ctx,
+        &serde_json::json!({"path": "notes/utf8.md", "start_byte": 1}),
+    )
+    .await
+    .expect_err("start must be a UTF-8 byte boundary");
+    assert!(invalid.to_string().contains("UTF-8"));
+
+    let result = note_impl::read_note(
+        &state,
+        &ctx,
+        &serde_json::json!({"path": "notes/utf8.md", "max_chars": 999999}),
+    )
+    .await
+    .expect("large max_chars is clamped");
+    assert_eq!(result["content"], "甲乙丙丁");
+}
+
+#[tokio::test]
+async fn get_outline_uses_markdown_heading_ranges_and_ignores_fences() {
+    let (state, dir) = test_state();
+    let content = "# 标题\n正文\n```md\n## 假标题\n```\n小节\n----\n内容";
+    std::fs::write(dir.path().join("vault/notes/outline.md"), content).unwrap();
+    let ctx = dispatch_context_with_plan(None);
+
+    let result = note_impl::get_outline(
+        &state,
+        &ctx,
+        &serde_json::json!({"path": "notes/outline.md"}),
+    )
+    .await
+    .expect("outline");
+
+    assert_eq!(result["headings"].as_array().unwrap().len(), 2);
+    assert_eq!(result["headings"][0]["text"], "标题");
+    assert_eq!(
+        result["headings"][0]["sourceSpan"],
+        serde_json::json!({"start": 0, "end": 9})
+    );
+    assert_eq!(result["headings"][1]["text"], "小节");
+    let span = &result["headings"][1]["sourceSpan"];
+    let start = span["start"].as_u64().unwrap() as usize;
+    let end = span["end"].as_u64().unwrap() as usize;
+    assert_eq!(&content[start..end], "小节\n----\n");
 }
 
 #[tokio::test]
@@ -522,13 +617,10 @@ fn write_tool_rejects_target_outside_active_skill_scope_before_apply() {
             "risk_level": "low"
         }),
     )
-    .unwrap();
+    .expect_err("scope denial must be an unsuccessful dispatch");
 
-    assert_eq!(result["type"], "patch_apply");
-    assert_eq!(result["result"]["success"], false);
-    assert!(result["result"]["error"]
-        .as_str()
-        .unwrap_or("")
+    assert!(result
+        .to_string()
         .contains("outside the confirmed Skill scope"));
     let content =
         std::fs::read_to_string(state.vault_path().unwrap().join("private/secret.md")).unwrap();
@@ -575,13 +667,9 @@ fn write_tool_rejects_a_target_other_than_the_explicit_run_target() {
             "original_text": "Hidden",
         }),
     )
-    .expect("out-of-target write returns a safe tool result");
+    .expect_err("out-of-target write returns a safe error");
 
-    assert_eq!(result["result"]["success"], false);
-    assert_eq!(
-        result["result"]["error"],
-        "agent_run_write_target_violation"
-    );
+    assert_eq!(result.to_string(), "agent_run_write_target_violation");
     let content =
         std::fs::read_to_string(state.vault_path().unwrap().join("private/secret.md")).unwrap();
     assert_eq!(content, base);
@@ -623,11 +711,9 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
             "original_text": "Hello",
         }),
     )
-    .unwrap();
+    .expect_err("hash conflict is not an applied edit");
 
-    assert_eq!(result["type"], "patch_apply");
-    assert_eq!(result["result"]["success"], false);
-    let error = result["result"]["error"].as_str().unwrap_or("");
+    let error = result.to_string();
     assert!(
         error.contains("hash") || !error.is_empty(),
         "unexpected error: {error}"

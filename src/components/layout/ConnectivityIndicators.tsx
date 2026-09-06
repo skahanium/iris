@@ -113,7 +113,7 @@ export const ConnectivityIndicators = memo(function ConnectivityIndicators({
     ? webSearchStatusDetail(webSearch, webSearchAvailability)
     : fallbackWebSearchDetail(webSearch);
   const canToggleWebSearch = webSearchAvailability?.canEnable ?? true;
-  const webSearchActive = webSearch && canToggleWebSearch;
+  const webSearchActive = webSearch;
 
   const llmTitle = [
     llm?.message ?? "LLM 未检测",
@@ -145,7 +145,7 @@ export const ConnectivityIndicators = memo(function ConnectivityIndicators({
           activeClass="bg-status-web-search shadow-[0_0_0_1px_hsl(var(--status-web-search)/0.35)]"
           title={`联网搜索：${webDetail}`}
           ariaLabel={webSearchActive ? "关闭联网搜索" : "开启联网搜索"}
-          disabled={!canToggleWebSearch}
+          disabled={!webSearch && !canToggleWebSearch}
           onClick={() => onWebSearchChange(!webSearch)}
         />
       ) : null}

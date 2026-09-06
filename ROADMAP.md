@@ -49,6 +49,8 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 
 ## v1.3.0 — Agent 可靠性与对话一致性（进行中）
 
+- 2026-09-06：笔记集成验收重新打开。普通文件入口与 Agent 共享笔记操作，保存原语、版本、回收站、索引和编辑器修订各自负责明确边界；不建立第二套文档系统。目标为真实差异逐批确认、保存屏障、冲突安全的独立 Agent 撤销，以及持久联网授权和有界本地续读。施工与证据见唯一 [Harness 路线](./agent-harness/05-implementation-roadmap.md)；局部合同测试不代表完整笔记能力或 HR-7 产品放行。
+
 Agent Harness 的现行问题审计、目标合同与 `HR-0` 至 `HR-7` 重构路线以 [Agent Harness 建设文档](./agent-harness/README.md) 为唯一入口。本版本撤回此前将 Web 专用研究、六类领域 operation 和普通事实严格结构化终局作为核心架构的方向，改为 Provider-neutral 的通用有界工具循环；目标能力只有在对应 HR 阶段取得当前证据后才能写作已交付。
 
 - 用户主动选区与 `@` 文档是独立的 `UserAuthorizedMaterial` 通道：通过安全校验后必须进入最终 Prompt，不按文件路径或 corpus 归类，也不受自动检索的 authority/exemplar/reference/lookup 筛选影响；这些角色只适用于系统自动召回材料。来源摘要显示“授权材料”，当前 user message 保持纯文本，选区正文不新增持久化。

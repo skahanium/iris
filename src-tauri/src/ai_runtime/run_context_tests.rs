@@ -726,7 +726,7 @@ fn implicit_vault_prefetch_uses_the_local_clause_of_a_mixed_local_and_web_reques
 }
 
 #[test]
-fn implicit_vault_context_fails_closed_when_no_eligible_local_material_is_found() {
+fn implicit_vault_context_reports_an_empty_local_preflight_without_web_substitution() {
     let dir = tempfile::tempdir().expect("vault");
     let vault = dir.path().join("vault");
     std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
@@ -755,22 +755,24 @@ fn implicit_vault_context_fails_closed_when_no_eligible_local_material_is_found(
     )
     .expect("accepted run");
 
-    let error = RunContextAssembler::assemble(
+    let context = RunContextAssembler::assemble(
         &db,
         Some(&vault),
         &session.session_key,
         "run-implicit-vault-empty",
     )
-    .expect_err("implicit vault requests cannot fall back to an answer without local evidence");
+    .expect("empty local preflight remains an explicit model observation");
 
-    assert_eq!(
-        error.to_string(),
-        "agent_run_local_reference_index_unavailable"
-    );
+    assert!(context.materials.is_empty());
+    let prompt = context.messages_with_context_material_plan(&context.context_material_plan())[0]
+        .content
+        .text_content();
+    assert!(prompt.contains("no authorized local note material matched"));
+    assert!(prompt.contains("do not silently replace"));
 }
 
 #[test]
-fn implicit_vault_context_fails_closed_when_policy_blocks_every_retrieved_note() {
+fn implicit_vault_context_discloses_when_policy_blocks_every_retrieved_note() {
     let dir = tempfile::tempdir().expect("vault");
     let vault = dir.path().join("vault");
     std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
@@ -816,18 +818,19 @@ fn implicit_vault_context_fails_closed_when_policy_blocks_every_retrieved_note()
     )
     .expect("accepted run");
 
-    let error = RunContextAssembler::assemble(
+    let context = RunContextAssembler::assemble(
         &db,
         Some(&vault),
         &session.session_key,
         "run-implicit-vault-policy-denied",
     )
-    .expect_err("policy-blocked local material must never fall back to a model-only answer");
+    .expect("policy-blocked local material remains absent from the model context");
 
-    assert_eq!(
-        error.to_string(),
-        "agent_run_local_reference_index_unavailable"
-    );
+    assert!(context.materials.is_empty());
+    let prompt = context.messages_with_context_material_plan(&context.context_material_plan())[0]
+        .content
+        .text_content();
+    assert!(prompt.contains("no authorized local note material matched"));
 }
 
 #[test]

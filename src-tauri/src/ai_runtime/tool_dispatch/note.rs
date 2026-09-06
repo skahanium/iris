@@ -4,6 +4,22 @@ use crate::storage::paths::validate_user_note_relative_path;
 
 use super::ToolDispatchContext;
 
+const DEFAULT_READ_NOTE_MAX_CHARS: usize = 12_000;
+const MAX_READ_NOTE_CHARS: usize = 12_000;
+
+fn ensure_note_model_read_allowed(ctx: &ToolDispatchContext<'_>, path: &str) -> AppResult<()> {
+    use crate::ai_runtime::policy_decision_engine::DocumentCapability;
+
+    for capability in [
+        DocumentCapability::Discover,
+        DocumentCapability::Read,
+        DocumentCapability::SendToModel,
+    ] {
+        ctx.ensure_document_capability(path, capability)?;
+    }
+    Ok(())
+}
+
 pub(super) async fn read_note(
     state: &AppState,
     ctx: &ToolDispatchContext<'_>,
@@ -12,18 +28,42 @@ pub(super) async fn read_note(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
-    ctx.ensure_document_capability(
-        path,
-        crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
-    )?;
+    ensure_note_model_read_allowed(ctx, path)?;
     ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
     let abs = validate_user_note_relative_path(&vault, path)?;
     let content = std::fs::read_to_string(abs)?;
-    let max_chars = args["max_chars"].as_u64().unwrap_or(12_000) as usize;
-    let truncated = content.chars().count() > max_chars;
-    let body: String = content.chars().take(max_chars).collect();
+    let content_hash = crate::cas::hash::content_hash_str(&content);
+    if args["content_hash"]
+        .as_str()
+        .is_some_and(|expected| expected != content_hash)
+    {
+        return Err(AppError::msg("read_note content hash mismatch"));
+    }
+    let start = args["start_byte"]
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    if start > content.len() || !content.is_char_boundary(start) {
+        return Err(AppError::msg(
+            "read_note start_byte must be a valid UTF-8 byte boundary",
+        ));
+    }
+    let max_chars = args["max_chars"]
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(DEFAULT_READ_NOTE_MAX_CHARS)
+        .clamp(1, MAX_READ_NOTE_CHARS);
+    let remaining = &content[start..];
+    let relative_end = remaining
+        .char_indices()
+        .nth(max_chars)
+        .map(|(index, _)| index)
+        .unwrap_or(remaining.len());
+    let end = start + relative_end;
+    let truncated = end < content.len();
+    let body = &content[start..end];
     Ok(serde_json::json!({
         "path": path,
         "content": body,
@@ -31,8 +71,9 @@ pub(super) async fn read_note(
         // Evidence registration must use the source that was actually read,
         // rather than treating the (possibly truncated) model payload as the
         // whole note. These fields remain internal tool-result metadata.
-        "contentHash": crate::cas::hash::content_hash_str(&content),
-        "sourceSpan": { "start": 0, "end": content.len() },
+        "contentHash": content_hash,
+        "sourceSpan": { "start": start, "end": end },
+        "nextStartByte": truncated.then_some(end),
     }))
 }
 
@@ -87,28 +128,20 @@ pub(super) async fn get_outline(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
-    ctx.ensure_document_capability(
-        path,
-        crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
-    )?;
+    ensure_note_model_read_allowed(ctx, path)?;
     ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
     let abs = validate_user_note_relative_path(&vault, path)?;
     let content = std::fs::read_to_string(abs)?;
-    let headings: Vec<serde_json::Value> = content
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if !trimmed.starts_with('#') {
-                return None;
-            }
-            let level = trimmed.chars().take_while(|c| *c == '#').count();
-            let text = trimmed.trim_start_matches('#').trim();
-            if text.is_empty() {
-                return None;
-            }
-            Some(serde_json::json!({ "level": level, "text": text }))
+    let headings: Vec<serde_json::Value> = crate::indexer::chunker::markdown_headings(&content)
+        .into_iter()
+        .map(|heading| {
+            serde_json::json!({
+                "level": heading.level,
+                "text": heading.text,
+                "sourceSpan": { "start": heading.source_start, "end": heading.source_end },
+            })
         })
         .collect();
     Ok(serde_json::json!({ "path": path, "headings": headings }))
@@ -122,10 +155,7 @@ pub(super) async fn get_backlinks(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
-    ctx.ensure_document_capability(
-        path,
-        crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
-    )?;
+    ensure_note_model_read_allowed(ctx, path)?;
     ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
@@ -153,7 +183,12 @@ pub(super) async fn get_backlinks(
         let mut entries = Vec::new();
         for row in rows {
             let (source_path, source_title, context) = row?;
-            if ctx.retrieval_scope.allows_path(conn, &source_path)? {
+            if ensure_note_model_read_allowed(ctx, &source_path).is_ok()
+                && ctx.retrieval_scope.allows_path(conn, &source_path)?
+                && ctx
+                    .ensure_active_skill_scope_allows_path(&state.db, &source_path)
+                    .is_ok()
+            {
                 entries.push(serde_json::json!({
                     "source_path": source_path,
                     "source_title": source_title,

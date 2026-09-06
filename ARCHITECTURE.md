@@ -49,6 +49,8 @@ React 19 UI
 
 用户 `.md` 是笔记唯一权威来源。`files`、`chunks`、`links`、FTS 与嵌入索引均可由 Vault 重建；会话、Run、网页缓存和收件箱属于应用状态。应用不会在未确认时改写用户笔记。
 
+**2026-09-06 数据保护审计限定**：以上“可重建”仅指索引内容，不代表当前 `files` 行可以安全删除。现行 `versions.file_id` 对 `files.id` 使用级联删除；通用缺失文件清理和目录移动后的旧路径清理存在丢失版本关联的风险。另有 `StorageState.cas_store` 首次初始化后未随 Vault 切换重绑、全局 `files.path` 缺少 Vault 身份的问题。它们仍是已知缺陷，不能把当前多 Vault 历史隔离或完整 Agent CRUD/撤销描述为已验收；整改边界见 [Harness 实施路线](./agent-harness/05-implementation-roadmap.md)。本轮没有运行迁移或改动用户笔记库。
+
 ## Agent Run
 
 normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `assistant_run_get` 执行、控制和回放。每个 normal-domain Run 在 accepted 后持久化，再进行策略、上下文、路由与 provider 调度；`assistant:run_event` 是唯一的前端生命周期事件，断流使用 `assistant_run_get` 回放。

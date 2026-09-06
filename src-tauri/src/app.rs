@@ -543,6 +543,10 @@ impl AppState {
     }
 
     pub fn set_vault(&self, path: PathBuf) -> AppResult<()> {
+        crate::storage::atomic_write::with_vault_move_lock(|| self.set_vault_locked(path))
+    }
+
+    fn set_vault_locked(&self, path: PathBuf) -> AppResult<()> {
         if !path.is_dir() {
             return Err(AppError::msg("Vault must be a directory"));
         }

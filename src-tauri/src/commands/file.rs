@@ -11,10 +11,7 @@ use crate::cas::hash::content_hash as content_hash_bytes;
 use crate::error::{AppError, AppResult};
 use crate::feed::fetch::{FeedHttpClient, FetchPurpose, ProdNetGate};
 use crate::indexer::frontmatter::resolve_display_title;
-use crate::indexer::scan::{
-    collect_vault_folders, content_hash, index_file, index_vault_incremental, rename_file_index,
-    FileEntry,
-};
+use crate::indexer::scan::{collect_vault_folders, index_file, index_vault_incremental, FileEntry};
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -23,8 +20,7 @@ use uuid::Uuid;
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
 use crate::storage::atomic_write::{
-    atomic_write, move_directory_no_replace_locked, move_file_no_replace_locked,
-    with_vault_move_lock,
+    atomic_write, move_directory_no_replace_locked, with_vault_move_lock,
 };
 use crate::storage::note_title::title_from_path;
 use crate::storage::note_write::{
@@ -718,15 +714,11 @@ fn folder_rename_inner_locked(
             continue;
         };
 
-        let old_stem = title_from_path(rel_old);
-        let new_stem = title_from_path(&rel_new);
         match cascade_rewrite_wikilinks_on_disk(
             state,
             &vault,
             rel_old,
             &rel_new,
-            &old_stem,
-            &new_stem,
             Some((&old_path, &new_path)),
         ) {
             Ok(mut mods) => all_modified_sources.append(&mut mods),
@@ -807,15 +799,17 @@ pub fn set_file_lock(state: &AppState, path: &str, locked: bool) -> AppResult<()
     if !is_user_note_path(path) {
         return Err(AppError::msg("只能操作用户笔记"));
     }
-    state.db.with_conn(|conn| {
-        let affected = conn.execute(
-            "UPDATE files SET is_locked = ?1 WHERE path = ?2",
-            rusqlite::params![locked as i64, path],
-        )?;
-        if affected == 0 {
-            return Err(AppError::msg("文件尚未索引，无法设置锁定状态"));
-        }
-        Ok(())
+    with_vault_move_lock(|| {
+        state.db.with_conn(|conn| {
+            let affected = conn.execute(
+                "UPDATE files SET is_locked = ?1 WHERE path = ?2",
+                rusqlite::params![locked as i64, path],
+            )?;
+            if affected == 0 {
+                return Err(AppError::msg("文件尚未索引，无法设置锁定状态"));
+            }
+            Ok(())
+        })
     })
 }
 
@@ -958,16 +952,6 @@ fn allocate_document_title_path(
     ))
 }
 
-fn fallback_file_entry(path: &str, content: &str) -> FileEntry {
-    FileEntry {
-        id: 0,
-        path: path.to_string(),
-        title: title_from_path(path),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-        word_count: content.split_whitespace().count() as i64,
-    }
-}
-
 pub(crate) fn file_rename_inner(
     state: Arc<AppState>,
     path: String,
@@ -981,108 +965,9 @@ fn file_rename_inner_locked(
     path: String,
     new_path: String,
 ) -> AppResult<FileWriteResult> {
-    if !is_user_note_path(&path) || !is_user_note_path(&new_path) {
-        return Err(AppError::msg("Only user note paths can be renamed"));
-    }
-
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
-    let new_abs = resolve_vault_path(&vault, &new_path)?;
-
-    let old_stem = title_from_path(&path);
-    let new_stem = title_from_path(&new_path);
-    let source_content = read_file_lossy(&abs)?;
-    let hash = content_hash(&source_content);
-    let mut index_degraded = false;
-
-    // This is the only state-changing operation before backlink and index
-    // work. `move_file_no_replace_locked` makes a competing destination
-    // creator win without replacing it or touching source documents.
-    move_file_no_replace_locked(&abs, &new_abs)?;
-    state.storage.write_guard.mark_removed(&path);
-    state.storage.write_guard.mark(&new_path, &hash);
-
-    let modified_sources = match cascade_rewrite_wikilinks_on_disk(
-        state, &vault, &path, &new_path, &old_stem, &new_stem, None,
-    ) {
-        Ok(paths) => paths,
-        Err(_) => {
-            index_degraded = true;
-            tracing::warn!(
-                result_code = "file_rename_cascade_degraded",
-                "file rename continued after wikilink cascade degradation"
-            );
-            Vec::new()
-        }
-    };
-
-    let entry = match state.db.with_conn(|conn| {
-        // A path absent on disk can still have an obsolete derived row. The
-        // destination now contains the moved Markdown, so discard only that
-        // stale collision after the authoritative move has succeeded.
-        conn.execute("DELETE FROM files WHERE path = ?1", [&new_path])?;
-        if rename_file_index(conn, &path, &new_path).is_err() {
-            index_degraded = true;
-            tracing::warn!(
-                result_code = "file_rename_index_rename_degraded",
-                "file rename continued after derived index rename degradation"
-            );
-        }
-        let entry = index_file(conn, &vault, &new_abs)?;
-        if crate::indexer::scan::prune_stale_file_indexes(conn, &vault).is_err() {
-            index_degraded = true;
-            tracing::warn!(
-                result_code = "file_rename_post_move_index_degraded",
-                "file rename continued after derived index degradation after move"
-            );
-        }
-        Ok(entry)
-    }) {
-        Ok(entry) => {
-            state.embedding_scheduler().notify_index_committed();
-            entry
-        }
-        Err(_) => {
-            index_degraded = true;
-            tracing::warn!(
-                result_code = "file_rename_index_refresh_degraded",
-                "file rename completed with derived index degradation"
-            );
-            fallback_file_entry(&new_path, &source_content)
-        }
-    };
-
-    for src_path in &modified_sources {
-        if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
-            if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
-                state.storage.write_guard.mark(src_path, &h);
-            }
-            let indexed = state
-                .db
-                .with_conn(|conn| index_file(conn, &vault, &abs_src))
-                .is_ok();
-            if indexed {
-                state.embedding_scheduler().notify_index_committed();
-            } else {
-                index_degraded = true;
-                NoteWriteService::schedule_index_repair(state, src_path);
-            }
-        }
-    }
-
-    if index_degraded {
-        NoteWriteService::schedule_index_repair(state, &new_path);
-    }
-
-    Ok(FileWriteResult {
-        entry,
-        content_hash: hash,
-        index_status: if index_degraded {
-            FileWriteIndexStatus::Degraded
-        } else {
-            FileWriteIndexStatus::Synced
-        },
-    })
+    let plan = crate::storage::note_move::prepare_move(state, &path, &new_path)?;
+    let receipt = crate::storage::note_move::execute_move_locked(state, &plan)?;
+    Ok(receipt.write)
 }
 
 /// Rewrite wikilink text in all files referencing `old_path` on disk.
@@ -1094,8 +979,6 @@ fn cascade_rewrite_wikilinks_on_disk(
     vault: &std::path::Path,
     old_path: &str,
     new_path: &str,
-    old_stem: &str,
-    new_stem: &str,
     moved_source_root: Option<(&str, &str)>,
 ) -> AppResult<Vec<String>> {
     let source_paths: Vec<String> = state.db.with_read_conn(|conn| {
@@ -1124,49 +1007,11 @@ fn cascade_rewrite_wikilinks_on_disk(
         }
         let content = read_file_lossy(&abs)?;
 
-        // Rewrite line-by-line, skipping code blocks
-        let mut fence = crate::indexer::code_fence::FenceState::new();
-        let mut lines: Vec<String> = Vec::new();
-        let mut changed = false;
-
-        for line in content.lines() {
-            let in_fence = fence.feed(line);
-            if in_fence {
-                lines.push(line.to_string());
-                continue;
-            }
-
-            let mut updated_line = line.to_string();
-            let pattern_stem = format!("[[{}]]", old_stem);
-            let replacement_stem = format!("[[{}]]", new_stem);
-            if updated_line.contains(&pattern_stem) {
-                updated_line = updated_line.replace(&pattern_stem, &replacement_stem);
-            }
-
-            let pattern_path = format!("[[{}]]", old_path);
-            let replacement_path = format!("[[{}]]", new_path);
-            if updated_line.contains(&pattern_path) {
-                updated_line = updated_line.replace(&pattern_path, &replacement_path);
-            }
-
-            if let Some(old_no_ext) = old_path.strip_suffix(".md") {
-                let pattern_noext = format!("[[{}]]", old_no_ext);
-                let new_no_ext = new_path.strip_suffix(".md").unwrap_or(new_path);
-                let replacement_noext = format!("[[{}]]", new_no_ext);
-                if updated_line.contains(&pattern_noext) {
-                    updated_line = updated_line.replace(&pattern_noext, &replacement_noext);
-                }
-            }
-
-            if updated_line != line {
-                changed = true;
-            }
-            lines.push(updated_line);
-        }
-
-        if changed {
-            let updated = lines.join("\n");
-            NoteWriteService::write_under_move_lock(state, &src_path, &updated, true)?;
+        let updated = crate::storage::note_move::rewrite_wikilinks(&content, old_path, new_path);
+        if updated != content {
+            NoteWriteService::ensure_unlocked(state, &src_path)?;
+            crate::storage::note_operations::protect_snapshot(state, &src_path, &content)?;
+            NoteWriteService::write_under_move_lock(state, &src_path, &updated)?;
             modified.push(src_path);
         }
     }
@@ -1667,6 +1512,35 @@ Body",
     }
 
     #[test]
+    fn move_preserves_backlink_bytes_and_creates_recovery_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("old.md"), "# Old\n").unwrap();
+        let before = "---\r\ntitle: Keep\r\n---\r\n[[old]]\r\n```md\r\n[[old]]\r\n```\r\n";
+        fs::write(vault.join("ref.md"), before).unwrap();
+        let state = AppState::new(temp.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file(conn, &vault, &vault.join("old.md"))?;
+                index_file(conn, &vault, &vault.join("ref.md"))?;
+                Ok(())
+            })
+            .unwrap();
+        file_rename_inner(state.clone(), "old.md".into(), "new.md".into()).unwrap();
+        assert_eq!(
+            fs::read_to_string(vault.join("ref.md")).unwrap(),
+            before.replacen("[[old]]", "[[new]]", 1)
+        );
+        let versions = crate::version::version_list(&state, "ref.md").unwrap();
+        assert!(versions
+            .iter()
+            .any(|version| version.content_hash == crate::cas::hash::content_hash_str(before)));
+    }
+
+    #[test]
     fn document_rename_by_title_noop_does_not_rewrite_markdown() {
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
@@ -1937,7 +1811,7 @@ Body",
         assert_eq!(status, FileWriteIndexStatus::Synced);
         assert_eq!(
             fs::read_to_string(vault.join("new/source.md")).unwrap(),
-            "Inside [[new/target.md]]."
+            "Inside [[new/target.md]].\n"
         );
     }
 
@@ -2034,8 +1908,6 @@ Body",
             &vault,
             "target.md",
             "folder/target.md",
-            "target",
-            "target",
             None,
         )
         .unwrap();

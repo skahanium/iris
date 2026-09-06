@@ -144,6 +144,15 @@ export function useVaultFileActions(
     [onIndexDegraded],
   );
 
+  const reportPendingOperation = useCallback(
+    (pendingPaths: readonly string[] | undefined) => {
+      if (pendingPaths?.length) {
+        setError("文件已移动，部分反向链接待处理");
+      }
+    },
+    [],
+  );
+
   const preferredMoveFileName = useCallback((file: FileListItem) => {
     const title = displayTitleForFileListItem(file).trim();
     if (
@@ -255,6 +264,7 @@ export function useVaultFileActions(
             startedMigrations.push(target.file.path);
             const receipt = await fileRename(target.file.path, nextPath);
             reportIndexStatus(receipt.indexStatus);
+            reportPendingOperation(receipt.operation?.pendingPaths);
             onFilePathChanged?.(target.file.path, nextPath, name);
           }
         } else {
@@ -303,6 +313,7 @@ export function useVaultFileActions(
       onIndexChange,
       refresh,
       reportIndexStatus,
+      reportPendingOperation,
     ],
   );
 
@@ -326,6 +337,7 @@ export function useVaultFileActions(
             startedMigrations.push(target.file.path);
             const receipt = await fileRename(target.file.path, nextPath);
             reportIndexStatus(receipt.indexStatus);
+            reportPendingOperation(receipt.operation?.pendingPaths);
             onFilePathChanged?.(
               target.file.path,
               nextPath,
@@ -346,6 +358,7 @@ export function useVaultFileActions(
             startedMigrations.push(file.path);
             const receipt = await fileRename(file.path, nextPath);
             reportIndexStatus(receipt.indexStatus);
+            reportPendingOperation(receipt.operation?.pendingPaths);
             onFilePathChanged?.(file.path, nextPath, ctx.fileTitle(file));
             reservedPaths.add(nextPath);
           }
@@ -397,6 +410,7 @@ export function useVaultFileActions(
       onIndexChange,
       refresh,
       reportIndexStatus,
+      reportPendingOperation,
       resolveMoveFilePath,
     ],
   );

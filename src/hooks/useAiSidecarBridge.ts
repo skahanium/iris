@@ -76,8 +76,6 @@ export function useAiSidecarBridge({
   const [webSearchProviderId, setWebSearchProviderIdState] = useState<
     string | null
   >(null);
-  const [webSearchProvidersLoaded, setWebSearchProvidersLoaded] =
-    useState(false);
   const [prefillMessage, setPrefillMessage] = useState<string | null>(null);
   const [editorSelectionCandidate, setEditorSelectionCandidate] =
     useState<EditorSelectionCandidate | null>(null);
@@ -92,6 +90,7 @@ export function useAiSidecarBridge({
   const isDocumentDirtyRef = useRef(isDocumentDirty);
   isDocumentDirtyRef.current = isDocumentDirty;
   const mountedRef = useRef(true);
+  const webSearchPreferenceTouchedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -118,8 +117,6 @@ export function useAiSidecarBridge({
     } catch {
       setWebSearchProviders([]);
       setWebSearchProviderIdState(null);
-    } finally {
-      setWebSearchProvidersLoaded(true);
     }
   }, []);
 
@@ -134,17 +131,10 @@ export function useAiSidecarBridge({
       if (cancelled) return;
       const normalizedSelectedProviderId =
         route.candidateProviderIds[0] ?? null;
-      const availability = getWebSearchAvailability(
-        providers,
-        normalizedSelectedProviderId,
-      );
       setWebSearchProviders(providers);
       setWebSearchProviderIdState(normalizedSelectedProviderId);
-      setWebSearchProvidersLoaded(true);
-      const nextEnabled = enabled === true && availability.canEnable;
-      setWebSearchEnabled(nextEnabled);
-      if (enabled === true && !availability.canEnable) {
-        void settingsSet("web_search_enabled", false);
+      if (!webSearchPreferenceTouchedRef.current) {
+        setWebSearchEnabled(enabled === true);
       }
     })();
     return () => {
@@ -152,37 +142,20 @@ export function useAiSidecarBridge({
     };
   }, []);
 
-  useEffect(() => {
-    if (
-      webSearchProvidersLoaded &&
-      webSearchEnabled &&
-      !webSearchAvailability.canEnable
-    ) {
-      setWebSearchEnabled(false);
-      void settingsSet("web_search_enabled", false);
-    }
-  }, [
-    webSearchAvailability.canEnable,
-    webSearchEnabled,
-    webSearchProvidersLoaded,
-  ]);
-
-  const setWebSearch = useCallback(
-    (enabled: boolean) => {
-      const nextEnabled = enabled && webSearchAvailability.canEnable;
-      setWebSearchEnabled(nextEnabled);
-      void settingsSet("web_search_enabled", nextEnabled);
-    },
-    [webSearchAvailability.canEnable],
-  );
+  const setWebSearch = useCallback((enabled: boolean) => {
+    webSearchPreferenceTouchedRef.current = true;
+    setWebSearchEnabled(enabled);
+    void settingsSet("web_search_enabled", enabled);
+  }, []);
 
   const toggleWebSearch = useCallback(() => {
     setWebSearchEnabled((prev) => {
-      const next = !prev && webSearchAvailability.canEnable;
+      webSearchPreferenceTouchedRef.current = true;
+      const next = !prev;
       void settingsSet("web_search_enabled", next);
       return next;
     });
-  }, [webSearchAvailability.canEnable]);
+  }, []);
 
   const setWebSearchProviderId = useCallback((providerId: string | null) => {
     const normalized = providerId?.trim() || null;

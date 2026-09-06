@@ -46,9 +46,10 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"}
+                    "path": {"type": "string"},
+                    "base_content_hash": {"type":"string", "description":"read_note 返回的完整文档 hash；确认后发生变更会拒绝删除"}
                 },
-                "required": ["path"]
+                "required": ["path", "base_content_hash"]
             }),
             access_level: ToolAccessLevel::WriteMarkdown,
             requires_confirmation: true,

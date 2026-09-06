@@ -1,13 +1,9 @@
-use crate::ai_runtime::{PatchApplyResult, PatchProposal, RiskLevel, SourceSpan};
+use super::ToolDispatchContext;
+use crate::ai_runtime::PatchApplyResult;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::storage::note_write::{FileWriteIndexStatus, NoteWriteService};
-use crate::storage::paths::{is_user_note_path, resolve_vault_path};
-
-use super::ToolDispatchContext;
-
-const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
-const INDEX_REFRESH_WARNING: &str = "文档已写入，但索引刷新失败。可继续编辑，稍后可重新索引。";
+use crate::storage::note_operations::{apply_edit, NoteEdit};
+use crate::storage::note_write::FileWriteIndexStatus;
 
 pub(super) fn markdown_write_patch_apply(
     state: &AppState,
@@ -15,238 +11,63 @@ pub(super) fn markdown_write_patch_apply(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
-    let Some(target_path) = args
+    let required = |key: &str| {
+        args.get(key)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::msg(format!("missing {key}")))
+    };
+    let target = args
         .get("target_path")
         .and_then(|v| v.as_str())
         .or(ctx.note_path)
-        .map(str::to_string)
-    else {
-        return Ok(markdown_write_not_applied(
-            tool_name,
-            "missing target_path",
-            args,
-        ));
+        .ok_or_else(|| AppError::msg("missing target_path"))?;
+    let range = args
+        .get("range")
+        .ok_or_else(|| AppError::msg("missing range"))?;
+    let offset = |key: &str| {
+        range
+            .get(key)
+            .and_then(|v| v.as_u64())
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or_else(|| AppError::msg("invalid patch range"))
     };
-    if !is_user_note_path(&target_path) {
-        return Ok(markdown_write_not_applied(
-            tool_name,
-            "只能修改用户笔记",
-            args,
-        ));
-    }
-    if let Err(error) = ctx.ensure_write_target_matches(&target_path) {
-        return Ok(markdown_write_not_applied(
-            tool_name,
-            &error.to_string(),
-            args,
-        ));
-    }
-    if let Err(error) = ctx.ensure_document_capability(
-        &target_path,
-        crate::ai_runtime::policy_decision_engine::DocumentCapability::ApplyChange,
-    ) {
-        return Ok(markdown_write_not_applied(
-            tool_name,
-            &error.to_string(),
-            args,
-        ));
-    }
-    if let Err(error) = ctx.ensure_active_skill_scope_allows_path(&state.db, &target_path) {
-        return Ok(markdown_write_not_applied(
-            tool_name,
-            &error.to_string(),
-            args,
-        ));
-    }
-    let Some(base_content_hash) = args
-        .get("base_content_hash")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-    else {
-        return Ok(markdown_write_not_applied(
-            tool_name,
-            "missing base_content_hash",
-            args,
-        ));
-    };
-    let Some(range) = parse_source_span(args.get("range")) else {
-        return Ok(markdown_write_not_applied(tool_name, "missing range", args));
-    };
-    let replacement_key = if tool_name == "insert_text_at_cursor" {
-        "text"
-    } else {
-        "replacement"
-    };
-    let replacement = args[replacement_key]
-        .as_str()
-        .ok_or_else(|| AppError::msg(format!("missing {replacement_key}")))?;
-    let original_text = args
-        .get("original_text")
-        .and_then(|v| v.as_str())
-        .or_else(|| args.get("selection").and_then(|v| v.as_str()))
-        .unwrap_or("");
-    let patch = PatchProposal {
-        id: uuid::Uuid::new_v4().to_string(),
-        target_path: target_path.clone(),
-        base_content_hash: base_content_hash.to_string(),
-        range,
-        original_text: original_text.to_string(),
-        replacement_text: replacement.to_string(),
-        evidence_packet_ids: vec![],
-        risk_level: parse_risk_level(args.get("risk_level")),
-        warnings: vec![],
-        created_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+    let edit = NoteEdit {
+        path: target.to_string(),
+        base_content_hash: required("base_content_hash")?.to_string(),
+        range: offset("start")?..offset("end")?,
+        original: args
+            .get("original_text")
+            .or_else(|| args.get("selection"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        replacement: required(if tool_name == "insert_text_at_cursor" {
+            "text"
+        } else {
+            "replacement"
+        })?
+        .to_string(),
     };
     let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &target_path)?;
-    let current = std::fs::read_to_string(&abs)?;
-    let current_hash = crate::cas::hash::content_hash_str(&current);
-    if current_hash != base_content_hash {
-        let result = PatchApplyResult {
-            success: false,
-            new_content_hash: None,
-            error: Some("base content hash does not match the current note".into()),
-            warnings: vec![],
-        };
-        return Ok(serde_json::json!({
-            "type": "patch_apply",
-            "tool_name": tool_name,
-            "target_path": target_path,
-            "patch_id": patch.id,
-            "result": result,
-        }));
-    }
-    let applied = match crate::cas::patch::apply_patch(&patch, &current) {
-        Ok(content) => content,
-        Err(e) => {
-            let result = PatchApplyResult {
-                success: false,
-                new_content_hash: None,
-                error: Some(e.to_string()),
-                warnings: vec![],
-            };
-            return Ok(serde_json::json!({
-                "type": "patch_apply",
-                "tool_name": tool_name,
-                "target_path": target_path,
-                "patch_id": patch.id,
-                "result": result,
-            }));
-        }
-    };
-    if applied.len() > MAX_NOTE_FILE_BYTES {
-        return Err(AppError::msg(format!(
-            "补丁应用后内容超过 20MB 限制（{} 字节）",
-            applied.len()
-        )));
-    }
-    let is_indexed = state.db.with_read_conn(|conn| {
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE path = ?1",
-            [&target_path],
-            |row| row.get(0),
+    let receipt = apply_edit(state, &vault, &edit, || {
+        ctx.ensure_run_active()?;
+        ctx.ensure_write_target_matches(target)?;
+        ctx.ensure_document_capability(
+            target,
+            crate::ai_runtime::policy_decision_engine::DocumentCapability::ApplyChange,
         )?;
-        Ok(count > 0)
+        ctx.ensure_active_skill_scope_allows_path(&state.db, target)
     })?;
-    if !is_indexed {
-        let current_hash = crate::indexer::scan::content_hash(&current);
-        state.db.with_conn(|conn| {
-            crate::indexer::scan::index_file_from_content(
-                conn,
-                &vault,
-                &abs,
-                &current,
-                &current_hash,
-            )
-        })?;
-        state.embedding_scheduler().notify_index_committed();
-    }
-    // A cancellation can arrive while this tool was validating and preparing
-    // the patch. Re-check immediately before any durable side effect.
-    ctx.ensure_run_active()?;
-    crate::version::create_snapshot(
-        state,
-        &target_path,
-        &current,
-        crate::version::SnapshotParams::manual(),
-    )?;
-    ctx.ensure_run_active()?;
-    let receipt = match NoteWriteService::write(state, &target_path, &applied) {
-        Ok(receipt) => receipt,
-        Err(error) if error.to_string().contains("note_locked") => {
-            return Ok(markdown_write_not_applied(
-                tool_name,
-                "笔记已锁定，无法写入",
-                args,
-            ));
-        }
-        Err(error) => return Err(error),
-    };
-    let hash = receipt.content_hash;
-    let mut warnings = Vec::new();
-    if receipt.index_status == FileWriteIndexStatus::Degraded {
-        warnings.push(INDEX_REFRESH_WARNING.into());
-    }
-    let entry = receipt.entry;
-    warnings.insert(
-        0,
-        format!("已写入《{}》，共 {} 字", entry.title, entry.word_count),
-    );
-    let result = PatchApplyResult {
-        success: true,
-        new_content_hash: Some(hash),
-        error: None,
-        warnings,
+    let warnings = if receipt.write.index_status == FileWriteIndexStatus::Degraded {
+        vec!["文档已写入，但索引待修复。".to_string()]
+    } else {
+        Vec::new()
     };
     Ok(serde_json::json!({
-        "type": "patch_apply",
-        "tool_name": tool_name,
-        "target_path": target_path,
-        "patch_id": patch.id,
-        "result": result,
-    }))
-}
-
-fn markdown_write_not_applied(
-    tool_name: &str,
-    reason: &str,
-    args: &serde_json::Value,
-) -> serde_json::Value {
-    let replacement_key = if tool_name == "insert_text_at_cursor" {
-        "text"
-    } else {
-        "replacement"
-    };
-    let replacement_len = args
-        .get(replacement_key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.chars().count())
-        .unwrap_or(0);
-    serde_json::json!({
-        "type": "patch_apply",
-        "tool_name": tool_name,
-        "replacement_len": replacement_len,
+        "type": "patch_apply", "tool_name": tool_name, "target_path": target,
+        "receipt": receipt,
         "result": PatchApplyResult {
-            success: false,
-            new_content_hash: None,
-            error: Some(reason.to_string()),
-            warnings: vec![],
+            success: true, new_content_hash: Some(receipt.after_hash.clone()), error: None, warnings,
         },
-    })
-}
-
-fn parse_source_span(value: Option<&serde_json::Value>) -> Option<SourceSpan> {
-    let value = value?;
-    Some(SourceSpan {
-        start: value.get("start")?.as_u64()? as usize,
-        end: value.get("end")?.as_u64()? as usize,
-    })
-}
-
-fn parse_risk_level(value: Option<&serde_json::Value>) -> RiskLevel {
-    match value.and_then(|v| v.as_str()) {
-        Some("high") => RiskLevel::High,
-        Some("medium") => RiskLevel::Medium,
-        _ => RiskLevel::Low,
-    }
+    }))
 }

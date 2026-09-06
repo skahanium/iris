@@ -52,7 +52,10 @@ fn normalized_relative(relative: &str) -> String {
 }
 
 fn first_path_segment(relative: &str) -> &str {
-    relative.split('/').next().unwrap_or(relative)
+    relative
+        .split('/')
+        .find(|segment| !segment.is_empty() && *segment != ".")
+        .unwrap_or(relative)
 }
 
 /// True when the first vault-relative path segment is an Iris reserved root.
@@ -105,7 +108,15 @@ pub fn validate_user_note_relative_path(vault: &Path, relative: &str) -> AppResu
     if !is_user_note_path(relative) {
         return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
     }
-    resolve_vault_path(vault, relative)
+    let absolute = resolve_vault_path(vault, relative)?;
+    let canonical_vault = vault.canonicalize()?;
+    let canonical_relative = absolute
+        .strip_prefix(&canonical_vault)
+        .map_err(|_| AppError::msg("Path is outside the vault"))?;
+    if !is_user_note_path(&canonical_relative.to_string_lossy()) {
+        return Err(AppError::msg("不允许通过路径别名访问内部元数据"));
+    }
+    Ok(absolute)
 }
 
 #[cfg(test)]

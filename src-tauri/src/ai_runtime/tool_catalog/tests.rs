@@ -2,6 +2,39 @@ use super::*;
 use crate::ai_runtime::tool_dispatch::{DISPATCHABLE_TOOL_NAMES, HARNESS_ONLY_TOOL_NAMES};
 
 #[test]
+fn note_write_schema_requires_the_exact_dispatch_preconditions() {
+    for (tool, fields) in [
+        (
+            "insert_text_at_cursor",
+            vec!["text", "target_path", "base_content_hash", "range"],
+        ),
+        (
+            "replace_selection",
+            vec![
+                "replacement",
+                "target_path",
+                "base_content_hash",
+                "range",
+                "original_text",
+            ],
+        ),
+        ("vault_delete_to_trash", vec!["path", "base_content_hash"]),
+    ] {
+        let schema = &catalog_find(tool).unwrap().input_schema;
+        for field in fields {
+            assert!(
+                schema["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!(field)),
+                "{tool}: {field}"
+            );
+            assert!(schema["properties"].get(field).is_some());
+        }
+    }
+}
+
+#[test]
 fn catalog_owns_execution_metadata() {
     let web = catalog_find("web_search")
         .and_then(|entry| entry.execution_metadata)
@@ -44,6 +77,18 @@ fn web_tools_expose_single_responsibility_search_and_fetch_contracts() {
     assert!(fetch_properties.contains_key("urls"));
     assert!(!fetch_properties.contains_key("query"));
     assert_eq!(fetch.input_schema["required"], serde_json::json!(["urls"]));
+}
+
+#[test]
+fn read_note_catalog_exposes_bounded_continuation_contract() {
+    let read = catalog_find("read_note").expect("read_note catalog entry");
+    let properties = read.input_schema["properties"]
+        .as_object()
+        .expect("read_note properties");
+
+    assert!(properties.contains_key("start_byte"));
+    assert!(properties.contains_key("content_hash"));
+    assert_eq!(properties["max_chars"]["maximum"], 12_000);
 }
 
 #[test]

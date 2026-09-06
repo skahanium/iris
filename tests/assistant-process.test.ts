@@ -28,6 +28,23 @@ function event<Type extends AssistantRunEvent["type"]>(
 }
 
 describe("Assistant Run 处理过程投影", () => {
+  it("兼容句点能力名并为未知能力使用通用中文", () => {
+    const items = projectAssistantProcessEvents([
+      event(1, "tool_started", {
+        kind: "tool_started",
+        capability: "web.fetch",
+        toolCallId: "fetch-001",
+      }),
+      event(2, "tool_started", {
+        kind: "tool_started",
+        capability: "legacy.unknown",
+        toolCallId: "unknown-001",
+      }),
+    ]);
+
+    expect(items.map((item) => item.label)).toEqual(["读取网页", "执行工具"]);
+  });
+
   it("用临时摘要快照更新 UI，并由持久化摘要提交它", () => {
     let state = createAssistantRunEventState(runId);
     state = reduceAssistantRunEvent(

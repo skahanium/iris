@@ -440,7 +440,7 @@ export function ManagementCenterPanel({
         <SettingRow
           icon={ShieldCheck}
           title="权限边界"
-          detail="写入笔记、网页抓取和外部动作执行前需要明确确认。"
+          detail="笔记变更逐批确认；联网开启后，授权范围内的搜索与网页抓取不再逐次询问。"
         />
         <SettingRow
           icon={KeyRound}
@@ -1075,8 +1075,8 @@ export function ManagementCenterPanel({
                   }
                 >
                   <SwitchControl
-                    checked={webSearch && webSearchAvailability.canEnable}
-                    disabled={!webSearchAvailability.canEnable}
+                    checked={webSearch}
+                    disabled={!webSearch && !webSearchAvailability.canEnable}
                     label="联网搜索"
                     onCheckedChange={(checked) => {
                       if (!checked || webSearchAvailability.canEnable) {

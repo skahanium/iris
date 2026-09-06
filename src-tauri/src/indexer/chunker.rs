@@ -27,6 +27,58 @@ pub struct MarkdownChunk {
     pub content_hash: String,
 }
 
+/// One Markdown heading and its exact UTF-8 byte range in the source body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownHeading {
+    pub level: usize,
+    pub text: String,
+    pub source_start: usize,
+    pub source_end: usize,
+}
+
+/// Parse ATX and Setext headings with the same fence and offset rules as indexing.
+pub fn markdown_headings(content: &str) -> Vec<MarkdownHeading> {
+    let lines = lines_with_offsets(content);
+    let mut headings = Vec::new();
+    let mut fence = FenceState::new();
+    for (line_index, &(line_start, line, line_with_eol_len)) in lines.iter().enumerate() {
+        if fence.feed(line) {
+            continue;
+        }
+        if let Some((level, text)) = parse_heading(line) {
+            if !text.is_empty() {
+                headings.push(MarkdownHeading {
+                    level,
+                    text,
+                    source_start: line_start,
+                    source_end: line_start + line_with_eol_len,
+                });
+            }
+            continue;
+        }
+        let Some(&(next_start, next_line, next_len)) = lines.get(line_index + 1) else {
+            continue;
+        };
+        let Some(level) = parse_setext_underline(next_line) else {
+            continue;
+        };
+        let text = line.trim();
+        if text.is_empty()
+            || line.bytes().take_while(|byte| *byte == b' ').count() > 3
+            || is_fence_delimiter(line)
+        {
+            continue;
+        }
+        headings.push(MarkdownHeading {
+            level,
+            text: text.to_string(),
+            source_start: line_start,
+            source_end: next_start + next_len,
+        });
+    }
+    headings
+}
+
 /// Split markdown while preserving enough source metadata for stable citations.
 pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<MarkdownChunk> {
     let mut chunks = Vec::new();
@@ -525,5 +577,21 @@ mod tests {
 
         assert_eq!(c_sharp[0].heading_path.as_deref(), Some("C#"));
         assert_eq!(tag[0].heading_path.as_deref(), Some("#tag"));
+    }
+
+    #[test]
+    fn headings_share_fence_rules_and_exact_source_ranges() {
+        let content = "# 标题\n```md\n## 假标题\n```\n小节\n----\n";
+        let headings = markdown_headings(content);
+
+        assert_eq!(headings.len(), 2);
+        assert_eq!(
+            &content[headings[0].source_start..headings[0].source_end],
+            "# 标题\n"
+        );
+        assert_eq!(
+            &content[headings[1].source_start..headings[1].source_end],
+            "小节\n----\n"
+        );
     }
 }
