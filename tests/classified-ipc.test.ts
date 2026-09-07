@@ -56,6 +56,7 @@ describe("classified vault IPC contract", () => {
     const types = read("src/types/ipc.ts");
     expect(types).toContain("export interface FileReadResult");
     expect(types).toContain("isLocked: boolean");
+    expect(types).toContain("contentHash: string");
     expect(types).toContain("export interface ClassifiedFileEntry");
     expect(types).toContain("isDir: boolean");
     expect(types).toContain("export type ClassifiedStatus =");
@@ -159,9 +160,14 @@ describe("classified vault IPC contract", () => {
   });
 
   it("fileRead returns FileReadResult shape from invoke", async () => {
-    invoke.mockResolvedValue({ content: "# Hi", isLocked: false });
+    invoke.mockResolvedValueOnce({
+      content: "# Hi",
+      contentHash: "a".repeat(64),
+      isLocked: false,
+    });
     await expect(fileRead("notes/a.md")).resolves.toEqual({
       content: "# Hi",
+      contentHash: "a".repeat(64),
       isLocked: false,
     });
     expect(invoke).toHaveBeenCalledWith("file_read", {
@@ -186,7 +192,7 @@ describe("fileRead call-site compatibility (Task 15)", () => {
     expect(source).toContain(": fileRead(path,");
     expect(source).toContain("const readPromise = preparedNote");
     expect(source).toContain("Promise.all");
-    expect(source).toMatch(/\{\s*content,\s*isLocked\s*\}/);
+    expect(source).toMatch(/\{\s*content,\s*isLocked,\s*contentHash\s*\}/);
   });
 
   it("note-tab-lifecycle destructures content from fileRead", () => {

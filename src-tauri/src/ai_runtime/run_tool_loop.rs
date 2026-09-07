@@ -4704,15 +4704,24 @@ mod tests {
             assert!(!surfaces[0].contains(&"memory_write".to_string()));
             assert!(!surfaces[0].contains(&"spawn_subagent".to_string()));
         }
-        let child_budget = crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
-            max_prompt_tokens: Some(2_000),
-            max_completion_tokens: Some(2_048),
-            max_turn_output_tokens: Some(1_024),
-        };
-        assert_eq!(
-            provider.budgets.lock().expect("child budgets").as_slice(),
-            &[child_budget, child_budget]
-        );
+        {
+            let budgets = provider.budgets.lock().expect("child budgets");
+            assert_eq!(budgets.len(), 2, "child must make a real continuation turn");
+            assert_eq!(budgets[0].max_prompt_tokens, Some(2_000));
+            assert_eq!(
+                budgets[0].max_completion_tokens,
+                Some(1_024),
+                "exploratory child turn must keep the synthesis output reserve"
+            );
+            assert_eq!(budgets[0].max_turn_output_tokens, Some(1_024));
+            assert_eq!(budgets[1].max_prompt_tokens, Some(2_000));
+            let synthesis_completion = budgets[1].max_completion_tokens.expect("synthesis budget");
+            assert!(
+                (1_024..=2_048).contains(&synthesis_completion),
+                "synthesis turn spends remaining child completion budget, got {synthesis_completion}"
+            );
+            assert_eq!(budgets[1].max_turn_output_tokens, Some(1_024));
+        }
         for child_index in 2..=3 {
             let arguments = if child_index == 3 {
                 r#"{"task":"只推理，不调用工具","allowed_tools":[]}"#

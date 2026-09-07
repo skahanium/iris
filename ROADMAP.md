@@ -59,7 +59,7 @@ Agent Harness 的现行问题审计、目标合同与 `HR-0` 至 `HR-7` 重构�
 
 - LLM 与联网搜索均采用用户可配置的有序主备路由：每次 Run 最多筛选主服务和两个备用，能力不匹配或暂时熔断的候选直接跳过；不采用并发双发。固定模型覆盖不参与自动切换。MCP 联网服务商列表是搜索主备顺序的唯一入口：候选在列表置顶并标注主服务、备用 1/2，排序由条目内控件完成，不另设重复顺序卡片。
 - 自定义 LLM 端点当前保持 chat-only 安全回退：连通性、文本和视觉验证均不等于 Agent 工具或多轮续接协议验证，界面必须持续明示该限制。后续仅在具备逐端点、可撤销且可复验的 tools/continuation 显式能力探测后，才允许把相应端点纳入 Agent 池；探测失败或契约漂移时继续安全降级。
-- 桌面发布采用两段式门禁：普通 `main` push CI 保持有界，完整 Agent、真实 RAG、50k sqlite-vec 与 Windows 桌面 E2E 由同一 `main` SHA 的手动 `workflow_dispatch` 执行；tag 或手动打包必须同时找到该 SHA 的成功 push CI 和成功手动发布就绪运行，任一缺失不得产出安装包。
+- 桌面发布采用两段式门禁：普通 `main` push CI 保持有界；同一 `main` SHA 的手动 `workflow_dispatch` 执行确定性 `agent:eval:contract`、内嵌 BGE/sqlite-vec smoke、真实 RAG、50k sqlite-vec 与 Windows 桌面 E2E。tag 或手动打包必须同时找到该 SHA 的成功 push CI 和成功手动发布就绪运行，任一缺失不得产出安装包。`agent:eval` 双路 live 与人工审阅仍是 v1.3.0 Agent 产品放行门，不作为每次打包前置。发版步骤见 [桌面发版手册](./docs/testing/desktop-release-runbook.md)。
 - LLM 仅在尚未产生可见输出、工具调用或 continuation 前，因连接、首响应超时、限流或服务端瞬态故障切换；MCP `web.search` / `web.fetch` 在同一 20 秒预算内按顺序切换，成功服务在该 Run 后续调用中优先复用。过程流仅展示安全的切换说明，不保存端点、凭据、查询或原始输出。
 - Agent intake 以本地事务 Outbox 持久化用户消息、Run 与 accepted 事件；`clientRequestId` 是幂等键，同 ID、同 intake 指纹返回原 Run，同 ID、不同指纹安全拒绝。会话键只界定活动顶层 Run 的单航班范围；网络未知回包时前端以同一 ID 重放，而不制造第二条用户消息。
 - Prompt 通过唯一的 `PromptContractV3` 统一编译：安全与权限、真实性与归因、稳定身份、Run 领域约束、当前任务、人格软偏好、历史与材料数据按固定优先级进入；本轮 user role 只承载用户原文，授权材料以明确的非用户陈述数据段注入。归因和运行生命周期仅留在 Harness、证据账本与来源区，普通正文不复述“本轮 / 上一轮 / Run”或内部核验协议；只有用户主动询问来源、核验过程或不确定性时，才以自然语言解释限制。V2 不保留双编译路径；旧会话仅以未验证历史可读。人格快照在 Run 接受时冻结。
@@ -97,6 +97,17 @@ Agent Harness 的现行问题审计、目标合同与 `HR-0` 至 `HR-7` 重构�
 ### Harness Recovery 阶段（不构成额外版本承诺）
 
 具体依赖、删除项和退出条件见 [Harness Recovery 实施路线](./agent-harness/05-implementation-roadmap.md)。阶段顺序固定为：HR-0 文档事实重置、HR-1 回归基线、HR-2 Intake 去领域化、HR-3 通用自适应循环、HR-4 回答/澄清/投影、HR-5 冻结变更集、HR-6 领域核心退役、HR-7 通用质量与 Provider 校准。未授权工具面、Web 开关、classified 隔离、evidence Run 所有权和 Markdown 写入确认在所有阶段不可回退。
+
+### 六阶段受控演进验收矩阵（不构成发布版本承诺）
+
+现行施工以 Harness Recovery 为准；下列冻结门禁在所有阶段不可回退，也不把局部通过写成已交付。
+
+- 阶段 0：契约校准与回归基线
+- 阶段 0 基线门禁：`web_enabled` / `web.search` 是唯一授权来源
+- Markdown Apply 写入必须经过用户确认，并校验 plan hash 与内容 hash
+- 持久化事件 DTO 不包含工具参数或原始输出
+- classified 隔离必须保持为 CEF 加密持久化边界
+- 阶段 5：可信且可解释的 Skills 激活
 
 ## v1.2.17 — macOS 更新与状态继承（进行中）
 

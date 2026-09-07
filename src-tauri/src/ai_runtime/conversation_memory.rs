@@ -226,9 +226,7 @@ impl ConversationMemory {
         db: &Database,
         session_id: i64,
     ) -> AppResult<Option<ConversationMemoryCompactionRequest>> {
-        let Some(memory) = Self::validated_for_session(db, session_id)? else {
-            return Ok(None);
-        };
+        let memory = Self::validated_for_session(db, session_id)?;
         let messages = load_messages(db, session_id)?;
         let target_end = messages
             .len()
@@ -239,31 +237,42 @@ impl ConversationMemory {
             return Ok(None);
         };
 
-        if memory.seq_end > target_end {
-            return Ok(None);
-        }
-        if is_model_compacted(&memory) && memory.seq_end == target_end {
-            return Ok(None);
+        if let Some(memory) = memory.as_ref() {
+            if memory.seq_end > target_end {
+                return Ok(None);
+            }
+            if is_model_compacted(memory) && memory.seq_end == target_end {
+                return Ok(None);
+            }
         }
 
-        let incremental = if is_model_compacted(&memory) {
-            messages
+        let incremental = match memory.as_ref() {
+            Some(memory) if is_model_compacted(memory) => messages
                 .iter()
                 .filter(|message| message.seq > memory.seq_end && message.seq <= target_end)
                 .cloned()
-                .collect::<Vec<_>>()
-        } else {
-            messages
+                .collect::<Vec<_>>(),
+            Some(memory) => messages
                 .iter()
                 .filter(|message| message.seq >= memory.seq_start && message.seq <= target_end)
                 .cloned()
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            None => messages
+                .iter()
+                .filter(|message| message.seq <= target_end)
+                .cloned()
+                .collect::<Vec<_>>(),
         };
-        let Some((prompt, included_count)) = model_compaction_prompt(&memory, &incremental) else {
+        let Some((prompt, included_count)) = model_compaction_prompt(memory.as_ref(), &incremental)
+        else {
             return Ok(None);
         };
         let included = &incremental[..included_count];
-        let seq_start = memory.seq_start;
+        let seq_start = memory
+            .as_ref()
+            .map(|memory| memory.seq_start)
+            .or_else(|| included.first().map(|message| message.seq))
+            .unwrap_or(1);
         let seq_end = included
             .last()
             .map(|message| message.seq)
@@ -280,10 +289,16 @@ impl ConversationMemory {
         let fallback = draft_for_messages(session_id, seq_start, seq_end, &covered);
         Ok(Some(ConversationMemoryCompactionRequest {
             session_id,
-            expected_seq_start: memory.seq_start,
-            expected_seq_end: memory.seq_end,
-            expected_content_hash: memory.content_hash.clone(),
-            prior_prompt_fragment: memory.to_prompt_fragment(),
+            expected_seq_start: memory.as_ref().map(|m| m.seq_start).unwrap_or(0),
+            expected_seq_end: memory.as_ref().map(|m| m.seq_end).unwrap_or(0),
+            expected_content_hash: memory
+                .as_ref()
+                .map(|m| m.content_hash.clone())
+                .unwrap_or_default(),
+            prior_prompt_fragment: memory
+                .as_ref()
+                .map(ConversationMemory::to_prompt_fragment)
+                .unwrap_or_default(),
             seq_start,
             seq_end,
             content_hash,
@@ -300,14 +315,21 @@ impl ConversationMemory {
         request: &ConversationMemoryCompactionRequest,
         output: Option<&str>,
     ) -> AppResult<Option<Self>> {
-        let Some(current) = Self::latest_for_session(db, request.session_id)? else {
-            return Ok(None);
-        };
-        if current.seq_start != request.expected_seq_start
-            || current.seq_end != request.expected_seq_end
-            || current.content_hash != request.expected_content_hash
-        {
-            return Ok(None);
+        let current = Self::latest_for_session(db, request.session_id)?;
+        match current {
+            None => {
+                if request.expected_seq_end != 0 || !request.expected_content_hash.is_empty() {
+                    return Ok(None);
+                }
+            }
+            Some(current) => {
+                if current.seq_start != request.expected_seq_start
+                    || current.seq_end != request.expected_seq_end
+                    || current.content_hash != request.expected_content_hash
+                {
+                    return Ok(None);
+                }
+            }
         }
         let draft = parse_model_compaction(output.unwrap_or_default())
             .map(|summary| MemoryDraft {
@@ -476,15 +498,20 @@ fn draft_for_messages(
 /// statement about the model-visible input. In particular, do not slice a
 /// large message and then mark its whole row as summarized.
 fn model_compaction_prompt(
-    memory: &ConversationMemory,
+    memory: Option<&ConversationMemory>,
     messages: &[MemoryMessage],
 ) -> Option<(String, usize)> {
-    let prior = format!(
-        "当前目标：{}\n最新约束与更正：{}\n已确认结果：{}\n未解决事项：{}",
-        display_summary(&memory.goal_summary),
-        display_summary(&memory.preference_summary),
-        display_summary(&memory.decision_summary),
-        display_summary(&memory.open_threads_summary),
+    let prior = memory.map_or_else(
+        || "无".to_string(),
+        |memory| {
+            format!(
+                "当前目标：{}\n最新约束与更正：{}\n已确认结果：{}\n未解决事项：{}",
+                display_summary(&memory.goal_summary),
+                display_summary(&memory.preference_summary),
+                display_summary(&memory.decision_summary),
+                display_summary(&memory.open_threads_summary),
+            )
+        },
     );
     let header = format!(
         "将下列即将移出最近对话窗口的已提交消息压缩为 JSON 对象。\n\
@@ -1257,5 +1284,57 @@ mod memory_extraction_tests {
             (after.seq_start, after.seq_end),
             (before.seq_start, before.seq_end)
         );
+    }
+
+    #[test]
+    fn retract_without_a_summary_still_requests_first_window_compaction() {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        db.with_conn(|conn| {
+            for seq in 1..=30_i64 {
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("message-{seq}"),
+                        format!("2026-09-07T00:00:{seq:02}Z"),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed conversation");
+        ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+            .expect("refresh")
+            .expect("memory exists");
+        assert_eq!(
+            NormalSessionRepository::retract(&db, &session.session_key, 28).expect("retract"),
+            3
+        );
+        assert!(
+            ConversationMemory::latest_for_session(&db, session.session_id)
+                .expect("memory lookup")
+                .is_none(),
+            "retract must drop the prior summary"
+        );
+        assert_eq!(
+            NormalSessionRepository::recent_messages(&db, session.session_id, 40)
+                .expect("remaining history")
+                .len(),
+            27
+        );
+
+        let request = ConversationMemory::pending_model_compaction(&db, session.session_id)
+            .expect("pending lookup")
+            .expect("first compaction after retract must cover the window prefix");
+        assert_eq!(request.covered_range().0, 1);
+        assert!(request.covered_range().1 >= 1);
+        ConversationMemory::apply_model_compaction(&db, &request, None)
+            .expect("apply first compaction")
+            .expect("summary persisted");
     }
 }

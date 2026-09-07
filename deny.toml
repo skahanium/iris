@@ -1,0 +1,31 @@
+# Iris crate license policy. Aligns with AGENTS.md §1.2: new Rust
+# dependencies must be AGPL-3.0 compatible. cargo-deny is a CI tool, not a
+# runtime crate. Unknown licenses must be listed here with a reason.
+[graph]
+targets = [
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-pc-windows-msvc" },
+]
+
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "AGPL-3.0",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+ignore = true

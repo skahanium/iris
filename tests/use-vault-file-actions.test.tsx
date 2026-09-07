@@ -524,6 +524,7 @@ describe("useVaultFileActions", () => {
       path: "notes/新文档.md",
       title: "新文档",
       content: "# 新文档",
+      contentHash: "c".repeat(64),
     });
     vi.mocked(prepareNoteOpenFromContent).mockResolvedValue({
       bodyMarkdown: "# 新文档",

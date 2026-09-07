@@ -220,6 +220,7 @@ async fn execute_normal_run_internal(
     #[cfg(test)] evaluation_cap: Option<crate::ai_runtime::agent_capacity_eval::LiveCampaignRunCap>,
     #[cfg(not(test))] _evaluation_cap: Option<()>,
 ) {
+    let _inflight = super::run_inflight::InflightGuard::new(accepted.run_id.clone());
     let db = Arc::clone(&state.db);
     let current_state = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .ok()

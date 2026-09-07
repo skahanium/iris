@@ -920,7 +920,10 @@ mod tests {
         .unwrap();
 
         let err = validate_media_relative_path(&vault, "assets/innocent.png").unwrap_err();
-        assert!(err.to_string().contains("内部元数据"));
+        assert!(
+            err.to_string().contains("note_path_alias_not_allowed"),
+            "symlink aliases must be rejected before canonical reserved-root remap: {err}"
+        );
     }
 
     #[test]

@@ -1518,10 +1518,24 @@ async fn strict_current_fact_repairs_out_of_run_w8_then_completes_with_limitatio
             .filter(|message| message.role == "assistant")
             .collect::<Vec<_>>();
     assert_eq!(assistant_messages.len(), 1);
-    assert_eq!(
-        assistant_messages[0].content,
-        super::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+    assert!(
+        assistant_messages[0]
+            .content
+            .starts_with(super::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE_PREFIX),
+        "strict current-fact limitation must stay Host-authored: {}",
+        assistant_messages[0].content
     );
+    assert!(
+        assistant_messages[0].content.contains("未核实线索"),
+        "invalid web sources remain unverified leads: {}",
+        assistant_messages[0].content
+    );
+    assert!(assistant_messages[0]
+        .content
+        .contains("https://source.invalid/contract"));
+    assert!(assistant_messages[0]
+        .content
+        .contains("https://source-2.invalid/2"));
     assert_eq!(llm.finish().await.expect("LLM completion").len(), 3);
 }
 

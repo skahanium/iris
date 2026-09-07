@@ -326,10 +326,13 @@ IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
 测试结果，也不会绕过后续批准与费用 checkpoint。Pilot 的严格白名单结果写入
 同目录的 `live-pilot-session-<64hex>-route-a|b.json`，不会包含内部路由、凭据或隐藏推理；固定公开 prompt、最终可见回答和有限来源摘录只在与报告哈希绑定的本地审阅包中出现。真实执行即使因状态、预算或质量不通过，也必须先写入并签名失败报告；最终产品验证仍以非零拒绝该报告。
 
-PR CI 的 macOS ARM64 quality job 执行 smoke、前端/Rust 依赖审计和完整通用测试；
-tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` 版本化基线。
-发布 source guard 要求同一 SHA 已有成功的 main push CI（其中包含 Windows x64
-桌面 E2E）；最终草稿 Release 同时依赖完整 Agent 基线和两个平台包。
+PR CI 的 macOS ARM64 quality job 执行 smoke、前端/Rust 依赖审计和完整通用测试。
+同一 SHA 的手动 `workflow_dispatch` 才运行打包门：`agent:eval:contract`、内嵌
+BGE/sqlite-vec smoke、RAG 供应门、50k sqlite-vec 与 Windows x64 桌面 E2E。
+发布 source guard 要求该 SHA 已有成功的 main push CI **以及** 成功的手动发布就绪运行；
+Windows E2E 属于后者，不在 push CI 中。`agent:eval` 产品门仍要求双路 live 与人工审阅，
+不作为每次 tag 打包前置。步骤见 [桌面发版手册](../testing/desktop-release-runbook.md)。
+最终草稿 Release 依赖两个平台包。
 
 ## 历史终验记录（v1.2.15，已被当前产品门取代）
 

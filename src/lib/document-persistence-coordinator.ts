@@ -1,4 +1,6 @@
 import { invokeErrorMessage } from "@/lib/credentials";
+import { sha256Utf8 } from "@/lib/sha256-utf8";
+import type { FileWritePrecondition } from "@/types/ipc";
 
 export type DocumentPersistenceStatus =
   | "clean"
@@ -37,6 +39,11 @@ export class DocumentPersistenceSnapshotRejectedError extends Error {
 
 export interface DocumentPersistenceWriteResult {
   indexDegraded: boolean;
+  contentHash: string;
+}
+
+export interface DocumentPersistenceLoadOptions {
+  contentHash?: string | null;
 }
 
 /** Result of the filesystem move that completes a coordinated path migration. */
@@ -65,6 +72,10 @@ interface DocumentRecord extends DocumentPersistenceSnapshot {
   migration: PathMigration | null;
   timer: ReturnType<typeof setTimeout> | null;
   writeTask: Promise<void> | null;
+  /** Last confirmed disk hash; `null` means the target must not exist. */
+  baselineContentHash: string | null | undefined;
+  /** Vault captured when this document was opened or first staged. */
+  originVault: string | null;
 }
 
 interface Deferred<T> {
@@ -81,9 +92,11 @@ interface PathMigration {
 interface DocumentPersistenceCoordinatorOptions {
   delayMs?: number;
   saveRetryDelaysMs?: readonly number[];
+  resolveVault?: () => string | null;
   write: (
     path: string,
     markdown: string,
+    precondition: FileWritePrecondition,
   ) => Promise<DocumentPersistenceWriteResult>;
 }
 
@@ -143,6 +156,13 @@ function sourceAllowsIntentionalClear(
 
 const DEFAULT_SAVE_RETRY_DELAYS_MS = [1000, 2000, 4000] as const;
 
+function resolveLoadContentHash(
+  markdown: string,
+  contentHash?: string | null,
+): string | null {
+  return contentHash === undefined ? sha256Utf8(markdown) : contentHash;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -161,15 +181,18 @@ export class DocumentPersistenceCoordinator {
   private readonly migrations = new Map<string, PathMigration>();
   private readonly listeners = new Set<DocumentPersistenceListener>();
   private readonly write: DocumentPersistenceCoordinatorOptions["write"];
+  private readonly resolveVault: () => string | null;
   private revision = 0;
 
   constructor({
     delayMs = 1200,
     saveRetryDelaysMs = DEFAULT_SAVE_RETRY_DELAYS_MS,
+    resolveVault,
     write,
   }: DocumentPersistenceCoordinatorOptions) {
     this.delayMs = delayMs;
     this.saveRetryDelaysMs = saveRetryDelaysMs;
+    this.resolveVault = resolveVault ?? (() => null);
     this.write = write;
   }
 
@@ -183,6 +206,7 @@ export class DocumentPersistenceCoordinator {
     path: string,
     markdown: string,
     loadGeneration: number,
+    options?: DocumentPersistenceLoadOptions,
   ): DocumentPersistenceSnapshot {
     const resolvedPath = this.resolvePath(path);
     const existing = this.records.get(resolvedPath);
@@ -203,6 +227,11 @@ export class DocumentPersistenceCoordinator {
       existing.baselineMarkdown = markdown;
       existing.baselineRevision = revision;
       existing.baselineSource = "load";
+      existing.baselineContentHash = resolveLoadContentHash(
+        markdown,
+        options?.contentHash,
+      );
+      existing.originVault = this.resolveVault();
       existing.savedAt = Date.now();
       existing.indexDegraded = false;
       existing.status = "clean";
@@ -220,6 +249,11 @@ export class DocumentPersistenceCoordinator {
       revision,
       baselineMarkdown: markdown,
       baselineRevision: revision,
+      baselineContentHash: resolveLoadContentHash(
+        markdown,
+        options?.contentHash,
+      ),
+      originVault: this.resolveVault(),
       savedAt: Date.now(),
       source: "load",
       indexDegraded: false,
@@ -262,6 +296,8 @@ export class DocumentPersistenceCoordinator {
         revision,
         baselineMarkdown: "",
         baselineRevision: 0,
+        baselineContentHash: null,
+        originVault: this.resolveVault(),
         savedAt: null,
         source,
         indexDegraded: false,
@@ -604,7 +640,18 @@ export class DocumentPersistenceCoordinator {
             return;
           }
           try {
-            const result = await this.write(path, markdown);
+            const expectedVault = record.originVault ?? this.resolveVault();
+            if (!expectedVault) {
+              throw new Error("note_vault_changed");
+            }
+            const baseContentHash =
+              record.baselineContentHash === undefined
+                ? sha256Utf8(record.baselineMarkdown)
+                : record.baselineContentHash;
+            const result = await this.write(path, markdown, {
+              expectedVault,
+              baseContentHash,
+            });
             if (
               record.discarded ||
               this.records.get(record.path) !== record ||
@@ -617,6 +664,7 @@ export class DocumentPersistenceCoordinator {
             record.baselineMarkdown = markdown;
             record.baselineRevision = revision;
             record.baselineSource = source;
+            record.baselineContentHash = result.contentHash;
             record.savedAt = Date.now();
             record.indexDegraded = result.indexDegraded;
             if (record.revision !== revision) {

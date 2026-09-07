@@ -8,6 +8,7 @@ import {
   type PersistBeforeLeave,
 } from "@/hooks/useAppPersistenceLifecycle";
 import type { TabItem } from "@/components/layout/TabBar";
+import type { FileWriteResult } from "@/types/ipc";
 
 const fileWrite = vi.fn();
 const fileDiscard = vi.fn();
@@ -22,6 +23,24 @@ function deferred<T>() {
     resolve = nextResolve;
   });
   return { promise, resolve };
+}
+
+const savedWrite = {
+  entry: {
+    id: 1,
+    path: "note.md",
+    title: "Note",
+    updated_at: "",
+    word_count: 6,
+  },
+  contentHash: "c".repeat(64),
+  indexStatus: "synced" as const,
+};
+
+function writeGuard() {
+  return expect.objectContaining({
+    expectedVault: "/vault-test",
+  });
 }
 
 vi.mock("@/lib/ipc", () => ({
@@ -147,11 +166,15 @@ describe("useAppPersistenceLifecycle", () => {
     fileSetLock.mockResolvedValue(undefined);
     fileWrite.mockReset();
     fileWrite.mockResolvedValue({
-      id: 1,
-      path: "note.md",
-      title: "Note",
-      updated_at: "",
-      word_count: 6,
+      entry: {
+        id: 1,
+        path: "note.md",
+        title: "Note",
+        updated_at: "",
+        word_count: 6,
+      },
+      contentHash: "c".repeat(64),
+      indexStatus: "synced",
     });
     fileDiscard.mockReset();
     fileDiscard.mockResolvedValue(undefined);
@@ -231,6 +254,7 @@ describe("useAppPersistenceLifecycle", () => {
     expect(fileWrite).toHaveBeenCalledWith(
       "note.md",
       '---\ntitle: "Renamed"\n---\n\nBody captured before remount.',
+      writeGuard(),
     );
     expect(setCachedEditorHtml).not.toHaveBeenCalled();
   });
@@ -302,7 +326,7 @@ describe("useAppPersistenceLifecycle", () => {
     });
 
     expect(saved).toBe(dirty);
-    expect(fileWrite).toHaveBeenCalledWith("note.md", dirty);
+    expect(fileWrite).toHaveBeenCalledWith("note.md", dirty, writeGuard());
   });
 
   it("projects whether any coordinator-owned document still needs persistence", async () => {
@@ -395,6 +419,7 @@ describe("useAppPersistenceLifecycle", () => {
     expect(fileWrite).toHaveBeenCalledWith(
       "note.md",
       '---\ntitle: "Note"\n---\n\nMust write despite stale tab state.',
+      writeGuard(),
     );
   });
 
@@ -470,13 +495,7 @@ describe("useAppPersistenceLifecycle", () => {
     } as React.MutableRefObject<PersistBeforeLeave>;
     const markClean = vi.fn();
     const setMarkdown = vi.fn();
-    const firstWrite = deferred<{
-      id: number;
-      path: string;
-      title: string;
-      updated_at: string;
-      word_count: number;
-    }>();
+    const firstWrite = deferred<FileWriteResult>();
     fileWrite.mockReturnValueOnce(firstWrite.promise);
     let api!: ReturnType<typeof useAppPersistenceLifecycle>;
     const opened = '---\ntitle: "Note"\n---\n\nOpened body.';
@@ -577,17 +596,11 @@ describe("useAppPersistenceLifecycle", () => {
     });
 
     await act(async () => {
-      firstWrite.resolve({
-        id: 1,
-        path: "note.md",
-        title: "Note",
-        updated_at: "",
-        word_count: 4,
-      });
+      firstWrite.resolve(savedWrite);
       await leavePromise;
     });
 
-    expect(fileWrite).toHaveBeenCalledWith("note.md", edited);
+    expect(fileWrite).toHaveBeenCalledWith("note.md", edited, writeGuard());
     expect(markClean).not.toHaveBeenCalled();
     expect(setMarkdown).not.toHaveBeenCalled();
     api.clearSuppressShellUi();
@@ -677,7 +690,7 @@ describe("useAppPersistenceLifecycle", () => {
         });
       });
 
-      expect(fileWrite).toHaveBeenCalledWith("note.md", edited);
+      expect(fileWrite).toHaveBeenCalledWith("note.md", edited, writeGuard());
       expect(markClean).not.toHaveBeenCalled();
       api.clearSuppressShellUi();
     } finally {
@@ -737,7 +750,7 @@ describe("useAppPersistenceLifecycle", () => {
       await api.flushSave();
     });
 
-    expect(fileWrite).toHaveBeenCalledWith("note.md", edited);
+    expect(fileWrite).toHaveBeenCalledWith("note.md", edited, writeGuard());
     expect(applySavedMarkdown).toHaveBeenCalledWith(edited);
     expect(setMarkdown).not.toHaveBeenCalled();
   });
@@ -746,13 +759,7 @@ describe("useAppPersistenceLifecycle", () => {
     const persistBeforeLeaveRef = {
       current: async () => null,
     } as React.MutableRefObject<PersistBeforeLeave>;
-    const firstWrite = deferred<{
-      id: number;
-      path: string;
-      title: string;
-      updated_at: string;
-      word_count: number;
-    }>();
+    const firstWrite = deferred<FileWriteResult>();
     fileWrite.mockReturnValueOnce(firstWrite.promise);
     let api!: ReturnType<typeof useAppPersistenceLifecycle>;
 
@@ -811,18 +818,16 @@ describe("useAppPersistenceLifecycle", () => {
     });
 
     await act(async () => {
-      firstWrite.resolve({
-        id: 1,
-        path: "note.md",
-        title: "Note",
-        updated_at: "",
-        word_count: 3,
-      });
+      firstWrite.resolve(savedWrite);
       await closing;
     });
 
     expect(fileWrite.mock.calls).toEqual([
-      ["note.md", '---\ntitle: "Note"\n---\n\nFirst captured revision.'],
+      [
+        "note.md",
+        '---\ntitle: "Note"\n---\n\nFirst captured revision.',
+        writeGuard(),
+      ],
     ]);
     expect(api.isPersistenceBarrierActive).toBe(true);
 
@@ -899,7 +904,11 @@ describe("useAppPersistenceLifecycle", () => {
       await api.flushAllOpenTabs();
     });
 
-    expect(fileWrite).toHaveBeenCalledWith("background.md", backgroundMarkdown);
+    expect(fileWrite).toHaveBeenCalledWith(
+      "background.md",
+      backgroundMarkdown,
+      writeGuard(),
+    );
   });
 
   it("releases the capture freeze after a close barrier write failure", async () => {
@@ -945,13 +954,7 @@ describe("useAppPersistenceLifecycle", () => {
       expect(api.isPersistenceBarrierActive).toBe(false);
 
       fileWrite.mockReset();
-      fileWrite.mockResolvedValue({
-        id: 1,
-        path: "note.md",
-        title: "Note",
-        updated_at: "",
-        word_count: 6,
-      });
+      fileWrite.mockResolvedValue(savedWrite);
 
       await act(async () => {
         root.render(
@@ -974,7 +977,11 @@ describe("useAppPersistenceLifecycle", () => {
         await api.flushAllOpenTabs();
       });
 
-      expect(fileWrite).toHaveBeenLastCalledWith("note.md", retryMarkdown);
+      expect(fileWrite).toHaveBeenLastCalledWith(
+        "note.md",
+        retryMarkdown,
+        writeGuard(),
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -1246,7 +1253,11 @@ describe("useAppPersistenceLifecycle", () => {
       await api.flushWhenEditorReady("保存");
     });
 
-    expect(fileWrite).toHaveBeenCalledWith("note.md", localPatchMarkdown);
+    expect(fileWrite).toHaveBeenCalledWith(
+      "note.md",
+      localPatchMarkdown,
+      writeGuard(),
+    );
   });
 
   it("projects degraded index status after a title-driven path rename", async () => {
@@ -1286,20 +1297,8 @@ describe("useAppPersistenceLifecycle", () => {
       current: async () => null,
     } as React.MutableRefObject<PersistBeforeLeave>;
     const applySavedMarkdown = vi.fn();
-    const firstWrite = deferred<{
-      id: number;
-      path: string;
-      title: string;
-      updated_at: string;
-      word_count: number;
-    }>();
-    const restoredWrite = deferred<{
-      id: number;
-      path: string;
-      title: string;
-      updated_at: string;
-      word_count: number;
-    }>();
+    const firstWrite = deferred<FileWriteResult>();
+    const restoredWrite = deferred<FileWriteResult>();
     fileWrite.mockReturnValueOnce(firstWrite.promise);
     fileWrite.mockReturnValueOnce(restoredWrite.promise);
     let api!: ReturnType<typeof useAppPersistenceLifecycle>;
@@ -1346,6 +1345,7 @@ describe("useAppPersistenceLifecycle", () => {
     expect(fileWrite).toHaveBeenCalledWith(
       "note.md",
       "# unsaved before restore",
+      writeGuard(),
     );
 
     let restored!: Promise<string>;
@@ -1355,13 +1355,7 @@ describe("useAppPersistenceLifecycle", () => {
     });
 
     await act(async () => {
-      firstWrite.resolve({
-        id: 1,
-        path: "note.md",
-        title: "Note",
-        updated_at: "",
-        word_count: 3,
-      });
+      firstWrite.resolve(savedWrite);
       await Promise.resolve();
     });
     expect(applySavedMarkdown).not.toHaveBeenCalled();
@@ -1369,17 +1363,12 @@ describe("useAppPersistenceLifecycle", () => {
       expect(fileWrite).toHaveBeenLastCalledWith(
         "note.md",
         "# historical version",
+        writeGuard(),
       );
     });
 
     await act(async () => {
-      restoredWrite.resolve({
-        id: 1,
-        path: "note.md",
-        title: "Note",
-        updated_at: "",
-        word_count: 3,
-      });
+      restoredWrite.resolve(savedWrite);
       await expect(restored).resolves.toBe("# historical version");
     });
     await expect(initialSave).resolves.toBe("# historical version");

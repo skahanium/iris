@@ -231,6 +231,7 @@ export function usePreparedNoteOpener<
             (documentOpenResult
               ? await prepareNoteOpenFromContent(lookupRequest, {
                   content: documentOpenResult.content,
+                  contentHash: documentOpenResult.contentHash,
                   isLocked: documentOpenResult.isLocked,
                 })
               : await prepareNoteOpen(lookupRequest));

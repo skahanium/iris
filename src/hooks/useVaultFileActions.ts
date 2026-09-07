@@ -237,6 +237,7 @@ export function useVaultFileActions(
           openTraceRequest,
           {
             content: created.content,
+            contentHash: created.contentHash,
             isLocked: false,
           },
         );

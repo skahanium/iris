@@ -5,6 +5,7 @@ import {
   DocumentPersistenceSnapshotRejectedError,
   type DocumentPersistenceWriteResult,
 } from "@/lib/document-persistence-coordinator";
+import { sha256Utf8 } from "@/lib/sha256-utf8";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -16,12 +17,91 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const written: DocumentPersistenceWriteResult = { indexDegraded: false };
+const written: DocumentPersistenceWriteResult = {
+  indexDegraded: false,
+  contentHash: "a".repeat(64),
+};
 
 describe("DocumentPersistenceCoordinator", () => {
+  it("sends the originating vault and last confirmed content hash with each write", async () => {
+    const write = vi.fn(async () => ({
+      indexDegraded: false,
+      contentHash: "b".repeat(64),
+    }));
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/public-fixture/vault",
+      write,
+    });
+
+    coordinator.load("note.md", "opened body", 1, {
+      contentHash: "a".repeat(64),
+    });
+    coordinator.capture("note.md", "user edit", "user_edit");
+    await coordinator.barrier("note.md");
+
+    expect(write).toHaveBeenCalledWith("note.md", "user edit", {
+      expectedVault: "/public-fixture/vault",
+      baseContentHash: "a".repeat(64),
+    });
+
+    coordinator.capture("note.md", "second edit", "user_edit");
+    await coordinator.barrier("note.md");
+    expect(write).toHaveBeenLastCalledWith("note.md", "second edit", {
+      expectedVault: "/public-fixture/vault",
+      baseContentHash: "b".repeat(64),
+    });
+  });
+
+  it("does not write when the originating vault is missing", async () => {
+    const write = vi.fn(async () => written);
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => null,
+      write,
+    });
+
+    coordinator.load("note.md", "opened body", 1, {
+      contentHash: "a".repeat(64),
+    });
+    coordinator.capture("note.md", "user edit", "user_edit");
+    await expect(coordinator.barrier("note.md")).rejects.toThrow(
+      "note_vault_changed",
+    );
+
+    expect(write).not.toHaveBeenCalled();
+    expect(coordinator.get("note.md")).toMatchObject({
+      markdown: "user edit",
+      status: "failed",
+      error: "笔记库已切换，未保存的编辑已保留，请返回原笔记库处理",
+    });
+  });
+
+  it("keeps the originating vault when the live selection later changes", async () => {
+    let currentVault: string | null = "/vault-a";
+    const write = vi.fn(async () => written);
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => currentVault,
+      write,
+    });
+
+    coordinator.load("note.md", "opened body", 1, {
+      contentHash: "a".repeat(64),
+    });
+    currentVault = "/vault-b";
+    coordinator.capture("note.md", "user edit", "user_edit");
+    await coordinator.barrier("note.md");
+
+    expect(write).toHaveBeenCalledWith("note.md", "user edit", {
+      expectedVault: "/vault-a",
+      baseContentHash: "a".repeat(64),
+    });
+  });
+
   it("keeps a dirty user-edit snapshot when a late load for the same path arrives", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("note.md", "authoritative disk body", 1);
     coordinator.capture("note.md", "user edit", "user_edit");
@@ -34,12 +114,18 @@ describe("DocumentPersistenceCoordinator", () => {
     });
 
     await coordinator.barrier("note.md");
-    expect(write).toHaveBeenCalledWith("note.md", "user edit");
+    expect(write).toHaveBeenCalledWith("note.md", "user edit", {
+      expectedVault: "/vault-test",
+      baseContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
   });
 
   it("adopts a newer disk load generation after the tracked document is clean", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("note.md", "first disk body", 1);
     coordinator.capture("note.md", "saved user edit", "user_edit");
@@ -61,6 +147,7 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("rejects an empty recovery or leave snapshot before it can replace a non-empty document", () => {
     const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
       write: async () => written,
     });
 
@@ -81,13 +168,19 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("allows a deliberate user clear and preserves its provenance through the durable receipt", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("note.md", "authoritative disk body", 1);
     coordinator.capture("note.md", "", "user_edit");
     await coordinator.barrier("note.md");
 
-    expect(write).toHaveBeenCalledWith("note.md", "");
+    expect(write).toHaveBeenCalledWith("note.md", "", {
+      expectedVault: "/vault-test",
+      baseContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     expect(coordinator.get("note.md")).toMatchObject({
       baselineMarkdown: "",
       baselineSource: "user_edit",
@@ -104,11 +197,18 @@ describe("DocumentPersistenceCoordinator", () => {
         (
           path: string,
           markdown: string,
+          precondition: {
+            expectedVault: string;
+            baseContentHash: string | null;
+          },
         ) => Promise<DocumentPersistenceWriteResult>
       >()
       .mockReturnValueOnce(firstWrite.promise)
       .mockResolvedValue(written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("note.md", "opened", 1);
     coordinator.capture("note.md", "first edit", "user_edit");
@@ -126,7 +226,10 @@ describe("DocumentPersistenceCoordinator", () => {
     });
 
     await coordinator.barrier("note.md");
-    expect(write).toHaveBeenLastCalledWith("note.md", "newer edit");
+    expect(write).toHaveBeenLastCalledWith("note.md", "newer edit", {
+      expectedVault: "/vault-test",
+      baseContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     expect(coordinator.get("note.md")).toMatchObject({
       markdown: "newer edit",
       baselineMarkdown: "newer edit",
@@ -141,11 +244,18 @@ describe("DocumentPersistenceCoordinator", () => {
         (
           path: string,
           markdown: string,
+          precondition: {
+            expectedVault: string;
+            baseContentHash: string | null;
+          },
         ) => Promise<DocumentPersistenceWriteResult>
       >()
       .mockReturnValueOnce(firstWrite.promise)
       .mockResolvedValue(written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("note.md", "opened", 1);
     coordinator.capture("note.md", "temporary edit", "user_edit");
@@ -155,7 +265,7 @@ describe("DocumentPersistenceCoordinator", () => {
     await firstCommit;
     await coordinator.barrier("note.md");
 
-    expect(write.mock.calls).toEqual([
+    expect(write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
       ["note.md", "temporary edit"],
       ["note.md", "opened"],
     ]);
@@ -168,7 +278,10 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("coalesces concurrent barriers for one document into one write", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("note.md", "opened", 1);
     coordinator.capture("note.md", "edited", "user_edit");
@@ -178,12 +291,18 @@ describe("DocumentPersistenceCoordinator", () => {
     ]);
 
     expect(write).toHaveBeenCalledTimes(1);
-    expect(write).toHaveBeenCalledWith("note.md", "edited");
+    expect(write).toHaveBeenCalledWith("note.md", "edited", {
+      expectedVault: "/vault-test",
+      baseContentHash: sha256Utf8("opened"),
+    });
   });
 
   it("persists independently captured dirty snapshots for multiple tabs", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.capture("first.md", "first tab", "user_edit");
     coordinator.capture("second.md", "second tab", "user_edit");
@@ -192,7 +311,7 @@ describe("DocumentPersistenceCoordinator", () => {
       coordinator.barrier("second.md"),
     ]);
 
-    expect(write.mock.calls).toEqual([
+    expect(write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
       ["first.md", "first tab"],
       ["second.md", "second tab"],
     ]);
@@ -205,17 +324,27 @@ describe("DocumentPersistenceCoordinator", () => {
         (
           path: string,
           markdown: string,
+          precondition: {
+            expectedVault: string;
+            baseContentHash: string | null;
+          },
         ) => Promise<DocumentPersistenceWriteResult>
       >()
       .mockReturnValueOnce(firstWrite.promise)
       .mockResolvedValue(written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("first.md", "opened", 1);
     coordinator.capture("first.md", "first edit", "user_edit");
     const barrier = coordinator.barrierAll();
 
-    expect(write).toHaveBeenCalledWith("first.md", "first edit");
+    expect(write).toHaveBeenCalledWith("first.md", "first edit", {
+      expectedVault: "/vault-test",
+      baseContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     coordinator.capture(
       "second.md",
       "edit captured while closing",
@@ -225,7 +354,7 @@ describe("DocumentPersistenceCoordinator", () => {
 
     await barrier;
 
-    expect(write.mock.calls).toEqual([
+    expect(write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
       ["first.md", "first edit"],
       ["second.md", "edit captured while closing"],
     ]);
@@ -234,7 +363,10 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("reschedules rename-time edits onto the backend-allocated path", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("old.md", "opened", 1);
     coordinator.capture("old.md", "before rename", "user_edit");
@@ -244,7 +376,7 @@ describe("DocumentPersistenceCoordinator", () => {
     });
     await coordinator.barrier("allocated.md");
 
-    expect(write.mock.calls).toEqual([
+    expect(write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
       ["old.md", "before rename"],
       ["allocated.md", "edited during rename"],
     ]);
@@ -259,7 +391,10 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("allows a backend-allocated filename when the migration initially keeps the old path", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("old.md", "opened", 1);
     coordinator.capture("old.md", "before rename", "user_edit");
@@ -269,7 +404,7 @@ describe("DocumentPersistenceCoordinator", () => {
     });
     await coordinator.barrier("allocated.md");
 
-    expect(write.mock.calls).toEqual([
+    expect(write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
       ["old.md", "before rename"],
       ["allocated.md", "edited during rename"],
     ]);
@@ -286,6 +421,7 @@ describe("DocumentPersistenceCoordinator", () => {
       const moveStarted = deferred<void>();
       const write = vi.fn(async () => written);
       const coordinator = new DocumentPersistenceCoordinator({
+        resolveVault: () => "/vault-test",
         delayMs: 50,
         write,
       });
@@ -302,13 +438,15 @@ describe("DocumentPersistenceCoordinator", () => {
       coordinator.capture("old.md", "edited while moving", "user_edit");
       await vi.advanceTimersByTimeAsync(50);
 
-      expect(write.mock.calls).toEqual([["old.md", "before move"]]);
+      expect(write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ["old.md", "before move"],
+      ]);
 
       move.resolve({ path: "allocated.md", indexDegraded: false });
       await rename;
       await coordinator.barrier("allocated.md");
 
-      expect(write.mock.calls).toEqual([
+      expect(write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
         ["old.md", "before move"],
         ["allocated.md", "edited while moving"],
       ]);
@@ -320,19 +458,28 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("moves a captured snapshot to a rebound path before its next write", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
 
     coordinator.load("old.md", "opened", 1);
     coordinator.capture("old.md", "unsaved", "user_edit");
     coordinator.rebind("old.md", "new.md");
     await coordinator.barrier("new.md");
 
-    expect(write).toHaveBeenCalledWith("new.md", "unsaved");
+    expect(write).toHaveBeenCalledWith("new.md", "unsaved", {
+      expectedVault: "/vault-test",
+      baseContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
   });
 
   it("does not discard an older dirty destination when rebinding another document", async () => {
     const write = vi.fn(async () => written);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
     coordinator.load("target.md", "target disk", 1);
     coordinator.capture("target.md", "target unsaved", "user_edit");
     coordinator.load("source.md", "source disk", 2);
@@ -340,13 +487,18 @@ describe("DocumentPersistenceCoordinator", () => {
     expect(coordinator.get("target.md")?.markdown).toBe("target unsaved");
     expect(coordinator.get("source.md")?.markdown).toBe("source disk");
     await coordinator.barrierAll();
-    expect(write.mock.calls).toEqual([["target.md", "target unsaved"]]);
+    expect(write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+      ["target.md", "target unsaved"],
+    ]);
   });
 
   it("rejects a rebind onto an in-flight destination without detaching its receipt", async () => {
     const receipt = deferred<DocumentPersistenceWriteResult>();
     const write = vi.fn(() => receipt.promise);
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
     coordinator.load("target.md", "target disk", 1);
     coordinator.capture("target.md", "target saving", "user_edit");
     const saving = coordinator.commit("target.md");
@@ -364,6 +516,7 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("keeps a migration recoverable when the backend returns an occupied tracked path", async () => {
     const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
       write: async () => written,
     });
     coordinator.load("occupied.md", "unrelated target", 1);
@@ -379,6 +532,7 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("projects a successful rename with a degraded derived index", async () => {
     const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
       write: async () => written,
     });
 
@@ -397,6 +551,7 @@ describe("DocumentPersistenceCoordinator", () => {
 
   it("rejects a barrier when a dirty remount has no captured snapshot", async () => {
     const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
       write: async () => written,
     });
 
@@ -417,6 +572,7 @@ describe("DocumentPersistenceCoordinator", () => {
         >()
         .mockRejectedValue(new Error("disk full"));
       const coordinator = new DocumentPersistenceCoordinator({
+        resolveVault: () => "/vault-test",
         saveRetryDelaysMs: [100, 200, 400],
         write,
       });
@@ -448,6 +604,7 @@ describe("DocumentPersistenceCoordinator", () => {
       const pending = deferred<DocumentPersistenceWriteResult>();
       const write = vi.fn(() => pending.promise);
       const coordinator = new DocumentPersistenceCoordinator({
+        resolveVault: () => "/vault-test",
         write,
         saveRetryDelaysMs: [100],
       });
@@ -488,6 +645,7 @@ describe("DocumentPersistenceCoordinator", () => {
           throw error;
         });
         const coordinator = new DocumentPersistenceCoordinator({
+          resolveVault: () => "/vault-test",
           write,
           saveRetryDelaysMs: [100, 200],
         });
@@ -524,6 +682,7 @@ describe("DocumentPersistenceCoordinator", () => {
         >()
         .mockRejectedValue(new Error("disk full"));
       const coordinator = new DocumentPersistenceCoordinator({
+        resolveVault: () => "/vault-test",
         delayMs: 50,
         saveRetryDelaysMs: [10, 10, 10],
         write,
@@ -567,6 +726,7 @@ describe("DocumentPersistenceCoordinator", () => {
         .mockRejectedValueOnce(new Error("disk full"))
         .mockResolvedValue(written);
       const coordinator = new DocumentPersistenceCoordinator({
+        resolveVault: () => "/vault-test",
         saveRetryDelaysMs: [100, 200, 400],
         write,
       });
@@ -596,6 +756,10 @@ describe("DocumentPersistenceCoordinator", () => {
         (
           path: string,
           markdown: string,
+          precondition: {
+            expectedVault: string;
+            baseContentHash: string | null;
+          },
         ) => Promise<DocumentPersistenceWriteResult>
       >()
       .mockRejectedValueOnce(new Error("disk full"))
@@ -604,6 +768,7 @@ describe("DocumentPersistenceCoordinator", () => {
       .mockRejectedValueOnce(new Error("disk full"))
       .mockResolvedValue(written);
     const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
       saveRetryDelaysMs: [1, 1, 1],
       write,
     });
@@ -630,6 +795,7 @@ describe("DocumentPersistenceCoordinator", () => {
     try {
       const write = vi.fn(async () => written);
       const coordinator = new DocumentPersistenceCoordinator({
+        resolveVault: () => "/vault-test",
         delayMs: 1200,
         write,
       });
@@ -648,7 +814,10 @@ describe("DocumentPersistenceCoordinator", () => {
       });
 
       await coordinator.barrier("note.md");
-      expect(write).toHaveBeenCalledWith("note.md", "edited");
+      expect(write).toHaveBeenCalledWith("note.md", "edited", {
+        expectedVault: "/vault-test",
+        baseContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
     } finally {
       vi.useRealTimers();
     }

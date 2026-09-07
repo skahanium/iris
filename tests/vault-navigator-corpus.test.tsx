@@ -134,6 +134,7 @@ describe("VaultNavigator corpus assignment", () => {
     knowledgeReindex.mockResolvedValue({ anchors: 0, regulations: 1 });
     vi.mocked(createDefaultNote).mockResolvedValue({
       content: '---\ntitle: "未命名文档"\n---\n\n',
+      contentHash: "c".repeat(64),
       path: "未命名文档.md",
       title: "未命名文档",
     });
@@ -273,6 +274,7 @@ describe("VaultNavigator corpus assignment", () => {
       }),
       {
         content: '---\ntitle: "未命名文档"\n---\n\n',
+        contentHash: "c".repeat(64),
         isLocked: false,
       },
     );

@@ -3,15 +3,34 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::{AppError, AppResult};
 
 /// Resolve a relative path under the vault and reject path traversal.
+///
+/// Each existing path component is inspected with `symlink_metadata` so a
+/// user-supplied lexical name cannot silently become a different `note_path`.
 pub fn resolve_vault_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
     let vault = vault
         .canonicalize()
         .map_err(|e| AppError::msg(format!("Invalid vault path: {e}")))?;
 
-    let mut joined = vault.clone();
+    let mut current = vault.clone();
+    let mut seen_missing = false;
     for component in Path::new(relative).components() {
         match component {
-            Component::Normal(part) => joined.push(part),
+            Component::Normal(part) => {
+                current.push(part);
+                if seen_missing {
+                    continue;
+                }
+                match std::fs::symlink_metadata(&current) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        return Err(AppError::msg("note_path_alias_not_allowed"));
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        seen_missing = true;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err(AppError::msg("Path traversal is not allowed"));
@@ -19,11 +38,8 @@ pub fn resolve_vault_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
         }
     }
 
-    // For new nested paths that don't exist yet, canonicalize would fail.
-    // Canonicalize the nearest existing ancestor so a missing parent tree is
-    // accepted without weakening the symlink/traversal boundary.
-    if joined.exists() {
-        let canonical = joined
+    if !seen_missing && current.exists() {
+        let canonical = current
             .canonicalize()
             .map_err(|_| AppError::msg("Path is outside the vault"))?;
         if !canonical.starts_with(&vault) {
@@ -31,22 +47,7 @@ pub fn resolve_vault_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
         }
         Ok(canonical)
     } else {
-        let mut ancestor = joined.as_path();
-        while !ancestor.exists() {
-            ancestor = ancestor
-                .parent()
-                .ok_or_else(|| AppError::msg("Invalid path"))?;
-        }
-        let canonical_ancestor = ancestor
-            .canonicalize()
-            .map_err(|_| AppError::msg("Path is outside the vault"))?;
-        if !canonical_ancestor.starts_with(&vault) {
-            return Err(AppError::msg("Path is outside the vault"));
-        }
-        let unresolved_suffix = joined
-            .strip_prefix(ancestor)
-            .map_err(|_| AppError::msg("Invalid path"))?;
-        Ok(canonical_ancestor.join(unresolved_suffix))
+        Ok(current)
     }
 }
 
@@ -213,7 +214,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn resolves_missing_suffix_from_the_canonical_symlink_ancestor() {
+    fn rejects_missing_suffix_below_a_symlink_ancestor() {
         use std::os::unix::fs::symlink;
 
         let dir = tempdir().unwrap();
@@ -221,11 +222,28 @@ mod tests {
         fs::create_dir_all(vault.join("old/sub")).unwrap();
         symlink(vault.join("old/sub"), vault.join("alias")).unwrap();
 
-        let resolved = resolve_vault_path(&vault, "alias/new/note.md").unwrap();
+        let err = resolve_vault_path(&vault, "alias/new/note.md").unwrap_err();
+        assert!(
+            err.to_string().contains("note_path_alias_not_allowed"),
+            "{err}"
+        );
+    }
 
-        assert_eq!(
-            resolved,
-            vault.canonicalize().unwrap().join("old/sub/new/note.md")
+    #[cfg(unix)]
+    #[test]
+    fn rejects_an_existing_file_reached_through_a_directory_alias() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("old/sub")).unwrap();
+        fs::write(vault.join("old/sub/note.md"), "body").unwrap();
+        symlink(vault.join("old/sub"), vault.join("alias")).unwrap();
+
+        let err = resolve_vault_path(&vault, "alias/note.md").unwrap_err();
+        assert!(
+            err.to_string().contains("note_path_alias_not_allowed"),
+            "{err}"
         );
     }
 

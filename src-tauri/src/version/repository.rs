@@ -430,6 +430,7 @@ fn decrement_cas_refs(conn: &Connection, storage: &str) -> AppResult<()> {
 mod tests {
     use super::*;
     use crate::storage::db::Database;
+    use crate::version::VersionEntry;
     use tempfile::tempdir;
 
     #[test]
@@ -478,6 +479,97 @@ mod tests {
                 assert!(archive_rows(conn, &vault, "note.md", "bundle", &[id]).is_err());
             }
             assert!(archive_rows(conn, &vault, "note.md", "bundle", &[i64::MAX]).is_err());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    fn sample_entry(version_no: &str, hash: &str) -> VersionEntry {
+        VersionEntry {
+            id: 0,
+            file_id: 0,
+            version_no: version_no.into(),
+            label: None,
+            content_hash: hash.into(),
+            word_count: 1,
+            is_finalized: false,
+            kind: crate::version::VersionKind::Manual,
+            created_at: "2026-09-07T00:00:00Z".into(),
+            is_legacy_unscoped: false,
+        }
+    }
+
+    #[test]
+    fn import_restore_and_cleanup_surface_ownership_conflicts_directly() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            import_recycled_row(
+                conn,
+                &vault,
+                "note.md",
+                &sample_entry("v1", "hash-a"),
+                "bundle/v1.md",
+            )?;
+            let conflict = import_recycled_row(
+                conn,
+                &vault,
+                "note.md",
+                &sample_entry("v1", "hash-b"),
+                "bundle/v1-other.md",
+            )
+            .unwrap_err();
+            assert!(
+                conflict
+                    .to_string()
+                    .contains("recycled_version_identity_conflict"),
+                "{conflict}"
+            );
+
+            let id: i64 = conn.query_row(
+                "SELECT id FROM versions WHERE version_no = 'v1'",
+                [],
+                |row| row.get(0),
+            )?;
+            conn.execute(
+                "UPDATE versions SET recycle_id = 'bundle' WHERE id = ?1",
+                [id],
+            )?;
+            let restore =
+                restore_archived_row(conn, &vault, "note.md", "other-bundle", id, 9).unwrap_err();
+            assert!(
+                restore
+                    .to_string()
+                    .contains("recycled_version_ownership_mismatch"),
+                "{restore}"
+            );
+
+            let foreign = VersionOwnership {
+                id,
+                vault_path: Some(vault.to_string_lossy().into_owned()),
+                note_path: Some("other.md".into()),
+                recycle_id: Some("bundle".into()),
+                storage_path: "bundle/v1.md".into(),
+            };
+            let cleanup = delete_cleanup_rows(conn, &vault, &[foreign], &["bundle/v1.md".into()])
+                .unwrap_err();
+            assert!(
+                cleanup
+                    .to_string()
+                    .contains("version_cleanup_ownership_mismatch"),
+                "{cleanup}"
+            );
+
+            let still_owned =
+                ensure_cleanup_storage_unowned(conn, &vault, &["bundle/v1.md".into()]).unwrap_err();
+            assert!(
+                still_owned
+                    .to_string()
+                    .contains("version_cleanup_storage_owner_conflict"),
+                "{still_owned}"
+            );
             Ok(())
         })
         .unwrap();

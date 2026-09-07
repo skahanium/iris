@@ -143,9 +143,11 @@ npm run format:check
 npm run typecheck
 npm run test
 
-# E2E
-npm run tauri build -- --debug
+# jsdom 源码契约（不是桌面 E2E）
 npm run test:e2e
+
+# 真实 Windows 桌面持久化（需 debug exe；CI 仅手动 workflow_dispatch）
+npm run test:desktop:windows
 ```
 
 ## Commit 规范
@@ -244,9 +246,11 @@ npm run test
 npm run test:watch
 npm run test:coverage
 
-# E2E
-npm run tauri build -- --debug
+# jsdom 源码契约（不是桌面 E2E）
 npm run test:e2e
+
+# 真实 Windows 桌面持久化（需 debug exe；CI 仅手动 workflow_dispatch）
+npm run test:desktop:windows
 ```
 
 ### 手工回归（关闭路径）

@@ -39,6 +39,7 @@ export interface MediaResolveResult extends MediaMetadata {
 export interface FileReadResult {
   content: string;
   isLocked: boolean;
+  contentHash: string;
 }
 
 export interface FileSignatureResult {
@@ -57,6 +58,7 @@ export interface DocumentOpenResult {
   token: string;
   content: string;
   isLocked: boolean;
+  contentHash: string;
 }
 
 export interface ClassifiedFileEntry {

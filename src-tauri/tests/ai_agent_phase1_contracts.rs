@@ -54,10 +54,11 @@ fn stage1_source_contracts_remove_misleading_tool_executor_stub() {
 fn stage1_source_contracts_remove_rendered_fetch_from_catalog() {
     let catalog = include_str!("../src/ai_runtime/tool_catalog_impl.rs");
     let web_catalog = include_str!("../src/ai_runtime/tool_catalog/web.rs");
+    let web_dispatch = include_str!("../src/ai_runtime/tool_dispatch/web.rs");
 
     assert!(!catalog.contains("rendered_fetch"));
     assert!(!web_catalog.contains("rendered_fetch"));
-    assert!(web_catalog.contains("WebEvidenceBroker"));
+    assert!(web_dispatch.contains("WebEvidenceBroker"));
 }
 
 #[test]

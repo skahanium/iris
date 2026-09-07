@@ -63,6 +63,8 @@ export interface PreparedNoteOpen {
   editorHtmlStatus?: PreparedEditorHtmlStatus;
   frontmatterYaml: string | null;
   isLocked: boolean;
+  /** SHA-256 of the decoded Markdown body; used as the editor write baseline. */
+  contentHash?: string;
   namespace: NoteOpenNamespace;
   path: string;
   preparedEditorHtml?: string;
@@ -478,6 +480,7 @@ async function buildPreparedNoteOpen(
   content: string,
   isLocked: boolean,
   startedAt: number,
+  contentHash?: string,
 ): Promise<PreparedNoteOpen> {
   const parsed = parseNoteForEditor(content, pathStem(normalized.path));
   const title = resolveNoteDisplayTitle({ path: normalized.path });
@@ -490,6 +493,7 @@ async function buildPreparedNoteOpen(
   return {
     bodyMarkdown: parsed.bodyMd,
     content,
+    contentHash,
     editorHtmlDigest: preparedHtml.digest,
     editorHtmlStatus: preparedHtml.status,
     frontmatterYaml: parsed.yaml,
@@ -506,7 +510,7 @@ async function buildPreparedNoteOpen(
 
 export async function prepareNoteOpenFromContent(
   request: PrepareNoteOpenRequest,
-  source: { content: string; isLocked: boolean },
+  source: { content: string; isLocked: boolean; contentHash?: string },
 ): Promise<PreparedNoteOpen> {
   const normalized = normalizeRequest(request);
   const startedAt = performance.now();
@@ -529,6 +533,7 @@ export async function prepareNoteOpenFromContent(
       source.content,
       source.isLocked,
       startedAt,
+      source.contentHash,
     );
     remember(namespace, cacheKey, {
       path: normalized.path,
@@ -586,9 +591,12 @@ export function prepareNoteOpen(
       if (signal.aborted) {
         throw new DOMException("Document open job cancelled", "AbortError");
       }
-      const { content, isLocked } = await fileRead(normalized.path, {
-        allowClassified: normalized.allowClassified === true,
-      });
+      const { content, isLocked, contentHash } = await fileRead(
+        normalized.path,
+        {
+          allowClassified: normalized.allowClassified === true,
+        },
+      );
       if (signal.aborted) {
         throw new DOMException("Document open job cancelled", "AbortError");
       }
@@ -600,6 +608,7 @@ export function prepareNoteOpen(
         content,
         isLocked,
         startedAt,
+        contentHash,
       );
     },
   });

@@ -49,7 +49,7 @@ import { useTabManager } from "@/hooks/useTabManager";
 const EMPTY_MD = '---\ntitle: "未命名文档"\n---\n\n';
 
 function fileReadResult(content: string, isLocked = false) {
-  return { content, isLocked };
+  return { content, contentHash: "d".repeat(64), isLocked };
 }
 
 function Harness({
@@ -118,6 +118,7 @@ describe("useTabManager handleNewNote", () => {
     fileRead.mockResolvedValue(fileReadResult(EMPTY_MD));
     createDefaultNote.mockResolvedValue({
       content: EMPTY_MD,
+      contentHash: "c".repeat(64),
       path: "未命名文档.md",
       title: "未命名文档",
     });

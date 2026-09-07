@@ -35,7 +35,7 @@ describe("web evidence broker contract", () => {
     expect(broker).toContain("collect_web_evidence");
     expect(broker).toContain("list_enabled_web_provider_mappings");
     expect(broker).not.toContain("fetch_search_context_for_db");
-    expect(read("src-tauri/src/ai_runtime/tool_catalog/web.rs")).toContain(
+    expect(read("src-tauri/src/ai_runtime/tool_dispatch/web.rs")).toContain(
       "网络证据代理",
     );
     expect(read("src/components/ai/ConversationSurface.tsx")).not.toContain(

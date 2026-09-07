@@ -866,7 +866,7 @@ mod apply_notice_tests {
         );
         assert_eq!(
             classify_provider_failure(&AppError::msg("internal_run_projection_failed")),
-            SafeRunErrorCode::PersistenceFailed
+            SafeRunErrorCode::InternalExecutionFailed
         );
     }
 

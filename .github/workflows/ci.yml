@@ -69,6 +69,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -95,13 +97,16 @@ jobs:
           cargo test --features sqlite-vec sqlite_vec_v3_mirrors_all_canonical_caches_insert_update_and_delete
           cargo test --features sqlite-vec semantic_search_uses_sqlite_vec_knn_and_never_skips_a_large_index
 
-      - name: Install cargo-audit
+      - name: Install cargo-audit and cargo-deny
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-audit
+          tool: cargo-audit,cargo-deny
 
       - name: Audit Rust dependencies
         run: npm run audit:rust
+
+      - name: Check Rust crate licenses
+        run: cargo deny --manifest-path src-tauri/Cargo.toml check licenses
 
   agent-smoke:
     name: Agent 24-case smoke
@@ -119,6 +124,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -132,12 +139,14 @@ jobs:
   release-readiness-macos-arm64:
     name: Release readiness / macOS ARM64
     # Keep the ordinary main/PR gate deterministic and bounded. The expensive
-    # model-provisioned RAG and desktop-release checks remain available as an
-    # explicit pre-release dispatch. Desktop packaging requires both the
-    # successful same-SHA main push run and this successful manual run.
+    # contract Agent, embedding smoke, model-provisioned RAG and desktop-release
+    # checks remain available as an explicit pre-release dispatch. Desktop
+    # packaging requires both the successful same-SHA main push run and this
+    # successful manual run. The live product gate (`npm run agent:eval`) is a
+    # separate v1.3.0 Agent-ship requirement and must not block packaging.
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -150,6 +159,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -157,8 +168,8 @@ jobs:
           workspaces: src-tauri -> ../.iris-dev/target
           shared-key: macos-arm64
 
-      - name: Run Agent full baseline gate
-        run: npm run agent:eval
+      - name: Run Agent deterministic contract gate
+        run: npm run agent:eval:contract
 
       - name: Restore embedded BGE model
         uses: actions/cache@v5
@@ -170,6 +181,9 @@ jobs:
 
       - name: Verify or prepare embedded BGE model
         run: npm run model:prepare
+
+      - name: Smoke test embedded BGE model and sqlite-vec
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --test embedding_model_smoke -- --ignored
 
       - name: Run provisioned sqlite-vec RAG gate
         run: cargo test --manifest-path src-tauri/Cargo.toml --features sqlite-vec --test rag_broker_eval rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates -- --ignored --nocapture
@@ -197,6 +211,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -206,6 +222,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test
 
       - name: Build Windows debug desktop executable
         run: npm run tauri -- build --debug --no-bundle

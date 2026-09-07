@@ -273,7 +273,8 @@ npm run version:check
 npm audit                           # 前端依赖安全审计
 # 数据库迁移在应用启动时自动执行（storage::migrate::migrate_up）
 # 重建索引：应用内 search_reindex（当前不提供 npm index:rebuild 脚本）
-npm run test:e2e                    # 运行端到端测试
+npm run test:e2e                    # jsdom 源码契约（不是桌面 E2E）
+npm run test:desktop:windows        # 真实 Windows 桌面持久化 E2E
 ```
 
 ## 六、AGENTS.md 修订规则

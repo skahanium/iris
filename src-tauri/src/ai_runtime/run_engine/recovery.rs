@@ -403,66 +403,6 @@ fn hashes_at_operation_boundary(
     Ok(hashes)
 }
 
-#[cfg(test)]
-mod boundary_tests {
-    use super::hashes_at_operation_boundary;
-    use crate::ai_runtime::frozen_change_plan::{
-        FrozenChangeOperationInput, FrozenChangePlan, FrozenChangeSetInput,
-    };
-    use crate::cas::hash::content_hash_str;
-    use std::collections::BTreeMap;
-
-    fn repeated_path_plan() -> FrozenChangePlan {
-        let operations = [("a.md", "a0", "a1"), ("b.md", "b0", "b1"),
-            ("a.md", "a1", "a2"), ("a.md", "a2", "a3")]
-            .into_iter().enumerate().map(|(index, (path, before, after))| FrozenChangeOperationInput {
-                tool_call_id: format!("call-{index}"),
-                operation: "replace_selection".into(),
-                relative_paths: vec![path.into()],
-                base_content_hashes: vec![(path.into(), content_hash_str(before))],
-                expected_post_content_hashes: vec![(path.into(), content_hash_str(after))],
-                change: serde_json::json!({"target_path": path, "original": before, "replacement": after}),
-                rollback_summary: "使用已保护的历史版本".into(),
-            }).collect();
-        FrozenChangePlan::freeze_set(FrozenChangeSetInput {
-            confirmation_id: "confirmation".into(),
-            run_id: "run".into(),
-            session_id: 1,
-            request_id: "request".into(),
-            vault_id: "vault".into(),
-            operations,
-            expires_at_unix_ms: i64::MAX,
-        })
-        .unwrap()
-    }
-
-    #[test]
-    fn recovery_boundary_uses_initial_state_then_only_the_executed_prefix() {
-        let plan = repeated_path_plan();
-        for (boundary, a, b) in [
-            (0, "a0", "b0"),
-            (1, "a1", "b0"),
-            (2, "a1", "b1"),
-            (3, "a2", "b1"),
-            (4, "a3", "b1"),
-        ] {
-            assert_eq!(
-                hashes_at_operation_boundary(&plan, boundary).unwrap(),
-                BTreeMap::from([
-                    ("a.md".into(), content_hash_str(a)),
-                    ("b.md".into(), content_hash_str(b))
-                ]),
-                "operation boundary {boundary} must not see a future edit"
-            );
-        }
-    }
-
-    #[test]
-    fn recovery_boundary_rejects_cursor_beyond_the_frozen_plan() {
-        assert!(hashes_at_operation_boundary(&repeated_path_plan(), 5).is_err());
-    }
-}
-
 fn recovered_change_paths(change: &serde_json::Value) -> Vec<String> {
     let mut paths = std::collections::BTreeSet::new();
     for key in ["target_path", "path", "new_path", "note_path"] {
@@ -669,4 +609,77 @@ fn advance_recovered_checkpoint_to_completed(
         stage = next_stage;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::hashes_at_operation_boundary;
+    use crate::ai_runtime::frozen_change_plan::{
+        FrozenChangeOperationInput, FrozenChangePlan, FrozenChangeSetInput,
+    };
+    use crate::cas::hash::content_hash_str;
+    use std::collections::BTreeMap;
+
+    fn repeated_path_plan() -> FrozenChangePlan {
+        let operations = [
+            ("a.md", "a0", "a1"),
+            ("b.md", "b0", "b1"),
+            ("a.md", "a1", "a2"),
+            ("a.md", "a2", "a3"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, (path, before, after))| FrozenChangeOperationInput {
+                tool_call_id: format!("call-{index}"),
+                operation: "replace_selection".into(),
+                relative_paths: vec![path.into()],
+                base_content_hashes: vec![(path.into(), content_hash_str(before))],
+                expected_post_content_hashes: vec![(path.into(), content_hash_str(after))],
+                change: serde_json::json!({
+                    "target_path": path,
+                    "original": before,
+                    "replacement": after
+                }),
+                rollback_summary: "使用已保护的历史版本".into(),
+            },
+        )
+        .collect();
+        FrozenChangePlan::freeze_set(FrozenChangeSetInput {
+            confirmation_id: "confirmation".into(),
+            run_id: "run".into(),
+            session_id: 1,
+            request_id: "request".into(),
+            vault_id: "vault".into(),
+            operations,
+            expires_at_unix_ms: i64::MAX,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn recovery_boundary_uses_initial_state_then_only_the_executed_prefix() {
+        let plan = repeated_path_plan();
+        for (boundary, a, b) in [
+            (0, "a0", "b0"),
+            (1, "a1", "b0"),
+            (2, "a1", "b1"),
+            (3, "a2", "b1"),
+            (4, "a3", "b1"),
+        ] {
+            assert_eq!(
+                hashes_at_operation_boundary(&plan, boundary).unwrap(),
+                BTreeMap::from([
+                    ("a.md".into(), content_hash_str(a)),
+                    ("b.md".into(), content_hash_str(b))
+                ]),
+                "operation boundary {boundary} must not see a future edit"
+            );
+        }
+    }
+
+    #[test]
+    fn recovery_boundary_rejects_cursor_beyond_the_frozen_plan() {
+        assert!(hashes_at_operation_boundary(&repeated_path_plan(), 5).is_err());
+    }
 }

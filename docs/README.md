@@ -4,20 +4,20 @@
 
 ## 现行规范
 
-| 文档                                                             | 用途                                 |
-| ---------------------------------------------------------------- | ------------------------------------ |
-| [README.md](../README.md)                                        | 产品边界、快速开始与开发入口         |
-| [ROADMAP.md](../ROADMAP.md)                                      | 唯一版本排期与当前里程碑             |
-| [ARCHITECTURE.md](../ARCHITECTURE.md)                            | 当前模块、数据流、单向兼容与安全边界 |
-| [ipc-api-reference.md](./ipc-api-reference.md)                   | 当前 Tauri IPC 契约                  |
-| [design-system.md](./design-system.md)                           | 界面 token、组件规范与人工验收       |
-| [adaptive-workspace.md](./adaptive-workspace.md)                 | v1.2.19 自适应工作区状态与交互契约   |
-| [rss-subscription-library.md](./rss-subscription-library.md)     | RSS 订阅资料库产品、数据与安全契约   |
-| [markdown-export.md](./markdown-export.md)                       | 编辑器 Markdown 往返与保留节点语义   |
-| [markdown-indexing-contract.md](./markdown-indexing-contract.md) | 编辑器与索引器的当前解析边界         |
-| [llm-routing.md](./llm-routing.md)                               | LLM 配置、连通性与联网证据           |
-| [testing/](./testing/)                                           | 可执行的手工验收清单                 |
-| [ops/](./ops/)                                                   | 运维、性能与能力降级手册             |
+| 文档                                                             | 用途                                                                        |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [README.md](../README.md)                                        | 产品边界、快速开始与开发入口                                                |
+| [ROADMAP.md](../ROADMAP.md)                                      | 唯一版本排期与当前里程碑                                                    |
+| [ARCHITECTURE.md](../ARCHITECTURE.md)                            | 当前模块、数据流、单向兼容与安全边界                                        |
+| [ipc-api-reference.md](./ipc-api-reference.md)                   | 当前 Tauri IPC 契约                                                         |
+| [design-system.md](./design-system.md)                           | 界面 token、组件规范与人工验收                                              |
+| [adaptive-workspace.md](./adaptive-workspace.md)                 | v1.2.19 自适应工作区状态与交互契约                                          |
+| [rss-subscription-library.md](./rss-subscription-library.md)     | RSS 订阅资料库产品、数据与安全契约                                          |
+| [markdown-export.md](./markdown-export.md)                       | 编辑器 Markdown 往返与保留节点语义                                          |
+| [markdown-indexing-contract.md](./markdown-indexing-contract.md) | 编辑器与索引器的当前解析边界                                                |
+| [llm-routing.md](./llm-routing.md)                               | LLM 配置、连通性与联网证据                                                  |
+| [testing/](./testing/)                                           | 可执行的手工验收清单与 [桌面发版手册](./testing/desktop-release-runbook.md) |
+| [ops/](./ops/)                                                   | 运维、性能与能力降级手册                                                    |
 
 ## 当前施工资料
 

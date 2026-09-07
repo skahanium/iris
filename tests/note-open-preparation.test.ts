@@ -62,6 +62,7 @@ describe("note open preparation", () => {
   it("prepares note content and editor HTML once for a stable file signature", async () => {
     fileRead.mockResolvedValue({
       content: '---\ntitle: "Prepared"\n---\n\nBody',
+      contentHash: "a".repeat(64),
       isLocked: false,
     });
 
@@ -78,6 +79,7 @@ describe("note open preparation", () => {
     expect(preparedAgain).toBe(prepared);
     expect(prepared.title).toBe("a");
     expect(prepared.bodyMarkdown.trim()).toBe("Body");
+    expect(prepared.contentHash).toBe("a".repeat(64));
     expect(prepared.preparedEditorHtml).toContain("Body");
     expect(
       getCachedEditorHtml("a.md", editorHtmlDigest(prepared.bodyMarkdown)),

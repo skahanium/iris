@@ -8,8 +8,14 @@ describe("app close version guard", () => {
   it("flushing multiple tabs during app close never calls versionSaveIdle", async () => {
     const versionSaveIdle = vi.fn(async () => undefined);
     const scheduler = createVersionSnapshotScheduler({ versionSaveIdle });
-    const write = vi.fn(async () => ({ indexDegraded: false }));
-    const coordinator = new DocumentPersistenceCoordinator({ write });
+    const write = vi.fn(async () => ({
+      indexDegraded: false,
+      contentHash: "a".repeat(64),
+    }));
+    const coordinator = new DocumentPersistenceCoordinator({
+      resolveVault: () => "/vault-test",
+      write,
+    });
     coordinator.load("notes/active.md", "active opened", 1);
     coordinator.load("notes/background.md", "background opened", 1);
     coordinator.capture("notes/active.md", "active saved", "user_edit");

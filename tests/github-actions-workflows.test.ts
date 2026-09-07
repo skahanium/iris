@@ -157,11 +157,12 @@ describe("GitHub Actions workflows", () => {
     expect(jobText(ciPath, "windows-desktop-e2e")).toContain(
       "npm run test:desktop:windows",
     );
+    expect(jobText(ciPath, "windows-desktop-e2e")).toContain("cargo test");
     const readiness = workflowJob(ciPath, "release-readiness-macos-arm64");
     expect(readiness.if).toBe("github.event_name == 'workflow_dispatch'");
     expect(readiness.needs).toBeUndefined();
     expect(readiness["runs-on"]).toBe("macos-15");
-    expect(readiness["timeout-minutes"]).toBe(30);
+    expect(readiness["timeout-minutes"]).toBe(60);
   });
 
   it("keeps common checks once across the parallel quality jobs", () => {
@@ -186,9 +187,12 @@ describe("GitHub Actions workflows", () => {
       "cargo clippy --all-targets -- -D warnings",
       "cargo test",
       "npm run audit:rust",
+      "cargo deny --manifest-path src-tauri/Cargo.toml check licenses",
     ]) {
       expect(rust).toContain(command);
     }
+    expect(rust).toContain("cargo-deny");
+    expect(rust).toContain("rustfmt, clippy");
     expect(agent).toContain("npm run agent:eval:smoke");
     expect(agent).toContain("dtolnay/rust-toolchain");
     expect(frontend).not.toContain("cargo");
@@ -252,14 +256,19 @@ describe("GitHub Actions workflows", () => {
     ).toBe(30);
   });
 
-  it("runs real-model, full Agent and 50k gates exactly once in one bounded macOS job", () => {
+  it("runs contract Agent, embedding smoke, real-model RAG and 50k gates exactly once in one bounded macOS job", () => {
     const ci = readWorkflow(ciPath);
     const release = readWorkflow(packagePath);
     const combined = `${ci}\n${release}`;
 
     const readiness = jobText(ciPath, "release-readiness-macos-arm64");
 
-    expect(readiness).toContain("npm run agent:eval");
+    expect(readiness).toContain("npm run agent:eval:contract");
+    expect(
+      readiness.replaceAll("npm run agent:eval:contract", ""),
+    ).not.toContain("npm run agent:eval");
+    expect(readiness).toContain("embedding_model_smoke");
+    expect(readiness).toContain("--ignored");
     expect(readiness).toContain(
       "rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates",
     );

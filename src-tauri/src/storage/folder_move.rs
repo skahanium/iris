@@ -340,14 +340,43 @@ mod tests {
         symlink(vault.join("old/sub"), vault.join("alias")).unwrap();
 
         let error = move_folder(&state, &vault, "old", "alias/new")
-            .expect_err("canonical destination is inside source");
+            .expect_err("alias destinations must be rejected before canonical conflict");
 
-        assert!(error.to_string().contains("target_conflict"));
+        assert!(
+            error.to_string().contains("note_path_alias_not_allowed"),
+            "{error}"
+        );
         assert_eq!(
             std::fs::read_to_string(vault.join("old/note.md")).unwrap(),
             "original"
         );
         assert!(!vault.join("old/sub/new").exists());
+        assert_eq!(
+            std::fs::read_dir(vault.join(".iris/operations/moves"))
+                .map(|entries| entries.count())
+                .unwrap_or(0),
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_alias_destination_is_rejected_before_any_move_side_effects() {
+        use std::os::unix::fs::symlink;
+
+        let (_dir, state, vault) = setup();
+        std::fs::create_dir_all(vault.join("other")).unwrap();
+        symlink(vault.join("other"), vault.join("alias")).unwrap();
+
+        let error = move_folder(&state, &vault, "old", "alias/moved")
+            .expect_err("alias destinations must not remap version identity");
+
+        assert!(
+            error.to_string().contains("note_path_alias_not_allowed"),
+            "{error}"
+        );
+        assert!(vault.join("old/note.md").exists());
+        assert!(!vault.join("other/moved").exists());
         assert_eq!(
             std::fs::read_dir(vault.join(".iris/operations/moves"))
                 .map(|entries| entries.count())

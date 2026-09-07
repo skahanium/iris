@@ -32,6 +32,24 @@ describe("document open IPC wrappers", () => {
     });
   });
 
+  it("returns the decoded SHA-256 baseline from file_read", async () => {
+    const { fileRead } = await import("../src/lib/ipc");
+    invoke.mockResolvedValueOnce({
+      content: "opened body",
+      contentHash: "a".repeat(64),
+      isLocked: false,
+    });
+    await expect(fileRead("note.md")).resolves.toEqual({
+      content: "opened body",
+      contentHash: "a".repeat(64),
+      isLocked: false,
+    });
+    expect(invoke).toHaveBeenCalledWith("file_read", {
+      path: "note.md",
+      allowClassified: false,
+    });
+  });
+
   it("requests file signatures through the typed ipc wrapper", async () => {
     const { fileSignature } = await import("../src/lib/ipc");
     invoke.mockResolvedValueOnce({

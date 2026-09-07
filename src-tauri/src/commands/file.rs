@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::app::AppState;
-use crate::cas::hash::content_hash as content_hash_bytes;
+use crate::cas::hash::{content_hash as content_hash_bytes, content_hash_str};
 use crate::error::{AppError, AppResult};
 use crate::feed::fetch::{FeedHttpClient, FetchPurpose, ProdNetGate};
 use crate::indexer::frontmatter::resolve_display_title;
@@ -49,6 +49,7 @@ struct VaultIndexProgress {
 pub struct FileReadResult {
     pub content: String,
     pub is_locked: bool,
+    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,6 +73,7 @@ pub struct DocumentOpenResult {
     pub token: String,
     pub content: String,
     pub is_locked: bool,
+    pub content_hash: String,
 }
 
 fn query_is_locked(db: &crate::storage::db::Database, path: &str) -> AppResult<bool> {
@@ -83,6 +85,19 @@ fn query_is_locked(db: &crate::storage::db::Database, path: &str) -> AppResult<b
             Err(e) => Err(e.into()),
         }
     })
+}
+
+fn read_decoded_note(
+    vault: &std::path::Path,
+    db: &crate::storage::db::Database,
+    path: &str,
+) -> AppResult<(String, bool, String)> {
+    let abs = resolve_vault_path(vault, path)?;
+    let raw_bytes = std::fs::read(&abs)?;
+    let content = decode_file_content(&raw_bytes)?;
+    let is_locked = query_is_locked(db, path)?;
+    let content_hash = content_hash_str(&content);
+    Ok((content, is_locked, content_hash))
 }
 
 pub(crate) fn allow_vault_assets_in_asset_protocol(app: &AppHandle, vault: &std::path::Path) {
@@ -334,18 +349,16 @@ pub async fn document_open(
     validate_file_read_path(&path, allow_classified.unwrap_or(false))?;
     let token = state.begin_document_open();
     let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
     let db = state.inner().db.clone();
     let path_for_db = path.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        let raw_bytes = std::fs::read(&abs)?;
-        let content = decode_file_content(&raw_bytes)?;
-        let is_locked = query_is_locked(&db, &path_for_db)?;
+        let (content, is_locked, content_hash) = read_decoded_note(&vault, &db, &path_for_db)?;
         Ok(DocumentOpenResult {
             token,
             content,
             is_locked,
+            content_hash,
         })
     })
     .await
@@ -361,14 +374,15 @@ pub async fn file_read(
 ) -> AppResult<FileReadResult> {
     validate_file_read_path(&path, allow_classified.unwrap_or(false))?;
     let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
     let db = state.inner().db.clone();
     let path_for_db = path.clone();
     tokio::task::spawn_blocking(move || {
-        let raw_bytes = std::fs::read(&abs)?;
-        let content = decode_file_content(&raw_bytes)?;
-        let is_locked = query_is_locked(&db, &path_for_db)?;
-        Ok(FileReadResult { content, is_locked })
+        let (content, is_locked, content_hash) = read_decoded_note(&vault, &db, &path_for_db)?;
+        Ok(FileReadResult {
+            content,
+            is_locked,
+            content_hash,
+        })
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
@@ -1219,6 +1233,31 @@ Body",
         assert_eq!(signature.content_hash.len(), 64);
         assert!(signature.modified_ms.is_some());
         assert!(signature.is_locked);
+    }
+
+    #[test]
+    fn file_read_reports_decoded_content_hash_matching_write_baseline() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        let body = "# Read hash\n\nBody";
+        fs::write(vault.join("notes/read.md"), body).unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                migrate_up(conn)?;
+                Ok(())
+            })
+            .unwrap();
+
+        let (content, is_locked, content_hash) =
+            read_decoded_note(&state.vault_path().unwrap(), &state.db, "notes/read.md").unwrap();
+
+        assert_eq!(content, body);
+        assert!(!is_locked);
+        assert_eq!(content_hash, content_hash_str(body));
     }
     #[test]
     fn file_read_validation_requires_classified_opt_in() {

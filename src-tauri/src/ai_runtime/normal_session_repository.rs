@@ -460,6 +460,19 @@ fn ensure_session_idle(conn: &rusqlite::Connection, session_id: i64) -> AppResul
             super::run_contract::SafeRunErrorCode::ActiveRunExists,
         ));
     }
+    let mut cancelled = conn
+        .prepare("SELECT run_id FROM agent_runs WHERE session_id = ?1 AND status = 'cancelled'")?;
+    let run_ids = cancelled
+        .query_map([session_id], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if run_ids
+        .iter()
+        .any(|run_id| super::run_inflight::is_marked(run_id))
+    {
+        return Err(AppError::run(
+            super::run_contract::SafeRunErrorCode::ActiveRunExists,
+        ));
+    }
     Ok(())
 }
 

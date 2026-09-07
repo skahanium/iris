@@ -195,6 +195,8 @@ function App() {
     syncTabMarkdownCache,
     invalidateDocumentRuntimeState,
     getTabMarkdownCached,
+    getTabContentHashCached,
+    rememberTabContentHash,
     setMarkdown,
     activeFileLocked,
     setFileLocked,
@@ -464,6 +466,8 @@ function App() {
     editorReadyRef: editorReadyForPersistenceRef,
     getLiveMarkdownRef,
     getTabMarkdownCached,
+    getTabContentHashCached,
+    rememberTabContentHash,
     markClean,
     markdown,
     onPersistenceBarrierRelease: () => {

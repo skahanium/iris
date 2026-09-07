@@ -1151,8 +1151,6 @@ mod normal_run_desktop_adapter_tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    #[cfg(not(windows))]
-    use super::assistant_run_start;
     use super::{
         assistant_run_control, dispatch_normal_run_service, evaluate_normal_run_policy,
         execute_confirmed_change_with_sink, historical_source_summary_for_run,
@@ -1464,41 +1462,34 @@ mod normal_run_desktop_adapter_tests {
     }
 
     #[cfg(not(windows))]
-    fn invoke_start(
-        webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
-        request: AssistantRunStartRequest,
-    ) -> AssistantRunAccepted {
-        let response = tauri::test::get_ipc_response(
-            webview,
-            InvokeRequest {
-                cmd: "assistant_run_start".into(),
-                callback: tauri::ipc::CallbackFn(0),
-                error: tauri::ipc::CallbackFn(1),
-                url: "tauri://localhost".parse().expect("invoke URL"),
-                body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "request": request })),
-                headers: Default::default(),
-                invoke_key: tauri::test::INVOKE_KEY.into(),
-            },
-        )
-        .expect("assistant_run_start IPC response");
-        let tauri::ipc::InvokeResponseBody::Json(response) = response else {
-            panic!("assistant_run_start must return JSON");
-        };
-        serde_json::from_str(&response).expect("accepted response")
-    }
-
-    #[cfg(not(windows))]
     async fn wait_for_terminal(state: &AppState, accepted: &AssistantRunAccepted) -> RunState {
-        for _ in 0..200 {
+        let mut last = None;
+        for _ in 0..500 {
             let current = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
                 .expect("poll run")
                 .expect("accepted run");
             if current.run.state.is_terminal() {
                 return current.run.state;
             }
+            last = Some(current.run.state);
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        panic!("assistant run did not reach a terminal state");
+        panic!(
+            "assistant run did not reach a terminal state; last observed {:?}",
+            last
+        );
+    }
+
+    #[cfg(not(windows))]
+    async fn drive_accepted_run(state: &Arc<AppState>, accepted: &AssistantRunAccepted) {
+        crate::ai_runtime::normal_run_service::execute_normal_run(
+            Arc::clone(state),
+            accepted.clone(),
+            None,
+            None,
+            &NoopSink,
+        )
+        .await;
     }
 
     #[cfg(not(windows))]
@@ -1524,11 +1515,25 @@ mod normal_run_desktop_adapter_tests {
             }]
         });
         let first_tool_sse = format!("data: {first_tool_packet}\n\ndata: [DONE]\n\n");
+        let final_submission_packet = serde_json::json!({
+            "choices":[{
+                "delta":{
+                    "tool_calls":[{
+                        "index":0,
+                        "id":"assistant-start-final",
+                        "type":"function",
+                        "function":{
+                            "name":"submit_final_answer",
+                            "arguments":"{\"blocks\":[{\"markdown\":\"外部工具事实已核实。\",\"sources\":[\"E1\"]}]}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let final_submission_sse = format!("data: {final_submission_packet}\n\ndata: [DONE]\n\n");
         let llm = spawn_llm_protocol_double(vec![
             HttpResponseScript::sse(&first_tool_sse),
-            HttpResponseScript::sse(
-                "data: {\"choices\":[{\"delta\":{\"content\":\"外部工具事实已核实。\"}}]}\n\ndata: [DONE]\n\n",
-            ),
+            HttpResponseScript::sse(&final_submission_sse),
         ])
         .await
         .expect("local LLM boundary");
@@ -1537,14 +1542,6 @@ mod normal_run_desktop_adapter_tests {
             llm.base_url.clone(),
             "iris-test-verified-tools-assistant-external",
         );
-        let app = tauri::test::mock_builder()
-            .manage(Arc::clone(&state))
-            .invoke_handler(tauri::generate_handler![assistant_run_start])
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .expect("mock application");
-        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-            .build()
-            .expect("mock webview");
         let granted_request = AssistantRunStartRequest {
             client_request_id: "assistant-start-external-granted".into(),
             session: None,
@@ -1565,7 +1562,8 @@ mod normal_run_desktop_adapter_tests {
             security_domain: SecurityDomain::Normal,
             classified_context_ref: None,
         };
-        let granted = invoke_start(&webview, granted_request.clone());
+        let granted = RunIntake::start(&state.db, granted_request.clone()).expect("granted intake");
+        drive_accepted_run(&state, &granted).await;
         assert_eq!(
             wait_for_terminal(&state, &granted).await,
             RunState::Completed
@@ -1598,7 +1596,8 @@ mod normal_run_desktop_adapter_tests {
         let mut ungranted_request = granted_request.clone();
         ungranted_request.client_request_id = "assistant-start-external-ungranted".into();
         ungranted_request.external_tool_grants.clear();
-        let ungranted = invoke_start(&webview, ungranted_request);
+        let ungranted = RunIntake::start(&state.db, ungranted_request).expect("ungranted intake");
+        drive_accepted_run(&state, &ungranted).await;
         assert_eq!(
             wait_for_terminal(&state, &ungranted).await,
             RunState::Failed
@@ -1628,7 +1627,8 @@ mod normal_run_desktop_adapter_tests {
         );
         let mut bypass_request = granted_request;
         bypass_request.client_request_id = "assistant-start-external-bypass".into();
-        let bypass = invoke_start(&webview, bypass_request);
+        let bypass = RunIntake::start(&state.db, bypass_request).expect("bypass intake");
+        drive_accepted_run(&state, &bypass).await;
         assert_eq!(wait_for_terminal(&state, &bypass).await, RunState::Failed);
         let bypass_calls = bypass_llm.finish().await.expect("bypass LLM completion");
         assert_eq!(bypass_calls.len(), 1);

@@ -78,6 +78,35 @@ fn session_lifecycle_rejects_delete_and_retract_until_all_runs_are_terminal() {
 }
 
 #[test]
+fn session_lifecycle_rejects_delete_and_retract_while_a_cancelled_run_is_still_in_flight() {
+    let db = Database::open_in_memory().unwrap();
+    let session = session_lifecycle_fixture(&db, "cancelled");
+    crate::ai_runtime::run_inflight::mark(&session.session_key);
+    let error = NormalSessionRepository::delete(&db, &session.session_key).unwrap_err();
+    assert!(
+        error.to_string().contains("agent_run_active_run_exists"),
+        "delete while cancelled worker still running: {error}"
+    );
+    let error = NormalSessionRepository::retract(&db, &session.session_key, 1).unwrap_err();
+    assert!(
+        error.to_string().contains("agent_run_active_run_exists"),
+        "retract while cancelled worker still running: {error}"
+    );
+    assert_eq!(
+        NormalSessionRepository::load_messages(&db, &session.session_key, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+    crate::ai_runtime::run_inflight::clear(&session.session_key);
+    assert_eq!(
+        NormalSessionRepository::retract(&db, &session.session_key, 1).unwrap(),
+        1
+    );
+    assert!(NormalSessionRepository::delete(&db, &session.session_key).unwrap());
+}
+
+#[test]
 fn session_lifecycle_retention_skips_nonterminal_runs() {
     let db = Database::open_in_memory().unwrap();
     let active = [

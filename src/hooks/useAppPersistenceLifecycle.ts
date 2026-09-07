@@ -78,6 +78,8 @@ interface UseAppPersistenceLifecycleParams {
   editorReadyRef: RefObject<boolean>;
   getLiveMarkdownRef: MutableRefObject<() => string>;
   getTabMarkdownCached: (path: string) => string | undefined;
+  getTabContentHashCached?: (path: string) => string | undefined;
+  rememberTabContentHash?: (path: string, contentHash: string) => void;
   markClean: (path: string, title: string) => void;
   markdown: string;
   onPersistenceBarrierRelease?: () => void;
@@ -121,6 +123,8 @@ export function useAppPersistenceLifecycle({
   editorReadyRef,
   getLiveMarkdownRef,
   getTabMarkdownCached,
+  getTabContentHashCached = () => undefined,
+  rememberTabContentHash,
   markClean,
   markdown,
   onPersistenceBarrierRelease,
@@ -134,11 +138,22 @@ export function useAppPersistenceLifecycle({
   tabsRef,
 }: UseAppPersistenceLifecycleParams) {
   const coordinatorRef = useRef<DocumentPersistenceCoordinator | null>(null);
+  const vaultPathRef = useRef(vaultPath);
+  vaultPathRef.current = vaultPath;
+  const rememberTabContentHashRef = useRef(rememberTabContentHash);
+  rememberTabContentHashRef.current = rememberTabContentHash;
+  const getTabContentHashCachedRef = useRef(getTabContentHashCached);
+  getTabContentHashCachedRef.current = getTabContentHashCached;
   if (!coordinatorRef.current) {
     coordinatorRef.current = new DocumentPersistenceCoordinator({
-      write: async (path, content) => {
-        const result = await fileWrite(path, content);
-        return { indexDegraded: result.indexStatus === "degraded" };
+      resolveVault: () => vaultPathRef.current,
+      write: async (path, content, precondition) => {
+        const result = await fileWrite(path, content, precondition);
+        rememberTabContentHashRef.current?.(path, result.contentHash);
+        return {
+          indexDegraded: result.indexStatus === "degraded",
+          contentHash: result.contentHash,
+        };
       },
     });
   }
@@ -268,7 +283,9 @@ export function useAppPersistenceLifecycle({
   useEffect(() => {
     const path = activePath;
     if (!path) return;
-    coordinator.load(path, markdown, persistenceContentTick);
+    coordinator.load(path, markdown, persistenceContentTick, {
+      contentHash: getTabContentHashCachedRef.current(path),
+    });
     // `persistenceContentTick` denotes only an authoritative disk/prepared load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePath, coordinator, persistenceContentTick]);

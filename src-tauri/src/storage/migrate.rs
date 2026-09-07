@@ -3468,4 +3468,109 @@ mod tests {
             1,
         );
     }
+
+    #[test]
+    fn migration_074_enforces_recycle_identity_indexes_and_refuses_index_cascade() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        let indexes = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'versions'",
+            )
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(indexes.contains(&"idx_versions_active_identity".into()));
+        assert!(indexes.contains(&"idx_versions_archived_identity".into()));
+        let foreign_keys: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_list('versions')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            foreign_keys, 0,
+            "history must not ON DELETE CASCADE with files"
+        );
+
+        conn.execute(
+            "INSERT INTO versions
+             (file_id, version_no, content_hash, storage_path, kind, created_at,
+              vault_path, note_path)
+             VALUES (0, 'v1', 'hash', 'cas:hash', 'manual', datetime('now'),
+                     '/vault-a', 'note.md')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO versions
+                 (file_id, version_no, content_hash, storage_path, kind, created_at,
+                  vault_path, note_path)
+                 VALUES (1, 'v1', 'hash-2', 'cas:hash-2', 'manual', datetime('now'),
+                         '/vault-a', 'note.md')",
+                [],
+            )
+            .is_err(),
+            "active identity must be unique per vault note"
+        );
+        conn.execute(
+            "INSERT INTO versions
+             (file_id, version_no, content_hash, storage_path, kind, created_at,
+              vault_path, note_path, recycle_id)
+             VALUES (0, 'v1', 'hash', 'cas:hash', 'manual', datetime('now'),
+                     '/vault-a', 'note.md', 'bundle-a')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO versions
+                 (file_id, version_no, content_hash, storage_path, kind, created_at,
+                  vault_path, note_path, recycle_id)
+                 VALUES (2, 'v1', 'hash-3', 'cas:hash-3', 'manual', datetime('now'),
+                         '/vault-a', 'other.md', 'bundle-a')",
+                [],
+            )
+            .is_err(),
+            "archived identity must be unique per vault recycle bundle"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO versions
+                 (file_id, version_no, content_hash, storage_path, kind, created_at,
+                  note_path, recycle_id)
+                 VALUES (3, 'orphan', 'hash-4', 'cas:hash-4', 'manual', datetime('now'),
+                         'note.md', 'bundle-b')",
+                [],
+            )
+            .is_err(),
+            "recycle_id requires vault ownership"
+        );
+        conn.execute(
+            "INSERT INTO versions
+             (file_id, version_no, content_hash, storage_path, kind, created_at,
+              vault_path, note_path, recycle_id)
+             VALUES (4, 'owned-recycle', 'hash-5', 'cas:hash-5', 'manual', datetime('now'),
+                     '/vault-b', 'kept.md', 'bundle-c')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            migrate_down(&conn).is_err(),
+            "down must refuse when recycle ownership exists"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM versions WHERE recycle_id = 'bundle-c'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1,
+        );
+    }
 }

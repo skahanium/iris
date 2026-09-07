@@ -62,6 +62,7 @@ interface OpenNoteOptions {
 export interface PendingNoteOpen {
   bodyMarkdown: string;
   content: string;
+  contentHash?: string;
   /** Runtime identity. All production opens provide it; legacy fixtures fall back to path. */
   documentSessionId?: string;
   editorHtmlDigest?: string;
@@ -166,6 +167,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const openFileSeqRef = useRef(0);
   const pendingNoteOpenCommitRef = useRef<PendingNoteOpenCommit | null>(null);
   const tabMarkdownCacheRef = useRef(new Map<string, string>());
+  const tabContentHashCacheRef = useRef(new Map<string, string>());
   const tabLockCacheRef = useRef(new Map<string, boolean>());
   const documentSessionSeqRef = useRef(0);
   /** Paths / session ids currently inside closeTab persistence (blocks handleDirty). */
@@ -318,6 +320,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const buildPendingNoteOpen = useCallback(
     ({
       content,
+      contentHash,
       documentOpenToken,
       homeOpenSequence,
       isLocked,
@@ -330,6 +333,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       titleHint,
     }: {
       content: string;
+      contentHash?: string;
       documentOpenToken?: string;
       homeOpenSequence?: number;
       isLocked: boolean;
@@ -354,6 +358,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       return {
         bodyMarkdown,
         content,
+        contentHash: contentHash ?? preparedNote?.contentHash,
         documentSessionId: existingSessionId ?? createDocumentSessionId(),
         documentOpenToken,
         editorHtmlDigest: preparedNote?.editorHtmlDigest,
@@ -383,6 +388,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     ) => {
       tabLockCacheRef.current.set(pending.path, pending.isLocked);
       tabMarkdownCacheRef.current.set(pending.path, pending.content);
+      if (pending.contentHash) {
+        tabContentHashCacheRef.current.set(pending.path, pending.contentHash);
+      }
       frontmatterYamlRef.current = pending.frontmatterYaml;
       activePathRef.current = pending.path;
       markdownRef.current = pending.content;
@@ -517,6 +525,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       const readPromise = preparedNote
         ? Promise.resolve({
             content: preparedNote.content,
+            contentHash: preparedNote.contentHash,
             isLocked: preparedNote.isLocked,
           })
         : fileRead(path, {
@@ -524,13 +533,14 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           });
 
       try {
-        const [{ content, isLocked }] = await Promise.all([
+        const [{ content, isLocked, contentHash }] = await Promise.all([
           readPromise,
           previousCleanupPromise,
         ]);
         if (openFileSeqRef.current !== seq) throw createSupersededError();
         const pending = buildPendingNoteOpen({
           content,
+          contentHash,
           documentOpenToken: options?.documentOpenToken,
           homeOpenSequence: options?.homeOpenSequence,
           isLocked,
@@ -778,6 +788,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         const closePath = current.path;
         tabMarkdownCacheRef.current.delete(path);
         tabMarkdownCacheRef.current.delete(closePath);
+        tabContentHashCacheRef.current.delete(path);
+        tabContentHashCacheRef.current.delete(closePath);
         tabLockCacheRef.current.delete(path);
         tabLockCacheRef.current.delete(closePath);
 
@@ -888,6 +900,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         : null;
 
       tabMarkdownCacheRef.current.delete(path);
+      tabContentHashCacheRef.current.delete(path);
       tabLockCacheRef.current.delete(path);
 
       if (!isActive) {
@@ -906,6 +919,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         cancelPendingNoteOpen();
         const pending = buildPendingNoteOpen({
           content: cached,
+          contentHash: tabContentHashCacheRef.current.get(switchTo),
           isLocked: tabLockCacheRef.current.get(switchTo) ?? false,
           openBudgetKind: "warm",
           openStartedAt: performance.now(),
@@ -949,6 +963,12 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           });
           createdPath = created.path;
           tabMarkdownCacheRef.current.set(created.path, created.content);
+          if (created.contentHash) {
+            tabContentHashCacheRef.current.set(
+              created.path,
+              created.contentHash,
+            );
+          }
           tabLockCacheRef.current.set(created.path, false);
           replaceTabs((existing) => [
             ...existing,
@@ -986,6 +1006,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           // performance concern and must never delay the first visible frame.
           const pending = buildPendingNoteOpen({
             content: created.content,
+            contentHash: created.contentHash,
             homeOpenSequence: options.homeOpenSequence,
             isLocked: false,
             openBudgetKind: "hot",
@@ -1091,6 +1112,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         tabMarkdownCacheRef.current.set(newPath, cachedMarkdown);
       }
       tabMarkdownCacheRef.current.delete(oldPath);
+      const cachedHash = tabContentHashCacheRef.current.get(oldPath);
+      if (cachedHash !== undefined) {
+        tabContentHashCacheRef.current.set(newPath, cachedHash);
+      }
+      tabContentHashCacheRef.current.delete(oldPath);
       const cachedLock = tabLockCacheRef.current.get(oldPath);
       if (cachedLock !== undefined) {
         tabLockCacheRef.current.set(newPath, cachedLock);
@@ -1122,6 +1148,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         cancelPendingNoteOpen();
       }
       tabMarkdownCacheRef.current.delete(path);
+      tabContentHashCacheRef.current.delete(path);
       tabLockCacheRef.current.delete(path);
     },
     [cancelPendingNoteOpen, isPathOpening],
@@ -1129,6 +1156,18 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
   const getTabMarkdownCached = useCallback(
     (path: string) => tabMarkdownCacheRef.current.get(path),
+    [],
+  );
+
+  const getTabContentHashCached = useCallback(
+    (path: string) => tabContentHashCacheRef.current.get(path),
+    [],
+  );
+
+  const rememberTabContentHash = useCallback(
+    (path: string, contentHash: string) => {
+      tabContentHashCacheRef.current.set(path, contentHash);
+    },
     [],
   );
 
@@ -1189,6 +1228,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     invalidateDocumentRuntimeState,
     getEditorMarkdown,
     getTabMarkdownCached,
+    getTabContentHashCached,
+    rememberTabContentHash,
     getCommittedMarkdown,
   };
 }

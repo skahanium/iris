@@ -49,7 +49,7 @@ React 19 UI
 
 用户 `.md` 是笔记唯一权威来源。`files`、`chunks`、`links`、FTS 与嵌入索引均可由 Vault 重建；会话、Run、网页缓存和收件箱属于应用状态。应用不会在未确认时改写用户笔记。
 
-**2026-09-06 数据保护施工限定**：migration 074 重建既有 `versions` 表，解除 `files.id` 级联删除；新版本归属使用 canonical Vault、笔记路径和可选回收条目身份，`file_id` 仅保留兼容元数据。旧记录没有可靠 Vault 归属时保持未分配，须在版本界面显式选择、验证内容并确认恢复目标，不自动归给当前库。CAS 缓存按 canonical Vault 绑定，在途句柄仍指向原库；派生索引的全局 `files.path` 不再作为历史归属权威。这些是当前工作树实现，不是完整笔记集成放行。目录移动的中断恢复、回收站永久清理的故障重试，以及 Agent 差异确认／保存屏障／独立撤销仍在集成与复审，见 [Harness 实施路线](./agent-harness/05-implementation-roadmap.md)。本轮迁移仅在临时测试数据库验证，未操作用户笔记库。
+**2026-09-06 数据保护施工限定**：migration 074 重建既有 `versions` 表，解除 `files.id` 级联删除；新版本归属使用 canonical Vault、笔记路径和可选回收条目身份，`file_id` 仅保留兼容元数据。旧记录没有可靠 Vault 归属时保持未分配，须在版本界面显式选择、验证内容并确认恢复目标，不自动归给当前库。CAS 缓存按 canonical Vault 绑定，在途句柄仍指向原库；派生索引的全局 `files.path` 不再作为历史归属权威。词法路径含符号链接组件时，身份解析在副作用前拒绝。编辑器保存提交发起 Vault 与解码正文的 SHA-256 基线。这些是当前工作树实现，不是完整笔记集成放行。Agent 差异确认与独立撤销仍在集成，见 [Harness 实施路线](./agent-harness/05-implementation-roadmap.md)。本轮迁移仅在临时测试数据库验证，未操作用户笔记库。
 
 ## Agent Run
 

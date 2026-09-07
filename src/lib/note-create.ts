@@ -3,6 +3,7 @@ import { allocateNewDocumentName } from "@/lib/note-names";
 
 export interface CreatedNote {
   content: string;
+  contentHash: string;
   path: string;
   title: string;
 }
@@ -50,7 +51,12 @@ export async function createDefaultNote(
     const content = buildDefaultNoteContent(title);
     try {
       const receipt = await fileCreate(path, content, options.expectedVault);
-      return { content, path: receipt.entry.path, title };
+      return {
+        content,
+        contentHash: receipt.contentHash,
+        path: receipt.entry.path,
+        title,
+      };
     } catch (e) {
       if (isCreateConflict(e)) {
         // Name conflict (stale DB or disk leftover) — blacklist and retry

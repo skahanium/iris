@@ -1010,6 +1010,7 @@ describe("FeedWorkspace", () => {
     await renderWorkspace();
     fireEvent.click(screen.getByTestId("feed-item-i1"));
     fireEvent.click(await screen.findByTestId("feed-preview-pdf"));
+    await waitFor(() => expect(feedDocumentPrepare).toHaveBeenCalledWith("i1"));
     fireEvent.click(await screen.findByTestId("feed-document-cancel"));
     expect(feedDocumentCancel).toHaveBeenCalledWith("i1");
     expect(screen.queryByTestId("feed-document-cancel")).toBeNull();

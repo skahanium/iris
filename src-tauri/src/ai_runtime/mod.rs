@@ -72,6 +72,7 @@ mod run_contract_tests;
 pub(crate) mod run_engine;
 #[cfg(test)]
 mod run_engine_tests;
+pub(crate) mod run_inflight;
 pub(crate) mod run_intake;
 #[cfg(test)]
 mod run_intake_tests;

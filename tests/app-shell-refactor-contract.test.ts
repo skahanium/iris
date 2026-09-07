@@ -11,8 +11,8 @@ function lineCount(path: string): number {
 
 describe("App shell refactor contract", () => {
   it("keeps App.impl.tsx below the current shell split checkpoint", () => {
-    // 1130: RSS 模式接线保持在壳层边界，未把阅读器业务重新塞回 App。
-    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(1130);
+    // 1134: 保存屏障把 Tab 内容哈希接到 persistence，未把读写业务塞回 App。
+    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(1134);
   });
 
   it("moves AI sidecar bridge state behind a dedicated hook", () => {
