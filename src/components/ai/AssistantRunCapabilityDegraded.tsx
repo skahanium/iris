@@ -71,9 +71,14 @@ export function AssistantRunWebVerificationFailed({
       <p className="font-medium text-foreground">联网核实未完成</p>
       <p>未取得可用联网证据，因此没有生成未经核实的答复。</p>
       <p className="mt-1">{webFailureReasonMessage(failure.failureReason)}</p>
-      <p className="mt-1 font-mono text-[10px]">
-        诊断 ID：{failure.diagnosticId}
-      </p>
+      <details className="mt-2 text-[11px]">
+        <summary className="cursor-pointer select-none text-foreground/70">
+          诊断信息
+        </summary>
+        <p className="mt-1 font-mono text-[10px]">
+          诊断编号：{failure.diagnosticId}
+        </p>
+      </details>
       {failure.retryable ? (
         <button
           type="button"
@@ -126,25 +131,25 @@ export function AssistantRunCapabilityDegraded({
         </summary>
         <dl className="mt-2 space-y-1.5 font-mono text-[10px] tabular-nums leading-relaxed">
           <div className="flex flex-wrap gap-x-2">
-            <dt className="text-muted-foreground">capability</dt>
+            <dt className="text-muted-foreground">能力</dt>
             <dd className="text-foreground">{degradation.capability}</dd>
           </div>
           <div className="flex flex-wrap gap-x-2">
-            <dt className="text-muted-foreground">code</dt>
+            <dt className="text-muted-foreground">错误码</dt>
             <dd className="text-foreground">{degradation.code}</dd>
           </div>
           <div className="flex flex-wrap gap-x-2">
-            <dt className="text-muted-foreground">attemptCount</dt>
+            <dt className="text-muted-foreground">尝试次数</dt>
             <dd className="text-foreground">{degradation.attemptCount}</dd>
           </div>
           <div className="flex flex-wrap gap-x-2">
-            <dt className="text-muted-foreground">retryable</dt>
+            <dt className="text-muted-foreground">可重试</dt>
             <dd className="text-foreground">
-              {degradation.retryable ? "true" : "false"}
+              {degradation.retryable ? "是" : "否"}
             </dd>
           </div>
           <div className="flex flex-wrap gap-x-2">
-            <dt className="text-muted-foreground">domain</dt>
+            <dt className="text-muted-foreground">范围</dt>
             <dd className="text-foreground">
               {WEB_CAPABILITY_DEGRADATION_DOMAIN_LABEL[triage.domain]}
             </dd>

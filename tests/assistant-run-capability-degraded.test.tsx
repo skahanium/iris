@@ -52,7 +52,7 @@ describe("AssistantRunCapabilityDegraded", () => {
     expect(diagnostics?.textContent).toContain(
       "agent_run_web_provider_timeout",
     );
-    expect(diagnostics?.textContent).toContain("attemptCount");
+    expect(diagnostics?.textContent).toContain("尝试次数");
     expect(diagnostics?.textContent).toContain("MCP");
   });
 

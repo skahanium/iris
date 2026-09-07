@@ -641,7 +641,7 @@ async fn collect_mcp_search_provider_fetch(
                 && probe.diagnostic.usable_https_row_count > 0
             {
                 record_provider_success(provider_id);
-            } else {
+            } else if search_probe_counts_toward_circuit(&probe.diagnostic) {
                 record_provider_failure(provider_id);
             }
             probe
@@ -816,6 +816,33 @@ fn record_provider_success(provider_id: &str) {
 
 fn record_provider_failure(provider_id: &str) {
     crate::ai_runtime::circuit_breaker::record_failure(provider_id);
+}
+
+fn search_probe_counts_toward_circuit(diagnostic: &McpSearchResultDiagnostic) -> bool {
+    match diagnostic.application_failure {
+        Some(
+            McpApplicationFailureKind::RateLimited
+            | McpApplicationFailureKind::QuotaExceeded
+            | McpApplicationFailureKind::ProviderFailed,
+        ) => true,
+        Some(
+            McpApplicationFailureKind::AuthFailed | McpApplicationFailureKind::InvalidArguments,
+        ) => false,
+        None => diagnostic
+            .failure_reason
+            .as_deref()
+            .is_some_and(is_transient_search_circuit_reason),
+    }
+}
+
+fn is_transient_search_circuit_reason(reason: &str) -> bool {
+    let lower = reason.to_ascii_lowercase();
+    lower.contains("timeout")
+        || lower.contains("transport")
+        || lower.contains("429")
+        || lower.contains("rate_limited")
+        || lower.contains("rate limit")
+        || lower.contains("quota")
 }
 
 fn is_transient_provider_error(error: &AppError) -> bool {
@@ -3276,6 +3303,36 @@ mod tests {
             diagnostic.failure_reason.as_deref(),
             Some("mcp_search_no_usable_https_results")
         );
+        assert!(
+            !search_probe_counts_toward_circuit(&diagnostic),
+            "empty or unusable HTTPS rows must not open the provider circuit"
+        );
+    }
+
+    #[test]
+    fn empty_search_parse_does_not_count_toward_the_provider_circuit() {
+        let empty = diagnose_mcp_search_result(
+            "anysearch",
+            &serde_json::json!({
+                "content": [{ "type": "text", "text": "" }]
+            }),
+        );
+        assert_eq!(empty.usable_https_row_count, 0);
+        assert!(!search_probe_counts_toward_circuit(&empty));
+
+        let timeout = McpSearchResultDiagnostic {
+            body: String::new(),
+            result_shape: "error".into(),
+            content_text_length: 0,
+            contains_url_marker: false,
+            parsed_row_count: 0,
+            usable_https_row_count: 0,
+            rejected_non_https_row_count: 0,
+            first_url_domain: None,
+            failure_reason: Some("mcp_provider_timeout".into()),
+            application_failure: None,
+        };
+        assert!(search_probe_counts_toward_circuit(&timeout));
     }
 
     #[test]

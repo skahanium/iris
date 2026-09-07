@@ -22,7 +22,7 @@
 ## 1. 已收回的控制面
 
 - `ExecutionEnvelope` 只冻结 effect、授权范围、风险、能力与预算；不冻结电影、天气、写作等解题策略。
-- 明确联网、URL、强时效与高风险当前事实是硬验证信号；其他已授权联网任务为 `WebPreferred`。工具面存在时进入同一个有界循环，由模型决定是否调用。
+- 明确联网/核实、URL 与高利害当前事实是硬验证信号；日常时效与其他已授权联网任务为 `WebPreferred`。工具面存在时进入同一个有界循环，由模型决定是否调用。
 - 旧 `conversation_meta`、创作、小说、公文、纪检等关键词不得撤销 Web 能力、改变来源终局或选择领域执行器。
 - `web_prefetched` 与 Host 替模型规划的预取研究路径已退出新 Run；Web、本地、外部只读与 runtime 走同一 ToolLoop。INC-HR-009 的 `WebRequired` 最低观察只执行用户原文搜索和最多两个正文抓取，复用该循环并把真实结果交还模型，不形成第二条研究路径。
 
@@ -36,7 +36,7 @@
 
 INC-HR-006 只重新打开 HR-3 内的 fetch 应用合同与 HR-4 内的严格发布密封，不重开通用循环：MCP fetch 必须把应用错误、空正文和搜索包装视为失败，并在冻结 `web.fetch` 候选内切换；严格路径在来源绑定前不得发送正文或 `AnswerReset`。来源区只列最终正文实际引用且成功登记的 evidence，限制说明不得携带来源摘要。
 
-INC-HR-007 继续在同一循环内回正真实工具闭环，不增加研究状态机：`web_search { query }` 只发现 Run-local 候选，`web_fetch { urls }` 只读取当前候选或用户明确 URL；两者共享既有授权、network 预算、Broker 与冻结 Provider 顺序。普通时效事实取得一份相关正文并精确引用即可完成；高风险、CitationCheck 或显式交叉核实才要求官方来源或两个独立域名。现代消息只按 `evidence_refs_json` 投影最终来源，显式空数组不得回挂整 Run 来源。
+INC-HR-007 继续在同一循环内回正真实工具闭环，不增加研究状态机：`web_search { query }` 只发现 Run-local 候选，`web_fetch { urls }` 只读取当前候选或用户明确 URL；两者共享既有授权、network 预算、Broker 与冻结 Provider 顺序。日常时效题完成不依赖摘录；高利害、CitationCheck 或显式交叉核实仍要求官方来源或两个独立域名。现代消息只按 `evidence_refs_json` 投影最终来源，显式空数组不得回挂整 Run 来源。
 
 INC-HR-009 重新打开 HR-3 的“提议—派发”边界和 HR-4 的长对话连续性：`WebRequired` 由同一 executor 先取得最低搜索/抓取观察；只有实际派发调用才消耗预算、审计并绑定 Provider；fetch 使用 5/18/20 秒有界 failover，健康统计按 `web.search`/`web.fetch` 分离，migration 073 只重建既有统计表。MiMo 工具续轮适配、错误语义和一次模型摘要压缩均留在 Gateway/现有会话字段内；这些确定性修复不代表 HR-7 真实质量通过。
 

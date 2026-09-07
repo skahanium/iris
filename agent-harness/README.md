@@ -27,7 +27,7 @@
 1. 复用现有 Provider-neutral `AgentToolLoop`，建立一个适用于本地检索、Web、runtime 和外部只读工具的通用有界循环。
 2. 模型负责理解问题、选择工具、调整查询、判断语义缺口和组织回答；Host 负责授权、预算、状态、来源身份、持久化和副作用。
 3. Intake 只冻结 `AgentIntent + Effect + ContextMode + Freshness + Effort + RiskClass + CapabilityId`，不再把领域分类当作执行骨架。
-4. 普通事实使用 `WebPreferred`；只有明确联网、指定 URL、强时效或高风险当前事实使用 `WebRequired`。
+4. 普通事实与日常时效使用 `WebPreferred`；只有明确联网/核实、指定 URL 或高利害当前事实使用 `WebRequired`。
 5. 结构化工具调用协议继续保留；11 个领域 operation 退出核心路由，真实需求可通过统一工具目录作为可选 Provider 适配器接入。
 6. 普通回答自然完成，普通缺参自然追问；结构化终局和暂停状态只用于真正需要确定性合同的任务。
 7. 写入由模型提出、Host 冻结、用户确认和确定性执行；模型不能把一次确认扩展成开放写权限。

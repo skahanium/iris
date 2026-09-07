@@ -14,9 +14,9 @@ export interface WebCapabilityDegradationTriage {
 
 const DEFAULT_TRIAGE: WebCapabilityDegradationTriage = {
   domain: "unknown",
-  meaning: "未映射的降级码；对照 Run 事件与 tracing 日志继续排查。",
+  meaning: "未映射的降级码；对照 Run 事件继续排查。",
   nextStep:
-    "执行 scripts/diagnose-web-capability-degradation.mjs 并查看 docs/ops/web-capability-degradation.md。",
+    "在管理中心打开对应联网提供方的实时诊断，并对照本次回答的过程记录。",
 };
 
 const TRIAGE_BY_CODE: Partial<
@@ -25,37 +25,33 @@ const TRIAGE_BY_CODE: Partial<
   agent_run_web_provider_auth_failed: {
     domain: "mcp",
     meaning: "MCP 搜索提供方鉴权失败（API Key 无效或缺失）。",
-    nextStep:
-      "管理中心 → 联网与证据 → 对应 MCP 提供方 → 实时诊断（credential / searchSmokeLive）。",
+    nextStep: "在管理中心重新配置对应联网提供方的凭据后重试。",
   },
   agent_run_web_provider_timeout: {
     domain: "mcp",
     meaning: "在 Run 预算内 MCP 搜索未在时限内返回。",
-    nextStep:
-      "检查网络与代理；对同一提供方执行实时诊断；检索日志「Run model-decided Web capability outcome」中的 web_duration_bucket。",
+    nextStep: "检查网络后稍后重试；若持续超时，到管理中心查看该联网提供方。",
   },
   agent_run_web_provider_failed: {
     domain: "mcp",
     meaning: "MCP 传输或提供方瞬时/配额类失败。",
-    nextStep:
-      "查看 web_evidence_provider_health 与实时诊断；若为限流且 retryable=true 可稍后重试。",
+    nextStep: "稍后重试；若持续失败，到管理中心查看联网提供方状态。",
   },
   agent_run_web_evidence_invalid: {
     domain: "mcp",
     meaning: "调用成功但无可用 HTTPS 证据行或摘录为空。",
-    nextStep:
-      "实时诊断中的 searchResultParseLive；确认 MCP 返回结构含可解析 HTTPS URL。",
+    nextStep: "换一个可公开访问的来源后重试，或到管理中心检查联网提供方。",
   },
   agent_run_web_evidence_required: {
     domain: "harness",
     meaning: "工具循环级错误（通常不会伴随黄条 capability_degraded）。",
-    nextStep: "查看 Run 终态 failed 与 safe_error_message，而非仅黄条。",
+    nextStep:
+      "本轮需要可核验网页正文才能给出适用结论；可稍后重试或贴上官方原文。",
   },
   agent_run_mcp_unavailable: {
     domain: "mcp",
     meaning: "无可用 MCP 搜索映射或提供方不可用。",
-    nextStep:
-      "确认已选搜索提供方、映射完整且 enabled；对照 canEnable 与运行时诊断差异。",
+    nextStep: "在管理中心启用并完成联网提供方配置后再试。",
   },
 };
 
@@ -73,7 +69,7 @@ export const WEB_CAPABILITY_DEGRADATION_DOMAIN_LABEL: Record<
   string
 > = {
   mcp: "MCP / 网络传输",
-  harness: "Agent harness",
+  harness: "运行环境",
   llm: "LLM 模型",
   unknown: "待确认",
 };

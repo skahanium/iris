@@ -2056,10 +2056,10 @@ fn web_enabled_external_question_persists_the_web_capability_contract() {
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(
         envelope.verification_requirement,
-        VerificationRequirement::CurrentRunWeb
+        VerificationRequirement::None
     );
     assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
     assert!(envelope
@@ -2198,7 +2198,7 @@ fn ordinary_external_fact_without_strong_temporal_or_risk_signal_is_web_preferre
 }
 
 #[test]
-fn rejecting_local_notes_as_a_factual_source_still_requires_web_verification() {
+fn rejecting_local_notes_as_a_factual_source_still_keeps_the_preferred_web_surface() {
     for message in [
         "确认 synthetic 软件当前稳定版本，不使用本地笔记作为版本事实。",
         "Confirm the current synthetic software version; do not use local notes as version facts.",
@@ -2209,10 +2209,17 @@ fn rejecting_local_notes_as_a_factual_source_still_requires_web_verification() {
 
         let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-        assert_eq!(envelope.freshness, Freshness::WebRequired, "{message}");
+        assert_eq!(envelope.freshness, Freshness::WebPreferred, "{message}");
         assert_eq!(
             envelope.verification_requirement,
-            VerificationRequirement::CurrentRunWeb,
+            VerificationRequirement::None,
+            "{message}"
+        );
+        assert!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
             "{message}"
         );
     }
@@ -2235,17 +2242,68 @@ fn creative_copy_request_uses_generic_webpreferred_when_authorized() {
 }
 
 #[test]
-fn strong_temporal_and_high_risk_requests_require_current_run_web_evidence() {
+fn strong_temporal_requests_prefer_web_without_a_current_run_gate() {
     let cases = [
         "今天世界杯决赛结果是什么？",
         "Who won the World Cup final today?",
-        "现任法国总统是谁？请核实后回答。",
         "What is the current share price?",
         "今天发生了哪些重要新闻？",
         "这场比赛的当前比分是多少？",
+        "勒布朗现在为什么还不退役",
+        "今晚湖人比赛几点",
+        "最近有什么好看的电影",
+        "为什么说未取得足够可核验来源正文",
+    ];
+
+    for message in cases {
+        let mut online = request();
+        online.web_enabled = true;
+        online.turn.message = message.to_string();
+        let online_envelope = RunIntake::resolve_envelope(&online).expect("online envelope");
+        assert_eq!(
+            online_envelope.freshness,
+            Freshness::WebPreferred,
+            "{message}"
+        );
+        assert_eq!(
+            online_envelope.verification_requirement,
+            super::run_contract::VerificationRequirement::None,
+            "{message}"
+        );
+        assert!(
+            online_envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search"),
+            "{message}"
+        );
+
+        let mut offline = online;
+        offline.web_enabled = false;
+        let offline_envelope = RunIntake::resolve_envelope(&offline).expect("offline envelope");
+        assert_eq!(offline_envelope.freshness, Freshness::Offline, "{message}");
+        assert_eq!(
+            offline_envelope.verification_requirement,
+            super::run_contract::VerificationRequirement::None,
+            "{message}"
+        );
+        assert!(!offline_envelope
+            .required_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == "web.search"));
+    }
+}
+
+#[test]
+fn high_risk_and_explicit_verify_requests_require_current_run_web_evidence() {
+    let cases = [
+        "现任法国总统是谁？请核实后回答。",
         "请联网核实这个赛事的最终结果。",
         "本周的监管规则是否已经生效？",
         "请给出当前用药建议。",
+        "当前这项法规是否已经生效？请核实",
+        "现行党纪对这种处分怎么规定，请核实",
+        "请联网核实勒布朗是否已经退役",
     ];
 
     for message in cases {
@@ -2482,8 +2540,8 @@ fn hr2_task_matrix_uses_task_contracts_instead_of_fresh_fact_domains() {
 fn strict_web_boundaries_remain_required_in_the_hr1_baseline() {
     for message in [
         "请联网核实 https://example.com/release-notes 的当前版本。",
-        "今天该证券的最新收盘价格是多少？",
         "当前这项法规是否已经生效？请核实后回答。",
+        "现行党纪对这种处分怎么规定，请核实",
     ] {
         let mut online = request();
         online.web_enabled = true;
@@ -2623,17 +2681,17 @@ fn today_date_question_uses_trusted_runtime_without_freezing_a_domain_plan() {
 }
 
 #[test]
-fn broad_recent_question_is_webrequired_and_enters_the_generic_tool_loop() {
+fn broad_recent_question_is_webpreferred_and_enters_the_generic_tool_loop() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "最近有什么好看的电影".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(
         envelope.verification_requirement,
-        VerificationRequirement::CurrentRunWeb
+        VerificationRequirement::None
     );
     assert_eq!(envelope.fresh_fact, Default::default());
     assert_eq!(envelope.effort, Effort::ToolLoop);
@@ -2646,14 +2704,15 @@ fn broad_recent_question_is_webrequired_and_enters_the_generic_tool_loop() {
 #[test]
 fn web_disabled_new_runs_keep_no_domain_plan_and_only_strict_tasks_keep_evidence_obligations() {
     for (message, verification_requirement) in [
-        ("上海未来一周天气", VerificationRequirement::CurrentRunWeb),
-        ("今天有什么重要新闻", VerificationRequirement::CurrentRunWeb),
+        ("上海未来一周天气", VerificationRequirement::None),
+        ("今天有什么重要新闻", VerificationRequirement::None),
+        ("最近有什么好看的电影", VerificationRequirement::None),
+        ("苹果现在股价多少", VerificationRequirement::None),
+        ("今晚湖人比赛几点", VerificationRequirement::None),
         (
-            "最近有什么好看的电影",
+            "当前这项法规是否已经生效？请核实",
             VerificationRequirement::CurrentRunWeb,
         ),
-        ("苹果现在股价多少", VerificationRequirement::CurrentRunWeb),
-        ("今晚湖人比赛几点", VerificationRequirement::CurrentRunWeb),
     ] {
         let mut request = request();
         request.web_enabled = false;
@@ -2803,7 +2862,7 @@ fn transformation_word_does_not_hide_an_unbound_current_facts_request() {
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
 }
 
@@ -2833,10 +2892,10 @@ fn explicit_local_reference_does_not_downgrade_a_comparison_with_public_evidence
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(
         envelope.verification_requirement,
-        super::run_contract::VerificationRequirement::CurrentRunWeb
+        super::run_contract::VerificationRequirement::None
     );
     assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
 }

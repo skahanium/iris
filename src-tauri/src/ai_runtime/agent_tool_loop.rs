@@ -335,10 +335,9 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     }
 }
 
-pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIX: &str =
-    "本轮未取得足够的可核验来源正文来可靠支持具体结论";
+pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIX: &str = "本轮未取得足够的可核验来源正文";
 pub(crate) const EVIDENCE_LIMITED_RESPONSE: &str =
-    "本轮未取得足够的可核验来源正文来可靠支持具体结论，因此不展示未经核实的答复。你可以稍后重试，或提供可核验的来源。";
+    "本轮未取得足够的可核验来源正文。已检索的线索不能作为处分、生效、用药或签证结论的依据。你可以稍后重试、粘贴官方原文，或用 @ 附上相关笔记。";
 
 /// Executes the only permitted shape of an Agent tool loop.
 #[derive(Debug, Clone, Copy)]

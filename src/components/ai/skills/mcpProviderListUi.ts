@@ -115,7 +115,7 @@ export function mcpListMappingShortLabel(mappingStatus: string): string {
 }
 
 export function mcpListTransportShortLabel(transportKind: string): string {
-  return transportKind === "stdio" ? "stdio" : "HTTPS";
+  return transportKind === "stdio" ? "本地命令" : "HTTPS";
 }
 
 export const MCP_PROVIDER_LIST_CARD_CLASS =

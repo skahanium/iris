@@ -240,8 +240,9 @@ async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let sink = RecordingSink::default();
-    let accepted =
-        RunIntake::start_with_sink(&state.db, direct_request(), &sink).expect("accepted run");
+    let mut request = direct_request();
+    request.turn.message = "请核实当前这项法规是否已经生效".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
 
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
 
@@ -270,7 +271,7 @@ async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
             .expect("session messages");
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, "user");
-    assert_eq!(messages[0].content, "请概述当前信息");
+    assert_eq!(messages[0].content, "请核实当前这项法规是否已经生效");
 }
 
 #[tokio::test]
@@ -1215,13 +1216,20 @@ async fn high_stakes_current_fact_keeps_structured_finalization_tool() {
 }
 
 #[tokio::test]
-async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
+async fn news_question_still_answers_when_web_is_disabled() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"以下是未核验的公开信息整理。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    install_test_routing(&state, &llm.base_url, "iris-test-news-offline");
     let sink = RecordingSink::default();
     let mut request = direct_request();
     request.client_request_id = "news-web-disabled".into();
     request.turn.message = "最新 synthetic 新闻".into();
+    request.web_enabled = false;
     let accepted =
         RunIntake::start_with_sink(&state.db, request, &sink).expect("accept offline news Run");
 
@@ -1230,14 +1238,24 @@ async fn news_web_fallback_is_unavailable_when_web_is_disabled() {
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("offline news snapshot")
         .expect("offline news Run");
-    assert_eq!(response.run.state, RunState::Failed);
-    assert!(matches!(
+    assert_eq!(response.run.state, RunState::Completed);
+    assert!(!matches!(
         response.events.last().map(AssistantRunEvent::payload),
         Some(RunEventPayload::Failed {
             code: super::run_contract::SafeRunErrorCode::WebVerificationRequired,
             ..
         })
     ));
+    let assistant_messages =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("session messages")
+            .into_iter()
+            .filter(|message| message.role == "assistant")
+            .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 1);
+    assert!(assistant_messages[0]
+        .content
+        .contains("未核验的公开信息整理"));
 }
 
 #[tokio::test]
@@ -1273,9 +1291,6 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
         )),
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。\"}}]}\n\ndata: [DONE]\n\n",
-        ),
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -1325,8 +1340,8 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
         .expect("news fallback Run");
     assert_eq!(
         llm.request_count(),
-        4,
-        "news Run must search, fetch, draft, and repair; events={:?}",
+        3,
+        "preferred news Run searches and fetches then completes without a citation repair; events={:?}",
         response
             .events
             .iter()
@@ -1344,10 +1359,10 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
     assert!(!names.contains(&"news_lookup"));
     assert!(
         names.contains(&"web_search"),
-        "HR-3 的严格联网任务也必须从通用循环暴露 Web 工具"
+        "preferred news Run still exposes generic Web tools"
     );
     assert!(!names.contains(&"submit_final_answer"));
-    assert_eq!(calls.len(), 4);
+    assert_eq!(calls.len(), 3);
     let current_evidence =
         crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_registered(
             &state.db,
@@ -1406,9 +1421,6 @@ async fn recent_movie_research_uses_generic_web_evidence_without_city_or_domain_
         HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。\"}}]}\n\ndata: [DONE]\n\n",
         ),
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。[W1]\"}}]}\n\ndata: [DONE]\n\n",
-        ),
     ])
     .await
     .expect("local LLM boundary");
@@ -1450,7 +1462,7 @@ async fn recent_movie_research_uses_generic_web_evidence_without_city_or_domain_
         AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
             .expect("movie research evidence");
     assert!(evidence.iter().all(|item| item.evidence_id > 2000));
-    assert_eq!(llm.finish().await.expect("LLM completion").len(), 4);
+    assert_eq!(llm.finish().await.expect("LLM completion").len(), 3);
 }
 
 #[tokio::test]
@@ -1528,6 +1540,11 @@ async fn strict_current_fact_repairs_out_of_run_w8_then_completes_with_limitatio
     assert!(
         assistant_messages[0].content.contains("未核实线索"),
         "invalid web sources remain unverified leads: {}",
+        assistant_messages[0].content
+    );
+    assert!(
+        assistant_messages[0].content.contains("不能作为处分"),
+        "strict degradation must forbid applicability conclusions: {}",
         assistant_messages[0].content
     );
     assert!(assistant_messages[0]

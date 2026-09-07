@@ -13,6 +13,7 @@ use crate::ai_runtime::run_contract::{CapabilityId, Effort};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WebToolInstruction {
     None,
+    PreferSearchForCurrentFacts,
     MustSearchIfNeeded,
     NoWebDoNotFabricate,
 }
@@ -24,6 +25,8 @@ pub(crate) struct ToolSurfaceInput {
     /// Whether the frozen Run contract requires current-Run Web evidence.
     /// This is intentionally a contract fact, not a domain classifier result.
     pub(crate) requires_current_web_evidence: bool,
+    /// Encourage search for changing public facts without gating completion.
+    pub(crate) prefer_search_for_current_facts: bool,
     pub(crate) effort: Effort,
     pub(crate) authorized_capabilities: Vec<CapabilityId>,
 }
@@ -78,6 +81,8 @@ impl ToolSurfacePlanner {
         let expose_web_search = true;
         let web_instruction = if requires_current_web_evidence {
             WebToolInstruction::MustSearchIfNeeded
+        } else if input.prefer_search_for_current_facts {
+            WebToolInstruction::PreferSearchForCurrentFacts
         } else {
             WebToolInstruction::None
         };
@@ -112,6 +117,7 @@ mod tests {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: true,
             requires_current_web_evidence: true,
+            prefer_search_for_current_facts: false,
             effort: Effort::Direct,
             authorized_capabilities: web_capabilities(),
         });
@@ -126,6 +132,7 @@ mod tests {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: false,
             requires_current_web_evidence: true,
+            prefer_search_for_current_facts: false,
             effort: Effort::Direct,
             authorized_capabilities: no_web_capabilities(),
         });
@@ -143,6 +150,7 @@ mod tests {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: true,
             requires_current_web_evidence: false,
+            prefer_search_for_current_facts: false,
             effort: Effort::Direct,
             authorized_capabilities: web_capabilities(),
         });
@@ -157,10 +165,29 @@ mod tests {
         let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
             web_enabled: true,
             requires_current_web_evidence: true,
+            prefer_search_for_current_facts: false,
             effort: Effort::ToolLoop,
             authorized_capabilities: web_capabilities(),
         });
 
         assert_eq!(plan.web_instruction, WebToolInstruction::MustSearchIfNeeded);
+    }
+
+    #[test]
+    fn preferred_volatile_facts_expose_search_and_prefer_search_without_a_gate() {
+        let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
+            web_enabled: true,
+            requires_current_web_evidence: false,
+            prefer_search_for_current_facts: true,
+            effort: Effort::Direct,
+            authorized_capabilities: web_capabilities(),
+        });
+
+        assert_eq!(plan.effort, Effort::ToolLoop);
+        assert!(plan.expose_web_search);
+        assert_eq!(
+            plan.web_instruction,
+            WebToolInstruction::PreferSearchForCurrentFacts
+        );
     }
 }

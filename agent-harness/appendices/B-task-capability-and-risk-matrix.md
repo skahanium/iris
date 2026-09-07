@@ -25,9 +25,9 @@
 | 条件                                                       | Freshness       | VerificationRequirement       |
 | ---------------------------------------------------------- | --------------- | ----------------------------- |
 | 问候、创作、转换、本地材料、runtime、classified/local-only | Offline         | None                          |
-| 普通知识、推荐、比较、一般研究，且用户允许联网             | WebPreferred    | None                          |
-| 用户明确要求搜索/核实、提供 URL、依赖最新状态              | WebRequired     | CurrentRunWeb                 |
-| 当前医疗、法律、金融或合规结论                             | WebRequired     | CurrentRunWeb 或明确 external |
+| 普通知识、推荐、比较、一般研究、日常时效，且用户允许联网   | WebPreferred    | None                          |
+| 用户明确要求搜索/核实、提供 URL                            | WebRequired     | CurrentRunWeb                 |
+| 当前医疗、法律、党纪、签证、金融或合规结论                 | WebRequired     | CurrentRunWeb 或明确 external |
 | 用户明确选择外部只读 binding 且问题依赖它                  | 按 Web 授权保持 | CurrentRunExternal            |
 
 Web 开关关闭时不能外发；对于 WebPreferred 可直接诚实降级，对于 WebRequired 必须说明当前能力不足。
@@ -68,7 +68,7 @@ Web 开关关闭时不能外发；对于 WebPreferred 可直接诚实降级，�
 
 普通回答不得因为模型没有调用保留的结构化终局工具而失败。
 
-普通 `VolatileExternalFact` 取得一份相关正文并精确引用即可满足最低证据要求；`HighStakesCurrentFact`、CitationCheck 或用户明确要求交叉核实才要求官方来源或两个独立域名。现代消息的显式空 evidence 选择不得在历史重载时恢复为整 Run 来源。
+日常 `VolatileExternalFact` 走 `WebPreferred`，完成不依赖摘录；`HighStakesCurrentFact`、CitationCheck 或用户明确要求交叉核实才要求官方来源或两个独立域名，无摘录时 Host 降级且不得下适用结论。现代消息的显式空 evidence 选择不得在历史重载时恢复为整 Run 来源。
 
 ## 6. 澄清与确认
 

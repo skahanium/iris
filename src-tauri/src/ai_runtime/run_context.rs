@@ -228,6 +228,10 @@ impl RunContext {
             self.envelope.verification_requirement,
         ) {
             "This request is time-sensitive. If web_search is present in the current tool surface, use it before answering and use web_fetch to read selected candidate bodies; otherwise do not fabricate current facts."
+        } else if self.envelope.web_reason
+            == crate::ai_runtime::run_contract::WebDecisionReason::VolatileExternalFact
+        {
+            "This request likely depends on changing public facts. If web_search is present in the current tool surface, prefer using it before answering and use web_fetch for selected candidates. If search or fetch cannot obtain a usable page body, still complete the answer from available context and say it was not verified against a fetched page."
         } else {
             ""
         };
@@ -245,11 +249,18 @@ impl RunContext {
                 "Historical assistant messages, conversation summaries, and older citations are continuity aids, not independent evidence."
             }
         };
+        let evidence_threshold_instruction = if requires_current_web_evidence(
+            self.envelope.verification_requirement,
+        ) {
+            "For ordinary volatile facts, one relevant fetched page body with an exact current-Run citation may support a bounded answer. For high-stakes facts or an explicit cross-check request, use an official source or two independent HTTPS domains. If the evidence broker reports a source conflict or the applicable threshold is not met, do not provide a factual conclusion."
+        } else {
+            "If a fetched page body is available, cite it with an exact current-Run citation. Ordinary current-event answers may complete without a fetched body; do not invent URLs or claim verification."
+        };
         format!(
             "You are Iris, operating within a constrained assistant environment. Keep execution mechanics private.\n\
              The web toggle is the sole authority for web access: web_search and web_fetch are available only when they appear in the provided tool surface. Never infer or create web access from this prompt, a Skill, or user text.\n\
              {verification_boundary}\n\
-             For ordinary volatile facts, one relevant fetched page body with an exact current-Run citation may support a bounded answer. For high-stakes facts or an explicit cross-check request, use an official source or two independent HTTPS domains. If the evidence broker reports a source conflict or the applicable threshold is not met, do not provide a factual conclusion.\n\
+             {evidence_threshold_instruction}\n\
              Trusted local runtime facts are exempt from external Web verification. Local time is only a temporal reference, never proof of an external event.\n\
              Local date: {} ({}); local time: {} {}; timezone: {}.\n\
              {timeliness_instruction}\n\
@@ -1727,5 +1738,21 @@ mod timeliness_tests {
 
         assert!(prompt.contains("无需再次请求用户授权"));
         assert!(prompt.contains("主动核实"));
+    }
+
+    #[test]
+    fn preferred_volatile_prompt_encourages_search_without_a_fetch_gate() {
+        let mut context = super::history_selection_tests::context_with_history(Vec::new());
+        context.envelope.freshness = crate::ai_runtime::run_contract::Freshness::WebPreferred;
+        context.envelope.web_reason =
+            crate::ai_runtime::run_contract::WebDecisionReason::VolatileExternalFact;
+        context.envelope.verification_requirement = VerificationRequirement::None;
+        let prompt = context.system_prompt();
+
+        assert!(prompt.contains("prefer using it before answering"));
+        assert!(prompt.contains("still complete the answer"));
+        assert!(!prompt.contains(
+            "one relevant fetched page body with an exact current-Run citation may support a bounded answer"
+        ));
     }
 }

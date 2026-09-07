@@ -1763,7 +1763,8 @@ impl AgentRunRepository {
                    ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1
                )
                AND e.event_type IN (
-                   'stage_changed', 'reasoning_summary', 'tool_started', 'tool_completed'
+                   'stage_changed', 'reasoning_summary', 'tool_started', 'tool_completed',
+                   'provider_switched', 'capability_degraded'
                )
              ORDER BY r.turn_id ASC, e.event_seq ASC"
         );

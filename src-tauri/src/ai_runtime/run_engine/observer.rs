@@ -159,6 +159,15 @@ impl<R: Runtime> RunEventSink for TauriRunEventSink<'_, R> {
     }
 }
 
+/// User-visible process copy for a Provider switch. Never include provider or tool ids.
+fn provider_switch_process_label(capability: &str) -> &'static str {
+    match capability {
+        "model.respond" => "已切换到备用模型",
+        "web.search" | "web.fetch" => "已改用备用检索服务",
+        _ => "服务不可用，已切换到备用服务",
+    }
+}
+
 /// Map one durable Run event into an optional live presentation payload.
 fn presentation_payload_for_durable_event(
     event: &crate::ai_runtime::run_contract::AssistantRunEvent,
@@ -200,13 +209,7 @@ fn presentation_payload_for_durable_event(
             Some(RunPresentationPayload::ProcessStarted {
                 item_id: format!("provider-switch:{}", event.seq()),
                 item_kind: PresentationProcessKind::Stage,
-                label: match capability.as_str() {
-                    "model.respond" => "已切换到备用模型".to_string(),
-                    "web.search" | "web.fetch" => {
-                        "联网检索服务暂不可用，正在尝试另一服务".to_string()
-                    }
-                    _ => "服务不可用，已切换到备用服务".to_string(),
-                },
+                label: provider_switch_process_label(capability).to_string(),
             })
         }
         RunEventPayload::Completed { .. } => Some(RunPresentationPayload::AnswerComplete),
@@ -867,8 +870,8 @@ mod presentation_clock_tests {
     fn provider_switch_copy_distinguishes_model_and_web_tools() {
         for (capability, expected) in [
             ("model.respond", "已切换到备用模型"),
-            ("web.search", "联网检索服务暂不可用，正在尝试另一服务"),
-            ("web.fetch", "联网检索服务暂不可用，正在尝试另一服务"),
+            ("web.search", "已改用备用检索服务"),
+            ("web.fetch", "已改用备用检索服务"),
         ] {
             let event = crate::ai_runtime::run_contract::AssistantRunEvent::new(
                 "provider-switch-copy",

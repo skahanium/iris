@@ -1,4 +1,5 @@
 import type {
+  AssistantRunErrorCode,
   AssistantRunEvent,
   AssistantRunEventPayload,
   Freshness,
@@ -456,4 +457,27 @@ function isTerminal(state: RunState | null): boolean {
 
 function sortBySeq(events: readonly AssistantRunEvent[]): AssistantRunEvent[] {
   return [...events].sort((left, right) => left.seq - right.seq);
+}
+
+/** User-facing Run failure copy. Web error codes stay Chinese and never leak ops paths. */
+export function userVisibleRunFailureMessage(
+  code: AssistantRunErrorCode | undefined,
+  message: string,
+  webSearched: boolean,
+): string {
+  if (code === "agent_run_provider_unavailable" && webSearched) {
+    return "联网检索已完成，但模型服务暂时不可用。请稍后重试或在设置中更换模型。";
+  }
+  switch (code) {
+    case "agent_run_web_provider_timeout":
+      return "联网检索超时，请稍后重试。";
+    case "agent_run_web_provider_auth_failed":
+      return "联网凭据无效，请在管理中心重新配置后重试。";
+    case "agent_run_web_provider_failed":
+      return "联网检索暂时失败，请稍后重试。";
+    case "agent_run_web_evidence_required":
+      return "本轮需要可核验网页正文才能给出适用结论。";
+    default:
+      return message.trim() ? message : "本次运行未能完成。";
+  }
 }

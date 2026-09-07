@@ -109,9 +109,8 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 ## 9. 回答与来源
 
 - 普通回答：自然正文，可附受控来源区；不要求 `submit_final_answer`。
-- WebPreferred：有证据时展示当前 Run 来源；无证据时可以基于模型知识回答并说明时效限制。
-- 普通 `VolatileExternalFact`：至少一份与核心结论相关、已抓取正文且被精确引用的当前 Run Web evidence 即可完成；不再无差别要求官方来源或两个域名。
-- `HighStakesCurrentFact`、`CitationCheck` 或用户明确要求交叉核实：必须取得官方来源，或至少两个相互独立域名的合格正文。只有搜索片段、来源冲突或跨 Run evidence 均不得通过。
+- WebPreferred：有证据时展示当前 Run 来源；无证据时可以基于模型知识回答并说明时效限制。日常 `VolatileExternalFact` 同此完成合同，鼓励搜索但不因无摘录整轮失败。
+- `HighStakesCurrentFact`、用户明示核实、显式 URL、`CitationCheck` 或交叉核实：必须取得合格正文。只有搜索片段、来源冲突或跨 Run evidence 均不得通过；无摘录时 Host 有内容降级，不得下适用结论。
 - 严格路径仍在验证后一次发布；证据不足时限制说明不得携带 citation map、source summary 或来源卡片。
 - `ProvenancePolicy` 统一解析 `Wn`、`E{id}`、`L{id}`、`Mn`；`[Cn]` 和数据库裸 ID 只用于内部或展示。
 - Harness 校验来源存在、归属、时效和声明的覆盖关系，不宣称完成自由文本 NLI。

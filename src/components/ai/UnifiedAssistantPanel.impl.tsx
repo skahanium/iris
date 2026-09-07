@@ -553,17 +553,6 @@ export function UnifiedAssistantPanel({
           ) : null}
         </section>
       ) : null}
-      {import.meta.env.DEV && assistantRun.eventState?.provider ? (
-        <p
-          className="border-b border-border-subtle px-3 py-1 text-caption text-muted-foreground"
-          data-testid="assistant-run-provider-diagnostic"
-        >
-          当前模型：{assistantRun.eventState.provider.providerId}
-          {assistantRun.eventState.provider.modelId
-            ? ` / ${assistantRun.eventState.provider.modelId}`
-            : ""}
-        </p>
-      ) : null}
       <ErrorBoundary scope="AI 对话区">
         <ConversationSurface
           key={assistantSessionIdentity(runSession)}

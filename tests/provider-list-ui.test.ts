@@ -4,6 +4,7 @@ import {
   mcpListDotAriaLabel,
   mcpListDotTone,
   mcpListMappingShortLabel,
+  mcpListTransportShortLabel,
 } from "@/components/ai/skills/mcpProviderListUi";
 import {
   providerIcon,
@@ -34,6 +35,8 @@ describe("provider list UI helpers", () => {
       mcpListDotAriaLabel({ enabled: false, mappingStatus: "missing" }),
     ).toBe("未启用");
     expect(mcpListMappingShortLabel("complete")).toBe("映射完整");
+    expect(mcpListTransportShortLabel("stdio")).toBe("本地命令");
+    expect(mcpListTransportShortLabel("https")).toBe("HTTPS");
   });
 
   it("shows vision badge only after Iris vision probe, not catalog", () => {

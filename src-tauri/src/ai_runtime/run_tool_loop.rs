@@ -107,7 +107,7 @@ fn mcp_failover_events(
                 "web.fetch" => pair[1].web_fetch_mapping_json.as_deref(),
                 _ => pair[1].web_search_mapping_json.as_deref(),
             }),
-            reason_code: "mcp_provider_failed".into(),
+            reason_code: "provider_failure".into(),
             attempt: (index + 2) as u32,
         })
         .collect()
@@ -2227,7 +2227,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .map(|state| state.unverified_leads.clone())
             .unwrap_or_default();
         if leads.is_empty() {
-            return "本轮未取得足够的可核验来源正文来可靠支持具体结论；联网检索也没有取得可用候选。你可以稍后通过“重试”再次执行本轮。".into();
+            return crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE.to_string();
         }
         let items = leads
             .into_iter()
@@ -2236,7 +2236,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "本轮未取得足够的可核验来源正文来可靠支持具体结论。以下是未核实线索；它们不能作为具体结论的依据。你可以通过“重试”再次抓取，或选择其中一个链接继续核验。\n\n{items}"
+            "本轮未取得足够的可核验来源正文。以下是未核实线索；它们不能作为处分、生效、用药或签证结论的依据。你可以稍后重试、粘贴官方原文，或用 @ 附上相关笔记。\n\n{items}"
         )
     }
 
@@ -5381,15 +5381,20 @@ mod tests {
                 if from_provider_id == "primary"
                     && provider_id == "backup"
                     && model_id == "backup_search"
-                    && reason_code == "mcp_provider_failed"
+                    && reason_code == "provider_failure"
                     && *attempt == 2
         ));
         assert!(mcp_failover_events(&snapshots, "primary", "web.search").is_empty());
         let fetch_events = mcp_failover_events(&snapshots, "backup", "web.fetch");
         assert!(matches!(
             fetch_events.as_slice(),
-            [McpFailoverEvent { model_id, .. }] if model_id == "backup_fetch"
+            [McpFailoverEvent { model_id, reason_code, .. }]
+                if model_id == "backup_fetch" && reason_code == "provider_failure"
         ));
+        assert!(
+            mcp_failover_events(&snapshots, "native.fetch", "web.fetch").is_empty(),
+            "native.fetch is not an MCP route winner and must not emit ProviderSwitched"
+        );
     }
 
     #[test]

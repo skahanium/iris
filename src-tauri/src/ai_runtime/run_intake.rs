@@ -955,12 +955,10 @@ impl ExclusionClassifier {
         }
         let strict_reason = if contains_any(directive_text, &["http://", "https://"]) {
             Some(WebDecisionReason::ExplicitUrl)
-        } else if explicit_web {
-            Some(WebDecisionReason::ExplicitWebRequest)
         } else if is_high_stakes_current_request(directive_text) {
             Some(WebDecisionReason::HighStakesCurrentFact)
-        } else if is_volatile_external_request(directive_text) {
-            Some(WebDecisionReason::VolatileExternalFact)
+        } else if explicit_web {
+            Some(WebDecisionReason::ExplicitWebRequest)
         } else {
             None
         };
@@ -969,6 +967,13 @@ impl ExclusionClassifier {
                 required(reason)
             } else {
                 offline_requires_web(WebDecisionReason::UserDisabled)
+            };
+        }
+        if is_volatile_external_request(directive_text) {
+            return if request.web_enabled {
+                preferred(WebDecisionReason::VolatileExternalFact)
+            } else {
+                offline(WebDecisionReason::UserDisabled)
             };
         }
         if request.web_enabled {
@@ -1123,6 +1128,7 @@ fn has_explicit_web_instruction(message: &str) -> bool {
             "browse for",
             "look up",
             "verify online",
+            "please verify",
             "browse the web",
             "search online",
             "find this online",
@@ -1134,6 +1140,7 @@ fn has_explicit_web_instruction(message: &str) -> bool {
             "帮我联网",
             "请搜索",
             "帮我搜索",
+            "请核实",
             "联网查",
             "联网核实",
             "上网查证",
@@ -1266,6 +1273,11 @@ fn is_high_stakes_current_request(message: &str) -> bool {
             "税",
             "签证",
             "监管",
+            "党纪",
+            "党章",
+            "政务处分",
+            "监察",
+            "纪检",
             "medical",
             "dosage",
             "dose",
@@ -1289,10 +1301,13 @@ fn is_high_stakes_current_request(message: &str) -> bool {
                 "今天",
                 "怎么做",
                 "建议",
+                "核实",
+                "生效",
                 "latest",
                 "current",
                 "today",
                 "advice",
+                "verify",
             ],
         )
 }

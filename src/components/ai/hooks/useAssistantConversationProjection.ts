@@ -8,7 +8,10 @@ import {
   type AssistantProcessItem,
 } from "@/lib/assistant-process";
 import { deriveRunOutputting } from "@/lib/assistant-run-activity";
-import type { AssistantRunEventState } from "@/lib/assistant-run-events";
+import {
+  type AssistantRunEventState,
+  userVisibleRunFailureMessage,
+} from "@/lib/assistant-run-events";
 import { ensureTerminalAnswerComplete } from "@/lib/ensure-answer-complete-process";
 import type {
   AssistantPresentationItem,
@@ -365,16 +368,14 @@ function userVisibleRunFailure(
   run: AssistantRunEventState,
   event: NonNullable<AssistantRunEventState["events"]>[number],
 ): string {
-  if (
-    event.payload.kind === "failed" &&
-    event.payload.code === "agent_run_provider_unavailable" &&
-    run.webSearched
-  ) {
-    return "联网检索已完成，但模型服务暂时不可用。请稍后重试或在设置中更换模型。";
+  if (event.payload.kind !== "failed") {
+    return "本次运行未能完成。";
   }
-  return event.payload.kind === "failed"
-    ? event.payload.message
-    : "本次运行未能完成。";
+  return userVisibleRunFailureMessage(
+    event.payload.code,
+    event.payload.message,
+    Boolean(run.webSearched),
+  );
 }
 
 function toProcessItem(item: AssistantPresentationItem): AssistantProcessItem {

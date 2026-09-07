@@ -31,11 +31,11 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 ## 联网证据
 
-联网开关只授予 `web.search` 能力。当前 Run Intake 以排除优先的确定性规则解析 `offline`、`web_preferred`、`web_required`：本机运行时事实、对话元问题、用户已提供材料的转换与创作任务可以离线；一般外部事实可进入 `web_preferred`；明确联网、强时效或高风险当前事实进入 `web_required`。有 Web 工具面时使用同一个 `AgentToolLoop`，Host 不在模型前另做预取或领域规划。
+联网开关只授予 `web.search` 能力。当前 Run Intake 以排除优先的确定性规则解析 `offline`、`web_preferred`、`web_required`：本机运行时事实、对话元问题、用户已提供材料的转换与创作任务可以离线；日常时效、开放分析与一般外部事实进入 `web_preferred`；用户明示核实/联网、显式 URL 或高利害当前事实进入 `web_required`。有 Web 工具面时使用同一个 `AgentToolLoop`，Host 不在模型前另做预取或领域规划。
 
 模型工具面拆为两个单一职责动作：`web_search { query }` 只返回当前 Run 候选，`web_fetch { urls }` 只读取当前 Run 候选或用户明确提供的 HTTPS URL。两者共用联网授权、network 分类预算、`WebEvidenceBroker`、冻结 Provider 顺序和 evidence ledger；搜索片段不是证据，只有抓取到 URL 匹配的实质正文才登记为 `Wn`。一批 URL 部分失败时，工具观察保留成功正文、失败 URL、剩余证据要求和预算，模型可以换源继续。
 
-Web 工具失败会返回可行动的结构化观察并可产生非终态 `capability_degraded` 事件。普通时效事实取得一份与核心结论相关的当前 Run 正文并精确引用即可回答；高风险当前事实、CitationCheck 或用户明确要求交叉核实才要求官方来源或两个独立域名。来源不足时丢弃未验证草稿，以无 citation map 和 source summary 的自然限制说明完成；Provider、持久化、权限或内部状态损坏才使用红色失败。诊断只记录联网模式、能力、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。
+Web 工具失败会返回可行动的结构化观察并可产生非终态 `capability_degraded` 事件。日常时效与开放题完成不依赖本轮摘录，工具失败时保留模型正文。高利害当前事实、CitationCheck 或用户明确要求交叉核实才要求官方来源或两个独立域名；守线无摘录时丢弃未验证草稿，以无 citation map 和 source summary 的有内容限制说明完成。Provider、持久化、权限或内部状态损坏才使用红色失败。诊断只记录联网模式、能力、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。
 
 严格来源路径在 `bind_validated_content` 前密封正文，来源 repair 使用同一 ToolLoop 的一次修复槽；通过后只发布一次，失败不发送 `AnswerReset`。普通非严格回答继续实时流式。现代消息只按最终 `evidence_refs_json` 投影来源；显式空数组保持无来源，只有字段缺失的旧消息可以显示历史来源组。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider。普通来源区只显示最终实际引用的可点击 HTTPS 标题，不显示摘录、搜索词、工具参数、原始输出或内部推理。
 
@@ -45,9 +45,9 @@ MCP 的 Web 路径仍只承载显式 `web.search` / `web.fetch` mapping，并只
 
 ## 当前事实证据分级（v1.3.0）
 
-联网开关只授予 `web_search` 与 `web_fetch` 的共同能力边界；每次完成都必须绑定本 Run 的 HTTPS Web evidence，会话历史、摘要和旧引用不能充当新一轮核验结果。搜索候选每次最多 4 条、每 Run 最多 8 条且不占 evidence；整个 Run 最多注册 12 条正文 evidence，单条摘录最多 2,000 字符，Web 工具结果专用上限为 32,000 字符。Run-local `W1…Wn` 每轮重新编号，不复用会话级编号或数据库裸 ID。
+联网开关只授予 `web_search` 与 `web_fetch` 的共同能力边界。守线完成必须绑定本 Run 的 HTTPS Web evidence；发挥轨有摘录则可引用，无摘录仍可完成。会话历史、摘要和旧引用不能充当新一轮核验结果。搜索候选每次最多 4 条、每 Run 最多 8 条且不占 evidence；整个 Run 最多注册 12 条正文 evidence，单条摘录最多 2,000 字符，Web 工具结果专用上限为 32,000 字符。Run-local `W1…Wn` 每轮重新编号，不复用会话级编号或数据库裸 ID。
 
-普通近期电影、体育和新闻等 `VolatileExternalFact` 不因领域名称进入特殊路由，一份相关正文和精确引用即可完成。高风险事实、CitationCheck、显式要求官方来源或交叉核实的请求才提高到官方/双域名门槛。联网未开启、只有片段、来源冲突或严格门槛不足时不得伪造事实结论。
+日常时效与开放题（`VolatileExternalFact`、`DefaultOnline`）走 `WebPreferred`：暴露搜索/抓取并鼓励核实，完成不依赖本轮摘录。高利害当前事实、用户明示「请核实/请联网」或显式 URL 仍走 `WebRequired`，无摘录时 Host 给出有内容的证据降级，不得下适用结论。高风险、CitationCheck 或显式交叉核实才提高到官方/双域名门槛。联网未开启时不得伪造严肃当前事实结论。
 
 ## 相关 IPC
 

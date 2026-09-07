@@ -413,4 +413,55 @@ describe("Assistant Run 处理过程投影", () => {
       },
     ]);
   });
+
+  it("将检索服务切换投影为完成态中文过程项，且不泄漏内部 id", () => {
+    const items = projectAssistantProcessEvents([
+      event(1, "tool_started", {
+        kind: "tool_started",
+        capability: "web.fetch",
+        toolCallId: "fetch-001",
+      }),
+      event(2, "tool_completed", {
+        kind: "tool_completed",
+        capability: "web.fetch",
+        toolCallId: "fetch-001",
+        summary: "工具调用完成",
+        durationMs: 16000,
+      }),
+      event(3, "provider_switched", {
+        kind: "provider_switched",
+        capability: "web.fetch",
+        fromProviderId: "mcp-custom-primary",
+        providerId: "mcp-custom-backup",
+        modelId: "tavily_extract",
+        reasonCode: "provider_failure",
+        attempt: 2,
+      }),
+    ]);
+
+    expect(items.map((item) => item.label)).toEqual([
+      "读取网页",
+      "已改用备用检索服务",
+    ]);
+    expect(
+      items.some((item) =>
+        /mcp-custom|tavily_extract|provider_failure/.test(item.label),
+      ),
+    ).toBe(false);
+  });
+
+  it("将守线降级投影为未取得正文，且不与备用检索文案混用内部 id", () => {
+    const items = projectAssistantProcessEvents([
+      event(1, "capability_degraded", {
+        kind: "capability_degraded",
+        capability: "web.fetch",
+        code: "agent_run_web_provider_timeout",
+        retryable: true,
+        attemptCount: 2,
+        message: "联网核实暂不可用，已继续生成受约束答复。",
+      }),
+    ]);
+
+    expect(items.map((item) => item.label)).toEqual(["未取得可核验网页正文"]);
+  });
 });

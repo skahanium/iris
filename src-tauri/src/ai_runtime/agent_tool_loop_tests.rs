@@ -6,8 +6,8 @@ use std::sync::Mutex;
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
-    is_natural_clarification, AgentModelTurnBudget, AgentToolLoop, RequiredWebBootstrapObservation,
-    ToolLoopExecutor, ToolLoopProvider, EVIDENCE_LIMITED_RESPONSE,
+    is_evidence_limited_response, is_natural_clarification, AgentModelTurnBudget, AgentToolLoop,
+    RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
 };
 use super::model_gateway::{StreamEventObserver, StreamSurface};
 use super::run_context::CONVERSATION_HISTORY_COVERAGE_WARNING;
@@ -20,6 +20,21 @@ use crate::storage::db::Database;
 
 fn standard_tool_loop() -> AgentToolLoop {
     AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
+}
+
+fn assert_host_evidence_limited(content: &str) {
+    assert!(
+        is_evidence_limited_response(content),
+        "host limitation must keep the evidence-limited prefix: {content}"
+    );
+    assert!(
+        content.contains("不能作为处分") && content.contains("用药"),
+        "strict degradation must forbid applicability conclusions: {content}"
+    );
+    assert!(
+        content.contains("重试") && (content.contains("官方") || content.contains("@")),
+        "strict degradation must include a next step: {content}"
+    );
 }
 
 #[test]
@@ -1173,6 +1188,7 @@ struct RequiredExternalExecutor;
 struct SourceBindingExecutor;
 struct FinalSubmissionValidationExecutor;
 struct EmptyWebEvidenceExecutor;
+struct PreferredWebExecutor;
 struct RecoverableWebExecutor {
     registered: AtomicBool,
 }
@@ -1349,6 +1365,27 @@ impl ToolLoopExecutor for EmptyWebEvidenceExecutor {
 
     fn requires_web_evidence(&self) -> bool {
         true
+    }
+}
+
+impl ToolLoopExecutor for PreferredWebExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "items": [] }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
     }
 }
 
@@ -2207,7 +2244,7 @@ async fn repeated_invalid_structured_source_binding_finishes_with_limitation() {
         .await
         .expect("invalid structured submission degrades safely");
 
-    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert_host_evidence_limited(&outcome.content);
     assert!(outcome.final_submission.is_none());
     assert_eq!(outcome.tool_calls, 0);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
@@ -2880,7 +2917,7 @@ async fn web_required_without_a_tool_surface_finishes_with_a_bounded_limitation(
         )
         .await
         .expect("a mismatched required-Web surface should degrade without showing a draft");
-    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert_host_evidence_limited(&outcome.content);
 }
 
 #[tokio::test]
@@ -2926,9 +2963,59 @@ async fn empty_web_search_finishes_with_a_bounded_limitation_without_spending_a_
         .await
         .expect("an empty current Web result should complete safely");
 
-    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert_host_evidence_limited(&outcome.content);
     assert_eq!(outcome.model_turns, 2);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn web_preferred_keeps_the_model_draft_when_search_or_fetch_fails() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call_with_arguments(
+                    "empty-search",
+                    "web_search",
+                    serde_json::json!({"query":"lebron retirement"}),
+                )],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("勒布朗仍在打球，以下分析不依赖本轮网页正文。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &PreferredWebExecutor,
+            "run-preferred-web-draft",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("preferred Web may complete without excerpts");
+
+    assert_eq!(
+        outcome.content,
+        "勒布朗仍在打球，以下分析不依赖本轮网页正文。"
+    );
+    assert!(!is_evidence_limited_response(&outcome.content));
+    assert_ne!(outcome.finish_reason, "evidence_limited");
 }
 
 #[test]
@@ -3038,7 +3125,7 @@ async fn external_required_repairs_then_limits_an_answer_without_registered_evid
         )
         .await
         .expect("external-required degrades to a safe limitation");
-    assert_eq!(outcome.content, EVIDENCE_LIMITED_RESPONSE);
+    assert_host_evidence_limited(&outcome.content);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 

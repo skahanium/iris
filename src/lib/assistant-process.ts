@@ -125,6 +125,26 @@ export function projectAssistantProcessEvents(
         answerTerminalAt = createdAt;
         answerTerminalLabel = "已取消";
         break;
+      case "provider_switched":
+        items.push({
+          id: `provider-switch:${event.seq}`,
+          kind: "stage",
+          label: providerSwitchProcessLabel(event.payload.capability),
+          status: "completed",
+          createdAt,
+        });
+        break;
+      case "capability_degraded":
+        if (isWebCapability(event.payload.capability)) {
+          items.push({
+            id: `capability-degraded:${event.seq}`,
+            kind: "stage",
+            label: "未取得可核验网页正文",
+            status: "completed",
+            createdAt,
+          });
+        }
+        break;
       default:
         break;
     }
@@ -198,6 +218,22 @@ export function collapseRepeatedWebSearchProcessItems(
 
 function isWebSearchProcessItem(item: AssistantProcessItem): boolean {
   return item.kind === "tool" && item.label === displayCapability("web_search");
+}
+
+function providerSwitchProcessLabel(capability: string | undefined): string {
+  switch (capability) {
+    case "model.respond":
+      return "已切换到备用模型";
+    case "web.search":
+    case "web.fetch":
+      return "已改用备用检索服务";
+    default:
+      return "服务不可用，已切换到备用服务";
+  }
+}
+
+function isWebCapability(capability: string): boolean {
+  return capability === "web.search" || capability === "web.fetch";
 }
 
 function mergeProcessStatus(

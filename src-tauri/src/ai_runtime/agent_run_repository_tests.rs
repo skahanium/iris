@@ -1192,6 +1192,62 @@ fn session_history_process_lookup_batches_safe_events_by_latest_turn_run() {
 }
 
 #[test]
+fn session_history_process_lookup_includes_provider_switch_events() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted run");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".into(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("preparing");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".into(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::ProviderSwitched,
+            payload: RunEventPayload::ProviderSwitched {
+                capability: "web.fetch".into(),
+                from_provider_id: "primary".into(),
+                provider_id: "backup".into(),
+                model_id: "backup_fetch".into(),
+                reason_code: "provider_failure".into(),
+                attempt: 2,
+            },
+        },
+    )
+    .expect("provider switch");
+
+    let by_turn = AgentRunRepository::process_events_for_session_turns(
+        &db,
+        &session_key,
+        &["turn-1".to_string()],
+    )
+    .expect("batched process lookup");
+    let process = by_turn.get("turn-1").expect("turn process");
+    assert!(
+        process.events.iter().any(|event| {
+            serde_json::to_value(event).expect("event")["type"] == "provider_switched"
+        }),
+        "historical process lookup must include provider_switched"
+    );
+    assert!(process.events.iter().all(|event| {
+        let value = serde_json::to_value(event).expect("event");
+        value["type"] != "content_delta"
+    }));
+}
+
+#[test]
 fn repository_refuses_second_completed_event_for_terminal_run() {
     let (db, session_id, session_key) = setup();
     AgentRunRepository::accept(&db, accept_input(session_id, session_key)).expect("accepted run");

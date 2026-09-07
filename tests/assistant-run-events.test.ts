@@ -6,6 +6,7 @@ import {
   createAssistantRunEventState,
   reduceAssistantRunEvent,
   replayAssistantRunEvents,
+  userVisibleRunFailureMessage,
 } from "@/lib/assistant-run-events";
 import type {
   AssistantRunAccepted,
@@ -948,5 +949,31 @@ describe("Assistant Run 事件归约", () => {
     }
     expect(completed.payload.success).toBe(false);
     expect(completed.payload.subagentBatchReport).toEqual(report);
+  });
+});
+
+describe("userVisibleRunFailureMessage", () => {
+  it("将联网失败码译为中文，且不回传内部脚本路径", () => {
+    expect(
+      userVisibleRunFailureMessage(
+        "agent_run_web_provider_timeout",
+        "agent_run_web_provider_timeout",
+        true,
+      ),
+    ).toBe("联网检索超时，请稍后重试。");
+    expect(
+      userVisibleRunFailureMessage(
+        "agent_run_web_provider_auth_failed",
+        "agent_run_web_provider_auth_failed",
+        false,
+      ),
+    ).toContain("管理中心");
+    expect(
+      userVisibleRunFailureMessage(
+        "agent_run_cancelled",
+        "本次回答已取消。",
+        false,
+      ),
+    ).toBe("本次回答已取消。");
   });
 });

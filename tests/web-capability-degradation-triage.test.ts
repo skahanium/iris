@@ -19,11 +19,12 @@ describe("triageWebCapabilityDegradation", () => {
       "agent_run_web_evidence_required",
     );
     expect(triage.domain).toBe("harness");
+    expect(WEB_CAPABILITY_DEGRADATION_DOMAIN_LABEL.harness).toBe("运行环境");
   });
 
   it("returns unknown triage for unmapped codes", () => {
     const triage = triageWebCapabilityDegradation("agent_run_cancelled");
     expect(triage.domain).toBe("unknown");
-    expect(triage.nextStep).toContain("diagnose-web-capability-degradation");
+    expect(triage.nextStep).toContain("实时诊断");
   });
 });

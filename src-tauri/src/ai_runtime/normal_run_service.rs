@@ -38,6 +38,8 @@ fn plan_tool_surface(
             context.envelope.verification_requirement,
             VerificationRequirement::CurrentRunWeb
         ),
+        prefer_search_for_current_facts: context.envelope.web_reason
+            == WebDecisionReason::VolatileExternalFact,
         effort: context.envelope.effort,
         authorized_capabilities: authorized_capabilities.to_vec(),
     });
