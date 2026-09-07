@@ -2,39 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AssistantPresentationState } from "@/lib/assistant-presentation";
 import { sanitizeAssistantVisibleText } from "@/lib/assistant-visible-text";
+import {
+  fallbackLineBudget,
+  measureTextForBudget,
+  nextRevealLength,
+  type StreamingLineBudget,
+} from "@/lib/streaming-line-fit";
 
-/**
- * Streaming answer reveal budget.
- *
- * The backend may deliver an `answer_delta` containing a whole paragraph at
- * once, especially through proxies or non-token-aligned providers. Applying
- * such a delta to the conversation in one React commit makes the viewport jump
- * and flicker. This hook releases the authoritative presentation answer in
- * small per-frame increments so the UI stays smooth even when the source chunk
- * is large.
- */
-export const ASSISTANT_ANSWER_REVEAL_MIN_STEP = 2;
-export const ASSISTANT_ANSWER_REVEAL_MAX_STEP = 48;
-export const ASSISTANT_ANSWER_REVEAL_DRAIN_FRAMES = 24;
-
-export function assistantAnswerRevealStep(pending: number): number {
-  if (pending <= 0) return 0;
-  return Math.min(
-    ASSISTANT_ANSWER_REVEAL_MAX_STEP,
-    Math.max(
-      ASSISTANT_ANSWER_REVEAL_MIN_STEP,
-      Math.ceil(pending / ASSISTANT_ANSWER_REVEAL_DRAIN_FRAMES),
-    ),
-  );
-}
-
-/** Avoid splitting a UTF-16 surrogate pair when slicing the reveal window. */
-function alignEndToCodePoint(value: string, end: number): number {
-  if (end <= 0 || end >= value.length) return end;
-  const code = value.charCodeAt(end - 1);
-  if (code >= 0xd800 && code <= 0xdbff) return end + 1;
-  return end;
-}
+export type { StreamingLineBudget };
 
 function prefersReducedMotion(): boolean {
   return (
@@ -42,6 +17,21 @@ function prefersReducedMotion(): boolean {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
+}
+
+function revealNext(
+  current: string,
+  target: string,
+  budget: StreamingLineBudget,
+): string {
+  const end = nextRevealLength({
+    current,
+    target,
+    remainingPx: budget.remainingPx,
+    lineWidthPx: budget.lineWidthPx,
+    measure: (text) => measureTextForBudget(text, budget.font),
+  });
+  return target.slice(0, Math.min(target.length, end));
 }
 
 export interface AssistantAnswerReveal {
@@ -54,15 +44,16 @@ export interface AssistantAnswerReveal {
 }
 
 /**
- * Returns a smoothly revealed slice of the live presentation answer.
+ * Returns a line-paced slice of the live presentation answer.
  *
- * The authoritative `presentation.answer` is never mutated; this hook only
- * controls how much of it is visible in the conversation. New runs and resets
- * clear immediately; large backlogs drain over a small number of animation
- * frames instead of one large DOM write.
+ * The authoritative `presentation.answer` is never mutated. Visible text
+ * fills the current visual line and only then wraps; a new empty line is
+ * capped to a fraction of the measured line width so the last line grows
+ * instead of appearing all at once.
  */
 export function useAssistantAnswerReveal(
   presentation: AssistantPresentationState | null,
+  getLineBudget?: () => StreamingLineBudget | null,
 ): AssistantAnswerReveal {
   const runId = presentation?.runId ?? null;
   const resetEpoch = presentation?.resetEpoch ?? 0;
@@ -77,8 +68,13 @@ export function useAssistantAnswerReveal(
   const frameRef = useRef<number | null>(null);
   const runIdRef = useRef<string | null>(null);
   const resetEpochRef = useRef<number | null>(null);
+  const getLineBudgetRef = useRef(getLineBudget);
+  getLineBudgetRef.current = getLineBudget;
 
   targetRef.current = target;
+
+  const currentBudget = (): StreamingLineBudget =>
+    getLineBudgetRef.current?.() ?? fallbackLineBudget();
 
   useEffect(() => {
     if (runIdRef.current !== runId || resetEpochRef.current !== resetEpoch) {
@@ -117,13 +113,24 @@ export function useAssistantAnswerReveal(
       return;
     }
 
+    const next = revealNext(answerRef.current, target, currentBudget());
+    if (next === target) {
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+      if (answerRef.current !== target) {
+        answerRef.current = target;
+        setAnswer(target);
+      }
+      return;
+    }
+
     const tick = () => {
       frameRef.current = null;
       const latestTarget = targetRef.current;
       const current = answerRef.current;
-      const pending = latestTarget.length - current.length;
-
-      if (pending <= 0) {
+      if (latestTarget.length <= current.length) {
         if (current !== latestTarget) {
           answerRef.current = latestTarget;
           setAnswer(latestTarget);
@@ -131,16 +138,11 @@ export function useAssistantAnswerReveal(
         return;
       }
 
-      const step = assistantAnswerRevealStep(pending);
-      const nextLength = alignEndToCodePoint(
-        latestTarget,
-        Math.min(latestTarget.length, current.length + step),
-      );
-      const next = latestTarget.slice(0, nextLength);
-      answerRef.current = next;
-      setAnswer(next);
+      const revealed = revealNext(current, latestTarget, currentBudget());
+      answerRef.current = revealed;
+      setAnswer(revealed);
 
-      if (nextLength < latestTarget.length) {
+      if (revealed.length < latestTarget.length) {
         frameRef.current = window.requestAnimationFrame(tick);
       }
     };

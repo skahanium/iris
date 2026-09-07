@@ -2034,7 +2034,7 @@
 
   .ai-message-bubble-streaming[data-streaming] {
     @apply border-border/40;
-    contain: layout style;
+    contain: style;
   }
 
   .ai-message-bubble-assistant:not([data-streaming]):not([data-last-message]) {
@@ -2048,8 +2048,7 @@
 
   .ai-streaming-tail {
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    overflow-wrap: break-word;
     min-height: 1em;
   }
 
@@ -2202,4 +2201,12 @@ button.feed-img-placeholder {
   border-color: hsl(var(--warning) / 0.55);
   background: hsl(var(--warning) / 0.08);
   color: hsl(var(--warning));
+}
+
+/* Conversation follow-to-bottom uses scrollHeight. Radix wraps viewport
+   children in `display: table`, which inflates that height. Keep the
+   conversation wrapper as a block without changing other ScrollAreas. */
+.ai-conversation-scroll [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  min-width: 100%;
 }

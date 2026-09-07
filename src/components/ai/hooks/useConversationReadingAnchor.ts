@@ -34,11 +34,12 @@ export function tailBottomInScrollContent({
  * Calculates the scroll position that keeps the newest output above the
  * viewport bottom edge.
  *
- * `AiMessageList` reserves a bottom spacer after the virtual rows, so scrolling
- * to `maxScrollTop` leaves that spacer visible below the latest assistant
- * content. The tail geometry is accepted for callers that still locate the
- * streaming tail, but the anchor itself intentionally follows the scroll
- * content bottom rather than pinning the tail to the edge.
+ * `AiMessageList` reserves a bottom spacer after the virtual rows and the
+ * live streaming footer, so scrolling to `maxScrollTop` leaves that spacer
+ * visible below the latest assistant content. The tail geometry is accepted
+ * for callers that still locate the streaming tail, but the anchor itself
+ * intentionally follows the scroll content bottom rather than pinning the
+ * tail to the edge.
  */
 export function readingAnchorTarget({
   scrollHeight,
@@ -48,10 +49,90 @@ export function readingAnchorTarget({
   return Math.max(0, scrollHeight - clientHeight);
 }
 
+export const CONVERSATION_PARK_PADDING_PX = 12;
+export const CONVERSATION_BOTTOM_SPACER_PX = 96;
+
+export function conversationFollowStreamKey({
+  live,
+  userClientRequestId,
+  userRunId,
+  activeStreamKey,
+  pendingInputRunId,
+}: {
+  live: boolean;
+  userClientRequestId?: string;
+  userRunId?: string;
+  activeStreamKey: string | null;
+  pendingInputRunId?: string | null;
+}): string | null {
+  if (live) {
+    return (
+      userClientRequestId ??
+      userRunId ??
+      activeStreamKey ??
+      pendingInputRunId ??
+      null
+    );
+  }
+  return activeStreamKey ?? pendingInputRunId ?? null;
+}
+
+export interface ConversationFollowInput {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  liveBottom: number | null;
+  parkTop: number | null;
+  shouldPark: boolean;
+  spacerPx?: number;
+  parkPaddingPx?: number;
+}
+
 /**
- * Follows the latest streaming content while reserving a fixed bottom gap.
- * Human upward movement permanently detaches until the user explicitly returns
- * to the newest output.
+ * Follows live output by growing into unused viewport space. The canvas only
+ * moves when the live block would cross the bottom spacer, and then only by
+ * that overflow. A new turn may park the outgoing user message near the top.
+ */
+export function conversationFollowTarget({
+  scrollTop,
+  scrollHeight,
+  clientHeight,
+  liveBottom,
+  parkTop,
+  shouldPark,
+  spacerPx = CONVERSATION_BOTTOM_SPACER_PX,
+  parkPaddingPx = CONVERSATION_PARK_PADDING_PX,
+}: ConversationFollowInput): { scrollTop: number; changed: boolean } {
+  const maxScroll = Math.max(0, scrollHeight - clientHeight);
+  const clamp = (value: number) => Math.max(0, Math.min(maxScroll, value));
+
+  if (shouldPark && parkTop != null) {
+    const parked = clamp(parkTop - parkPaddingPx);
+    return {
+      scrollTop: parked,
+      changed: Math.abs(parked - scrollTop) >= 1,
+    };
+  }
+
+  if (liveBottom == null) {
+    return { scrollTop, changed: false };
+  }
+
+  const limit = scrollTop + clientHeight - spacerPx;
+  if (liveBottom <= limit + 1) {
+    return { scrollTop, changed: false };
+  }
+
+  const next = clamp(scrollTop + (liveBottom - limit));
+  return {
+    scrollTop: next,
+    changed: Math.abs(next - scrollTop) >= 1,
+  };
+}
+
+/**
+ * Follows the latest streaming content by growing into unused viewport space.
+ * Human upward movement detaches until the user returns to the newest output.
  */
 export function useConversationReadingAnchor({
   viewportRef,
@@ -65,15 +146,13 @@ export function useConversationReadingAnchor({
   streamKey: string | null;
 }) {
   const [following, setFollowing] = useState(true);
-  const followingRef = useRef(following);
-  followingRef.current = following;
   const programmaticWriteRef = useRef(false);
   const activeStreamKeyRef = useRef<string | null>(null);
   const lastObservedScrollTopRef = useRef(0);
-  const observedRevisionRef = useRef(0);
-  const [tailRevision, setTailRevision] = useState(0);
+  const parkNeededRef = useRef(false);
 
   const returnToLatest = useCallback(() => {
+    parkNeededRef.current = false;
     setFollowing(true);
   }, []);
 
@@ -82,6 +161,7 @@ export function useConversationReadingAnchor({
       return;
     }
     activeStreamKeyRef.current = streamKey;
+    parkNeededRef.current = true;
     setFollowing(true);
   }, [active, streamKey]);
 
@@ -91,7 +171,7 @@ export function useConversationReadingAnchor({
 
     const onScroll = () => {
       const nextScrollTop = viewport.scrollTop;
-      const movedUp = nextScrollTop < lastObservedScrollTopRef.current;
+      const movedUpBy = lastObservedScrollTopRef.current - nextScrollTop;
       const maxScrollTop = Math.max(
         0,
         viewport.scrollHeight - viewport.clientHeight,
@@ -100,12 +180,12 @@ export function useConversationReadingAnchor({
         nextScrollTop >= maxScrollTop - DETACH_BOTTOM_THRESHOLD;
       lastObservedScrollTopRef.current = nextScrollTop;
       if (programmaticWriteRef.current) return;
-      if (nearBottom) {
-        setFollowing(true);
+      if (movedUpBy >= DETACH_BOTTOM_THRESHOLD) {
+        setFollowing(false);
         return;
       }
-      if (movedUp) {
-        setFollowing(false);
+      if (nearBottom) {
+        setFollowing(true);
       }
     };
     lastObservedScrollTopRef.current = viewport.scrollTop;
@@ -115,69 +195,44 @@ export function useConversationReadingAnchor({
     };
   }, [viewportRef]);
 
-  useEffect(() => {
-    if (!active || !streamKey) return;
-    const viewport = viewportRef.current;
-    const tail = viewport?.querySelector<HTMLElement>("[data-streaming-tail]");
-    if (!tail || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      observedRevisionRef.current += 1;
-      setTailRevision(observedRevisionRef.current);
-    });
-    observer.observe(tail);
-    return () => observer.disconnect();
-  }, [active, streamKey, viewportRef]);
-
   useLayoutEffect(() => {
     if (!active || !following) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const tail = viewport.querySelector<HTMLElement>("[data-streaming-tail]");
-    const viewportBounds = viewport.getBoundingClientRect();
-    const tailBounds = tail?.getBoundingClientRect();
-    const target = readingAnchorTarget({
+    const viewportBox = viewport.getBoundingClientRect();
+    const live = viewport.querySelector<HTMLElement>("[data-live-stream]");
+    const park = viewport.querySelector<HTMLElement>(
+      "[data-conversation-park]",
+    );
+    const spacer = viewport.querySelector<HTMLElement>(
+      "[data-conversation-spacer]",
+    );
+    const toContentY = (rectTop: number) =>
+      rectTop - viewportBox.top + viewport.scrollTop;
+    const liveBox = live?.getBoundingClientRect();
+    const parkBox = park?.getBoundingClientRect();
+    const shouldPark = parkNeededRef.current;
+    const result = conversationFollowTarget({
+      scrollTop: viewport.scrollTop,
       scrollHeight: viewport.scrollHeight,
       clientHeight: viewport.clientHeight,
-      tailBottom: tailBounds
-        ? tailBottomInScrollContent({
-            viewportTop: viewportBounds.top,
-            viewportScrollTop: viewport.scrollTop,
-            tailBottom: tailBounds.bottom,
-          })
-        : viewport.scrollHeight,
+      liveBottom: liveBox ? toContentY(liveBox.bottom) : null,
+      parkTop: parkBox ? toContentY(parkBox.top) : null,
+      shouldPark,
+      spacerPx:
+        spacer?.getBoundingClientRect().height || CONVERSATION_BOTTOM_SPACER_PX,
     });
-    if (Math.abs(viewport.scrollTop - target) < 1) return;
+    if (shouldPark && parkBox) {
+      parkNeededRef.current = false;
+    }
+    if (!result.changed) return;
     programmaticWriteRef.current = true;
-    lastObservedScrollTopRef.current = target;
-    viewport.scrollTop = target;
-
-    const clearProgrammatic = () => {
-      programmaticWriteRef.current = false;
-    };
-
-    // The virtual list may not have published its final scrollHeight during
-    // this layout effect. Re-check after the browser has had a chance to apply
-    // the measured row heights so the latest content does not get left behind.
+    lastObservedScrollTopRef.current = result.scrollTop;
+    viewport.scrollTop = result.scrollTop;
     window.requestAnimationFrame(() => {
-      if (!followingRef.current) {
-        clearProgrammatic();
-        return;
-      }
-      const latestTarget = readingAnchorTarget({
-        scrollHeight: viewport.scrollHeight,
-        clientHeight: viewport.clientHeight,
-        tailBottom: viewport.scrollHeight,
-      });
-      if (Math.abs(viewport.scrollTop - latestTarget) < 1) {
-        clearProgrammatic();
-        return;
-      }
-      programmaticWriteRef.current = true;
-      lastObservedScrollTopRef.current = latestTarget;
-      viewport.scrollTop = latestTarget;
-      window.requestAnimationFrame(clearProgrammatic);
+      programmaticWriteRef.current = false;
     });
-  }, [active, following, revision, tailRevision, viewportRef]);
+  }, [active, following, revision, viewportRef]);
 
   return { following, returnToLatest };
 }

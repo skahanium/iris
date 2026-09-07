@@ -51,7 +51,16 @@ export interface UnifiedAssistantSendOptions {
     displayMentions?: DisplayMention[],
     selectionReference?: SelectionReferenceDisplay,
   ) => void;
+  beginOutgoingTurn?: (draft: {
+    message: string;
+    clientRequestId: string;
+    images?: ImageAttachment[];
+    displayMentions?: DisplayMention[];
+    selectionReference?: SelectionReferenceDisplay;
+  }) => void;
+  retractOutgoingTurn?: (clientRequestId: string) => void;
   clearComposer?: () => void;
+  scheduleComposerClear?: () => void;
   clearContextReferences: () => void;
   setInput?: (value: string) => void;
   setImages: (images: ImageAttachment[]) => void;
@@ -185,7 +194,10 @@ export function useUnifiedAssistantSend({
   start,
   getFileSignature = fileSignature,
   commitAcceptedTurn,
+  beginOutgoingTurn,
+  retractOutgoingTurn,
   clearComposer,
+  scheduleComposerClear,
   clearContextReferences,
   setInput,
   setImages,
@@ -309,8 +321,19 @@ export function useUnifiedAssistantSend({
     setIsStarting(true);
     setError(null);
 
+    let outgoingClientRequestId: string | undefined;
     try {
       let pendingStart = reusable;
+      outgoingClientRequestId =
+        pendingStart?.request.clientRequestId ?? crypto.randomUUID();
+      beginOutgoingTurn?.({
+        message,
+        clientRequestId: outgoingClientRequestId,
+        images,
+        displayMentions: draft.displayMentions,
+        selectionReference: selectionReferenceDisplay,
+      });
+      setStreaming(true);
       if (!pendingStart) {
         const mentionReferences =
           aiDomain === "classified"
@@ -326,7 +349,7 @@ export function useUnifiedAssistantSend({
         pendingStart = {
           draftKey,
           request: {
-            clientRequestId: crypto.randomUUID(),
+            clientRequestId: outgoingClientRequestId,
             ...(session ? { session } : {}),
             turn: {
               message,
@@ -393,7 +416,8 @@ export function useUnifiedAssistantSend({
       }
       setStreaming(true);
       setSession(aiDomain === "classified" ? null : accepted.session);
-      if (clearComposer) clearComposer();
+      if (scheduleComposerClear) scheduleComposerClear();
+      else if (clearComposer) clearComposer();
       else setInput?.("");
       setImages([]);
       clearContextReferences();
@@ -401,6 +425,10 @@ export function useUnifiedAssistantSend({
       if (aiDomain === "classified") clearClassifiedDocumentConsent?.();
       setActivityHint("正在准备回答…");
     } catch (reason) {
+      const failedRequestId =
+        outgoingClientRequestId ??
+        pendingStartRef.current?.request.clientRequestId;
+      if (failedRequestId) retractOutgoingTurn?.(failedRequestId);
       pendingStartRef.current = null;
       setStreaming(false);
       setActivityHint(null);
@@ -415,10 +443,13 @@ export function useUnifiedAssistantSend({
     }
   }, [
     aiDomain,
+    beginOutgoingTurn,
+    retractOutgoingTurn,
     classifiedContextRef,
     commitAcceptedTurn,
     clearContextReferences,
     clearComposer,
+    scheduleComposerClear,
     clearExternalToolGrants,
     composerDisabled,
     contextReferences,

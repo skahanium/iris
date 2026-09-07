@@ -10,8 +10,10 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
+import { useStreamingLineBudgetRef } from "@/lib/streaming-line-budget-ref";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import { toTrustedHtml } from "@/lib/sanitize";
+import { readTailLineBudget } from "@/lib/streaming-line-fit";
 import { splitStreamingMarkdown } from "@/lib/streaming-markdown-splitter";
 
 export function StreamingMessageBody({
@@ -31,6 +33,7 @@ export function StreamingMessageBody({
   const stableBlockCountRef = useRef(-1);
   const stableMarkdownRef = useRef("");
   const lastIdentityRef = useRef<string | null | undefined>(null);
+  const budgetRef = useStreamingLineBudgetRef();
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -46,7 +49,6 @@ export function StreamingMessageBody({
     const split = splitStreamingMarkdown(content);
     const mustReset =
       stableBlockCountRef.current < 0 ||
-      split.stableBlockCount < stableBlockCountRef.current ||
       !content.startsWith(stableMarkdownRef.current);
 
     if (mustReset) {
@@ -83,7 +85,10 @@ export function StreamingMessageBody({
     stableBlockCountRef.current = split.stableBlockCount;
     stableMarkdownRef.current = split.stableMarkdown;
     tail.textContent = split.tailMarkdown;
-  }, [content, contentIdentity]);
+    if (budgetRef) {
+      budgetRef.current = readTailLineBudget(tail);
+    }
+  }, [budgetRef, content, contentIdentity]);
 
   return (
     <div

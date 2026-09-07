@@ -11,9 +11,8 @@ describe("assistant conversation height contract", () => {
     const list = read("src/components/ai/AiMessageList.tsx");
 
     expect(list).toContain('className="relative flex min-h-0 flex-1 flex-col"');
-    expect(list).toContain(
-      'className="min-h-0 flex-1" viewportRef={viewportRef}',
-    );
+    expect(list).toContain('className="ai-conversation-scroll min-h-0 flex-1"');
+    expect(list).toContain("viewportRef={viewportRef}");
   });
 
   it("keeps the panel and composer out of the message list's shrink budget", () => {
@@ -24,5 +23,17 @@ describe("assistant conversation height contract", () => {
       'className="ai-sidecar flex h-full min-h-0 flex-col bg-ai-workspace"',
     );
     expect(composer).toMatch(/className=\{cn\(\s*"flex shrink-0 flex-col",/);
+  });
+
+  it("overrides the Radix viewport table wrapper so scrollHeight matches content", () => {
+    const css = read("src/styles/globals.css");
+    const after =
+      css.split(
+        ".ai-conversation-scroll [data-radix-scroll-area-viewport] > div",
+      )[1] ?? "";
+    const rule = after.split("}")[0] ?? "";
+
+    expect(rule).toContain("display: block");
+    expect(rule).toContain("min-width: 100%");
   });
 });

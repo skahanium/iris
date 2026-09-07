@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ArrowDown, Check, Copy, RotateCcw } from "lucide-react";
 
@@ -9,7 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
-import { useConversationReadingAnchor } from "@/components/ai/hooks/useConversationReadingAnchor";
+import {
+  conversationFollowStreamKey,
+  useConversationReadingAnchor,
+} from "@/components/ai/hooks/useConversationReadingAnchor";
 import { assistantMessageIdentity } from "@/lib/ai-message-identity";
 
 import { useToast } from "@/components/ui/use-toast";
@@ -130,6 +133,19 @@ function isAssistantStreaming(
 
 function hasCitationFooter(message: ChatLine): boolean {
   return Boolean(message.webCitations?.length || message.sourceSummary?.length);
+}
+
+function isLiveConversationRow(
+  row: MessageRow,
+  messages: readonly ChatLine[],
+  streaming: boolean,
+): boolean {
+  if (row.type === "thinking") return true;
+  if (row.type === "empty" || row.type === "citations") return false;
+  if (row.type === "input_required") return true;
+  const message = messages[row.messageIndex];
+  if (!message) return false;
+  return isAssistantStreaming(message, row.messageIndex, messages, streaming);
 }
 
 function MessageSelectControl({
@@ -306,6 +322,13 @@ export const AiMessageList = memo(function AiMessageList({
   onSelect,
 }: AiMessageListProps) {
   const last = messages[messages.length - 1];
+  const lastUserIndex = (() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "user") return index;
+    }
+    return -1;
+  })();
+  const lastUser = lastUserIndex >= 0 ? messages[lastUserIndex] : undefined;
   const showStandaloneThinking =
     streaming &&
     (messages.length === 0 ||
@@ -313,9 +336,10 @@ export const AiMessageList = memo(function AiMessageList({
       (last?.role === "system" &&
         !messages.some((m) => m.role === "assistant")));
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const liveStreamRef = useRef<HTMLDivElement | null>(null);
+  const [liveFooterHeight, setLiveFooterHeight] = useState(0);
   const toast = useToast();
-  const rows = useMemo<MessageRow[]>(() => {
-    if (messages.length === 0) return [{ type: "empty" }];
+  const { historicalRows, liveRows } = useMemo(() => {
     const pendingAssistantExists = pendingInput
       ? messages.some(
           (message) =>
@@ -323,40 +347,66 @@ export const AiMessageList = memo(function AiMessageList({
             message.runId === pendingInput.runId,
         )
       : false;
-    return [
-      ...(showStandaloneThinking ? [{ type: "thinking" } as const] : []),
-      ...messages.flatMap((message, messageIndex) => {
-        const ownsPendingInput =
-          pendingInput?.runId === message.runId &&
-          (message.role === "assistant" ||
-            (!pendingAssistantExists && message.role === "user"));
-        const inputRow: MessageRow[] = ownsPendingInput
-          ? [{ type: "input_required", messageIndex }]
-          : [];
-        if (
-          !isRenderableMessageRow(message, messageIndex, messages, streaming)
-        ) {
-          return inputRow;
-        }
-        const messageRow: MessageRow = { type: "message", messageIndex };
-        const citationRow: MessageRow | null =
-          message.role === "assistant" &&
-          !isAssistantStreaming(message, messageIndex, messages, streaming) &&
-          hasCitationFooter(message)
-            ? { type: "citations", messageIndex }
-            : null;
-        return citationRow
-          ? [messageRow, citationRow, ...inputRow]
-          : [messageRow, ...inputRow];
-      }),
-    ];
+    const conversationRows: MessageRow[] =
+      messages.length === 0
+        ? [
+            { type: "empty" },
+            ...(showStandaloneThinking ? [{ type: "thinking" as const }] : []),
+          ]
+        : [
+            ...(showStandaloneThinking ? [{ type: "thinking" as const }] : []),
+            ...messages.flatMap((message, messageIndex) => {
+              const ownsPendingInput =
+                pendingInput?.runId === message.runId &&
+                (message.role === "assistant" ||
+                  (!pendingAssistantExists && message.role === "user"));
+              const inputRow: MessageRow[] = ownsPendingInput
+                ? [{ type: "input_required", messageIndex }]
+                : [];
+              if (
+                !isRenderableMessageRow(
+                  message,
+                  messageIndex,
+                  messages,
+                  streaming,
+                )
+              ) {
+                return inputRow;
+              }
+              const messageRow: MessageRow = { type: "message", messageIndex };
+              const citationRow: MessageRow | null =
+                message.role === "assistant" &&
+                !isAssistantStreaming(
+                  message,
+                  messageIndex,
+                  messages,
+                  streaming,
+                ) &&
+                hasCitationFooter(message)
+                  ? { type: "citations", messageIndex }
+                  : null;
+              return citationRow
+                ? [messageRow, citationRow, ...inputRow]
+                : [messageRow, ...inputRow];
+            }),
+          ];
+    const nextHistorical: MessageRow[] = [];
+    const nextLive: MessageRow[] = [];
+    for (const row of conversationRows) {
+      if (isLiveConversationRow(row, messages, streaming)) {
+        nextLive.push(row);
+      } else {
+        nextHistorical.push(row);
+      }
+    }
+    return { historicalRows: nextHistorical, liveRows: nextLive };
   }, [messages, pendingInput, showStandaloneThinking, streaming]);
 
   const messagesForIdentityRef = useRef(messages);
   messagesForIdentityRef.current = messages;
   const getItemKey = useCallback(
     (index: number): string => {
-      const row = rows[index];
+      const row = historicalRows[index];
       if (!row || row.type === "empty" || row.type === "thinking") {
         return row?.type ?? `row:${index}`;
       }
@@ -370,7 +420,7 @@ export const AiMessageList = memo(function AiMessageList({
       }
       return messageIdentity;
     },
-    [rows],
+    [historicalRows],
   );
 
   // Actual row height comes exclusively from the batched ResizeObserver. These
@@ -378,28 +428,19 @@ export const AiMessageList = memo(function AiMessageList({
   // so streaming text cannot churn virtual total size before measurement.
   const estimateRowSize = useCallback(
     (index: number): number => {
-      const row = rows[index];
+      const row = historicalRows[index];
       if (!row || row.type === "empty" || row.type === "thinking") return 80;
       if (row.type === "citations") return 72;
       if (row.type === "input_required") return 144;
       const message = messages[row.messageIndex];
       if (!message) return 112;
-      return isAssistantStreaming(
-        message,
-        row.messageIndex,
-        messages,
-        streaming,
-      )
-        ? 320
-        : message.role === "assistant"
-          ? 168
-          : 96;
+      return message.role === "assistant" ? 168 : 96;
     },
-    [messages, rows, streaming],
+    [historicalRows, messages],
   );
 
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: historicalRows.length,
     getScrollElement: () => viewportRef.current,
     getItemKey,
 
@@ -461,14 +502,41 @@ export const AiMessageList = memo(function AiMessageList({
     : null;
   const contentRevision =
     Math.round(virtualTotalSize) +
-    rows.length +
-    (activeStreamingMessage?.content.length ?? 0);
+    historicalRows.length +
+    Math.round(liveFooterHeight);
   const { following, returnToLatest } = useConversationReadingAnchor({
     viewportRef,
     active: streaming || activeStreamingMessage != null || pendingInput != null,
     revision: contentRevision,
-    streamKey: activeStreamKey ?? pendingInput?.runId ?? null,
+    streamKey: conversationFollowStreamKey({
+      live: streaming || activeStreamingMessage != null || pendingInput != null,
+      userClientRequestId: lastUser?.clientRequestId,
+      userRunId: lastUser?.runId,
+      activeStreamKey,
+      pendingInputRunId: pendingInput?.runId,
+    }),
   });
+
+  useEffect(() => {
+    const node = liveStreamRef.current;
+    if (!node) {
+      setLiveFooterHeight(0);
+      return;
+    }
+    const publishHeight = (height: number) => {
+      const next = Math.round(height);
+      setLiveFooterHeight((prev) => (prev === next ? prev : next));
+    };
+    publishHeight(node.getBoundingClientRect().height);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const height =
+        entries[0]?.contentRect.height ?? node.getBoundingClientRect().height;
+      publishHeight(height);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [liveRows]);
 
   useEffect(() => {
     const pendingMeasureNodes = pendingMeasureNodesRef.current;
@@ -669,13 +737,16 @@ export const AiMessageList = memo(function AiMessageList({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
+      <ScrollArea
+        className="ai-conversation-scroll min-h-0 flex-1"
+        viewportRef={viewportRef}
+      >
         <div
           className="relative py-3"
           style={{ height: `${virtualTotalSize}px` }}
         >
           {virtualItems.map((virtualRow) => {
-            const row = rows[virtualRow.index];
+            const row = historicalRows[virtualRow.index];
             if (!row) return null;
             return (
               <div
@@ -683,6 +754,13 @@ export const AiMessageList = memo(function AiMessageList({
                 ref={measureRowElement}
                 data-index={virtualRow.index}
                 data-row-kind={row.type}
+                data-conversation-park={
+                  streaming &&
+                  row.type === "message" &&
+                  row.messageIndex === lastUserIndex
+                    ? ""
+                    : undefined
+                }
                 className="absolute left-0 top-0 w-full px-3"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
               >
@@ -691,7 +769,32 @@ export const AiMessageList = memo(function AiMessageList({
             );
           })}
         </div>
-        <div className="h-24 shrink-0" aria-hidden="true" />
+        {liveRows.length > 0 ? (
+          <div ref={liveStreamRef} className="px-3" data-live-stream="">
+            {liveRows.map((row, liveIndex) => {
+              const message =
+                row.type === "empty" || row.type === "thinking"
+                  ? undefined
+                  : messages[row.messageIndex];
+              const liveKey =
+                row.type === "empty" || row.type === "thinking"
+                  ? `${row.type}:${liveIndex}`
+                  : message
+                    ? `${assistantMessageIdentity(message, row.messageIndex)}:${row.type}`
+                    : `live:${liveIndex}`;
+              return (
+                <div key={liveKey} data-row-kind={row.type} className="pb-4">
+                  {renderRow(row)}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        <div
+          className="h-24 shrink-0"
+          aria-hidden="true"
+          data-conversation-spacer=""
+        />
       </ScrollArea>
       {(streaming || activeStreamingMessage != null) && !following ? (
         <button

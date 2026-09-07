@@ -125,4 +125,64 @@ describe("useAssistantConversation", () => {
     });
     expect(bubbleSelectionClear).toHaveBeenCalled();
   });
+
+  it("merges an optimistic user bubble into the accepted turn without duplicating it", () => {
+    mountProbe();
+    act(() => {
+      api?.beginOutgoingTurn({
+        message: "今晚天气如何",
+        clientRequestId: "req-1",
+      });
+    });
+    expect(api?.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: "今晚天气如何",
+        clientRequestId: "req-1",
+      }),
+    ]);
+
+    act(() => {
+      api?.commitAcceptedTurn("今晚天气如何", {
+        runId: "run-1",
+        turnId: "turn-1",
+        clientRequestId: "req-1",
+        session: { domain: "normal", sessionKey: "session-1" },
+        state: "accepted",
+        stateVersion: 1,
+      });
+    });
+
+    expect(api?.messages).toHaveLength(2);
+    expect(api?.messages[0]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        runId: "run-1",
+        turnId: "turn-1",
+        clientRequestId: "req-1",
+      }),
+    );
+    expect(api?.messages[1]).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: "",
+        runId: "run-1",
+        clientRequestId: "req-1",
+      }),
+    );
+  });
+
+  it("removes an optimistic user bubble when the outgoing turn is retracted", () => {
+    mountProbe();
+    act(() => {
+      api?.beginOutgoingTurn({
+        message: "今晚天气如何",
+        clientRequestId: "req-fail",
+      });
+    });
+    act(() => {
+      api?.retractOutgoingTurn("req-fail");
+    });
+    expect(api?.messages).toEqual([]);
+  });
 });

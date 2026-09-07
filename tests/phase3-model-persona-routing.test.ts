@@ -57,7 +57,8 @@ describe("model routing and Run execution contracts", () => {
     const run = read("src/hooks/useAssistantRun.ts");
 
     expect(sender).toContain("start(pendingStart.request)");
-    expect(sender).toContain("clientRequestId: crypto.randomUUID()");
+    expect(sender).toContain("clientRequestId: outgoingClientRequestId");
+    expect(sender).toContain("crypto.randomUUID()");
     expect(sender).toContain("explicitReferences");
     expect(sender).toContain("securityDomain: aiDomain");
     expect(run).toContain("assistantRunStart");

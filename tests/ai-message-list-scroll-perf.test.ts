@@ -17,12 +17,14 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
     });
   });
 
-  describe("Fix 2: stable streaming estimate", () => {
-    it("keeps streaming height independent from content length until ResizeObserver measures it", () => {
+  describe("Fix 2: live streaming row is outside the virtualizer", () => {
+    it("keeps historical estimates independent from live stream height", () => {
       const s = read("src/components/ai/AiMessageList.tsx");
       expect(s).not.toContain("estimateSize: () => 112");
       expect(s).toContain("estimateRowSize");
-      expect(s).toContain("? 320");
+      expect(s).toContain("historicalRows");
+      expect(s).toContain("data-live-stream");
+      expect(s).not.toContain("? 320");
       expect(s).not.toContain("content.length *");
     });
   });
@@ -76,23 +78,33 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
       expect(s).toContain("const activeStreamingMessage");
       expect(s).toContain("const activeStreamKey");
       expect(s).toContain("const contentRevision");
-      expect(s).toContain("streamKey: activeStreamKey");
+      expect(s).toContain("conversationFollowStreamKey");
+      expect(s).toContain("userClientRequestId");
       expect(s).toContain("revision: contentRevision");
+      expect(s).toContain("liveFooterHeight");
+      expect(s).not.toContain("activeStreamingMessage?.content.length");
     });
 
-    it("keeps the tail observer stable for one streaming message", () => {
+    it("writes scrollTop at most once per follow pass and does not re-observe the tail", () => {
       const hook = read(
         "src/components/ai/hooks/useConversationReadingAnchor.ts",
       );
 
-      expect(hook).toContain("}, [active, streamKey, viewportRef]);");
-      expect(hook).toContain("lastObservedScrollTopRef.current = target;");
+      expect(hook).toContain(
+        "lastObservedScrollTopRef.current = result.scrollTop;",
+      );
+      expect(hook).toContain("conversationFollowTarget");
+      expect(hook.match(/viewport\.scrollTop =/g)?.length).toBe(1);
+      expect(hook).not.toContain("setTailRevision");
+      expect(hook).not.toContain("[data-streaming-tail]");
     });
 
     it("reserves a bottom spacer so the latest text never touches the viewport edge", () => {
       const s = read("src/components/ai/AiMessageList.tsx");
 
       expect(s).toContain('className="h-24 shrink-0"');
+      expect(s).toContain("data-conversation-spacer");
+      expect(s).toContain("data-conversation-park");
       expect(s).toContain("aria-hidden");
     });
 

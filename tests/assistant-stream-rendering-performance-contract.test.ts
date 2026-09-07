@@ -18,22 +18,48 @@ describe("assistant stream rendering performance contract", () => {
     expect(existsSync("src/hooks/useStreamingContent.ts")).toBe(false);
   });
 
-  it("uses the per-frame reveal hook instead of reintroducing a whole-delta throttle", () => {
+  it("uses the reveal hook for large backlogs instead of a whole-delta throttle", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const reveal = read("src/components/ai/hooks/useAssistantAnswerReveal.ts");
 
     expect(panel).toContain("useAssistantAnswerReveal");
     expect(panel).toContain("presentationReveal");
+    expect(panel).toContain("StreamingLineBudgetRefContext.Provider");
+    expect(panel).toContain("scheduleComposerClear");
+    expect(panel).toContain("composerClearEpoch");
+    expect(panel).not.toContain("clearComposer:");
+    expect(reveal).toContain("nextRevealLength");
+    expect(reveal).not.toContain("ASSISTANT_ANSWER_REVEAL_MIN_STEP = 2");
+    expect(reveal).not.toContain("ASSISTANT_ANSWER_REVEAL_IMMEDIATE_CHARS");
+    const body = read("src/components/ai/StreamingMessageBody.tsx");
+    expect(body).toContain("readTailLineBudget");
   });
 
-  it("contains streaming assistant bubble layout and paint work", () => {
+  it("does not clip streaming bubbles or wrap the tail at arbitrary graphemes", () => {
+    const bubble = read("src/components/ai/AiMessageBubble.tsx");
+    const css = read("src/styles/globals.css");
+    const tailAfter = css.split(".ai-streaming-tail")[1] ?? "";
+    const tailRule = tailAfter.split("}")[0] ?? "";
+
+    expect(bubble).toContain(
+      'streaming ? "overflow-visible" : "overflow-hidden"',
+    );
+    expect(tailRule).toContain("white-space: pre-wrap");
+    expect(tailRule).toContain("overflow-wrap: break-word");
+    expect(tailRule).not.toContain("anywhere");
+    expect(tailRule).not.toContain("word-break");
+  });
+
+  it("contains streaming assistant bubble style work without layout clipping", () => {
     const css = read("src/styles/globals.css");
     const after =
       css.split(".ai-message-bubble-streaming[data-streaming]")[1] ?? "";
     const streamingRule = after.split("}")[0] ?? "";
 
-    expect(streamingRule).toContain("contain: layout style");
-    expect(streamingRule).not.toContain("contain: paint");
-    expect(streamingRule).not.toContain("content-visibility: auto");
+    expect(streamingRule).toContain("contain: style");
+    expect(streamingRule).not.toContain("layout");
+    expect(streamingRule).not.toContain("paint");
+    expect(streamingRule).not.toContain("content-visibility");
   });
 
   it("allows content-visibility only for finalized assistant bubbles", () => {

@@ -4,13 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAssistantAnswerReveal } from "@/components/ai/hooks/useAssistantAnswerReveal";
 import type { AssistantPresentationState } from "@/lib/assistant-presentation";
+import type { StreamingLineBudget } from "@/lib/streaming-line-fit";
 
 function Harness({
   presentation,
+  getLineBudget,
 }: {
   presentation: AssistantPresentationState | null;
+  getLineBudget?: () => StreamingLineBudget | null;
 }) {
-  const { runId, answer, revealing } = useAssistantAnswerReveal(presentation);
+  const { runId, answer, revealing } = useAssistantAnswerReveal(
+    presentation,
+    getLineBudget,
+  );
   return createElement(
     "output",
     {
@@ -85,12 +91,7 @@ describe("useAssistantAnswerReveal", () => {
     }
   }
 
-  it("releases a large answer over multiple frames instead of one commit", () => {
-    act(() => {
-      root.render(createElement(Harness, { presentation: null }));
-    });
-    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe("");
-
+  it("aligns a short increment immediately without a typewriter", () => {
     act(() => {
       root.render(
         createElement(Harness, {
@@ -99,7 +100,30 @@ describe("useAssistantAnswerReveal", () => {
       );
     });
 
-    // The authoritative answer exists but is not yet visible in the same commit.
+    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe(
+      "1234567890",
+    );
+    expect(host.querySelector("output")?.getAttribute("data-revealing")).toBe(
+      "false",
+    );
+    expect(frameCallbacks.size).toBe(0);
+  });
+
+  it("releases a large answer over a few frames instead of one commit", () => {
+    const large = "x".repeat(200);
+    act(() => {
+      root.render(createElement(Harness, { presentation: null }));
+    });
+    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe("");
+
+    act(() => {
+      root.render(
+        createElement(Harness, {
+          presentation: presentationFor(large),
+        }),
+      );
+    });
+
     expect(host.querySelector("output")?.getAttribute("data-answer")).toBe("");
     expect(host.querySelector("output")?.getAttribute("data-revealing")).toBe(
       "true",
@@ -113,15 +137,41 @@ describe("useAssistantAnswerReveal", () => {
       .querySelector("output")
       ?.getAttribute("data-answer");
     expect(afterFirstFrame?.length).toBeGreaterThan(0);
-    expect(afterFirstFrame?.length).toBeLessThan(10);
+    expect(afterFirstFrame?.length).toBeLessThan(large.length);
 
     drainFrames();
     expect(host.querySelector("output")?.getAttribute("data-answer")).toBe(
-      "1234567890",
+      large,
     );
     expect(host.querySelector("output")?.getAttribute("data-revealing")).toBe(
       "false",
     );
+  });
+
+  it("releases only as much text as the current line budget allows", () => {
+    const large = "x".repeat(40);
+    act(() => {
+      root.render(
+        createElement(Harness, {
+          presentation: presentationFor(large),
+          getLineBudget: () => ({
+            remainingPx: 8,
+            lineWidthPx: 240,
+            font: "14px sans-serif",
+          }),
+        }),
+      );
+    });
+
+    expect(frameCallbacks.size).toBe(1);
+    act(() => {
+      frameCallbacks.get(1)?.(16);
+    });
+    const afterFirstFrame = host
+      .querySelector("output")
+      ?.getAttribute("data-answer");
+    expect(afterFirstFrame?.length).toBeGreaterThan(0);
+    expect(afterFirstFrame?.length).toBeLessThanOrEqual(2);
   });
 
   it("never splits a surrogate pair while revealing", () => {
@@ -228,9 +278,14 @@ describe("useAssistantAnswerReveal", () => {
     expect(host.querySelector("output")?.getAttribute("data-run-id")).toBe(
       "run-new",
     );
-    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe("");
+    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe(
+      "new",
+    );
+    expect(host.querySelector("output")?.getAttribute("data-answer")).not.toBe(
+      "old answer",
+    );
     expect(host.querySelector("output")?.getAttribute("data-revealing")).toBe(
-      "true",
+      "false",
     );
   });
 
@@ -250,11 +305,7 @@ describe("useAssistantAnswerReveal", () => {
     act(() => {
       root.render(
         createElement(Harness, {
-          presentation: presentationFor(
-            "a much longer new answer",
-            "run-same",
-            1,
-          ),
+          presentation: presentationFor("x".repeat(200), "run-same", 1),
         }),
       );
     });

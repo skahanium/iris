@@ -61,6 +61,43 @@ describe("assistant Run transcript rendering", () => {
     ).toBe(false);
   });
 
+  it("pins the live streaming assistant below the virtualizer", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[
+            { role: "user", content: "请继续", runId: "run-live" },
+            {
+              role: "assistant",
+              content: "正在输出的片段",
+              runId: "run-live",
+              turnId: "turn-1",
+            },
+          ]}
+          streaming={true}
+        />,
+      );
+    });
+
+    const live = document.body.querySelector("[data-live-stream]");
+    expect(live?.textContent).toContain("正在输出的片段");
+    expect(
+      live?.querySelector(".ai-message-bubble-assistant[data-streaming]"),
+    ).not.toBeNull();
+    expect(
+      document.body.querySelector(
+        "[data-index] .ai-message-bubble-assistant[data-streaming]",
+      ),
+    ).toBeNull();
+    expect(live?.innerHTML).not.toContain("translateY");
+    expect(
+      document.body.querySelector("[data-conversation-park]"),
+    ).not.toBeNull();
+    expect(
+      document.body.querySelector("[data-conversation-spacer]"),
+    ).not.toBeNull();
+  });
+
   it("renders the current assistant bubble while a Run is streaming", async () => {
     await act(async () => {
       root.render(

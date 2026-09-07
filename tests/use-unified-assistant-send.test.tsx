@@ -774,4 +774,126 @@ describe("useUnifiedAssistantSend", () => {
       displayMentions,
     );
   });
+
+  it("inserts an optimistic user bubble before start and defers composer clear", async () => {
+    const beginOutgoingTurn = vi.fn();
+    const scheduleComposerClear = vi.fn();
+    const clearComposer = vi.fn();
+    start.mockResolvedValue({
+      runId: "run-optimistic",
+      turnId: "turn-optimistic",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        beginOutgoingTurn,
+        scheduleComposerClear,
+        clearComposer,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(beginOutgoingTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "请总结 Guide",
+        clientRequestId: start.mock.calls[0]?.[0].clientRequestId,
+      }),
+    );
+    expect(scheduleComposerClear).toHaveBeenCalledOnce();
+    expect(clearComposer).not.toHaveBeenCalled();
+  });
+
+  it("retracts the optimistic user bubble when start fails", async () => {
+    const beginOutgoingTurn = vi.fn();
+    const retractOutgoingTurn = vi.fn();
+    start.mockRejectedValue(new Error("unavailable"));
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        beginOutgoingTurn,
+        retractOutgoingTurn,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(beginOutgoingTurn).toHaveBeenCalledOnce();
+    expect(retractOutgoingTurn).toHaveBeenCalledWith(
+      start.mock.calls[0]?.[0].clientRequestId,
+    );
+  });
+
+  it("inserts the optimistic user bubble before awaiting mention signatures", async () => {
+    const beginOutgoingTurn = vi.fn();
+    let resolveSignature: ((value: unknown) => void) | undefined;
+    getFileSignature.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSignature = resolve;
+        }),
+    );
+    start.mockResolvedValue({
+      runId: "run-same-frame",
+      turnId: "turn-same-frame",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        beginOutgoingTurn,
+        scheduleComposerClear: vi.fn(),
+      }),
+    );
+
+    let sendPromise: Promise<void> | undefined;
+    act(() => {
+      sendPromise = api?.send();
+    });
+
+    expect(beginOutgoingTurn).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveSignature?.({
+        byteLength: 128,
+        contentHash: "same-frame-hash",
+        isLocked: false,
+        modifiedMs: 42,
+      });
+      await sendPromise;
+    });
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(start.mock.calls[0]?.[0].clientRequestId).toBe(
+      beginOutgoingTurn.mock.calls[0]?.[0].clientRequestId,
+    );
+  });
+
+  it("retracts the optimistic bubble if mention signing fails", async () => {
+    const beginOutgoingTurn = vi.fn();
+    const retractOutgoingTurn = vi.fn();
+    getFileSignature.mockRejectedValue(new Error("file disappeared"));
+    renderProbe(
+      normalOptions({
+        beginOutgoingTurn,
+        retractOutgoingTurn,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(beginOutgoingTurn).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
+    expect(retractOutgoingTurn).toHaveBeenCalledWith(
+      beginOutgoingTurn.mock.calls[0]?.[0].clientRequestId,
+    );
+  });
 });

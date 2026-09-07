@@ -164,6 +164,52 @@ export function useAssistantConversation({
     [bubbleSelection, runSession, setMessages, toast],
   );
 
+  const beginOutgoingTurn = useCallback(
+    (draft: {
+      message: string;
+      clientRequestId: string;
+      images?: ImageAttachment[];
+      displayMentions?: DisplayMention[];
+      selectionReference?: SelectionReferenceDisplay;
+    }) => {
+      const user: ChatLine = {
+        role: "user",
+        content: draft.message,
+        clientRequestId: draft.clientRequestId,
+      };
+      if (draft.displayMentions?.length) {
+        user.displayMentions = draft.displayMentions;
+      }
+      if (draft.selectionReference) {
+        user.selectionReference = draft.selectionReference;
+      }
+      if (draft.images?.length) user.images = draft.images;
+      setMessages((previous) => {
+        if (
+          previous.some(
+            (message) => message.clientRequestId === draft.clientRequestId,
+          )
+        ) {
+          return previous;
+        }
+        return [...previous, user];
+      });
+      setStreaming(true);
+    },
+    [setMessages, setStreaming],
+  );
+
+  const retractOutgoingTurn = useCallback(
+    (clientRequestId: string) => {
+      setMessages((previous) =>
+        previous.filter(
+          (message) => message.clientRequestId !== clientRequestId,
+        ),
+      );
+    },
+    [setMessages],
+  );
+
   const commitAcceptedTurn = useCallback(
     (
       rawMessage: string,
@@ -190,16 +236,27 @@ export function useAssistantConversation({
         turnId: accepted.turnId,
       };
       setMessages((previous) => {
-        if (
-          previous.some(
-            (message) =>
-              message.clientRequestId === accepted.clientRequestId ||
-              message.runId === accepted.runId,
-          )
-        ) {
-          return previous;
+        const userIndex = previous.findIndex(
+          (message) =>
+            message.role === "user" &&
+            (message.clientRequestId === accepted.clientRequestId ||
+              message.runId === accepted.runId),
+        );
+        const assistantIndex = previous.findIndex(
+          (message) =>
+            message.role === "assistant" &&
+            (message.clientRequestId === accepted.clientRequestId ||
+              message.runId === accepted.runId),
+        );
+        if (userIndex >= 0 && assistantIndex >= 0) return previous;
+        const next = [...previous];
+        if (userIndex >= 0) {
+          next[userIndex] = { ...next[userIndex], ...user };
+        } else {
+          next.push(user);
         }
-        return [...previous, user, assistant];
+        if (assistantIndex < 0) next.push(assistant);
+        return next;
       });
     },
     [setMessages],
@@ -311,7 +368,9 @@ export function useAssistantConversation({
 
   return {
     appendAcceptedRetry,
+    beginOutgoingTurn,
     commitAcceptedTurn,
+    retractOutgoingTurn,
     handleCopySelected,
     handleExportSelected,
     handleInsertToEditor,

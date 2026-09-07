@@ -647,7 +647,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   return (
     <div
       className={cn(
-        "ai-message-assistant ai-message-bubble ai-message-bubble-assistant ai-message-surface-assistant relative w-full max-w-full overflow-hidden",
+        "ai-message-assistant ai-message-bubble ai-message-bubble-assistant ai-message-surface-assistant relative w-full max-w-full",
+        streaming ? "overflow-visible" : "overflow-hidden",
 
         streaming && "ai-message-bubble-streaming",
 
