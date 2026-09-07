@@ -118,6 +118,7 @@ function asErrorMessage(error: unknown, fallback: string): string {
  * 所有 dirty/open-tab 动作必须经由 useNavigatorFileLifecycle 提供的回调。
  */
 export function useVaultFileActions(
+  expectedVault: string,
   callbacks: VaultFileActionCallbacks,
 ): UseVaultFileActionsResult {
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +138,33 @@ export function useVaultFileActions(
 
   const clearError = useCallback(() => setError(null), []);
 
+  const appendCommittedWarning = useCallback((warning: string) => {
+    setError((current) => {
+      if (!current) return warning;
+      if (current.includes(warning)) return current;
+      return `${current}；${warning}`;
+    });
+  }, []);
+
+  const reportCommittedUiFailure = useCallback(
+    (error: unknown) => {
+      const detail = asErrorMessage(error, "界面同步失败");
+      appendCommittedWarning(`文件已移动，但界面同步失败：${detail}`);
+    },
+    [appendCommittedWarning],
+  );
+
+  const runPostCommit = useCallback(
+    (callback: () => void) => {
+      try {
+        callback();
+      } catch (error) {
+        reportCommittedUiFailure(error);
+      }
+    },
+    [reportCommittedUiFailure],
+  );
+
   const reportIndexStatus = useCallback(
     (status: FileWriteIndexStatus) => {
       if (status === "degraded") onIndexDegraded?.();
@@ -145,12 +173,18 @@ export function useVaultFileActions(
   );
 
   const reportPendingOperation = useCallback(
-    (pendingPaths: readonly string[] | undefined) => {
+    (
+      pendingPaths: readonly string[] | undefined,
+      recoveryWarnings: readonly string[] | undefined,
+    ) => {
       if (pendingPaths?.length) {
-        setError("文件已移动，部分反向链接待处理");
+        appendCommittedWarning("文件已移动，部分反向链接待处理");
+      }
+      if (recoveryWarnings?.length) {
+        appendCommittedWarning("文件已移动，恢复清理待处理");
       }
     },
-    [],
+    [appendCommittedWarning],
   );
 
   const preferredMoveFileName = useCallback((file: FileListItem) => {
@@ -184,10 +218,12 @@ export function useVaultFileActions(
 
   const createNote = useCallback(
     async (options: { folderPrefix?: string; titleHint?: string }) => {
+      const actionVault = expectedVault;
       const { folderPrefix = "", titleHint } = options;
       try {
         const created = await createDefaultNote({
           folderPrefix,
+          expectedVault: actionVault,
           ...(titleHint ? { titleHint } : {}),
         });
         const openStartedAt = performance.now();
@@ -218,11 +254,12 @@ export function useVaultFileActions(
         setError(asErrorMessage(e, "新建笔记失败"));
       }
     },
-    [onIndexChange, onOpen, refresh],
+    [expectedVault, onIndexChange, onOpen, refresh],
   );
 
   const createFolder = useCallback(
     async (parentPath: string, name: string): Promise<string | null> => {
+      const actionVault = expectedVault;
       const trimmed = name.trim();
       if (!trimmed) return null;
       if (isInvalidFolderName(trimmed)) {
@@ -231,7 +268,7 @@ export function useVaultFileActions(
       }
       const folderPath = joinVaultChildPath(parentPath, trimmed);
       try {
-        await folderCreate(folderPath);
+        await folderCreate(folderPath, actionVault);
         onIndexChange?.();
         refresh();
         // 返回规范化前缀（含尾斜杠），消费方直接用于选中/展开 key。
@@ -241,7 +278,7 @@ export function useVaultFileActions(
         return null;
       }
     },
-    [onIndexChange, refresh],
+    [expectedVault, onIndexChange, refresh],
   );
 
   const rename = useCallback(
@@ -250,6 +287,7 @@ export function useVaultFileActions(
       name: string,
       ctx: VaultRenameMoveContext,
     ): Promise<string | null> => {
+      const actionVault = expectedVault;
       const startedMigrations: string[] = [];
       let folderPrefix: string | null = null;
       try {
@@ -262,10 +300,22 @@ export function useVaultFileActions(
           if (nextPath !== target.file.path) {
             await onBeforeFilePathChange?.(target.file.path, nextPath);
             startedMigrations.push(target.file.path);
-            const receipt = await fileRename(target.file.path, nextPath);
-            reportIndexStatus(receipt.indexStatus);
-            reportPendingOperation(receipt.operation?.pendingPaths);
-            onFilePathChanged?.(target.file.path, nextPath, name);
+            const receipt = await fileRename(
+              target.file.path,
+              nextPath,
+              actionVault,
+            );
+            startedMigrations.length = 0;
+            runPostCommit(() => reportIndexStatus(receipt.indexStatus));
+            runPostCommit(() =>
+              reportPendingOperation(
+                receipt.operation?.pendingPaths,
+                receipt.operation?.recoveryWarnings,
+              ),
+            );
+            runPostCommit(() =>
+              onFilePathChanged?.(target.file.path, nextPath, name),
+            );
           }
         } else {
           const parent = folderParentPath(target.path);
@@ -284,19 +334,37 @@ export function useVaultFileActions(
               await onBeforeFilePathChange?.(file.path, remappedPath);
               startedMigrations.push(file.path);
             }
-            reportIndexStatus(await folderRename(target.path, nextPath));
+            const receipt = await folderRename(
+              target.path,
+              nextPath,
+              actionVault,
+            );
+            startedMigrations.length = 0;
+            runPostCommit(() => reportIndexStatus(receipt.indexStatus));
+            runPostCommit(() =>
+              reportPendingOperation(
+                receipt.operation.pendingPaths,
+                receipt.operation.recoveryWarnings,
+              ),
+            );
             for (const file of renamedFiles) {
               const remappedPath = joinVaultChildPath(
                 newPrefix,
                 file.path.slice(oldPrefix.length),
               );
-              onFilePathChanged?.(file.path, remappedPath, ctx.fileTitle(file));
+              runPostCommit(() =>
+                onFilePathChanged?.(
+                  file.path,
+                  remappedPath,
+                  ctx.fileTitle(file),
+                ),
+              );
             }
             folderPrefix = normalizeFolderPrefix(nextPath);
           }
         }
-        onIndexChange?.();
-        refresh();
+        runPostCommit(() => onIndexChange?.());
+        runPostCommit(refresh);
       } catch (e) {
         startedMigrations.forEach((oldPath) =>
           onFilePathChangeFailed?.(oldPath),
@@ -308,12 +376,14 @@ export function useVaultFileActions(
     },
     [
       onBeforeFilePathChange,
+      expectedVault,
       onFilePathChangeFailed,
       onFilePathChanged,
       onIndexChange,
       refresh,
       reportIndexStatus,
       reportPendingOperation,
+      runPostCommit,
     ],
   );
 
@@ -323,6 +393,7 @@ export function useVaultFileActions(
       targetFolder: string,
       ctx: VaultRenameMoveContext,
     ): Promise<string | null> => {
+      const actionVault = expectedVault;
       const startedMigrations: string[] = [];
       let folderPrefix: string | null = null;
       try {
@@ -335,13 +406,25 @@ export function useVaultFileActions(
           if (nextPath !== target.file.path) {
             await onBeforeFilePathChange?.(target.file.path, nextPath);
             startedMigrations.push(target.file.path);
-            const receipt = await fileRename(target.file.path, nextPath);
-            reportIndexStatus(receipt.indexStatus);
-            reportPendingOperation(receipt.operation?.pendingPaths);
-            onFilePathChanged?.(
+            const receipt = await fileRename(
               target.file.path,
               nextPath,
-              ctx.fileTitle(target.file),
+              actionVault,
+            );
+            startedMigrations.length = 0;
+            runPostCommit(() => reportIndexStatus(receipt.indexStatus));
+            runPostCommit(() =>
+              reportPendingOperation(
+                receipt.operation?.pendingPaths,
+                receipt.operation?.recoveryWarnings,
+              ),
+            );
+            runPostCommit(() =>
+              onFilePathChanged?.(
+                target.file.path,
+                nextPath,
+                ctx.fileTitle(target.file),
+              ),
             );
           }
         } else if (target.kind === "files") {
@@ -356,10 +439,18 @@ export function useVaultFileActions(
             if (nextPath === file.path) continue;
             await onBeforeFilePathChange?.(file.path, nextPath);
             startedMigrations.push(file.path);
-            const receipt = await fileRename(file.path, nextPath);
-            reportIndexStatus(receipt.indexStatus);
-            reportPendingOperation(receipt.operation?.pendingPaths);
-            onFilePathChanged?.(file.path, nextPath, ctx.fileTitle(file));
+            const receipt = await fileRename(file.path, nextPath, actionVault);
+            startedMigrations.splice(startedMigrations.indexOf(file.path), 1);
+            runPostCommit(() => reportIndexStatus(receipt.indexStatus));
+            runPostCommit(() =>
+              reportPendingOperation(
+                receipt.operation?.pendingPaths,
+                receipt.operation?.recoveryWarnings,
+              ),
+            );
+            runPostCommit(() =>
+              onFilePathChanged?.(file.path, nextPath, ctx.fileTitle(file)),
+            );
             reservedPaths.add(nextPath);
           }
         } else {
@@ -381,19 +472,37 @@ export function useVaultFileActions(
               await onBeforeFilePathChange?.(file.path, remappedPath);
               startedMigrations.push(file.path);
             }
-            reportIndexStatus(await folderRename(target.path, nextPath));
+            const receipt = await folderRename(
+              target.path,
+              nextPath,
+              actionVault,
+            );
+            startedMigrations.length = 0;
+            runPostCommit(() => reportIndexStatus(receipt.indexStatus));
+            runPostCommit(() =>
+              reportPendingOperation(
+                receipt.operation.pendingPaths,
+                receipt.operation.recoveryWarnings,
+              ),
+            );
             for (const file of movedFiles) {
               const remappedPath = joinVaultChildPath(
                 newPrefix,
                 file.path.slice(oldPrefix.length),
               );
-              onFilePathChanged?.(file.path, remappedPath, ctx.fileTitle(file));
+              runPostCommit(() =>
+                onFilePathChanged?.(
+                  file.path,
+                  remappedPath,
+                  ctx.fileTitle(file),
+                ),
+              );
             }
             folderPrefix = normalizeFolderPrefix(nextPath);
           }
         }
-        onIndexChange?.();
-        refresh();
+        runPostCommit(() => onIndexChange?.());
+        runPostCommit(refresh);
       } catch (e) {
         startedMigrations.forEach((oldPath) =>
           onFilePathChangeFailed?.(oldPath),
@@ -405,6 +514,7 @@ export function useVaultFileActions(
     },
     [
       onBeforeFilePathChange,
+      expectedVault,
       onFilePathChangeFailed,
       onFilePathChanged,
       onIndexChange,
@@ -412,6 +522,7 @@ export function useVaultFileActions(
       reportIndexStatus,
       reportPendingOperation,
       resolveMoveFilePath,
+      runPostCommit,
     ],
   );
 

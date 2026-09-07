@@ -1,9 +1,11 @@
 import { Extension } from "@tiptap/core";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, Selection } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
+import type { Transaction } from "@tiptap/pm/state";
 
 import { vaultAssetImportUrl, vaultAssetWrite } from "@/lib/ipc";
 
-const pluginKey = new PluginKey("editorImageDrop");
+const pluginKey = new PluginKey<object>("editorImageDrop");
 
 function extensionFromMime(mime: string): string {
   const map: Record<string, string> = {
@@ -34,17 +36,23 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-async function saveImageFile(file: File): Promise<string | null> {
+async function saveImageFile(
+  file: File,
+  isCurrent: () => boolean,
+): Promise<string | null> {
   if (!file.type.startsWith("image/")) return null;
   if (file.type === "image/svg+xml") return null;
   const ext = extensionFromMime(file.type);
   const name = `assets/${crypto.randomUUID()}.${ext}`;
   const dataBase64 = await fileToBase64(file);
+  if (!isCurrent()) return null;
   return vaultAssetWrite({ path: name, dataBase64 });
 }
 
 export async function localizeRemoteImagesInHtml(
   html: string,
+  isCurrent: () => boolean = () => true,
+  onError?: () => void,
 ): Promise<string | null> {
   if (typeof DOMParser === "undefined") return null;
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -55,6 +63,7 @@ export async function localizeRemoteImagesInHtml(
   if (images.length === 0) return null;
 
   for (const img of images) {
+    if (!isCurrent()) return null;
     const src = img.getAttribute("src");
     if (!src) continue;
     try {
@@ -62,14 +71,16 @@ export async function localizeRemoteImagesInHtml(
       img.setAttribute("src", local);
     } catch {
       img.remove();
+      if (isCurrent()) onError?.();
     }
   }
-  return doc.body.innerHTML;
+  return isCurrent() ? doc.body.innerHTML : null;
 }
 
 export interface EditorImageDropOptions {
   canMutate: () => boolean;
   enabled: boolean;
+  onError?: () => void;
 }
 
 /**
@@ -86,10 +97,45 @@ export const EditorImageDropExtension =
     addProseMirrorPlugins() {
       const enabled = this.options.enabled;
       const canMutate = this.options.canMutate;
+      const trackSelection = (view: EditorView, position?: number) => {
+        // A baseline reset creates new plugin state; ordinary transactions keep
+        // this token and map the original bookmark, never the later caret.
+        const generation = pluginKey.getState(view.state);
+        let bookmark = (
+          position === undefined
+            ? view.state.selection
+            : Selection.near(view.state.doc.resolve(position))
+        ).getBookmark();
+        const isCurrent = () =>
+          !view.isDestroyed &&
+          view.editable &&
+          canMutate() &&
+          pluginKey.getState(view.state) === generation;
+        const onTransaction = ({
+          transaction,
+        }: {
+          transaction: Transaction;
+        }) => {
+          if (pluginKey.getState(view.state) === generation)
+            bookmark = bookmark.map(transaction.mapping);
+        };
+        this.editor.on("transaction", onTransaction);
+        return {
+          isCurrent,
+          selection: () => bookmark.resolve(view.state.doc),
+          release: () => {
+            this.editor.off("transaction", onTransaction);
+          },
+        };
+      };
 
       return [
         new Plugin({
           key: pluginKey,
+          state: {
+            init: () => ({}),
+            apply: (_transaction, generation) => generation,
+          },
           props: {
             handleDrop: (view, event, _slice, moved) => {
               if (
@@ -110,19 +156,26 @@ export const EditorImageDropExtension =
                 left: event.clientX,
                 top: event.clientY,
               });
-              void saveImageFile(file).then((src) => {
-                if (!src || !view.editable || !canMutate()) return;
-                const pos = coords?.pos ?? view.state.selection.from;
-                view.dispatch(
-                  view.state.tr.insert(
-                    pos,
-                    view.state.schema.nodes.image?.create({
-                      src,
-                      alt: file.name.replace(/\.[^.]+$/, ""),
-                    }) ?? [],
-                  ),
-                );
-              });
+              const pending = trackSelection(
+                view,
+                coords?.pos ?? view.state.selection.from,
+              );
+              void saveImageFile(file, pending.isCurrent)
+                .then((src) => {
+                  if (!src || !pending.isCurrent()) return;
+                  const pos = pending.selection().from;
+                  view.dispatch(
+                    view.state.tr.insert(
+                      pos,
+                      view.state.schema.nodes.image?.create({
+                        src,
+                        alt: file.name.replace(/\.[^.]+$/, ""),
+                      }) ?? [],
+                    ),
+                  );
+                })
+                .catch(() => this.options.onError?.())
+                .finally(pending.release);
               return true;
             },
             handlePaste: (view, event) => {
@@ -136,19 +189,23 @@ export const EditorImageDropExtension =
                 const file = fileItem?.getAsFile();
                 if (file) {
                   event.preventDefault();
-                  const pos = view.state.selection.from;
-                  void saveImageFile(file).then((src) => {
-                    if (!src || !view.editable || !canMutate()) return;
-                    view.dispatch(
-                      view.state.tr.insert(
-                        pos,
-                        view.state.schema.nodes.image?.create({
-                          src,
-                          alt: file.name.replace(/\.[^.]+$/, ""),
-                        }) ?? [],
-                      ),
-                    );
-                  });
+                  const pending = trackSelection(view);
+                  void saveImageFile(file, pending.isCurrent)
+                    .then((src) => {
+                      if (!src || !pending.isCurrent()) return;
+                      view.dispatch(
+                        view.state.tr
+                          .setSelection(pending.selection())
+                          .replaceSelectionWith(
+                            view.state.schema.nodes.image?.create({
+                              src,
+                              alt: file.name.replace(/\.[^.]+$/, ""),
+                            }) ?? view.state.schema.text(file.name),
+                          ),
+                      );
+                    })
+                    .catch(() => this.options.onError?.())
+                    .finally(pending.release);
                   return true;
                 }
               }
@@ -156,10 +213,23 @@ export const EditorImageDropExtension =
               const html = event.clipboardData?.getData("text/html");
               if (html && /<img[^>]+src=["']https:\/\//i.test(html)) {
                 event.preventDefault();
-                void localizeRemoteImagesInHtml(html).then((localHtml) => {
-                  if (!localHtml || !view.editable || !canMutate()) return;
-                  view.pasteHTML(localHtml, event);
-                });
+                const pending = trackSelection(view);
+                void localizeRemoteImagesInHtml(
+                  html,
+                  pending.isCurrent,
+                  this.options.onError,
+                )
+                  .then((localHtml) => {
+                    if (!localHtml || !pending.isCurrent()) return;
+                    view.dispatch(
+                      view.state.tr.setSelection(pending.selection()),
+                    );
+                    // A fresh synthetic paste has no original remote clipboard
+                    // payload, so localization cannot recursively download again.
+                    view.pasteHTML(localHtml);
+                  })
+                  .catch(() => this.options.onError?.())
+                  .finally(pending.release);
                 return true;
               }
 

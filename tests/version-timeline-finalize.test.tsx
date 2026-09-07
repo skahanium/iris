@@ -50,6 +50,7 @@ describe("VersionTimeline finalize", () => {
           open
           onClose={() => {}}
           notePath="notes/a.md"
+          vaultPath="/vault-A"
           currentContent="body"
           onRestore={async () => {}}
           onFinalizeCurrent={onFinalizeCurrent}
@@ -95,6 +96,7 @@ describe("VersionTimeline finalize", () => {
           open
           onClose={() => {}}
           notePath="notes/a.md"
+          vaultPath="/vault-A"
           currentContent="# stale state"
           getCurrentContent={getCurrentContent}
           onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
@@ -137,6 +139,7 @@ describe("VersionTimeline finalize", () => {
           open
           onClose={() => {}}
           notePath="notes/a.md"
+          vaultPath="/vault-A"
           currentContent="# stale state"
           onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
           onRestore={async () => {}}

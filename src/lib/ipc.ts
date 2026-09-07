@@ -68,8 +68,9 @@ import type {
   FeedChangedEvent,
   FileChangedEvent,
   FileEntry,
-  FileWriteIndexStatus,
+  FolderMoveResult,
   FileWriteResult,
+  FileWritePrecondition,
   FileLinkSummary,
   FileListItem,
   FileReadResult,
@@ -321,8 +322,13 @@ export async function classifiedRename(
 export async function fileWrite(
   path: string,
   content: string,
+  precondition?: FileWritePrecondition,
 ): Promise<FileWriteResult> {
-  return invoke<FileWriteResult>("file_write", { path, content });
+  return invoke<FileWriteResult>("file_write", {
+    path,
+    content,
+    ...(precondition ? { precondition } : {}),
+  });
 }
 
 /** Save a vault image under `assets/` (base64 body). Returns vault-relative path. */
@@ -341,8 +347,13 @@ export async function vaultAssetImportUrl(url: string): Promise<string> {
 export async function fileCreate(
   path: string,
   content: string,
+  expectedVault?: string,
 ): Promise<FileWriteResult> {
-  return invoke<FileWriteResult>("file_create", { path, content });
+  return invoke<FileWriteResult>("file_create", {
+    path,
+    content,
+    expectedVault,
+  });
 }
 
 export async function fileDelete(path: string): Promise<void> {
@@ -357,8 +368,13 @@ export async function fileDiscard(path: string): Promise<void> {
 export async function fileRename(
   path: string,
   newPath: string,
+  expectedVault: string,
 ): Promise<FileWriteResult> {
-  return invoke<FileWriteResult>("file_rename", { path, newPath });
+  return invoke<FileWriteResult>("file_rename", {
+    path,
+    newPath,
+    expectedVault,
+  });
 }
 
 /** Atomically allocate and move a note to the basename entered inline. */
@@ -377,15 +393,23 @@ export async function fileLinkSummary(path: string): Promise<FileLinkSummary> {
   return invoke<FileLinkSummary>("file_link_summary", { path });
 }
 
-export async function folderCreate(path: string): Promise<void> {
-  return invoke("folder_create", { path });
+export async function folderCreate(
+  path: string,
+  expectedVault?: string,
+): Promise<void> {
+  return invoke("folder_create", { path, expectedVault });
 }
 
 export async function folderRename(
   oldPath: string,
   newPath: string,
-): Promise<FileWriteIndexStatus> {
-  return invoke<FileWriteIndexStatus>("folder_rename", { oldPath, newPath });
+  expectedVault: string,
+): Promise<FolderMoveResult> {
+  return invoke<FolderMoveResult>("folder_rename", {
+    oldPath,
+    newPath,
+    expectedVault,
+  });
 }
 
 export async function folderDelete(path: string): Promise<void> {
@@ -417,37 +441,59 @@ export async function graphData(): Promise<GraphData> {
   return invoke<GraphData>("graph_data");
 }
 
-export async function versionList(path: string): Promise<VersionEntry[]> {
-  return invoke<VersionEntry[]>("version_list_cmd", { path });
+export async function versionList(
+  path: string,
+  expectedVault?: string,
+  includeLegacyUnassigned = false,
+): Promise<VersionEntry[]> {
+  return invoke<VersionEntry[]>("version_list_cmd", {
+    path,
+    expectedVault,
+    includeLegacyUnassigned,
+  });
 }
 
-export async function versionPreview(versionId: number): Promise<string> {
-  return invoke<string>("version_preview_cmd", { versionId });
+export async function versionPreview(
+  versionId: number,
+  expectedVault?: string,
+): Promise<string> {
+  return invoke<string>("version_preview_cmd", { versionId, expectedVault });
 }
 
 export async function versionRestore(
   versionId: number,
   currentContent: string,
+  options?: {
+    targetPath: string;
+    expectedVault: string;
+    allowLegacyUnscoped?: boolean;
+  },
 ): Promise<{ content: string }> {
   return invoke<{ content: string }>("version_restore_cmd", {
     versionId,
     currentContent,
+    ...options,
   });
 }
 
-export async function versionDelete(versionId: number): Promise<void> {
-  return invoke("version_delete_cmd", { versionId });
+export async function versionDelete(
+  versionId: number,
+  expectedVault?: string,
+): Promise<void> {
+  return invoke("version_delete_cmd", { versionId, expectedVault });
 }
 
 export async function versionFinalizeCurrent(
   path: string,
   content: string,
   label: string | null,
+  expectedVault?: string,
 ): Promise<VersionEntry | null> {
   return invoke<VersionEntry | null>("version_finalize_current_cmd", {
     path,
     content,
     label,
+    expectedVault,
   });
 }
 
@@ -455,10 +501,12 @@ export async function versionFinalizeCurrent(
 export async function versionSaveManual(
   path: string,
   content: string,
+  expectedVault?: string,
 ): Promise<VersionSaveOutcome> {
   return invoke<VersionSaveOutcome>("version_save_manual_cmd", {
     path,
     content,
+    expectedVault,
   });
 }
 
@@ -466,10 +514,12 @@ export async function versionSaveManual(
 export async function versionSaveIdle(
   path: string,
   content: string,
+  expectedVault?: string,
 ): Promise<VersionSaveOutcome> {
   return invoke<VersionSaveOutcome>("version_save_idle_cmd", {
     path,
     content,
+    expectedVault,
   });
 }
 
@@ -477,10 +527,12 @@ export async function versionSaveIdle(
 export async function versionSavePreClose(
   path: string,
   content: string,
+  expectedVault?: string,
 ): Promise<VersionSaveOutcome> {
   return invoke<VersionSaveOutcome>("version_save_pre_close_cmd", {
     path,
     content,
+    expectedVault,
   });
 }
 

@@ -11,6 +11,17 @@ pub fn compute_diff(old: &str, new: &str) -> Option<String> {
 
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
+    // A delta is optional. Bound the quadratic LCS workspace before allocating
+    // it; large documents use the existing full-content blob instead.
+    const MAX_LCS_CELLS: usize = 1_000_000;
+    if old_lines
+        .len()
+        .saturating_add(1)
+        .saturating_mul(new_lines.len().saturating_add(1))
+        > MAX_LCS_CELLS
+    {
+        return None;
+    }
     let lcs = longest_common_subsequence(&old_lines, &new_lines);
     if lcs.is_empty() && !old.is_empty() && !new.is_empty() {
         return None;
@@ -18,7 +29,12 @@ pub fn compute_diff(old: &str, new: &str) -> Option<String> {
 
     let hunks = build_hunks(&old_lines, &new_lines, &lcs);
     let diff = format_diff(&hunks);
-    if diff.len() < new.len() || new.is_empty() {
+    // The legacy line format cannot represent every byte-level newline shape.
+    // Never trade Markdown integrity for compression, or change the reader's
+    // historical format: full-content storage is already supported.
+    if diff.len() < new.len()
+        && apply_diff(old, &diff).is_ok_and(|reconstructed| reconstructed == new)
+    {
         Some(diff)
     } else {
         None
@@ -35,13 +51,13 @@ pub fn apply_diff(old: &str, diff: &str) -> AppResult<String> {
     while let Some(line) = lines.next() {
         let header = line
             .strip_prefix('@')
-            .ok_or_else(|| AppError::msg(format!("invalid diff line: {}", line)))?;
+            .ok_or_else(|| AppError::msg("invalid diff line"))?;
         let mut parts = header.split_whitespace();
         let old_start = parse_hunk_usize(parts.next(), "old_start")?;
         let old_len = parse_hunk_usize(parts.next(), "old_len")?;
         let new_len = parse_hunk_usize(parts.next(), "new_len")?;
         if parts.next().is_some() {
-            return Err(AppError::msg(format!("invalid diff header: {}", line)));
+            return Err(AppError::msg("invalid diff header"));
         }
 
         if old_start < old_idx || old_start > old_lines.len() {
@@ -56,10 +72,10 @@ pub fn apply_diff(old: &str, diff: &str) -> AppResult<String> {
             old_idx += 1;
         }
 
-        if old_idx + old_len > old_lines.len() {
-            return Err(AppError::msg(format!("invalid diff old_len: {}", old_len)));
-        }
-        old_idx += old_len;
+        old_idx = old_idx
+            .checked_add(old_len)
+            .filter(|end| *end <= old_lines.len())
+            .ok_or_else(|| AppError::msg("invalid diff source range"))?;
 
         for _ in 0..new_len {
             let inserted = lines
@@ -179,6 +195,46 @@ fn parse_hunk_usize(value: Option<&str>, name: &str) -> AppResult<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delta_never_changes_line_endings_or_final_newline() {
+        for (old, new) in [
+            ("stable header\nold\n", "stable header\nnew\n"),
+            ("stable header\r\nold\r\n", "stable header\r\nnew\r\n"),
+        ] {
+            if let Some(delta) = compute_diff(old, new) {
+                assert_eq!(apply_diff(old, &delta).unwrap(), new);
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_non_empty_content_to_empty_uses_full_blob() {
+        assert!(compute_diff("private body", "").is_none());
+    }
+
+    #[test]
+    fn large_delta_inputs_skip_quadratic_allocation() {
+        let old = (0..2000)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let new = old.replace("line 1000\n", "changed\n");
+        assert!(compute_diff(&old, &new).is_none());
+    }
+
+    #[test]
+    fn malformed_delta_is_an_error_without_echoing_document_text() {
+        let private_marker = "PRIVATE_DOCUMENT_CONTENT";
+        let error = apply_diff("body", private_marker).unwrap_err();
+        assert!(!error.to_string().contains(private_marker));
+    }
+
+    #[test]
+    fn malformed_delta_cannot_overflow_its_source_range() {
+        let overflow = format!("@1 {} 0\n", usize::MAX);
+        assert!(apply_diff("one\ntwo", &overflow).is_err());
+    }
 
     #[test]
     fn diff_identical_texts() {

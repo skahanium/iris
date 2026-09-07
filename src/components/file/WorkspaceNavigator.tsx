@@ -81,6 +81,7 @@ export interface WorkspaceNavigatorFileLifecycle {
 
 interface WorkspaceNavigatorProps {
   activePath: string | null;
+  vaultPath: string;
   onOpenDocument: (path: string, titleHint?: string) => void | Promise<void>;
   onPrepareNote?: (file: FileListItem) => void;
   fileLifecycle: WorkspaceNavigatorFileLifecycle;
@@ -181,6 +182,7 @@ function NavigatorIconButton({
 /** Obsidian 式上下分层 workspace navigator。 */
 export function WorkspaceNavigator({
   activePath,
+  vaultPath,
   onOpenDocument,
   onPrepareNote,
   fileLifecycle,
@@ -274,7 +276,7 @@ export function WorkspaceNavigator({
     setSelectedFolder(fallback);
   }, [knownFolders, selectedFolder]);
 
-  const fileActions = useVaultFileActions({
+  const fileActions = useVaultFileActions(vaultPath, {
     onOpen: (path) => onOpenDocument(path),
     onBeforeFilePathChange: fileLifecycle.handleBeforeFilePathChange,
     onFilePathChanged: fileLifecycle.handleFilePathChanged,

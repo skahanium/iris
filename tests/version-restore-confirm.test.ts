@@ -19,6 +19,16 @@ function entry(overrides: Partial<VersionEntry>): VersionEntry {
 }
 
 describe("buildRestoreConfirmMessage", () => {
+  it("explicitly identifies unowned history and its chosen restore target", () => {
+    const msg = buildRestoreConfirmMessage(
+      entry({ is_legacy_unscoped: true }),
+      true,
+      "notes/chosen.md",
+    );
+    expect(msg).toContain("无法确认原笔记库归属");
+    expect(msg).toContain("notes/chosen.md");
+    expect(msg).toContain("恢复前备份");
+  });
   it("mentions finalized when restoring a finalized snapshot", () => {
     const msg = buildRestoreConfirmMessage(
       entry({ is_finalized: true, kind: "finalize" }),

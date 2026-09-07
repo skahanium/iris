@@ -7,7 +7,11 @@ use super::ToolDispatchContext;
 const DEFAULT_READ_NOTE_MAX_CHARS: usize = 12_000;
 const MAX_READ_NOTE_CHARS: usize = 12_000;
 
-fn ensure_note_model_read_allowed(ctx: &ToolDispatchContext<'_>, path: &str) -> AppResult<()> {
+/// Shared policy boundary for note contents and model-visible history metadata.
+pub(super) fn ensure_note_model_read_allowed(
+    ctx: &ToolDispatchContext<'_>,
+    path: &str,
+) -> AppResult<()> {
     use crate::ai_runtime::policy_decision_engine::DocumentCapability;
 
     for capability in [

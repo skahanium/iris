@@ -63,6 +63,7 @@ import { FeedManagementSection } from "./FeedManagementSection";
 
 interface ManagementCenterPanelProps {
   open: boolean;
+  vaultPath: string;
   onClose: () => void;
   section: ManagementCenterSection;
   detail: ManagementCenterDetail;
@@ -182,6 +183,7 @@ import {
 
 export function ManagementCenterPanel({
   open,
+  vaultPath,
   onClose,
   section,
   detail,
@@ -802,6 +804,7 @@ export function ManagementCenterPanel({
           {isFileTree ? (
             <VaultNavigatorBody
               open={open && activeSection === "notes" && isFileTree}
+              vaultPath={vaultPath}
               onClose={onClose}
               onOpen={onOpenNote}
               onPrepare={onPrepareNote}

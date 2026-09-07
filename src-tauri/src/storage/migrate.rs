@@ -195,6 +195,9 @@ const MIGRATION_073_UP: &str =
     include_str!("../../migrations/073_web_evidence_provider_health_capability.sql");
 const MIGRATION_073_DOWN: &str =
     include_str!("../../migrations/073_web_evidence_provider_health_capability.down.sql");
+const MIGRATION_074_UP: &str = include_str!("../../migrations/074_durable_version_ownership.sql");
+const MIGRATION_074_DOWN: &str =
+    include_str!("../../migrations/074_durable_version_ownership.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -724,6 +727,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_073_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "074_durable_version_ownership",
+        MIGRATION_074_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -735,6 +744,21 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    if is_applied(conn, "074_durable_version_ownership") {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        if let Err(error) = conn.execute_batch(MIGRATION_074_DOWN).and_then(|()| {
+            conn.execute(
+                "DELETE FROM _migrations WHERE name = '074_durable_version_ownership'",
+                [],
+            )?;
+            conn.execute_batch("COMMIT")
+        }) {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(AppError::msg(format!(
+                "version ownership rollback refused: {error}"
+            )));
+        }
+    }
     rollback_migration(
         conn,
         "073_web_evidence_provider_health_capability",
@@ -3338,6 +3362,110 @@ mod tests {
             )
             .is_err(),
             "down must restore the 059 external.read-only CHECK"
+        );
+    }
+
+    #[test]
+    fn migration_074_preserves_legacy_rows_without_assigning_a_vault() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        conn.execute_batch(MIGRATION_074_DOWN).unwrap();
+        conn.execute(
+            "DELETE FROM _migrations WHERE name = '074_durable_version_ownership'",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+        conn.execute(
+            "INSERT INTO files
+             (path, title, content_hash, created_at, updated_at)
+             VALUES ('legacy.md', 'Legacy', 'file-hash', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let file_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO versions
+             (file_id, version_no, content_hash, storage_path, kind, created_at)
+             VALUES (?1, 'legacy-1', 'body-hash', '1/legacy-1.md', 'manual', datetime('now'))",
+            [file_id],
+        )
+        .unwrap();
+
+        apply_migration(
+            &conn,
+            "074_durable_version_ownership",
+            MIGRATION_074_UP,
+            false,
+        )
+        .unwrap();
+
+        let ownership: (Option<String>, Option<String>, i64) = conn
+            .query_row(
+                "SELECT vault_path, note_path, file_id FROM versions WHERE version_no = 'legacy-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(ownership, (None, Some("legacy.md".into()), file_id));
+        conn.execute("DELETE FROM files WHERE id = ?1", [file_id])
+            .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM versions", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1,
+        );
+        assert!(
+            migrate_down(&conn).is_err(),
+            "a legacy row orphaned from the disposable files index must block rollback",
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM versions", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1,
+        );
+    }
+
+    #[test]
+    fn migration_074_down_refuses_to_drop_owned_history_transactionally() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO versions
+             (file_id, version_no, content_hash, storage_path, kind, created_at,
+              vault_path, note_path)
+             VALUES (0, 'owned-1', 'body-hash', 'cas:body-hash', 'manual', datetime('now'),
+                     '/vault-a', 'note.md')",
+            [],
+        )
+        .unwrap();
+
+        assert!(migrate_down(&conn).is_err());
+        let columns = conn
+            .prepare("PRAGMA table_info(versions)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.contains(&"vault_path".to_string()));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM _migrations WHERE name = '074_durable_version_ownership'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1,
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM versions", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1,
         );
     }
 }

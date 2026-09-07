@@ -1,5 +1,7 @@
 //! Soft-delete notes (current `.md` + all version snapshots) into `.iris/trash/`.
 
+mod cleanup;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,6 +26,9 @@ pub const RECYCLE_RETENTION_DAYS: i64 = 15;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrashVersionMeta {
+    /// Exact durable row frozen before moving the note. Absent in old bundles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_id: Option<i64>,
     pub version_no: String,
     pub label: Option<String>,
     pub content_hash: String,
@@ -34,8 +39,7 @@ pub struct TrashVersionMeta {
     pub created_at: String,
     /// File name under `versions/` inside the trash bundle.
     pub trash_file: String,
-    /// `true` 表示该版本快照已不可读（解密失败/损坏），删除时被跳过，
-    /// 回收站 bundle 中不含其内容，恢复时也不会写回。旧 manifest 无此字段。
+    /// The convenience copy is unreadable; durable metadata and objects remain owned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unreadable: Option<bool>,
 }
@@ -59,10 +63,6 @@ pub struct RecycleBinItem {
     pub version_count: usize,
 }
 
-fn storage_path_for(file_id: i64, version_no: &str) -> String {
-    format!("{file_id}/{version_no}.md")
-}
-
 fn load_manifest(vault: &Path, trash_rel: &str) -> AppResult<TrashManifest> {
     let path = vault.join(trash_rel).join("manifest.json");
     let raw = fs::read_to_string(path)?;
@@ -77,40 +77,6 @@ fn versions_root(vault: &Path) -> PathBuf {
     vault.join(".iris").join("versions")
 }
 
-struct VersionRow {
-    entry: VersionEntry,
-    storage_path: String,
-}
-
-fn load_versions_for_file(conn: &rusqlite::Connection, file_id: i64) -> AppResult<Vec<VersionRow>> {
-    use crate::version::VersionKind;
-    use rusqlite::Row;
-
-    let mut stmt = conn.prepare(
-        "SELECT id, file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path
-         FROM versions WHERE file_id = ?1 ORDER BY created_at ASC",
-    )?;
-    let rows = stmt.query_map([file_id], |row: &Row<'_>| {
-        let kind_str: String = row.get(7)?;
-        let kind = VersionKind::parse(&kind_str).unwrap_or(VersionKind::Manual);
-        Ok(VersionRow {
-            entry: VersionEntry {
-                id: row.get(0)?,
-                file_id: row.get(1)?,
-                version_no: row.get(2)?,
-                label: row.get(3)?,
-                content_hash: row.get(4)?,
-                word_count: row.get(5)?,
-                is_finalized: row.get::<_, i64>(6)? != 0,
-                kind,
-                created_at: row.get(8)?,
-            },
-            storage_path: row.get(9)?,
-        })
-    })?;
-    Ok(rows.flatten().collect())
-}
-
 fn lookup_file_id(conn: &rusqlite::Connection, path: &str) -> AppResult<Option<i64>> {
     conn.query_row(
         "SELECT id FROM files WHERE path = ?1 ORDER BY id DESC LIMIT 1",
@@ -121,44 +87,125 @@ fn lookup_file_id(conn: &rusqlite::Connection, path: &str) -> AppResult<Option<i
     .map_err(Into::into)
 }
 
-/// Permanently remove a note, all version blobs, and index rows (no recycle).
-pub fn discard_document(state: &AppState, path: &str) -> AppResult<()> {
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, path)?;
-
-    let cas_hashes = state.db.with_conn(|conn| {
-        let mut cas_hashes = Vec::new();
-        if let Some(file_id) = lookup_file_id(conn, path)? {
-            for v in load_versions_for_file(conn, file_id)? {
-                if let Some(hash) = v.storage_path.strip_prefix("cas:") {
-                    cas_hashes.push(hash.to_string());
-                    continue;
-                }
-                let src = versions_root(&vault).join(&v.storage_path);
-                if src.is_file() {
-                    let _ = fs::remove_file(src);
-                }
+fn in_immediate_transaction<T>(
+    conn: &rusqlite::Connection,
+    operation: impl FnOnce(&rusqlite::Connection) -> AppResult<T>,
+) -> AppResult<T> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    match operation(conn) {
+        Ok(value) => match conn.execute_batch("COMMIT") {
+            Ok(()) => Ok(value),
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(error.into())
             }
-        }
-        remove_file_index(conn, path)?;
-        Ok(cas_hashes)
-    })?;
-
-    for hash in cas_hashes {
-        if let Err(error) = state.ref_counter().decrement(&hash) {
-            tracing::warn!("CAS ref decrement failed while permanently discarding {path}: {error}");
+        },
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
         }
     }
+}
 
-    if abs.is_file() {
-        fs::remove_file(abs)?;
+fn validate_file_index_ownership(
+    conn: &rusqlite::Connection,
+    path: &str,
+    expected_ids: &[i64],
+) -> AppResult<()> {
+    let mut statement = conn.prepare("SELECT id FROM files WHERE path = ?1 ORDER BY id")?;
+    let actual_ids = statement
+        .query_map([path], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if actual_ids != expected_ids {
+        return Err(AppError::msg("discard_file_ownership_mismatch"));
     }
     Ok(())
 }
 
+/// Permanently remove a note, all version blobs, and index rows (no recycle).
+pub fn discard_document(state: &AppState, path: &str) -> AppResult<()> {
+    with_vault_move_lock(|| {
+        let vault = state.vault_path()?;
+        ensure_cleanup_recovered(&state.db, &vault)?;
+        let abs = crate::storage::paths::validate_user_note_relative_path(&vault, path)?;
+        if abs.exists() && !abs.is_file() {
+            return Err(AppError::msg("discard target is not a regular file"));
+        }
+        let (rows, file_ids, legacy_paths) = state.db.with_read_conn(|conn| {
+            let rows = crate::version::repository::active_rows(conn, &vault, path)?
+                .into_iter()
+                .map(|(_, ownership)| ownership)
+                .collect::<Vec<_>>();
+            let legacy_paths =
+                crate::version::repository::unshared_non_cas_storage_paths(conn, &vault, &rows)?;
+            let mut statement = conn.prepare("SELECT id FROM files WHERE path = ?1")?;
+            let file_ids = statement
+                .query_map([path], |row| row.get::<_, i64>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((rows, file_ids, legacy_paths))
+        })?;
+        let mut candidates = legacy_paths
+            .iter()
+            .cloned()
+            .map(|relative_path| cleanup::Candidate {
+                root: cleanup::CandidateRoot::Versions,
+                relative_path,
+            })
+            .collect::<Vec<_>>();
+        if abs.is_file() {
+            candidates.push(cleanup::Candidate {
+                root: cleanup::CandidateRoot::Vault,
+                relative_path: path.to_string(),
+            });
+        }
+        let version_ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+        let mut checkpoint = cleanup::prepare(
+            &vault,
+            cleanup::CleanupKind::Discard {
+                note_path: path.to_string(),
+                file_ids: file_ids.clone(),
+                version_ids,
+            },
+            rows.clone(),
+            candidates,
+        )?;
+        let database_result = state.db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                crate::version::repository::delete_cleanup_rows(
+                    conn,
+                    &vault,
+                    &rows,
+                    &legacy_paths,
+                )?;
+                validate_file_index_ownership(conn, path, &file_ids)?;
+                remove_file_index(conn, path)?;
+                Ok(())
+            })
+        });
+        if let Err(error) = database_result {
+            return match cleanup::rollback(&mut checkpoint) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(AppError::msg(format!(
+                    "discard database failed and rollback is pending: {error}; {rollback_error}"
+                ))),
+            };
+        }
+        cleanup::finish(&state.db, &checkpoint)?;
+        state.storage.write_guard.mark_removed(path);
+        Ok(())
+    })
+}
+
 /// Move current note + all versions/finalized snapshots into recycle bin.
 pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
-    trash_with_receipt(state, path).map(|_| ())
+    let receipt = trash_with_receipt(state, path)?;
+    if let Some(error) = &receipt.metadata_error {
+        return Err(AppError::msg(format!(
+            "{error}: document_moved_to_recycle=true; trash_id={}",
+            receipt.trash_id
+        )));
+    }
+    Ok(())
 }
 
 /// Result of a recoverable deletion, independent of Agent/Run metadata.
@@ -169,6 +216,8 @@ pub(crate) struct TrashReceipt {
     pub trash_id: String,
     pub content_hash: String,
     pub metadata_pending: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_error: Option<String>,
 }
 
 /// Trash via the shared file-operation guard.
@@ -204,21 +253,20 @@ pub(crate) fn trash_locked(state: &AppState, path: &str) -> AppResult<TrashRecei
             .unwrap_or_else(|| title_from_path(path));
 
         let mut metas = Vec::new();
-        if let Some(fid) = file_id {
-            for v in load_versions_for_file(conn, fid)? {
-                metas.push(TrashVersionMeta {
-                    version_no: v.entry.version_no.clone(),
-                    label: v.entry.label.clone(),
-                    content_hash: v.entry.content_hash.clone(),
-                    storage_path: v.storage_path.clone(),
-                    word_count: v.entry.word_count,
-                    is_finalized: v.entry.is_finalized,
-                    kind: v.entry.kind.as_str().to_string(),
-                    created_at: v.entry.created_at.clone(),
-                    trash_file: format!("{}.md", v.entry.version_no),
-                    unreadable: None,
-                });
-            }
+        for (entry, ownership) in crate::version::repository::active_rows(conn, &vault, path)? {
+            metas.push(TrashVersionMeta {
+                version_id: Some(entry.id),
+                version_no: entry.version_no.clone(),
+                label: entry.label.clone(),
+                content_hash: entry.content_hash.clone(),
+                storage_path: ownership.storage_path,
+                word_count: entry.word_count,
+                is_finalized: entry.is_finalized,
+                kind: entry.kind.as_str().to_string(),
+                created_at: entry.created_at.clone(),
+                trash_file: format!("{}.md", entry.version_no),
+                unreadable: None,
+            });
         }
         Ok((title, metas))
     })?;
@@ -238,8 +286,8 @@ pub(crate) fn trash_locked(state: &AppState, path: &str) -> AppResult<TrashRecei
                         crate::storage::atomic_write::atomic_write(&dest, content.as_bytes())?
                     }
                     Err(error) => {
-                        // 单个快照不可读（损坏/密钥缺失）只跳过该版本，不阻断删除：
-                        // 内容已无法恢复，用户无需为此承担认知负担。
+                        // Keep the durable row and original CAS references even
+                        // when the optional readable bundle copy is unavailable.
                         meta.unreadable = Some(true);
                         tracing::warn!(
                             result_code = "recycle_trash_skip_unreadable_version",
@@ -279,31 +327,82 @@ pub(crate) fn trash_locked(state: &AppState, path: &str) -> AppResult<TrashRecei
     state.storage.write_guard.mark_removed(path);
 
     let trash_rel = format!(".iris/trash/{trash_id}");
-    let metadata_pending = state.db.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO recycle_bin (id, original_path, title, deleted_at, expires_at, trash_rel_dir)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![
-                trash_id,
-                path,
-                title,
-                manifest.deleted_at,
-                manifest.expires_at,
-                trash_rel,
-            ],
-        )?;
-        remove_file_index(conn, path)
-    }).is_err();
+    enum MetadataOutcome {
+        Committed,
+        OwnershipMismatch,
+    }
+    let version_ids = manifest
+        .versions
+        .iter()
+        .filter_map(|version| version.version_id)
+        .collect::<Vec<_>>();
+    let metadata_result = state.db.with_conn(|conn| {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        match crate::version::repository::archive_rows(
+            conn,
+            &vault,
+            path,
+            &trash_id,
+            &version_ids,
+        ) {
+            Ok(()) => {}
+            Err(crate::version::repository::ArchiveRowsError::OwnershipMismatch) => {
+                conn.execute_batch("ROLLBACK")?;
+                return Ok(MetadataOutcome::OwnershipMismatch);
+            }
+            Err(crate::version::repository::ArchiveRowsError::Database(error)) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(error.into());
+            }
+        }
+        let result = (|| {
+            conn.execute(
+                "INSERT INTO recycle_bin (id, original_path, title, deleted_at, expires_at, trash_rel_dir)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    trash_id,
+                    path,
+                    title,
+                    manifest.deleted_at,
+                    manifest.expires_at,
+                    trash_rel,
+                ],
+            )?;
+            remove_file_index(conn, path)
+        })();
+        match result {
+            Ok(()) => match conn.execute_batch("COMMIT") {
+                Ok(()) => Ok(MetadataOutcome::Committed),
+                Err(error) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    Err(error.into())
+                }
+            },
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    });
+    let (metadata_pending, metadata_error) = match metadata_result {
+        Ok(MetadataOutcome::Committed) => (false, None),
+        Ok(MetadataOutcome::OwnershipMismatch) => (
+            true,
+            Some("recycled_version_ownership_mismatch".to_string()),
+        ),
+        Err(_) => (true, None),
+    };
 
     Ok(TrashReceipt {
         path: path.into(),
         trash_id,
         content_hash: body_hash,
         metadata_pending,
+        metadata_error,
     })
 }
 
-pub fn purge_bundle(vault: &Path, trash_rel_dir: &str) -> AppResult<u64> {
+fn purge_bundle(vault: &Path, trash_rel_dir: &str) -> AppResult<u64> {
     let dir = vault.join(trash_rel_dir);
     let mut size = 0u64;
     if dir.exists() {
@@ -330,10 +429,11 @@ fn dir_size(path: &Path) -> u64 {
 
 /// Remove expired recycle entries using the given DB connection and vault path.
 /// Returns (purged_count, bytes_freed).
-pub fn purge_expired_items(
+pub(crate) fn purge_expired_items(
     db: &crate::storage::db::Database,
     vault: &Path,
 ) -> AppResult<(usize, u64)> {
+    ensure_cleanup_recovered(db, vault)?;
     let now = Utc::now().to_rfc3339();
     let expired: Vec<(String, String)> = db.with_read_conn(|conn| {
         let mut stmt =
@@ -345,11 +445,10 @@ pub fn purge_expired_items(
     let mut count = 0usize;
     let mut freed = 0u64;
     for (id, trash_rel) in expired {
-        freed += purge_bundle(vault, &trash_rel)?;
-        db.with_conn(|conn| {
-            conn.execute("DELETE FROM recycle_bin WHERE id = ?1", [&id])?;
-            Ok(())
-        })?;
+        if !vault.join(&trash_rel).join("manifest.json").is_file() {
+            continue;
+        }
+        freed = freed.saturating_add(purge_one(db, vault, &id, &trash_rel)?);
         count += 1;
     }
     Ok((count, freed))
@@ -357,13 +456,23 @@ pub fn purge_expired_items(
 
 /// Remove recycle entries whose retention period has ended.
 pub fn purge_expired(state: &AppState) -> AppResult<usize> {
-    let vault = state.vault_path()?;
-    let (count, _) = purge_expired_items(&state.db, &vault)?;
-    Ok(count)
+    with_vault_move_lock(|| {
+        let vault = state.vault_path()?;
+        let (count, _) = purge_expired_items(&state.db, &vault)?;
+        Ok(count)
+    })
 }
 
 pub fn list_recycle(state: &AppState) -> AppResult<Vec<RecycleBinItem>> {
     let vault = state.vault_path()?;
+    let unresolved = with_vault_move_lock(|| Ok(cleanup::recover_pending(&state.db, &vault)))?;
+    if !unresolved.is_empty() {
+        tracing::warn!(
+            result_code = "recycle_cleanup_recovery_required",
+            checkpoint_count = unresolved.len(),
+            "recycle cleanup checkpoints still require recovery"
+        );
+    }
     reconcile_durable_trash(state, &vault)?;
     resume_deferred_restores(state, &vault);
     let rows: Vec<(String, String, String, String, String, String)> =
@@ -387,6 +496,7 @@ pub fn list_recycle(state: &AppState) -> AppResult<Vec<RecycleBinItem>> {
 
     Ok(rows
         .into_iter()
+        .filter(|(_, _, _, _, _, trash_rel)| vault.join(trash_rel).join("manifest.json").is_file())
         .map(
             |(id, original_path, title, deleted_at, expires_at, trash_rel)| {
                 let version_count = load_manifest(&vault, &trash_rel)
@@ -433,10 +543,15 @@ fn reconcile_durable_trash(state: &AppState, vault: &Path) -> AppResult<()> {
                 continue;
             };
             state.db.with_conn(|conn| {
-                conn.execute("INSERT OR IGNORE INTO recycle_bin (id,original_path,title,deleted_at,expires_at,trash_rel_dir) VALUES (?1,?2,?3,?4,?5,?6)",
-                    rusqlite::params![id, manifest.original_path, manifest.title, manifest.deleted_at, manifest.expires_at, relative])?;
-                if !original.exists() { remove_file_index(conn, &manifest.original_path)?; }
-                Ok(())
+                in_immediate_transaction(conn, |conn| {
+                    crate::version::repository::archive_rows(conn, vault, &manifest.original_path, &id,
+                        &manifest.versions.iter().filter_map(|v| v.version_id).collect::<Vec<_>>())
+                        .map_err(AppError::from)?;
+                    conn.execute("INSERT OR IGNORE INTO recycle_bin (id,original_path,title,deleted_at,expires_at,trash_rel_dir) VALUES (?1,?2,?3,?4,?5,?6)",
+                        rusqlite::params![id, manifest.original_path, manifest.title, manifest.deleted_at, manifest.expires_at, relative])?;
+                    if !original.exists() { remove_file_index(conn, &manifest.original_path)?; }
+                    Ok(())
+                })
             })?;
         }
         Ok(())
@@ -529,46 +644,60 @@ fn finalize_restore(
 ) -> AppResult<()> {
     let bundle_dir = vault.join(trash_rel);
     for v in &manifest.versions {
-        if v.unreadable == Some(true) {
-            // 删除时已跳过的不可读版本：内容不存在于 bundle，恢复时同样跳过。
-            tracing::warn!(
-                result_code = "recycle_restore_skip_unreadable_version",
-                version_no = %v.version_no,
-                "skipping unreadable version snapshot during restore"
-            );
+        if let Some(version_id) = v.version_id {
+            state.db.with_conn(|conn| {
+                in_immediate_transaction(conn, |conn| {
+                    crate::version::repository::restore_archived_row(
+                        conn,
+                        vault,
+                        &manifest.original_path,
+                        id,
+                        version_id,
+                        file_id,
+                    )
+                })
+            })?;
             continue;
         }
         let src = bundle_dir.join("versions").join(&v.trash_file);
-        let new_storage = storage_path_for(file_id, &v.version_no);
+        let new_storage = if v.unreadable == Some(true) {
+            v.storage_path.clone()
+        } else {
+            format!("recycled/{id}/{}.md", v.version_no)
+        };
         let dest_version = versions_root(vault).join(&new_storage);
-        if let Some(parent) = dest_version.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        if src.is_file() {
-            fs::rename(&src, &dest_version)?;
-        } else if !dest_version.is_file() {
-            return Err(AppError::msg("recycled version snapshot is missing"));
+        if v.unreadable != Some(true) {
+            if let Some(parent) = dest_version.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            if src.is_file() {
+                crate::storage::atomic_write::atomic_write(&dest_version, &fs::read(&src)?)?;
+            } else if !dest_version.is_file() {
+                return Err(AppError::msg("recycled version snapshot is missing"));
+            }
         }
         state.db.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO versions (file_id, version_no, label, content_hash, storage_path, word_count, is_finalized, kind, created_at)
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
-                 WHERE NOT EXISTS (
-                    SELECT 1 FROM versions WHERE file_id = ?1 AND version_no = ?2
-                 )",
-                rusqlite::params![
-                    file_id,
-                    v.version_no,
-                    v.label,
-                    v.content_hash,
-                    new_storage,
-                    v.word_count,
-                    if v.is_finalized { 1 } else { 0 },
-                    v.kind,
-                    v.created_at,
-                ],
-            )?;
-            Ok(())
+            in_immediate_transaction(conn, |conn| {
+                crate::version::repository::import_recycled_row(
+                    conn,
+                    vault,
+                    &manifest.original_path,
+                    &VersionEntry {
+                        id: 0,
+                        file_id,
+                        version_no: v.version_no.clone(),
+                        label: v.label.clone(),
+                        content_hash: v.content_hash.clone(),
+                        word_count: v.word_count,
+                        is_finalized: v.is_finalized,
+                        kind: crate::version::VersionKind::parse(&v.kind)
+                            .unwrap_or(crate::version::VersionKind::Manual),
+                        created_at: v.created_at.clone(),
+                        is_legacy_unscoped: false,
+                    },
+                    &new_storage,
+                )
+            })
         })?;
     }
 
@@ -586,6 +715,10 @@ fn finalize_restore(
 /// version snapshots stay in the recycle bundle until a later repair can bind
 /// them to the regenerated file row.
 pub(crate) fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<FileWriteResult> {
+    with_vault_move_lock(|| restore_document_locked(state, id))
+}
+
+fn restore_document_locked(state: &Arc<AppState>, id: &str) -> AppResult<FileWriteResult> {
     let vault = state.vault_path()?;
     let (trash_rel, original_path): (String, String) = state.db.with_conn(|conn| {
         conn.query_row(
@@ -616,7 +749,7 @@ pub(crate) fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<Fil
             "回收站中的文档文件已损坏（document.md 缺失），无法恢复",
         ));
     }
-    let receipt = NoteWriteService::adopt(state, &doc, &manifest.original_path)?;
+    let receipt = NoteWriteService::adopt_under_move_lock(state, &doc, &manifest.original_path)?;
 
     if receipt.index_status == FileWriteIndexStatus::Degraded {
         if manifest.versions.is_empty() {
@@ -641,20 +774,84 @@ pub(crate) fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<Fil
 
 /// Permanently delete a recycle entry before its expiry.
 pub fn purge_recycle_item(state: &AppState, id: &str) -> AppResult<()> {
-    let vault = state.vault_path()?;
-    let trash_rel: String = state.db.with_conn(|conn| {
-        conn.query_row(
-            "SELECT trash_rel_dir FROM recycle_bin WHERE id = ?1",
-            [id],
-            |r| r.get(0),
-        )
-        .map_err(|_| AppError::msg("回收站中找不到该条目"))
-    })?;
-    purge_bundle(&vault, &trash_rel)?;
-    state.db.with_conn(|conn| {
-        conn.execute("DELETE FROM recycle_bin WHERE id = ?1", [id])?;
-        Ok(())
+    with_vault_move_lock(|| {
+        let vault = state.vault_path()?;
+        ensure_cleanup_recovered(&state.db, &vault)?;
+        let trash_rel: String = state.db.with_conn(|conn| {
+            conn.query_row(
+                "SELECT trash_rel_dir FROM recycle_bin WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(|_| AppError::msg("回收站中找不到该条目"))
+        })?;
+        cleanup::validate_bundle_manifest(&vault, id, &trash_rel)?;
+        load_manifest(&vault, &trash_rel)?;
+        purge_one(&state.db, &vault, id, &trash_rel).map(|_| ())
     })
+}
+
+fn purge_one(
+    db: &crate::storage::db::Database,
+    vault: &Path,
+    id: &str,
+    trash_rel: &str,
+) -> AppResult<u64> {
+    let (rows, legacy_paths) = db.with_read_conn(|conn| {
+        let rows = crate::version::repository::archived_rows(conn, vault, id)?;
+        let paths = crate::version::repository::unshared_non_cas_storage_paths(conn, vault, &rows)?;
+        Ok((rows, paths))
+    })?;
+    let mut checkpoint = cleanup::prepare(
+        vault,
+        cleanup::CleanupKind::Purge {
+            recycle_id: id.to_string(),
+            trash_rel_dir: trash_rel.to_string(),
+        },
+        rows.clone(),
+        legacy_paths
+            .iter()
+            .cloned()
+            .map(|relative_path| cleanup::Candidate {
+                root: cleanup::CandidateRoot::Versions,
+                relative_path,
+            })
+            .collect(),
+    )?;
+    let database_result = db.with_conn(|conn| {
+        in_immediate_transaction(conn, |conn| {
+            crate::version::repository::delete_cleanup_rows(conn, vault, &rows, &legacy_paths)?;
+            if conn.execute("DELETE FROM recycle_bin WHERE id = ?1", [id])? != 1 {
+                return Err(AppError::msg("recycle_purge_identity_mismatch"));
+            }
+            Ok(())
+        })
+    });
+    if let Err(error) = database_result {
+        return match cleanup::rollback(&mut checkpoint) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(AppError::msg(format!(
+                "recycle purge database failed and rollback is pending: {error}; {rollback_error}"
+            ))),
+        };
+    }
+    cleanup::finish(db, &checkpoint)
+}
+
+fn ensure_cleanup_recovered(db: &crate::storage::db::Database, vault: &Path) -> AppResult<()> {
+    let unresolved = cleanup::recover_pending(db, vault);
+    if unresolved.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::msg("recycle_cleanup_recovery_required"))
+    }
+}
+
+pub(crate) fn recover_cleanup_checkpoints(
+    db: &crate::storage::db::Database,
+    vault: &Path,
+) -> Vec<String> {
+    cleanup::recover_pending(db, vault)
 }
 
 #[cfg(test)]
@@ -674,6 +871,114 @@ mod tests {
         let state = AppState::new(data).unwrap();
         state.set_vault(vault).unwrap();
         (dir, state)
+    }
+
+    fn restore_legacy_bundle(
+        state: &Arc<AppState>,
+        path: &str,
+        expires_at: &str,
+    ) -> (String, PathBuf) {
+        let vault = state.vault_path().unwrap();
+        let id = Uuid::new_v4().to_string();
+        let trash_rel = format!(".iris/trash/{id}");
+        let bundle = vault.join(&trash_rel);
+        fs::create_dir_all(bundle.join("versions")).unwrap();
+        fs::write(bundle.join("document.md"), "restored body").unwrap();
+        fs::write(bundle.join("versions/legacy-1.md"), "legacy snapshot").unwrap();
+        let manifest = TrashManifest {
+            original_path: path.to_string(),
+            title: "Legacy".to_string(),
+            deleted_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: expires_at.to_string(),
+            versions: vec![TrashVersionMeta {
+                version_id: None,
+                version_no: "legacy-1".to_string(),
+                label: None,
+                content_hash: crate::cas::hash::content_hash_str("legacy snapshot"),
+                storage_path: "old/legacy-1.md".to_string(),
+                word_count: 2,
+                is_finalized: false,
+                kind: "manual".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                trash_file: "legacy-1.md".to_string(),
+                unreadable: None,
+            }],
+        };
+        fs::write(
+            bundle.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO recycle_bin
+                     (id, original_path, title, deleted_at, expires_at, trash_rel_dir)
+                     VALUES (?1, ?2, 'Legacy', ?3, ?4, ?5)",
+                    rusqlite::params![
+                        id,
+                        path,
+                        manifest.deleted_at,
+                        manifest.expires_at,
+                        trash_rel
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        restore_document(state, &id).unwrap();
+        let storage: String = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT storage_path FROM versions
+                     WHERE vault_path = ?1 AND note_path = ?2 AND version_no = 'legacy-1'",
+                    rusqlite::params![vault.to_string_lossy(), path],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        let file = versions_root(&vault).join(storage);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "legacy snapshot");
+        (id, file)
+    }
+
+    fn install_delete_failure(state: &AppState, target: &str) {
+        let sql = match target {
+            "versions" => {
+                "CREATE TRIGGER fail_purge_versions BEFORE DELETE ON versions
+                 BEGIN SELECT RAISE(ABORT, 'simulated version purge failure'); END;"
+            }
+            "recycle_bin" => {
+                "CREATE TRIGGER fail_purge_recycle BEFORE DELETE ON recycle_bin
+                 BEGIN SELECT RAISE(ABORT, 'simulated recycle purge failure'); END;"
+            }
+            _ => unreachable!(),
+        };
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch(sql)?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn remove_delete_failure(state: &AppState, target: &str) {
+        let sql = match target {
+            "versions" => "DROP TRIGGER fail_purge_versions;",
+            "recycle_bin" => "DROP TRIGGER fail_purge_recycle;",
+            _ => unreachable!(),
+        };
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch(sql)?;
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -716,6 +1021,9 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(bundle.join("manifest.json")).unwrap())
                 .unwrap();
         assert!(!manifest.versions.is_empty());
+        assert!(crate::version::version_list(&state, "note.md")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -852,6 +1160,93 @@ mod tests {
     }
 
     #[test]
+    fn legacy_bundle_restore_resumes_without_duplicating_partially_imported_versions() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let id = Uuid::new_v4().to_string();
+        let trash_rel = format!(".iris/trash/{id}");
+        let bundle = vault.join(&trash_rel);
+        fs::create_dir_all(bundle.join("versions")).unwrap();
+        fs::write(bundle.join("document.md"), "restored body").unwrap();
+        let versions = ["legacy-1", "legacy-2"]
+            .into_iter()
+            .map(|version_no| TrashVersionMeta {
+                version_id: None,
+                version_no: version_no.to_string(),
+                label: None,
+                content_hash: crate::cas::hash::content_hash_str(version_no),
+                storage_path: format!("old/{version_no}.md"),
+                word_count: 1,
+                is_finalized: false,
+                kind: "manual".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                trash_file: format!("{version_no}.md"),
+                unreadable: None,
+            })
+            .collect::<Vec<_>>();
+        for version in &versions {
+            fs::write(
+                bundle.join("versions").join(&version.trash_file),
+                &version.version_no,
+            )
+            .unwrap();
+        }
+        let manifest = TrashManifest {
+            original_path: "legacy.md".to_string(),
+            title: "Legacy".to_string(),
+            deleted_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: "2099-01-01T00:00:00Z".to_string(),
+            versions,
+        };
+        fs::write(
+            bundle.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO recycle_bin
+                 (id, original_path, title, deleted_at, expires_at, trash_rel_dir)
+                 VALUES (?1, 'legacy.md', 'Legacy', ?2, ?3, ?4)",
+                    rusqlite::params![id, manifest.deleted_at, manifest.expires_at, trash_rel],
+                )?;
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_second_legacy_import
+                 BEFORE INSERT ON versions WHEN NEW.version_no = 'legacy-2'
+                 BEGIN SELECT RAISE(ABORT, 'fault'); END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(restore_document(&state, &id).is_err());
+        assert_eq!(
+            fs::read_to_string(vault.join("legacy.md")).unwrap(),
+            "restored body"
+        );
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch("DROP TRIGGER fail_second_legacy_import")?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(list_recycle(&state).unwrap().is_empty());
+        let restored = crate::version::version_list(&state, "legacy.md").unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(
+            restored
+                .iter()
+                .filter(|entry| entry.version_no == "legacy-1")
+                .count(),
+            1,
+        );
+    }
+
+    #[test]
     fn trash_and_restore_preserves_cas_version_blob() {
         let (_dir, state) = setup();
         let vault = state.vault_path().unwrap();
@@ -922,8 +1317,10 @@ mod tests {
         let note = vault.join("diff-note.md");
         fs::write(&note, "# Diff\n\nCurrent body").unwrap();
         state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
-        let base = format!("{}\nline-a\n", "shared-prefix-".repeat(80));
-        let expected = format!("{}\nline-b\n", "shared-prefix-".repeat(80));
+        // The legacy delta format only represents newline-free endings exactly.
+        // Exercise real delta materialization, not the full-blob fallback.
+        let base = format!("{}\nline-a", "shared-prefix-".repeat(80));
+        let expected = format!("{}\nline-b", "shared-prefix-".repeat(80));
         version_save_manual(&state, "diff-note.md", &base)
             .unwrap()
             .expect("base snapshot");
@@ -946,6 +1343,7 @@ mod tests {
             "precondition: {storage_path}"
         );
         let expected_preview = crate::version::version_preview(&state, delta.id).unwrap();
+        assert_eq!(expected_preview, expected);
 
         trash_document(&state, "diff-note.md").expect("trash diff-backed note");
         let item = list_recycle(&state).unwrap().remove(0);
@@ -963,7 +1361,7 @@ mod tests {
     }
 
     #[test]
-    fn trash_skips_unreadable_version_and_restores_readable_only() {
+    fn trash_preserves_unreadable_version_ownership_through_restore() {
         let (_dir, state) = setup();
         let vault = state.vault_path().unwrap();
         let note = vault.join("mixed.md");
@@ -1001,9 +1399,9 @@ mod tests {
             .db
             .with_conn(|conn| {
                 conn.execute(
-                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path)
-                     VALUES (?1, 'unreadable-1', NULL, ?2, 0, 0, 'manual', '2026-01-01T00:00:00+00:00', ?3)",
-                    rusqlite::params![file_id, unreadable_hash, format!("cas:{unreadable_hash}")],
+                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path, vault_path, note_path)
+                     VALUES (?1, 'unreadable-1', NULL, ?2, 0, 0, 'manual', '2026-01-01T00:00:00+00:00', ?3, ?4, 'mixed.md')",
+                    rusqlite::params![file_id, unreadable_hash, format!("cas:{unreadable_hash}"), vault.to_string_lossy()],
                 )?;
                 Ok(())
             })
@@ -1051,13 +1449,17 @@ mod tests {
             "only the readable snapshot may be copied into the bundle"
         );
 
-        // 恢复只恢复可读版本。
+        // Unreadability never removes metadata or original recovery material.
         restore_document(&state, &items[0].id).unwrap();
         let versions = crate::version::version_list(&state, "mixed.md").unwrap();
-        assert_eq!(versions.len(), 1);
-        assert_eq!(versions[0].version_no, readable_meta.version_no);
+        assert_eq!(versions.len(), 2);
+        assert!(blob_path.is_file());
+        let readable = versions
+            .iter()
+            .find(|v| v.version_no == readable_meta.version_no)
+            .unwrap();
         assert_eq!(
-            crate::version::version_preview(&state, versions[0].id).unwrap(),
+            crate::version::version_preview(&state, readable.id).unwrap(),
             readable_body
         );
     }
@@ -1104,5 +1506,598 @@ mod tests {
         discard_document(&state, "discard-cas.md").unwrap();
 
         assert_eq!(state.ref_counter().get_count(hash).unwrap(), 0);
+    }
+
+    #[test]
+    fn discard_rejects_a_non_file_before_removing_history_ownership() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        fs::create_dir(vault.join("broken.md")).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO versions
+                 (file_id, version_no, content_hash, storage_path, kind, created_at,
+                  vault_path, note_path)
+                 VALUES (0, 'keep-1', 'hash', 'legacy/keep.md', 'manual', datetime('now'),
+                         ?1, 'broken.md')",
+                    [vault.to_string_lossy()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(discard_document(&state, "broken.md").is_err());
+        let remaining = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM versions WHERE version_no = 'keep-1'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(remaining, 1);
+        assert!(vault.join("broken.md").is_dir());
+    }
+
+    #[test]
+    fn reconcile_never_archives_history_from_a_recreated_same_path_note() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        fs::write(vault.join("same.md"), "old body").unwrap();
+        let old = version_save_manual(&state, "same.md", "old snapshot")
+            .unwrap()
+            .unwrap();
+        trash_document(&state, "same.md").unwrap();
+        fs::write(vault.join("same.md"), "new body").unwrap();
+        let new = version_save_manual(&state, "same.md", "new snapshot")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(list_recycle(&state).unwrap().len(), 1);
+        assert_eq!(list_recycle(&state).unwrap().len(), 1);
+        let active = crate::version::version_list(&state, "same.md").unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, new.id);
+        state
+            .db
+            .with_read_conn(|conn| {
+                let old_owner: Option<String> = conn.query_row(
+                    "SELECT recycle_id FROM versions WHERE id = ?1",
+                    [old.id],
+                    |row| row.get(0),
+                )?;
+                assert!(old_owner.is_some());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn manual_purge_db_failures_keep_bundle_discoverable_and_retryable() {
+        for target in ["versions", "recycle_bin"] {
+            let (_dir, state) = setup();
+            let vault = state.vault_path().unwrap();
+            fs::write(vault.join("purge.md"), "body").unwrap();
+            version_save_manual(&state, "purge.md", "snapshot")
+                .unwrap()
+                .unwrap();
+            trash_document(&state, "purge.md").unwrap();
+            let id = list_recycle(&state).unwrap()[0].id.clone();
+            install_delete_failure(&state, target);
+
+            assert!(purge_recycle_item(&state, &id).is_err());
+            let items = list_recycle(&state).unwrap();
+            assert_eq!(items.len(), 1, "failed {target} delete hid the bundle");
+            assert_eq!(items[0].id, id);
+            assert!(trash_root(&vault).join(&id).join("document.md").is_file());
+
+            remove_delete_failure(&state, target);
+            purge_recycle_item(&state, &id).unwrap();
+            assert!(list_recycle(&state).unwrap().is_empty());
+            assert!(!trash_root(&vault).join(&id).exists());
+        }
+    }
+
+    #[test]
+    fn manual_purge_database_failure_still_allows_full_restore() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        fs::write(vault.join("restore-after-purge.md"), "current body").unwrap();
+        version_save_manual(&state, "restore-after-purge.md", "historical body")
+            .unwrap()
+            .unwrap();
+        trash_document(&state, "restore-after-purge.md").unwrap();
+        let id = list_recycle(&state).unwrap()[0].id.clone();
+        install_delete_failure(&state, "recycle_bin");
+        assert!(purge_recycle_item(&state, &id).is_err());
+        remove_delete_failure(&state, "recycle_bin");
+
+        restore_document(&state, &id).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(vault.join("restore-after-purge.md")).unwrap(),
+            "current body"
+        );
+        let versions = crate::version::version_list(&state, "restore-after-purge.md").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(
+            crate::version::version_preview(&state, versions[0].id).unwrap(),
+            "historical body"
+        );
+    }
+
+    #[test]
+    fn expired_purge_db_failures_keep_bundle_discoverable_and_retryable() {
+        for target in ["versions", "recycle_bin"] {
+            let (_dir, state) = setup();
+            let vault = state.vault_path().unwrap();
+            fs::write(vault.join("expired.md"), "body").unwrap();
+            version_save_manual(&state, "expired.md", "snapshot")
+                .unwrap()
+                .unwrap();
+            trash_document(&state, "expired.md").unwrap();
+            let id = list_recycle(&state).unwrap()[0].id.clone();
+            state
+                .db
+                .with_conn(|conn| {
+                    conn.execute(
+                        "UPDATE recycle_bin SET expires_at = '2020-01-01T00:00:00Z'
+                         WHERE id = ?1",
+                        [&id],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+            install_delete_failure(&state, target);
+
+            assert!(purge_expired_items(&state.db, &vault).is_err());
+            let items = list_recycle(&state).unwrap();
+            assert_eq!(items.len(), 1, "failed {target} delete hid the bundle");
+            assert_eq!(items[0].id, id);
+
+            remove_delete_failure(&state, target);
+            let (count, _) = purge_expired_items(&state.db, &vault).unwrap();
+            assert_eq!(count, 1);
+            assert!(list_recycle(&state).unwrap().is_empty());
+            assert!(!trash_root(&vault).join(&id).exists());
+        }
+    }
+
+    #[test]
+    fn legacy_restore_then_discard_removes_materialized_snapshot() {
+        let (_dir, state) = setup();
+        let (_id, version_file) =
+            restore_legacy_bundle(&state, "legacy-discard.md", "2099-01-01T00:00:00Z");
+
+        discard_document(&state, "legacy-discard.md").unwrap();
+
+        assert!(!version_file.exists());
+        let count = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM versions WHERE note_path = 'legacy-discard.md'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn legacy_discard_database_failure_restores_note_snapshot_and_identity() {
+        let (_dir, state) = setup();
+        let (_id, version_file) =
+            restore_legacy_bundle(&state, "legacy-discard-fail.md", "2099-01-01T00:00:00Z");
+        let note = state.vault_path().unwrap().join("legacy-discard-fail.md");
+        install_delete_failure(&state, "versions");
+
+        assert!(discard_document(&state, "legacy-discard-fail.md").is_err());
+        assert_eq!(fs::read_to_string(&note).unwrap(), "restored body");
+        assert_eq!(
+            fs::read_to_string(&version_file).unwrap(),
+            "legacy snapshot"
+        );
+        assert_eq!(
+            crate::version::version_list(&state, "legacy-discard-fail.md")
+                .unwrap()
+                .len(),
+            1
+        );
+
+        remove_delete_failure(&state, "versions");
+        discard_document(&state, "legacy-discard-fail.md").unwrap();
+        assert!(!note.exists());
+        assert!(!version_file.exists());
+    }
+
+    #[test]
+    fn legacy_restore_then_trash_and_purge_removes_materialized_snapshot() {
+        let (_dir, state) = setup();
+        let (_restored_id, version_file) =
+            restore_legacy_bundle(&state, "legacy-purge.md", "2099-01-01T00:00:00Z");
+        trash_document(&state, "legacy-purge.md").unwrap();
+        let id = list_recycle(&state).unwrap()[0].id.clone();
+
+        purge_recycle_item(&state, &id).unwrap();
+
+        assert!(!version_file.exists());
+        assert!(!trash_root(&state.vault_path().unwrap()).join(id).exists());
+    }
+
+    #[test]
+    fn purge_releases_cas_ownership_without_mixing_it_into_legacy_file_cleanup() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        fs::write(vault.join("purge-cas.md"), "body").unwrap();
+        let version = version_save_manual(&state, "purge-cas.md", "cas snapshot")
+            .unwrap()
+            .unwrap();
+        let storage: String = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [version.id],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        let hash = storage.strip_prefix("cas:").unwrap();
+        assert_eq!(state.ref_counter().get_count(hash).unwrap(), 1);
+        trash_document(&state, "purge-cas.md").unwrap();
+        let id = list_recycle(&state).unwrap()[0].id.clone();
+
+        purge_recycle_item(&state, &id).unwrap();
+
+        assert_eq!(state.ref_counter().get_count(hash).unwrap(), 0);
+        let rows = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM versions WHERE id = ?1",
+                    [version.id],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn legacy_purge_database_failure_restores_snapshot_and_bundle_for_retry() {
+        let (_dir, state) = setup();
+        let (_restored_id, version_file) =
+            restore_legacy_bundle(&state, "legacy-purge-fail.md", "2099-01-01T00:00:00Z");
+        trash_document(&state, "legacy-purge-fail.md").unwrap();
+        let id = list_recycle(&state).unwrap()[0].id.clone();
+        install_delete_failure(&state, "versions");
+
+        assert!(purge_recycle_item(&state, &id).is_err());
+        assert_eq!(
+            fs::read_to_string(&version_file).unwrap(),
+            "legacy snapshot"
+        );
+        assert_eq!(list_recycle(&state).unwrap()[0].id, id);
+        assert!(trash_root(&state.vault_path().unwrap())
+            .join(&id)
+            .join("document.md")
+            .is_file());
+
+        remove_delete_failure(&state, "versions");
+        purge_recycle_item(&state, &id).unwrap();
+        assert!(!version_file.exists());
+        assert!(list_recycle(&state).unwrap().is_empty());
+    }
+
+    #[test]
+    fn discard_rejects_legacy_storage_outside_version_root_before_changing_state() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("bounded.md");
+        let outside = vault.join("outside.md");
+        fs::write(&note, "body").unwrap();
+        fs::write(&outside, "outside").unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO versions
+                     (file_id, version_no, content_hash, storage_path, kind, created_at,
+                      vault_path, note_path)
+                     VALUES (0, 'outside', 'hash', '../../outside.md', 'manual', datetime('now'),
+                             ?1, 'bounded.md')",
+                    [vault.to_string_lossy()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(discard_document(&state, "bounded.md").is_err());
+        assert_eq!(fs::read_to_string(&note).unwrap(), "body");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "outside");
+        let count = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM versions WHERE version_no = 'outside'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn discard_keeps_non_cas_file_referenced_by_another_history_owner() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        fs::write(vault.join("owner-a.md"), "body a").unwrap();
+        fs::create_dir_all(versions_root(&vault).join("shared")).unwrap();
+        let shared = versions_root(&vault).join("shared/snapshot.md");
+        fs::write(&shared, "shared body").unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                for (version_no, note_path) in [("a", "owner-a.md"), ("b", "owner-b.md")] {
+                    conn.execute(
+                        "INSERT INTO versions
+                         (file_id, version_no, content_hash, storage_path, kind, created_at,
+                          vault_path, note_path)
+                         VALUES (0, ?1, 'hash', 'shared/snapshot.md', 'manual', datetime('now'),
+                                 ?2, ?3)",
+                        rusqlite::params![version_no, vault.to_string_lossy(), note_path],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        discard_document(&state, "owner-a.md").unwrap();
+
+        assert_eq!(fs::read_to_string(&shared).unwrap(), "shared body");
+        let owner_b = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM versions WHERE note_path = 'owner-b.md'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(owner_b, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discard_rejects_symlinked_legacy_storage_before_changing_state() {
+        use std::os::unix::fs::symlink;
+
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("symlinked.md");
+        let outside = vault.join("outside-versions");
+        fs::write(&note, "body").unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("snapshot.md"), "outside snapshot").unwrap();
+        fs::create_dir_all(versions_root(&vault)).unwrap();
+        symlink(&outside, versions_root(&vault).join("linked")).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO versions
+                     (file_id, version_no, content_hash, storage_path, kind, created_at,
+                      vault_path, note_path)
+                     VALUES (0, 'symlink', 'hash', 'linked/snapshot.md', 'manual', datetime('now'),
+                             ?1, 'symlinked.md')",
+                    [vault.to_string_lossy()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(discard_document(&state, "symlinked.md").is_err());
+        assert_eq!(fs::read_to_string(note).unwrap(), "body");
+        assert_eq!(
+            fs::read_to_string(outside.join("snapshot.md")).unwrap(),
+            "outside snapshot"
+        );
+    }
+
+    #[test]
+    fn ordinary_trash_reports_ownership_mismatch_after_preserving_the_bundle() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("trash-mismatch.md");
+        fs::write(&note, "body").unwrap();
+        version_save_manual(&state, "trash-mismatch.md", "snapshot")
+            .unwrap()
+            .unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    "CREATE TRIGGER remove_version_during_archive
+                     BEFORE UPDATE OF recycle_id ON versions
+                     WHEN OLD.note_path = 'trash-mismatch.md'
+                     BEGIN DELETE FROM versions WHERE id = OLD.id; END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let error = trash_document(&state, "trash-mismatch.md").unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("recycled_version_ownership_mismatch"));
+        assert!(
+            !note.exists(),
+            "the authoritative body move already happened"
+        );
+        let bundles = fs::read_dir(trash_root(&vault))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| Uuid::parse_str(&entry.file_name().to_string_lossy()).is_ok())
+            .collect::<Vec<_>>();
+        assert_eq!(bundles.len(), 1);
+        assert!(bundles[0].path().join("document.md").is_file());
+        assert!(bundles[0].path().join("manifest.json").is_file());
+        let (versions, recycle_rows) = state
+            .db
+            .with_read_conn(|conn| {
+                Ok((
+                    conn.query_row("SELECT COUNT(*) FROM versions", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                    conn.query_row("SELECT COUNT(*) FROM recycle_bin", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                ))
+            })
+            .unwrap();
+        assert_eq!(versions, 1, "the failed archive transaction must roll back");
+        assert_eq!(recycle_rows, 0);
+    }
+
+    #[test]
+    fn trash_receipt_exposes_ownership_mismatch_and_recovery_identity() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        fs::write(vault.join("receipt-mismatch.md"), "body").unwrap();
+        version_save_manual(&state, "receipt-mismatch.md", "snapshot")
+            .unwrap()
+            .unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    "CREATE TRIGGER remove_receipt_version_during_archive
+                     BEFORE UPDATE OF recycle_id ON versions
+                     WHEN OLD.note_path = 'receipt-mismatch.md'
+                     BEGIN DELETE FROM versions WHERE id = OLD.id; END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let receipt = trash_with_receipt(&state, "receipt-mismatch.md").unwrap();
+        let serialized = serde_json::to_value(&receipt).unwrap();
+
+        assert_eq!(
+            serialized["metadataError"],
+            "recycled_version_ownership_mismatch"
+        );
+        assert_eq!(serialized["metadataPending"], true);
+        assert!(Uuid::parse_str(serialized["trashId"].as_str().unwrap()).is_ok());
+        assert!(trash_root(&vault)
+            .join(serialized["trashId"].as_str().unwrap())
+            .join("document.md")
+            .is_file());
+    }
+
+    #[test]
+    fn discard_fails_closed_when_a_row_is_reassigned_after_staging() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("staged-reassign.md");
+        let relative = "recycled/staged-reassign.md";
+        let snapshot = versions_root(&vault).join(relative);
+        fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
+        fs::write(&note, "body").unwrap();
+        fs::write(&snapshot, "snapshot").unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO versions
+                     (file_id, version_no, content_hash, storage_path, kind, created_at,
+                      vault_path, note_path)
+                     VALUES (0, 'staged-reassign', 'hash', ?1, 'manual', datetime('now'),
+                             ?2, 'staged-reassign.md')",
+                    rusqlite::params![relative, vault.to_string_lossy()],
+                )?;
+                conn.execute_batch(
+                    "CREATE TRIGGER reassign_version_during_discard
+                     BEFORE DELETE ON versions
+                     WHEN OLD.note_path = 'staged-reassign.md'
+                     BEGIN
+                       UPDATE versions SET note_path = 'new-owner.md' WHERE id = OLD.id;
+                       SELECT RAISE(IGNORE);
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(discard_document(&state, "staged-reassign.md").is_err());
+        assert_eq!(fs::read_to_string(&note).unwrap(), "body");
+        assert_eq!(fs::read_to_string(&snapshot).unwrap(), "snapshot");
+        let owner: String = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT note_path FROM versions WHERE version_no = 'staged-reassign'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(owner, "staged-reassign.md");
+    }
+
+    #[test]
+    fn purge_fails_closed_when_a_new_storage_owner_appears_after_staging() {
+        let (_dir, state) = setup();
+        let (_restored_id, version_file) =
+            restore_legacy_bundle(&state, "purge-new-owner.md", "2099-01-01T00:00:00Z");
+        trash_document(&state, "purge-new-owner.md").unwrap();
+        let id = list_recycle(&state).unwrap()[0].id.clone();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    "CREATE TRIGGER add_owner_during_purge
+                     BEFORE DELETE ON versions
+                     WHEN OLD.note_path = 'purge-new-owner.md'
+                     BEGIN
+                       INSERT INTO versions
+                         (file_id, version_no, content_hash, storage_path, kind, created_at,
+                          vault_path, note_path)
+                       VALUES
+                         (0, 'injected-owner', OLD.content_hash, OLD.storage_path, 'manual',
+                          datetime('now'), OLD.vault_path, 'new-owner.md');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(purge_recycle_item(&state, &id).is_err());
+        assert_eq!(
+            fs::read_to_string(&version_file).unwrap(),
+            "legacy snapshot"
+        );
+        assert_eq!(list_recycle(&state).unwrap()[0].id, id);
+        let injected: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM versions WHERE version_no = 'injected-owner'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(injected, 0, "the conflicting transaction must roll back");
     }
 }

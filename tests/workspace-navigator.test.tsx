@@ -104,7 +104,15 @@ describe("WorkspaceNavigator", () => {
     vi.mocked(fileSetLock).mockResolvedValue(undefined);
     vi.mocked(fileDelete).mockResolvedValue(undefined);
     vi.mocked(folderCreate).mockResolvedValue(undefined);
-    vi.mocked(folderRename).mockResolvedValue("synced");
+    vi.mocked(folderRename).mockResolvedValue({
+      indexStatus: "synced",
+      operation: {
+        previousPath: "policy",
+        appliedPaths: [],
+        pendingPaths: [],
+        recoveryVersions: [],
+      },
+    });
   });
 
   afterEach(() => {
@@ -123,6 +131,7 @@ describe("WorkspaceNavigator", () => {
     const navigator = (
       <WorkspaceNavigator
         activePath={props.activePath ?? null}
+        vaultPath="/vault-a"
         onOpenDocument={onOpenDocument}
         onPrepareNote={props.onPrepareNote}
         fileLifecycle={lifecycle()}
@@ -222,7 +231,7 @@ describe("WorkspaceNavigator", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "创建文件夹" }));
     await waitFor(() =>
-      expect(folderCreate).toHaveBeenCalledWith("notes/收件箱"),
+      expect(folderCreate).toHaveBeenCalledWith("notes/收件箱", "/vault-a"),
     );
   });
 

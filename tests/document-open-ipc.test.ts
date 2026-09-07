@@ -14,6 +14,24 @@ describe("document open IPC wrappers", () => {
   beforeEach(() => {
     invoke.mockReset();
   });
+  it("preserves the editor Vault and explicit missing baseline on guarded writes", async () => {
+    const { fileWrite } = await import("../src/lib/ipc");
+    invoke.mockResolvedValueOnce({
+      contentHash: "new hash",
+      indexStatus: "synced",
+    });
+    const precondition = {
+      expectedVault: "/public-fixture/vault",
+      baseContentHash: null,
+    };
+    await fileWrite("new.md", "new body", precondition);
+    expect(invoke).toHaveBeenCalledWith("file_write", {
+      path: "new.md",
+      content: "new body",
+      precondition,
+    });
+  });
+
   it("requests file signatures through the typed ipc wrapper", async () => {
     const { fileSignature } = await import("../src/lib/ipc");
     invoke.mockResolvedValueOnce({

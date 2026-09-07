@@ -83,6 +83,71 @@ fn catalog_exposes_phase5_vault_core_tools() {
 }
 
 #[tokio::test]
+async fn vault_version_list_never_exposes_legacy_unscoped_history_as_current_fact() {
+    let (state, _dir) = test_state();
+    index_note(&state, "notes/test.md", "current body");
+    let known = iris_lib::version::version_save_manual(&state, "notes/test.md", "known body")
+        .unwrap()
+        .unwrap();
+    let legacy_id = state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO versions
+             (file_id, version_no, content_hash, storage_path, kind, created_at, note_path)
+             VALUES (0, 'legacy-unknown', 'hash', 'legacy/unknown.md', 'manual',
+                     datetime('now'), 'notes/test.md')",
+                [],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
+        .unwrap();
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(Some("notes/test.md")),
+        "vault_version_list",
+        &serde_json::json!({ "path": "notes/test.md" }),
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["versions"][0]["id"], known.id);
+    assert_ne!(result.output["versions"][0]["id"], legacy_id);
+}
+
+#[tokio::test]
+async fn vault_version_list_cannot_disclose_history_outside_read_scope() {
+    let (state, _dir) = test_state();
+    index_note(&state, "private/note.md", "private note");
+    iris_lib::version::version_finalize_current(
+        &state,
+        "private/note.md",
+        "private historical body",
+        Some("PRIVATE_HISTORY_LABEL".into()),
+    )
+    .unwrap();
+    let scope = RetrievalScope {
+        path_prefixes: vec!["public/".into()],
+        paths: Vec::new(),
+        required_tags: Vec::new(),
+    };
+    let result = dispatch_tool(
+        &state,
+        &ctx_with_scope(None, &scope),
+        "vault_version_list",
+        &serde_json::json!({"path":"private/note.md"}),
+    )
+    .await;
+    assert!(
+        !result.success,
+        "history metadata requires the same read scope"
+    );
+    assert!(!result.output.to_string().contains("PRIVATE_HISTORY_LABEL"));
+}
+
+#[tokio::test]
 async fn markdown_patch_tool_creates_pre_write_snapshot() {
     let (state, _dir) = test_state();
     index_note(&state, "notes/test.md", "# Test\nHello world");
@@ -172,6 +237,53 @@ async fn vault_create_note_never_overwrites_an_existing_note() {
 }
 
 #[tokio::test]
+async fn vault_asset_write_does_not_overwrite_an_existing_asset() {
+    let (state, _dir) = test_state();
+    let vault = state.vault_path().unwrap();
+    std::fs::create_dir(vault.join("assets")).unwrap();
+    std::fs::write(vault.join("assets/item.png"), b"original asset").unwrap();
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(None),
+        "vault_asset_write",
+        &serde_json::json!({"path":"assets/item.png", "data_base64":"bmV3"}),
+    )
+    .await;
+
+    assert!(
+        !result.success,
+        "asset creation must not replace unknown bytes"
+    );
+    assert_eq!(
+        std::fs::read(vault.join("assets/item.png")).unwrap(),
+        b"original asset"
+    );
+}
+
+#[tokio::test]
+async fn vault_asset_write_checks_confirmed_target_before_creating_directories() {
+    let (state, _dir) = test_state();
+    let mut context = ctx(None);
+    let allowed = vec!["assets/allowed.png".to_string()];
+    context.confirmed_write_targets = Some(&allowed);
+
+    let result = dispatch_tool(
+        &state,
+        &context,
+        "vault_asset_write",
+        &serde_json::json!({"path":"assets/unconfirmed/item.png", "data_base64":"bmV3"}),
+    )
+    .await;
+
+    assert!(
+        !result.success,
+        "a resource must stay inside the approved targets"
+    );
+    assert!(!state.vault_path().unwrap().join("assets").exists());
+}
+
+#[tokio::test]
 async fn search_tool_respects_hard_retrieval_scope_and_clamps_limit() {
     let (state, _dir) = test_state();
     index_note(
@@ -229,11 +341,14 @@ async fn vault_rename_move_reports_link_impact_and_moves_note() {
 
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["path"], "archive/new.md");
-    assert_eq!(result.output["linkImpact"]["backlinkCount"], 1);
-    assert_eq!(
-        result.output["linkImpact"]["modifiedSources"][0],
-        "notes/source.md"
-    );
+    let receipt = &result.output["receipt"];
+    assert_eq!(receipt["previousPath"], "notes/old.md");
+    let applied = receipt["appliedPaths"].as_array().unwrap();
+    assert_eq!(applied.len(), 2);
+    assert!(applied.contains(&serde_json::json!("archive/new.md")));
+    assert!(applied.contains(&serde_json::json!("notes/source.md")));
+    assert_eq!(receipt["pendingPaths"], serde_json::json!([]));
+    assert_eq!(receipt["recoveryVersions"].as_array().unwrap().len(), 2);
     assert!(!state.vault_path().unwrap().join("notes/old.md").exists());
     assert!(state.vault_path().unwrap().join("archive/new.md").exists());
     let source =
@@ -309,7 +424,7 @@ async fn vault_rename_move_reports_degraded_after_physical_move_when_indexing_fa
     .await;
 
     assert!(result.success, "{result:?}");
-    assert_eq!(result.output["indexStatus"], "degraded");
+    assert_eq!(result.output["receipt"]["write"]["indexStatus"], "degraded");
     assert!(!state.vault_path().unwrap().join("notes/old.md").exists());
     assert_eq!(
         std::fs::read_to_string(state.vault_path().unwrap().join("archive/new.md")).unwrap(),
@@ -326,7 +441,10 @@ async fn vault_delete_to_trash_moves_note_into_recycle_bin() {
         &state,
         &ctx(None),
         "vault_delete_to_trash",
-        &serde_json::json!({ "path": "notes/delete.md" }),
+        &serde_json::json!({
+            "path": "notes/delete.md",
+            "base_content_hash": iris_lib::cas::hash::content_hash_str("# Delete me")
+        }),
     )
     .await;
 
@@ -363,13 +481,10 @@ async fn markdown_patch_rejects_hash_mismatch_without_writing() {
     .await;
 
     assert!(
-        result.success,
-        "tool call should return a structured patch result"
+        !result.success,
+        "rejected changes must not advance execution"
     );
-    assert_eq!(result.output["result"]["success"], false);
-    let error = result.output["result"]["error"]
-        .as_str()
-        .unwrap_or_default();
+    let error = result.error.as_deref().unwrap_or_default();
     assert!(!error.trim().is_empty());
     let content =
         std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap();
@@ -397,12 +512,11 @@ async fn markdown_patch_rejects_out_of_vault_target_without_creating_file() {
     )
     .await;
 
-    assert!(
-        result.success,
-        "patch dispatch returns a structured rejection: {:?}",
-        result.error
-    );
-    assert_eq!(result.output["result"]["success"], false);
+    assert!(!result.success, "out-of-scope changes must not execute");
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| !error.is_empty()));
     assert!(!dir.path().join("outside.md").exists());
     assert_eq!(
         std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap(),

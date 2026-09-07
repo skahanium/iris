@@ -91,12 +91,34 @@ type DocumentPersistenceListener = (
   snapshot: DocumentPersistenceSnapshot | null,
 ) => void;
 
-function errorMessage(error: unknown): string {
-  const message = invokeErrorMessage(error);
-  if (message === "note_locked" || message.includes("note_locked")) {
-    return "笔记已锁定，无法保存";
+function saveRejectionCode(error: unknown): string | null {
+  // Match stable backend tokens before localization. These require a changed
+  // precondition or an explicit user action; waiting cannot make a retry safe.
+  const raw =
+    typeof error === "string"
+      ? error
+      : error && typeof error === "object" && "message" in error
+        ? error.message
+        : null;
+  switch (raw) {
+    case "note_locked":
+    case "note_vault_changed":
+    case "note_content_conflict":
+      return raw;
+    default:
+      return null;
   }
-  return message;
+}
+
+function errorMessage(error: unknown): string {
+  const rejection = saveRejectionCode(error);
+  if (rejection === "note_vault_changed") {
+    return "笔记库已切换，未保存的编辑已保留，请返回原笔记库处理";
+  }
+  if (rejection === "note_content_conflict") {
+    return "磁盘内容已改变，未保存的编辑已保留，请比较后重新保存";
+  }
+  return invokeErrorMessage(error);
 }
 
 function deferred<T>(): Deferred<T> {
@@ -398,9 +420,9 @@ export class DocumentPersistenceCoordinator {
     if (!migration) return this.rebind(oldPath, newPath);
 
     const source = migration.record;
+    this.rebindRecord(source, newPath);
     this.migrations.delete(oldPath);
     this.pathRedirects.delete(oldPath);
-    this.rebindRecord(source, newPath);
     source.migration = null;
     migration.ready.resolve();
     if (source.baselineRevision !== source.revision) {
@@ -420,9 +442,9 @@ export class DocumentPersistenceCoordinator {
     if (!migration) return null;
 
     const source = migration.record;
+    this.rebindRecord(source, oldPath);
     this.migrations.delete(oldPath);
     this.pathRedirects.delete(oldPath);
-    this.rebindRecord(source, oldPath);
     source.migration = null;
     migration.ready.resolve();
     if (source.baselineRevision !== source.revision) {
@@ -447,10 +469,9 @@ export class DocumentPersistenceCoordinator {
     const oldPath = source.path;
     const destination = this.records.get(newPath);
     if (destination && destination !== source) {
-      if (destination.revision > source.revision) {
-        throw new Error(`path rebind destination is newer: ${newPath}`);
-      }
-      this.discard(newPath);
+      // Revisions order captures, not ownership. Even an older destination may
+      // contain unsaved edits or an active disk write and cannot be discarded.
+      throw new Error(`path rebind destination is already tracked: ${newPath}`);
     }
     this.records.delete(oldPath);
     source.path = newPath;
@@ -591,16 +612,18 @@ export class DocumentPersistenceCoordinator {
             ) {
               return;
             }
-            if (record.revision !== revision) {
-              record.status = "dirty";
-              this.emit(record);
-              return;
-            }
+            // A newer edit stays dirty, but cannot erase a write that really
+            // reached disk. Future conflict checks must use that exact baseline.
             record.baselineMarkdown = markdown;
             record.baselineRevision = revision;
             record.baselineSource = source;
             record.savedAt = Date.now();
             record.indexDegraded = result.indexDegraded;
+            if (record.revision !== revision) {
+              record.status = "dirty";
+              this.emit(record);
+              return;
+            }
             record.status = result.indexDegraded
               ? "saved_index_degraded"
               : "saved";
@@ -608,8 +631,18 @@ export class DocumentPersistenceCoordinator {
             this.emit(record);
             return;
           } catch (error) {
+            // Failure receipts have the same ownership boundary as successful
+            // writes. A replaced record must not publish old retry state.
+            if (
+              record.discarded ||
+              this.records.get(record.path) !== record ||
+              record.path !== path
+            ) {
+              return;
+            }
             const retryDelay = this.saveRetryDelaysMs[attempt];
-            const canRetry = retryDelay !== undefined;
+            const canRetry =
+              retryDelay !== undefined && saveRejectionCode(error) === null;
             if (!canRetry) {
               if (
                 !record.discarded &&

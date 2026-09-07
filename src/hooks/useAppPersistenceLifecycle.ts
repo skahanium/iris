@@ -64,6 +64,7 @@ export interface PersistenceBlocker {
 }
 
 interface UseAppPersistenceLifecycleParams {
+  vaultPath: string | null;
   activeFileLocked: boolean;
   activePath: string | null;
   activePathRef: MutableRefObject<string | null>;
@@ -106,6 +107,7 @@ function shouldProjectSavedMarkdownIntoShell(
 }
 
 export function useAppPersistenceLifecycle({
+  vaultPath,
   activeFileLocked,
   activePath,
   activePathRef,
@@ -274,16 +276,22 @@ export function useAppPersistenceLifecycle({
   const versionSnapshotScheduler = useMemo(
     () =>
       createVersionSnapshotScheduler({
-        versionSaveIdle,
-        versionSaveManual,
-        versionFinalizeCurrent,
-        versionSavePreClose,
+        // Bind the queue to the originating Vault, not whichever Vault happens
+        // to be selected when a delayed task eventually dispatches.
+        versionSaveIdle: (path, content) =>
+          versionSaveIdle(path, content, vaultPath ?? ""),
+        versionSaveManual: (path, content) =>
+          versionSaveManual(path, content, vaultPath ?? ""),
+        versionFinalizeCurrent: (path, content, label) =>
+          versionFinalizeCurrent(path, content, label, vaultPath ?? ""),
+        versionSavePreClose: (path, content) =>
+          versionSavePreClose(path, content, vaultPath ?? ""),
         onError: (err) => {
           const msg = err instanceof Error ? err.message : String(err);
           setAiStatus(`自动版本备份提交失败：${msg}`);
         },
       }),
-    [setAiStatus],
+    [setAiStatus, vaultPath],
   );
 
   const enqueueIdleSnapshot = useCallback(

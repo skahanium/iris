@@ -65,7 +65,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         ),
         dispatchable(
             "fs_import_to_vault",
-            "将用户授权的外部 Markdown 文件导入当前 vault",
+            "将用户授权的外部 Markdown 文件导入确认目标；覆盖时必须提供已读正文的 base_content_hash，并保留恢复版本",
             Access::WriteMarkdown,
             true,
             serde_json::json!({
@@ -74,6 +74,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                     "source_path": {"type": "string"},
                     "authorized_root": {"type": "string"},
                     "target_path": {"type": "string"},
+                    "base_content_hash": {"type": "string", "description": "仅 overwrite=true 时必填，必须为已读目标正文的 hash"},
                     "overwrite": {"type": "boolean", "default": false}
                 },
                 "required": ["source_path", "authorized_root", "target_path"]

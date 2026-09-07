@@ -51,7 +51,7 @@ pub struct PendingToolCall {
 pub struct StorageState {
     pub db: Arc<Database>,
     pub write_guard: WriteGuard,
-    cas_store: OnceLock<CasObjectStore>,
+    cas_store: Mutex<Option<(PathBuf, Arc<CasObjectStore>)>>,
     ref_counter: OnceLock<RefCounter>,
     cas_key_override: Option<[u8; 32]>,
 }
@@ -61,16 +61,24 @@ impl StorageState {
         Self {
             db,
             write_guard: WriteGuard::default(),
-            cas_store: OnceLock::new(),
+            cas_store: Mutex::new(None),
             ref_counter: OnceLock::new(),
             cas_key_override,
         }
     }
 
-    /// Get or initialize the CAS object store (lazy, needs vault path).
-    pub fn cas_store(&self, vault: &std::path::Path) -> AppResult<&CasObjectStore> {
-        if let Some(store) = self.cas_store.get() {
-            return Ok(store);
+    /// Get the CAS handle bound to this canonical vault. Only the latest handle
+    /// is cached; in-flight callers retain their original store across switches.
+    pub fn cas_store(&self, vault: &std::path::Path) -> AppResult<Arc<CasObjectStore>> {
+        let vault = vault.canonicalize()?;
+        let mut current = self
+            .cas_store
+            .lock()
+            .map_err(|_| AppError::msg("CAS store lock failed"))?;
+        if let Some((current_vault, store)) = current.as_ref() {
+            if current_vault == &vault {
+                return Ok(Arc::clone(store));
+            }
         }
 
         let cas_path = vault.join(".iris").join("cas");
@@ -90,10 +98,9 @@ impl StorageState {
                 store.enable_encryption_ring(ring);
             }
         }
-        let _ = self.cas_store.set(store);
-        self.cas_store
-            .get()
-            .ok_or_else(|| AppError::msg("Failed to initialize CAS store"))
+        let store = Arc::new(store);
+        *current = Some((vault, Arc::clone(&store)));
+        Ok(store)
     }
 
     pub fn ref_counter(&self) -> &RefCounter {
@@ -479,8 +486,8 @@ impl AppState {
         self.foreground_document_open_count() > 0
     }
 
-    /// Get CAS store via the storage sub-state.
-    pub fn cas_store(&self) -> AppResult<&CasObjectStore> {
+    /// Get an owned CAS handle for the vault selected at the time of this call.
+    pub fn cas_store(&self) -> AppResult<Arc<CasObjectStore>> {
         let vault = self.vault_path()?;
         self.storage.cas_store(&vault)
     }
@@ -557,6 +564,22 @@ impl AppState {
             );
             path
         });
+        let unresolved_moves = crate::storage::move_journal::recover_pending(self, &canonical);
+        if !unresolved_moves.is_empty() {
+            tracing::warn!(
+                result_code = "move_recovery_required",
+                checkpoint_count = unresolved_moves.len(),
+                "vault activated with discoverable move recovery checkpoints"
+            );
+        }
+        let unresolved_cleanup = crate::recycle::recover_cleanup_checkpoints(&self.db, &canonical);
+        if !unresolved_cleanup.is_empty() {
+            tracing::warn!(
+                result_code = "recycle_cleanup_recovery_required",
+                checkpoint_count = unresolved_cleanup.len(),
+                "vault activated with discoverable recycle cleanup checkpoints"
+            );
+        }
         // This is an explicit vault activation boundary, not a Run. Refresh the
         // loaded Skill registry here so every later Run can stay I/O-free.
         let skills = crate::ai_runtime::skills::scan_all(&canonical)?;
@@ -687,6 +710,140 @@ impl AppState {
             .map_err(|_| AppError::msg("Lock error"))?;
         *guard = Some(watcher);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cas_scope_tests {
+    use super::*;
+
+    #[test]
+    fn cas_concurrent_initialization_reuses_canonical_alias_and_releases_old_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let other = dir.path().join("other");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let db = Arc::new(Database::open(&dir.path().join("test.db")).unwrap());
+        let storage = StorageState::new(db, Some([0xA7; 32]));
+        let barrier = std::sync::Barrier::new(4);
+        let handles = std::thread::scope(|scope| {
+            let threads = (0..4)
+                .map(|_| {
+                    let vault = &vault;
+                    let storage = &storage;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        storage.cas_store(vault).unwrap()
+                    })
+                })
+                .collect::<Vec<_>>();
+            threads
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let alias = storage.cas_store(&vault.join(".")).unwrap();
+        for handle in &handles {
+            assert!(Arc::ptr_eq(handle, &alias));
+        }
+        let old = Arc::downgrade(&alias);
+        storage.cas_store(&other).unwrap();
+        drop(handles);
+        assert!(
+            old.upgrade().is_some(),
+            "retained caller still owns its store"
+        );
+        drop(alias);
+        assert!(
+            old.upgrade().is_none(),
+            "cache must not retain all visited vaults"
+        );
+    }
+
+    #[test]
+    fn cas_version_read_uses_explicit_vault_after_selection_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_a = dir.path().join("a");
+        let vault_b = dir.path().join("b");
+        std::fs::create_dir_all(&vault_a).unwrap();
+        std::fs::create_dir_all(&vault_b).unwrap();
+        let state = AppState::new_with_test_cas_key(dir.path().join("data"), [0xA7; 32]).unwrap();
+        state.set_vault(vault_a.clone()).unwrap();
+        let store_a = state.cas_store().unwrap();
+        let hash = store_a.write_content("snapshot from A").unwrap();
+        let diff_hash = store_a
+            .write_content("@0 1 1\nupdated A snapshot\n")
+            .unwrap();
+        state.set_vault(vault_b.clone()).unwrap();
+        assert_eq!(
+            state.cas_store().unwrap().base_path(),
+            vault_b.canonicalize().unwrap().join(".iris/cas")
+        );
+        assert_eq!(
+            crate::version::read_version_content(&state, &vault_a, &format!("cas:{hash}")).unwrap(),
+            "snapshot from A"
+        );
+        assert_eq!(
+            crate::version::read_version_content(
+                &state,
+                &vault_a,
+                &format!("dif:{hash}:{diff_hash}")
+            )
+            .unwrap(),
+            "updated A snapshot"
+        );
+    }
+
+    #[test]
+    fn cas_handles_remain_bound_to_their_vault_after_switch_and_return() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_a = dir.path().join("a");
+        let vault_b = dir.path().join("b");
+        std::fs::create_dir_all(&vault_a).unwrap();
+        std::fs::create_dir_all(&vault_b).unwrap();
+        let db = Arc::new(Database::open(&dir.path().join("test.db")).unwrap());
+        let storage = StorageState::new(db, Some([0xA7; 32]));
+
+        let store_a = storage.cas_store(&vault_a).unwrap();
+        let hash_a = store_a.write_content("vault A snapshot").unwrap();
+        let store_b = storage.cas_store(&vault_b).unwrap();
+        let hash_b = store_b.write_content("vault B snapshot").unwrap();
+
+        assert!(store_b
+            .object_path(&hash_b)
+            .unwrap()
+            .starts_with(vault_b.canonicalize().unwrap()));
+        assert!(!store_a.object_path(&hash_b).unwrap().exists());
+        assert!(!store_b.object_path(&hash_a).unwrap().exists());
+        assert_eq!(
+            store_a.read_blob_content(&hash_a).unwrap(),
+            "vault A snapshot"
+        );
+        assert_eq!(
+            store_b.read_blob_content(&hash_b).unwrap(),
+            "vault B snapshot"
+        );
+        let late_hash = store_a.write_content("in-flight A snapshot").unwrap();
+        assert!(!store_b.object_path(&late_hash).unwrap().exists());
+
+        let returned_a = storage.cas_store(&vault_a).unwrap();
+        assert_eq!(
+            returned_a.read_blob_content(&late_hash).unwrap(),
+            "in-flight A snapshot"
+        );
+        assert_eq!(
+            returned_a.read_blob_content(&hash_a).unwrap(),
+            "vault A snapshot"
+        );
+        assert_eq!(
+            store_b.read_blob_content(&hash_b).unwrap(),
+            "vault B snapshot"
+        );
+        assert!(std::fs::read(returned_a.object_path(&late_hash).unwrap())
+            .unwrap()
+            .starts_with(b"CAS2"));
     }
 }
 

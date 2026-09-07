@@ -1,7 +1,7 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
 use crate::crypto::classified_io;
@@ -14,7 +14,8 @@ use crate::storage::atomic_write::{
 };
 use crate::storage::note_title::title_from_path;
 use crate::storage::paths::{
-    has_reserved_path_root, is_classified_note_path, read_file_lossy, resolve_vault_path,
+    ensure_safe_file_parent, has_reserved_path_root, is_classified_note_path, read_file_lossy,
+    resolve_vault_path,
 };
 
 /// Whether derived SQLite indexes match the persisted Markdown body.
@@ -23,6 +24,15 @@ use crate::storage::paths::{
 pub(crate) enum FileWriteIndexStatus {
     Synced,
     Degraded,
+}
+
+/// The originating document and observed baseline, independent of any AI Run.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FileWritePrecondition {
+    pub expected_vault: String,
+    /// None requires a missing target; it never means an unchecked overwrite.
+    pub base_content_hash: Option<String>,
 }
 
 /// Receipt separating authoritative Markdown persistence from derived indexing.
@@ -44,6 +54,7 @@ pub(crate) struct FileOperationReceipt {
     pub applied_paths: Vec<String>,
     pub pending_paths: Vec<String>,
     pub recovery_versions: Vec<(String, i64)>,
+    pub recovery_warnings: Vec<String>,
 }
 
 /// The single persistence path for Markdown note bodies.
@@ -94,12 +105,50 @@ impl NoteWriteService {
         Self::write_body(state, path, content, false)
     }
 
+    /// Verify the editor's actual baseline before the same protected write.
+    /// Autosave does not create manual versions; explicit operations own that policy.
+    pub(crate) fn write_checked_under_move_lock(
+        state: &AppState,
+        path: &str,
+        content: &str,
+        precondition: &FileWritePrecondition,
+    ) -> AppResult<FileWriteResult> {
+        let vault = state.vault_path()?;
+        let origin = Path::new(&precondition.expected_vault)
+            .canonicalize()
+            .map_err(|_| AppError::msg("note_vault_changed"))?;
+        if origin != vault {
+            return Err(AppError::msg("note_vault_changed"));
+        }
+        Self::ensure_unlocked(state, path)?;
+        let absolute = resolve_vault_path(&vault, path)?;
+        let actual = match std::fs::read(&absolute) {
+            Ok(bytes) => Some(content_hash(&decode_note_payload(&bytes)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if actual != precondition.base_content_hash {
+            return Err(AppError::msg("note_content_conflict"));
+        }
+        Self::write_body(state, path, content, actual.is_none())
+    }
+
     /// Move an existing plain Markdown file into the vault, then refresh its derived index.
     ///
     /// This is the persistence boundary for workflows such as recycle-bin
     /// restore: once the filesystem move succeeds, index failures are reported
     /// as degraded and queued for repair rather than negating the Markdown fact.
+    #[allow(dead_code)] // Compatibility entry for non-transactional callers; recycle uses the locked form.
     pub(crate) fn adopt(state: &AppState, source: &Path, path: &str) -> AppResult<FileWriteResult> {
+        with_vault_move_lock(|| Self::adopt_under_move_lock(state, source, path))
+    }
+
+    /// Adopt a recovered note while the caller holds the vault operation lock.
+    pub(crate) fn adopt_under_move_lock(
+        state: &AppState,
+        source: &Path,
+        path: &str,
+    ) -> AppResult<FileWriteResult> {
         if is_classified_note_path(path) {
             return Err(AppError::msg(
                 "classified notes cannot be adopted through the plain Markdown service",
@@ -107,13 +156,10 @@ impl NoteWriteService {
         }
 
         let vault = state.vault_path()?;
-        let (absolute, content) = with_vault_move_lock(|| {
-            ensure_note_parent(&vault, path)?;
-            let absolute = resolve_vault_path(&vault, path)?;
-            let content = read_file_lossy(source)?;
-            move_file_no_replace_locked(source, &absolute)?;
-            Ok((absolute, content))
-        })?;
+        ensure_safe_file_parent(&vault, path)?;
+        let absolute = resolve_vault_path(&vault, path)?;
+        let content = read_file_lossy(source)?;
+        move_file_no_replace_locked(source, &absolute)?;
         let hash = content_hash(&content);
         state.storage.write_guard.mark(path, &hash);
 
@@ -151,7 +197,7 @@ impl NoteWriteService {
         let payload = encode_payload(path, content)?;
         // Callers must hold the vault move lock so a concurrent rename/trash
         // cannot move the target between path resolution and the durable write.
-        ensure_note_parent(&vault, path)?;
+        ensure_safe_file_parent(&vault, path)?;
         let absolute = resolve_vault_path(&vault, path)?;
         if reject_existing {
             atomic_create(&absolute, &payload)?;
@@ -212,50 +258,22 @@ impl NoteWriteService {
     }
 }
 
-fn ensure_note_parent(vault: &Path, path: &str) -> AppResult<()> {
-    // Validate every existing ancestor before any mkdir. In particular, never
-    // create directories through a symlink and reject only after the side effect.
-    let mut parent = vault.canonicalize()?;
-    let relative_parent = Path::new(path).parent().unwrap_or_else(|| Path::new(""));
-    let mut missing = Vec::new();
-    for component in relative_parent.components() {
-        match component {
-            Component::Normal(part) => {
-                parent.push(part);
-                match std::fs::symlink_metadata(&parent) {
-                    Ok(metadata) if metadata.file_type().is_symlink() => {
-                        return Err(AppError::msg("note_path_alias_not_allowed"))
-                    }
-                    Ok(metadata) if !metadata.is_dir() => {
-                        return Err(AppError::msg("note_parent_not_directory"))
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        missing.push(parent.clone())
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(AppError::msg("Path traversal is not allowed"));
-            }
-        }
+/// Decode the persisted note representation for both opening and baseline checks.
+pub(crate) fn decode_note_payload(raw_bytes: &[u8]) -> AppResult<String> {
+    if classified_io::has_csef_magic(raw_bytes) {
+        let vk_guard = VAULT_KEY
+            .get()
+            .ok_or_else(|| AppError::msg("保险库未初始化"))?;
+        let vk = vk_guard
+            .read()
+            .map_err(|_| AppError::msg("保险库密钥不可用"))?;
+        let decrypted = classified_io::decrypt_cef(raw_bytes, vk.key()?)?;
+        String::from_utf8(decrypted).map_err(|_| AppError::msg("File is not valid UTF-8"))
+    } else {
+        std::str::from_utf8(raw_bytes)
+            .map(str::to_owned)
+            .map_err(|_| AppError::msg("File is not valid UTF-8"))
     }
-    // Also reject a final-component symlink; its canonical path could bypass
-    // lock identity or enter metadata despite a harmless-looking lexical name.
-    let file_name = Path::new(path)
-        .file_name()
-        .ok_or_else(|| AppError::msg("Invalid path"))?;
-    if std::fs::symlink_metadata(parent.join(file_name))
-        .is_ok_and(|metadata| metadata.file_type().is_symlink())
-    {
-        return Err(AppError::msg("note_path_alias_not_allowed"));
-    }
-    for directory in missing {
-        std::fs::create_dir(directory)?;
-    }
-    Ok(())
 }
 
 fn encode_payload(path: &str, content: &str) -> AppResult<Vec<u8>> {

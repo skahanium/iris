@@ -83,19 +83,20 @@ pub(crate) fn apply_edit(
 /// Deduplication can reuse a readable snapshot; failure is never index degradation.
 pub(crate) fn protect_snapshot(state: &AppState, path: &str, content: &str) -> AppResult<i64> {
     let hash = content_hash_str(content);
-    let snapshot = crate::version::create_snapshot(
+    let snapshot = crate::version::create_snapshot_under_move_lock(
         state,
         path,
         content,
         crate::version::SnapshotParams::manual(),
-    )?;
+    )?
+    .entry;
     let id = snapshot
         .map(|entry| entry.id)
         .or_else(|| {
             crate::version::version_list(state, path)
                 .ok()?
                 .into_iter()
-                .find(|entry| entry.content_hash == hash)
+                .find(|entry| !entry.is_legacy_unscoped && entry.content_hash == hash)
                 .map(|entry| entry.id)
         })
         .ok_or_else(|| AppError::msg("note_recovery_snapshot_missing"))?;
@@ -147,4 +148,62 @@ pub(crate) fn trash_note(
         }
         crate::recycle::trash_locked(state, path)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{edited_content, NoteEdit};
+    use crate::cas::hash::content_hash_str;
+
+    #[test]
+    fn exact_edit_preserves_unrelated_markdown_bytes() {
+        let before = "\u{feff}---\r\ntitle: '原题'\r\ntags: [one, two]\r\n---\r\n\r\n# 标题\r\n\r\n目标短句  \r\n\r\n```rust\r\nlet text = \"目标短句\";\r\n```\r\n\r\n[[目标短句|别名]] [链接](./目标短句.md)\r\n\r\n<!-- 保留 -->";
+        let start = before.find("目标短句").unwrap();
+        let edit = NoteEdit {
+            path: "note.md".into(),
+            base_content_hash: content_hash_str(before),
+            range: start..start + "目标短句".len(),
+            original: "目标短句".into(),
+            replacement: "新的正文🙂".into(),
+        };
+        let after = edited_content(&edit, before).unwrap();
+        assert_eq!(after, before.replacen("目标短句", "新的正文🙂", 1));
+        assert_eq!(&after[..start], &before[..start]);
+        assert_eq!(
+            &after[start + edit.replacement.len()..],
+            &before[edit.range.end..]
+        );
+    }
+
+    #[test]
+    fn exact_edit_rejects_invalid_utf8_ranges_and_original_without_panicking() {
+        let before = "正文🙂正文";
+        for (range, original) in [
+            (1..3, "正文"),
+            (0..usize::MAX, "正文"),
+            (std::ops::Range { start: 8, end: 2 }, ""),
+            (0..6, "别的"),
+        ] {
+            let edit = NoteEdit {
+                path: "note.md".into(),
+                base_content_hash: content_hash_str(before),
+                range,
+                original: original.into(),
+                replacement: "替换".into(),
+            };
+            assert!(edited_content(&edit, before).is_err());
+        }
+    }
+
+    #[test]
+    fn exact_edit_rejects_stale_baseline_even_if_original_still_matches() {
+        let edit = NoteEdit {
+            path: "note.md".into(),
+            base_content_hash: content_hash_str("正文\n"),
+            range: 0..6,
+            original: "正文".into(),
+            replacement: "替换".into(),
+        };
+        assert!(edited_content(&edit, "正文\n外部编辑").is_err());
+    }
 }

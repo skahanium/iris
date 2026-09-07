@@ -5,6 +5,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
+use rusqlite::{OptionalExtension, Transaction, TransactionBehavior};
 
 /// Opaque identity of one normal-domain conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -368,11 +369,23 @@ impl NormalSessionRepository {
         })
     }
 
-    /// Delete a conversation by opaque key.
+    /// Delete an idle conversation without racing a new Run or its receipts.
     pub(crate) fn delete(db: &Database, session_key: &str) -> AppResult<bool> {
         db.with_conn(|conn| {
+            let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+            let session_id = tx
+                .query_row(
+                    "SELECT id FROM sessions WHERE session_key = ?1",
+                    [session_key],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            if let Some(session_id) = session_id {
+                ensure_session_idle(&tx, session_id)?;
+            }
             let deleted =
-                conn.execute("DELETE FROM sessions WHERE session_key = ?1", [session_key])?;
+                tx.execute("DELETE FROM sessions WHERE session_key = ?1", [session_key])?;
+            tx.commit()?;
             Ok(deleted > 0)
         })
     }
@@ -380,10 +393,14 @@ impl NormalSessionRepository {
     /// Delete sessions whose last update is older than the configured retention window.
     pub(crate) fn purge_expired(db: &Database, retention_days: u32) -> AppResult<usize> {
         db.with_conn(|conn| {
-            let deleted = conn.execute(
-                "DELETE FROM sessions WHERE updated_at < datetime('now', ?1)",
+            let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+            let deleted = tx.execute(
+                "DELETE FROM sessions WHERE updated_at < datetime('now', ?1)
+                 AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.session_id = sessions.id
+                                 AND r.status NOT IN ('completed', 'failed', 'cancelled'))",
                 [format!("-{retention_days} days")],
             )?;
+            tx.commit()?;
             Ok(deleted)
         })
     }
@@ -392,51 +409,58 @@ impl NormalSessionRepository {
         if from_seq <= 0 {
             return Err(AppError::msg("assistant session sequence must be positive"));
         }
-        let session = Self::get(db, session_key)?
-            .ok_or_else(|| AppError::msg("assistant session not found"))?;
-        let deleted = db.with_conn(|conn| {
-            let deleted = conn.execute(
+        db.with_conn(|conn| {
+            let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+            let session_id = tx
+                .query_row(
+                    "SELECT id FROM sessions WHERE session_key = ?1",
+                    [session_key],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .ok_or_else(|| AppError::msg("assistant session not found"))?;
+            ensure_session_idle(&tx, session_id)?;
+            let deleted = tx.execute(
                 "DELETE FROM session_messages WHERE session_id = ?1 AND seq >= ?2",
-                rusqlite::params![session.session_id, from_seq],
+                rusqlite::params![session_id, from_seq],
             )?;
             if deleted > 0 {
-                conn.execute(
+                tx.execute(
                     "DELETE FROM conversation_summaries WHERE session_id = ?1",
-                    [session.session_id],
+                    [session_id],
                 )?;
-                conn.execute(
+                tx.execute(
                     "UPDATE session_evidence
                      SET retired_at = ?1
                      WHERE session_id = ?2 AND message_seq_first >= ?3 AND retired_at IS NULL",
-                    rusqlite::params![
-                        chrono::Utc::now().to_rfc3339(),
-                        session.session_id,
-                        from_seq,
-                    ],
+                    rusqlite::params![chrono::Utc::now().to_rfc3339(), session_id, from_seq,],
                 )?;
-                conn.execute(
+                tx.execute(
                     "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
-                    rusqlite::params![chrono::Utc::now().to_rfc3339(), session.session_id],
+                    rusqlite::params![chrono::Utc::now().to_rfc3339(), session_id],
                 )?;
             }
+            tx.commit()?;
+            // The next Run rebuilds memory from the retained history. Do not
+            // publish a second, out-of-transaction summary after retract.
             Ok(deleted as u32)
-        })?;
-        if deleted > 0
-            && crate::ai_runtime::conversation_memory::ConversationMemory::refresh_for_session(
-                db,
-                session.session_id,
-                Default::default(),
-            )
-            .is_err()
-        {
-            tracing::warn!(
-                session_key,
-                reason = "conversation_memory_refresh_after_retract_failed",
-                "conversation memory refresh skipped after retract"
-            );
-        }
-        Ok(deleted)
+        })
     }
+}
+
+fn ensure_session_idle(conn: &rusqlite::Connection, session_id: i64) -> AppResult<()> {
+    let active: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_runs WHERE session_id = ?1
+                       AND status NOT IN ('completed', 'failed', 'cancelled'))",
+        [session_id],
+        |row| row.get(0),
+    )?;
+    if active {
+        return Err(AppError::run(
+            super::run_contract::SafeRunErrorCode::ActiveRunExists,
+        ));
+    }
+    Ok(())
 }
 
 fn derive_title(first_user_message: Option<&str>) -> String {

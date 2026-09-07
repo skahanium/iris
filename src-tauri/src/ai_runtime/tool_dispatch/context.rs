@@ -39,6 +39,16 @@ pub struct ToolDispatchContext<'a> {
 }
 
 impl<'a> ToolDispatchContext<'a> {
+    pub(crate) fn ensure_note_write_allowed(&self, db: &Database, path: &str) -> AppResult<()> {
+        self.ensure_run_active()?;
+        self.ensure_write_target_matches(path)?;
+        self.ensure_document_capability(
+            path,
+            crate::ai_runtime::policy_decision_engine::DocumentCapability::ApplyChange,
+        )?;
+        self.ensure_active_skill_scope_allows_path(db, path)
+    }
+
     pub(crate) fn ensure_run_active(&self) -> AppResult<()> {
         if self
             .run_id

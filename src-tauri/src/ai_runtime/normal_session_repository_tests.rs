@@ -2,6 +2,185 @@ use super::conversation_memory::{build_memory_prompt_messages, ConversationMemor
 use super::normal_session_repository::NormalSessionRepository;
 use crate::storage::db::Database;
 
+fn session_lifecycle_fixture(
+    db: &Database,
+    status: &str,
+) -> super::normal_session_repository::NormalSession {
+    let session = NormalSessionRepository::create(db).unwrap();
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO agent_runs
+             (run_id, client_request_id, session_id, turn_id, status, state_version,
+              effect, effort, security_domain, risk, envelope_json, goal_summary,
+              created_at, updated_at)
+             VALUES (?1, ?1, ?2, ?1, ?3, 0, 'apply', 'durable', 'normal', 'bounded_write',
+                     '{}', '', '2020-01-01', '2020-01-01')",
+            rusqlite::params![session.session_key, session.session_id, status],
+        )?;
+        conn.execute(
+            "INSERT INTO session_messages (session_id, seq, role, content, turn_id, created_at)
+             VALUES (?1, 1, 'user', 'public fixture', ?2, '2020-01-01')",
+            rusqlite::params![session.session_id, session.session_key],
+        )?;
+        conn.execute(
+            "UPDATE sessions SET updated_at = '2020-01-01' WHERE id = ?1",
+            [session.session_id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    session
+}
+
+#[test]
+fn session_lifecycle_rejects_delete_and_retract_until_all_runs_are_terminal() {
+    for status in [
+        "accepted",
+        "preparing",
+        "running",
+        "awaiting_confirmation",
+        "awaiting_input",
+        "paused",
+        "verifying",
+    ] {
+        let db = Database::open_in_memory().unwrap();
+        let session = session_lifecycle_fixture(&db, status);
+        let error = NormalSessionRepository::delete(&db, &session.session_key).unwrap_err();
+        assert!(
+            error.to_string().contains("agent_run_active_run_exists"),
+            "{status}: {error}"
+        );
+        let error = NormalSessionRepository::retract(&db, &session.session_key, 1).unwrap_err();
+        assert!(
+            error.to_string().contains("agent_run_active_run_exists"),
+            "{status}: {error}"
+        );
+        assert_eq!(
+            NormalSessionRepository::load_messages(&db, &session.session_key, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE agent_runs SET status = 'cancelled' WHERE session_id = ?1",
+                [session.session_id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            NormalSessionRepository::retract(&db, &session.session_key, 1).unwrap(),
+            1
+        );
+        assert!(NormalSessionRepository::delete(&db, &session.session_key).unwrap());
+    }
+}
+
+#[test]
+fn session_lifecycle_retention_skips_nonterminal_runs() {
+    let db = Database::open_in_memory().unwrap();
+    let active = [
+        "accepted",
+        "preparing",
+        "running",
+        "awaiting_confirmation",
+        "awaiting_input",
+        "paused",
+        "verifying",
+    ]
+    .into_iter()
+    .map(|status| session_lifecycle_fixture(&db, status))
+    .collect::<Vec<_>>();
+    let done = session_lifecycle_fixture(&db, "completed");
+    assert_eq!(NormalSessionRepository::purge_expired(&db, 90).unwrap(), 1);
+    assert!(NormalSessionRepository::get(&db, &done.session_key)
+        .unwrap()
+        .is_none());
+    for session in active {
+        assert!(NormalSessionRepository::get(&db, &session.session_key)
+            .unwrap()
+            .is_some());
+    }
+}
+
+#[test]
+fn session_lifecycle_retract_rolls_back_when_later_metadata_write_fails() {
+    let db = Database::open_in_memory().unwrap();
+    let session = session_lifecycle_fixture(&db, "completed");
+    db.with_conn(|conn| {
+        conn.execute("INSERT INTO conversation_summaries
+            (session_id, seq_start, seq_end, content_hash, goal_summary, created_at, updated_at)
+            VALUES (?1, 1, 1, 'public-hash', 'keep on rollback', '2020-01-01', '2020-01-01')", [session.session_id])?;
+        conn.execute("INSERT INTO session_evidence
+            (session_id, citation_index, citation_label, packet_key, message_seq_first, source_type, created_at)
+            VALUES (?1, 1, 'C1', 'public-packet', 1, 'web', '2020-01-01')", [session.session_id])?;
+        conn.execute_batch("CREATE TRIGGER fail_session_update BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'injected update failure'); END;")?;
+        Ok(())
+    }).unwrap();
+    assert!(NormalSessionRepository::retract(&db, &session.session_key, 1).is_err());
+    assert_eq!(
+        NormalSessionRepository::load_messages(&db, &session.session_key, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+    db.with_read_conn(|conn| {
+        assert_eq!(
+            conn.query_row(
+                "SELECT goal_summary FROM conversation_summaries WHERE session_id = ?1",
+                [session.session_id],
+                |row| row.get::<_, String>(0)
+            )?,
+            "keep on rollback"
+        );
+        assert!(conn
+            .query_row(
+                "SELECT retired_at FROM session_evidence WHERE session_id = ?1",
+                [session.session_id],
+                |row| row.get::<_, Option<String>>(0)
+            )?
+            .is_none());
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn session_lifecycle_cleanup_keeps_note_versions_and_recycle_ownership() {
+    for mode in ["retract", "delete", "retention"] {
+        let db = Database::open_in_memory().unwrap();
+        let session = session_lifecycle_fixture(&db, "completed");
+        db.with_conn(|conn| {
+            conn.execute("INSERT INTO versions
+                (file_id, version_no, content_hash, storage_path, created_at, vault_path, note_path, recycle_id)
+                VALUES (99, '1', 'public-hash', '.iris/versions/public.md', '2020-01-01', '/public-vault', 'note.md', 'recycle-public')", [])?;
+            conn.execute("INSERT INTO recycle_bin (id, original_path, title, deleted_at, expires_at, trash_rel_dir)
+                VALUES ('recycle-public', 'note.md', 'public note', '2020-01-01', '2099-01-01', '.iris/trash/recycle-public')", [])?;
+            Ok(())
+        }).unwrap();
+        match mode {
+            "retract" => {
+                NormalSessionRepository::retract(&db, &session.session_key, 1).unwrap();
+            }
+            "delete" => {
+                NormalSessionRepository::delete(&db, &session.session_key).unwrap();
+            }
+            _ => {
+                NormalSessionRepository::purge_expired(&db, 90).unwrap();
+            }
+        }
+        db.with_read_conn(|conn| {
+            assert_eq!(conn.query_row("SELECT COUNT(*) FROM versions WHERE vault_path = '/public-vault' AND note_path = 'note.md' AND recycle_id = 'recycle-public'", [], |row| row.get::<_, i64>(0))?, 1);
+            assert_eq!(conn.query_row("SELECT COUNT(*) FROM recycle_bin WHERE id = 'recycle-public'", [], |row| row.get::<_, i64>(0))?, 1);
+            if mode == "retract" {
+                assert_eq!(conn.query_row("SELECT COUNT(*) FROM agent_runs WHERE session_id = ?1", [session.session_id], |row| row.get::<_, i64>(0))?, 1);
+            }
+            Ok(())
+        }).unwrap();
+    }
+}
+
 #[test]
 fn normal_session_is_created_and_resolved_without_scene_or_note_binding() {
     let db = Database::open_in_memory().expect("database");

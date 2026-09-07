@@ -1,11 +1,12 @@
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use crate::ai_runtime::sandbox_profile::sandbox_profile_for_tool;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::storage::note_write::NoteWriteService;
-use crate::storage::paths::is_user_note_path;
+use crate::storage::note_operations::{apply_edit, create_note, NoteEdit};
+use crate::storage::paths::{is_user_note_path, validate_user_note_relative_path};
 
 use super::ToolDispatchContext;
 
@@ -118,27 +119,6 @@ fn resolve_external_output(root: &Path, path: &Path) -> AppResult<PathBuf> {
     Ok(parent.join(file_name))
 }
 
-fn resolve_new_vault_note(vault: &Path, relative: &str) -> AppResult<PathBuf> {
-    if !is_user_note_path(relative) || !relative.ends_with(".md") {
-        return Err(AppError::msg("目标路径必须是用户 Markdown 笔记"));
-    }
-    let vault = vault.canonicalize()?;
-    let mut joined = vault.clone();
-    for component in Path::new(relative).components() {
-        match component {
-            Component::Normal(part) => joined.push(part),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(AppError::msg("Path traversal is not allowed"));
-            }
-        }
-    }
-    if !joined.starts_with(&vault) {
-        return Err(AppError::msg("Path is outside the vault"));
-    }
-    Ok(joined)
-}
-
 fn write_text_atomic(path: &Path, content: &str, overwrite: bool) -> AppResult<()> {
     if path.exists() && !overwrite {
         return Err(AppError::msg("Target already exists"));
@@ -160,41 +140,60 @@ fn write_text_atomic(path: &Path, content: &str, overwrite: bool) -> AppResult<(
 
 pub(super) fn fs_import_to_vault_tool(
     state: &AppState,
-    _ctx: &ToolDispatchContext<'_>,
+    ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
+    let vault = state.vault_path()?;
+    let target_path = arg_str(args, "target_path")?;
+    if !is_user_note_path(target_path) || !target_path.ends_with(".md") {
+        return Err(AppError::msg("invalid_note_import_target"));
+    }
+    ctx.ensure_note_write_allowed(&state.db, target_path)?;
     let source = resolve_external_input(
         Path::new(arg_str(args, "authorized_root")?),
         Path::new(arg_str(args, "source_path")?),
     )?;
-    let target_path = arg_str(args, "target_path")?;
     let overwrite = args
         .get("overwrite")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let content = std::fs::read_to_string(&source)?;
+    let mut content = String::new();
+    std::fs::File::open(&source)?
+        .take(MAX_EXTERNAL_TEXT_BYTES as u64 + 1)
+        .read_to_string(&mut content)?;
     if content.len() > MAX_EXTERNAL_TEXT_BYTES {
         return Err(AppError::msg("content exceeds 20MB limit"));
     }
-    let vault = state.vault_path()?;
-    let _ = resolve_new_vault_note(&vault, target_path)?;
-    let receipt = if overwrite {
-        match NoteWriteService::write(state, target_path, &content) {
-            Ok(receipt) => receipt,
-            Err(error) if error.to_string().contains("note_locked") => {
-                return Err(AppError::msg("笔记已锁定，无法写入"));
-            }
-            Err(error) => return Err(error),
-        }
+    let (write, operation) = if overwrite {
+        let base_content_hash = arg_str(args, "base_content_hash")?;
+        let absolute = validate_user_note_relative_path(&vault, target_path)?;
+        let original = std::fs::read_to_string(absolute)?;
+        let edit = NoteEdit {
+            path: target_path.to_owned(),
+            base_content_hash: base_content_hash.to_owned(),
+            range: 0..original.len(),
+            original,
+            replacement: content.clone(),
+        };
+        let receipt = apply_edit(state, &vault, &edit, || {
+            ctx.ensure_note_write_allowed(&state.db, target_path)
+        })?;
+        let operation = serde_json::to_value(&receipt)?;
+        (receipt.write, operation)
     } else {
-        NoteWriteService::create(state, target_path, &content)?
+        let receipt = create_note(state, &vault, target_path, &content, || {
+            ctx.ensure_note_write_allowed(&state.db, target_path)
+        })?;
+        let operation = serde_json::to_value(&receipt)?;
+        (receipt, operation)
     };
     Ok(serde_json::json!({
         "type": "fs_import_to_vault",
-        "path": receipt.entry.path,
+        "path": write.entry.path,
         "bytes": content.len(),
-        "title": receipt.entry.title,
-        "indexStatus": receipt.index_status,
+        "title": write.entry.title,
+        "indexStatus": write.index_status,
+        "receipt": operation,
     }))
 }
 

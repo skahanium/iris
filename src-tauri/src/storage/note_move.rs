@@ -1,14 +1,16 @@
 //! Shared move/backlink operation. Preview and execution consume the same bytes.
+use std::collections::BTreeMap;
+
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::indexer::scan::{collect_vault_files, content_hash, index_file, rename_file_index};
-use crate::storage::atomic_write::move_file_no_replace_locked;
+use crate::indexer::scan::{collect_vault_files, content_hash, index_file};
+use crate::storage::move_journal::{MoveCheckpoint, MoveKind};
 use crate::storage::note_operations::protect_snapshot;
 use crate::storage::note_title::title_from_path;
 use crate::storage::note_write::{
     noop_write_receipt, FileWriteIndexStatus, FileWriteResult, NoteWriteService,
 };
-use crate::storage::paths::{relative_path, validate_user_note_relative_path};
+use crate::storage::paths::{relative_path, resolve_vault_path, validate_user_note_relative_path};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +40,7 @@ pub(crate) struct NoteMoveReceipt {
     pub applied_paths: Vec<String>,
     pub pending_paths: Vec<String>,
     pub recovery_versions: Vec<(String, i64)>,
+    pub recovery_warnings: Vec<String>,
 }
 
 /// Compute the actual on-disk impact, not only potentially stale index links.
@@ -101,7 +104,7 @@ pub(crate) fn execute_move_locked(
         if lookup_indexed_file_id(conn, &plan.path)?.is_none() {
             index_file(conn, &vault, &source)?;
         }
-        ensure_destination_identity_available(conn, &plan.new_path)
+        crate::version::repository::ensure_destination_available(conn, &vault, &plan.new_path)
     })?;
     let mut versions = vec![(
         plan.path.clone(),
@@ -113,35 +116,19 @@ pub(crate) fn execute_move_locked(
             protect_snapshot(state, &edit.path, &edit.before)?,
         ));
     }
-    move_file_no_replace_locked(&source, &target)?;
-    let identity_result = state.db.with_conn(|conn| {
-        conn.execute_batch("BEGIN IMMEDIATE")?;
-        let result = (|| {
-            ensure_destination_identity_available(conn, &plan.new_path)?;
-            conn.execute(
-                "DELETE FROM files
-                 WHERE path = ?1
-                   AND NOT EXISTS (SELECT 1 FROM versions WHERE file_id = files.id)",
-                [&plan.new_path],
-            )?;
-            rename_file_index(conn, &plan.path, &plan.new_path)
-        })();
-        match result {
-            Ok(file_id) => {
-                if let Err(error) = conn.execute_batch("COMMIT") {
-                    let _ = conn.execute_batch("ROLLBACK");
-                    return Err(error.into());
-                }
-                Ok(file_id)
-            }
-            Err(error) => {
-                let _ = conn.execute_batch("ROLLBACK");
-                Err(error)
-            }
-        }
-    });
-    if let Err(identity_error) = identity_result {
-        return match move_file_no_replace_locked(&target, &source) {
+    let mappings = BTreeMap::from([(plan.path.clone(), plan.new_path.clone())]);
+    let mut checkpoint = MoveCheckpoint::create(
+        state,
+        &vault,
+        MoveKind::File,
+        (&plan.path, &plan.new_path),
+        &mappings,
+        &plan.backlinks,
+        &versions,
+    )?;
+    checkpoint.move_filesystem()?;
+    if let Err(identity_error) = checkpoint.commit_identity(state) {
+        return match checkpoint.rollback_filesystem() {
             Ok(()) => Err(AppError::msg(format!(
                 "note_move_identity_migration_failed: {identity_error}"
             ))),
@@ -160,31 +147,32 @@ pub(crate) fn execute_move_locked(
     let indexed = state.db.with_conn(|conn| index_file(conn, &vault, &target));
     match indexed {
         Ok(entry) => write.entry = entry,
-        Err(_) => write.index_status = FileWriteIndexStatus::Degraded,
+        Err(_) => {
+            write.index_status = FileWriteIndexStatus::Degraded;
+            NoteWriteService::schedule_index_repair(state, &plan.new_path);
+        }
     }
     let mut applied_paths = vec![plan.new_path.clone()];
-    let mut pending_paths = Vec::new();
-    for (index, edit) in plan.backlinks.iter().enumerate() {
-        let path = if edit.path == plan.path {
-            &plan.new_path
-        } else {
-            &edit.path
-        };
-        match NoteWriteService::write_under_move_lock(state, path, &edit.after) {
-            Ok(receipt) => {
-                if path == &plan.new_path {
-                    write.content_hash = receipt.content_hash;
-                }
-                if receipt.index_status == FileWriteIndexStatus::Degraded {
-                    write.index_status = FileWriteIndexStatus::Degraded;
-                }
-                if !applied_paths.contains(path) {
-                    applied_paths.push(path.clone());
-                }
-            }
+    let backlink_outcome = checkpoint.apply_backlinks(state);
+    let pending_paths = backlink_outcome.pending_paths;
+    let recovery_warnings = backlink_outcome.recovery_warnings;
+    for path in backlink_outcome.applied_paths {
+        if path == plan.new_path {
+            write.content_hash = crate::indexer::scan::file_hash(&target)
+                .unwrap_or_else(|_| write.content_hash.clone());
+        }
+        if !applied_paths.contains(&path) {
+            applied_paths.push(path.clone());
+        }
+        match resolve_vault_path(&vault, &path).and_then(|absolute| {
+            state
+                .db
+                .with_conn(|conn| index_file(conn, &vault, &absolute))
+        }) {
+            Ok(_) => {}
             Err(_) => {
-                pending_paths.extend(plan.backlinks[index..].iter().map(|edit| edit.path.clone()));
-                break;
+                write.index_status = FileWriteIndexStatus::Degraded;
+                NoteWriteService::schedule_index_repair(state, &path);
             }
         }
     }
@@ -194,6 +182,7 @@ pub(crate) fn execute_move_locked(
         applied_paths: applied_paths.clone(),
         pending_paths: pending_paths.clone(),
         recovery_versions: versions.clone(),
+        recovery_warnings: recovery_warnings.clone(),
     });
     Ok(NoteMoveReceipt {
         write,
@@ -201,6 +190,7 @@ pub(crate) fn execute_move_locked(
         applied_paths,
         pending_paths,
         recovery_versions: versions,
+        recovery_warnings,
     })
 }
 
@@ -212,25 +202,6 @@ fn lookup_indexed_file_id(conn: &rusqlite::Connection, path: &str) -> AppResult<
     })
     .optional()
     .map_err(Into::into)
-}
-
-fn ensure_destination_identity_available(
-    conn: &rusqlite::Connection,
-    new_path: &str,
-) -> AppResult<()> {
-    let target_has_history = conn.query_row(
-        "SELECT EXISTS(
-             SELECT 1 FROM versions v
-             JOIN files f ON f.id = v.file_id
-             WHERE f.path = ?1
-         )",
-        [new_path],
-        |row| row.get::<_, bool>(0),
-    )?;
-    if target_has_history {
-        return Err(AppError::msg("note_destination_history_conflict"));
-    }
-    Ok(())
 }
 
 /// Replace link targets only, preserving whitespace, fences, frontmatter and code.
@@ -289,6 +260,51 @@ pub(crate) fn rewrite_wikilinks(content: &str, old_path: &str, new_path: &str) -
 mod tests {
     use super::*;
     use crate::version::version_save_manual;
+
+    #[test]
+    fn move_preserves_unindexed_history_and_rejects_unindexed_destination_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(vault.join("old.md"), "original").unwrap();
+        let state = AppState::new(directory.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        let old = version_save_manual(&state, "old.md", "historical")
+            .unwrap()
+            .unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute("DELETE FROM files", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let plan = prepare_move(&state, "old.md", "new.md").unwrap();
+        execute_move_locked(&state, &plan).unwrap();
+        assert!(crate::version::version_list(&state, "new.md")
+            .unwrap()
+            .iter()
+            .any(|v| v.id == old.id));
+        assert!(crate::version::version_list(&state, "old.md")
+            .unwrap()
+            .is_empty());
+        std::fs::write(vault.join("another.md"), "another").unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute("DELETE FROM files", [])?;
+                Ok(())
+            })
+            .unwrap();
+        std::fs::remove_file(vault.join("new.md")).unwrap();
+        let plan = prepare_move(&state, "another.md", "new.md").unwrap();
+        assert!(execute_move_locked(&state, &plan).is_err());
+        assert_eq!(
+            std::fs::read_to_string(vault.join("another.md")).unwrap(),
+            "another"
+        );
+        assert!(!vault.join("new.md").exists());
+    }
 
     #[test]
     fn note_move_rejects_a_non_markdown_destination_before_snapshots() {

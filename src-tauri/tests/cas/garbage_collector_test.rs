@@ -7,18 +7,23 @@ use iris_lib::cas::store::CasObjectStore;
 use iris_lib::storage::db::Database;
 use tempfile::tempdir;
 
-fn setup() -> (CasObjectStore, Arc<Database>, GarbageCollector) {
+fn setup() -> (
+    tempfile::TempDir,
+    CasObjectStore,
+    Arc<Database>,
+    GarbageCollector,
+) {
     let dir = tempdir().unwrap();
     let db = Arc::new(Database::open_in_memory().unwrap());
     let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
     store.enable_encryption([3u8; 32]);
     let gc = GarbageCollector::new(store.clone(), db.clone());
-    (store, db, gc)
+    (dir, store, db, gc)
 }
 
 #[tokio::test]
 async fn test_gc_removes_orphaned_objects() {
-    let (store, db, gc) = setup();
+    let (_dir, store, db, gc) = setup();
     let rc = RefCounter::new(db.clone());
 
     // 存储对象并设置引用计数为 0（通过增减）
@@ -38,7 +43,7 @@ async fn test_gc_removes_orphaned_objects() {
 
 #[tokio::test]
 async fn test_gc_preserves_referenced_objects() {
-    let (store, db, gc) = setup();
+    let (_dir, store, db, gc) = setup();
     let rc = RefCounter::new(db.clone());
 
     let hash = store.store_blob(b"referenced content").unwrap();
@@ -55,7 +60,7 @@ async fn test_gc_preserves_referenced_objects() {
 
 #[tokio::test]
 async fn test_gc_removes_ref_links_for_orphaned_objects() {
-    let (store, db, gc) = setup();
+    let (_dir, store, db, gc) = setup();
     let rc = RefCounter::new(db.clone());
 
     let hash1 = store.store_blob(b"obj1").unwrap();
@@ -88,13 +93,14 @@ async fn test_gc_removes_ref_links_for_orphaned_objects() {
 
 #[tokio::test]
 async fn test_gc_cleans_expired_recycle_bin_items() {
-    let (store, db, gc) = setup();
+    let (_dir, store, db, gc) = setup();
 
     // 在回收站中插入一个已过期的条目
-    let trash_rel = "trash/test_item";
+    let trash_rel = ".iris/trash/test-id-1";
     let trash_dir = store.base_path().join(trash_rel);
     std::fs::create_dir_all(&trash_dir).unwrap();
     std::fs::write(trash_dir.join("file.md"), "deleted content").unwrap();
+    std::fs::write(trash_dir.join("manifest.json"), "{}").unwrap();
 
     let past = (Utc::now() - chrono::Duration::days(1)).to_rfc3339();
     db.with_conn(|conn| {
@@ -137,9 +143,9 @@ async fn test_gc_cleans_expired_recycle_bin_items() {
 
 #[tokio::test]
 async fn test_gc_preserves_unexpired_recycle_bin_items() {
-    let (store, db, gc) = setup();
+    let (_dir, store, db, gc) = setup();
 
-    let trash_rel = "trash/future_item";
+    let trash_rel = ".iris/trash/test-id-2";
     let trash_dir = store.base_path().join(trash_rel);
     std::fs::create_dir_all(&trash_dir).unwrap();
 
@@ -170,7 +176,7 @@ async fn test_gc_preserves_unexpired_recycle_bin_items() {
 
 #[tokio::test]
 async fn test_gc_noop_when_no_orphaned_or_expired() {
-    let (_store, _db, gc) = setup();
+    let (_dir, _store, _db, gc) = setup();
 
     let result = gc.collect().await.unwrap();
     assert_eq!(result.orphaned_count, 0);

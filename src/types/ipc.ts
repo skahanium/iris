@@ -84,6 +84,12 @@ export interface FileEntry {
 
 export type FileWriteIndexStatus = "synced" | "degraded";
 
+/** Baseline observed by the originating editor; null requires a missing file. */
+export interface FileWritePrecondition {
+  expectedVault: string;
+  baseContentHash: string | null;
+}
+
 /** Receipt for the authoritative Markdown write and its derived-index refresh. */
 export interface FileWriteResult {
   entry: FileEntry;
@@ -94,7 +100,14 @@ export interface FileWriteResult {
     appliedPaths: string[];
     pendingPaths: string[];
     recoveryVersions: Array<[string, number]>;
+    recoveryWarnings?: string[];
   };
+}
+
+/** Directory commit, separately from pending backlink edits. */
+export interface FolderMoveResult {
+  indexStatus: FileWriteIndexStatus;
+  operation: NonNullable<FileWriteResult["operation"]>;
 }
 
 export type CredentialState = "available" | "missing";
@@ -358,6 +371,8 @@ export interface VersionEntry {
   is_finalized: boolean;
   kind: VersionKind;
   created_at: string;
+  /** Older snapshots whose original Vault cannot be proven; never auto-adopt. */
+  is_legacy_unscoped?: boolean;
 }
 
 /** Durable result of a manual or idle version-save command. */

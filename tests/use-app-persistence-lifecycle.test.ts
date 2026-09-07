@@ -110,6 +110,7 @@ function Harness({
   tabsRef.current = tabItems;
 
   const api = useAppPersistenceLifecycle({
+    vaultPath: "/vault-test",
     activeFileLocked,
     activePath: path,
     activePathRef,

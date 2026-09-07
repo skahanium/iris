@@ -64,6 +64,7 @@ import {
 } from "@/lib/session-char-delta";
 
 import { isTauriRuntime } from "@/lib/tauri-runtime";
+import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
 import { AiSourceHighlightExtension } from "./extensions/AiSourceHighlightExtension";
@@ -264,6 +265,7 @@ function TipTapEditorInner({
   setLocked,
   cjkPunctuationEnabled = true,
 }: TipTapEditorProps) {
+  const toast = useToast();
   const lockedRef = useRef(locked);
   lockedRef.current = locked;
   const mutationBlockedRef = useRef(mutationBlocked);
@@ -456,6 +458,8 @@ function TipTapEditorInner({
       EditorImageDropExtension.configure({
         canMutate: () => mutationAllowed(),
         enabled: isTauriRuntime(),
+        onError: () =>
+          toast("图片未能插入，请返回原文档后重试", { tone: "error" }),
       }),
 
       TaskList,
@@ -509,7 +513,7 @@ function TipTapEditorInner({
       }),
     ],
 
-    [mediaLoading, mutationAllowed, vaultPath],
+    [mediaLoading, mutationAllowed, toast, vaultPath],
   );
 
   const ingestResultRef = useRef<{

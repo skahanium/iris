@@ -278,6 +278,140 @@ async fn external_import_requires_authorized_root_and_writes_vault_note() {
 }
 
 #[tokio::test]
+async fn external_import_respects_confirmed_note_target_before_creating_directories() {
+    let (state, dir) = test_state();
+    let external = dir.path().join("external");
+    std::fs::create_dir_all(&external).unwrap();
+    let source = external.join("source.md");
+    std::fs::write(&source, "# Imported").unwrap();
+    let mut context = ctx();
+    context.write_target_path = Some("allowed.md");
+
+    let result = dispatch_tool(
+        &state,
+        &context,
+        "fs_import_to_vault",
+        &serde_json::json!({
+            "source_path": source,
+            "authorized_root": external,
+            "target_path": "not-confirmed/import.md"
+        }),
+    )
+    .await;
+
+    assert!(!result.success, "unconfirmed import must not execute");
+    assert!(!state.vault_path().unwrap().join("not-confirmed").exists());
+}
+
+#[tokio::test]
+async fn external_import_overwrite_requires_read_baseline_and_preserves_history() {
+    let (state, dir) = test_state();
+    let external = dir.path().join("external");
+    std::fs::create_dir_all(&external).unwrap();
+    let source = external.join("source.md");
+    std::fs::write(&source, "# Imported\n").unwrap();
+    let target = state.vault_path().unwrap().join("target.md");
+    let original = "---\ntitle: Original\n---\n\n# Keep in history\r\n";
+    std::fs::write(&target, original).unwrap();
+    let mut arguments = serde_json::json!({
+        "source_path": source,
+        "authorized_root": external,
+        "target_path": "target.md",
+        "overwrite": true
+    });
+
+    let missing = dispatch_tool(&state, &ctx(), "fs_import_to_vault", &arguments).await;
+    assert!(
+        !missing.success,
+        "overwrite without a read baseline must fail"
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), original);
+
+    arguments["base_content_hash"] = iris_lib::cas::hash::content_hash_str(original).into();
+    let result = dispatch_tool(&state, &ctx(), "fs_import_to_vault", &arguments).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "# Imported\n");
+    let version_id = result.output["receipt"]["versionId"]
+        .as_i64()
+        .expect("recovery version");
+    assert_eq!(
+        iris_lib::version::version_preview(&state, version_id).unwrap(),
+        original
+    );
+
+    std::fs::write(&target, "newer user edit").unwrap();
+    let stale = dispatch_tool(&state, &ctx(), "fs_import_to_vault", &arguments).await;
+    assert!(!stale.success);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "newer user edit");
+}
+
+#[tokio::test]
+async fn external_import_overwrite_rejects_non_markdown_target() {
+    let (state, dir) = test_state();
+    let external = dir.path().join("external");
+    std::fs::create_dir_all(&external).unwrap();
+    let source = external.join("source.md");
+    std::fs::write(&source, "replacement").unwrap();
+    let target = state.vault_path().unwrap().join("config.txt");
+    std::fs::write(&target, "original").unwrap();
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(),
+        "fs_import_to_vault",
+        &serde_json::json!({
+            "source_path": source,
+            "authorized_root": external,
+            "target_path": "config.txt",
+            "overwrite": true,
+            "base_content_hash": iris_lib::cas::hash::content_hash_str("original")
+        }),
+    )
+    .await;
+
+    assert!(!result.success, "import must only target Markdown notes");
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "original");
+}
+
+#[tokio::test]
+async fn external_import_overwrite_stops_when_protection_snapshot_fails() {
+    let (state, dir) = test_state();
+    let external = dir.path().join("external");
+    std::fs::create_dir_all(&external).unwrap();
+    let source = external.join("source.md");
+    std::fs::write(&source, "replacement").unwrap();
+    let target = state.vault_path().unwrap().join("target.md");
+    std::fs::write(&target, "original").unwrap();
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER reject_import_snapshot BEFORE INSERT ON versions
+            BEGIN SELECT RAISE(ABORT, 'snapshot unavailable'); END;",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(),
+        "fs_import_to_vault",
+        &serde_json::json!({
+            "source_path": source,
+            "authorized_root": external,
+            "target_path": "target.md",
+            "overwrite": true,
+            "base_content_hash": iris_lib::cas::hash::content_hash_str("original")
+        }),
+    )
+    .await;
+
+    assert!(!result.success);
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "original");
+}
+
+#[tokio::test]
 async fn external_import_rejects_oversized_markdown_without_creating_a_note() {
     let (state, dir) = test_state();
     let external = dir.path().join("external");

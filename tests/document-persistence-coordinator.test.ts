@@ -8,10 +8,12 @@ import {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
     resolve = nextResolve;
+    reject = nextReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 const written: DocumentPersistenceWriteResult = { indexDegraded: false };
@@ -118,6 +120,8 @@ describe("DocumentPersistenceCoordinator", () => {
 
     expect(coordinator.get("note.md")).toMatchObject({
       markdown: "newer edit",
+      baselineMarkdown: "first edit",
+      baselineSource: "user_edit",
       status: "dirty",
     });
 
@@ -326,6 +330,53 @@ describe("DocumentPersistenceCoordinator", () => {
     expect(write).toHaveBeenCalledWith("new.md", "unsaved");
   });
 
+  it("does not discard an older dirty destination when rebinding another document", async () => {
+    const write = vi.fn(async () => written);
+    const coordinator = new DocumentPersistenceCoordinator({ write });
+    coordinator.load("target.md", "target disk", 1);
+    coordinator.capture("target.md", "target unsaved", "user_edit");
+    coordinator.load("source.md", "source disk", 2);
+    expect(() => coordinator.rebind("source.md", "target.md")).toThrow();
+    expect(coordinator.get("target.md")?.markdown).toBe("target unsaved");
+    expect(coordinator.get("source.md")?.markdown).toBe("source disk");
+    await coordinator.barrierAll();
+    expect(write.mock.calls).toEqual([["target.md", "target unsaved"]]);
+  });
+
+  it("rejects a rebind onto an in-flight destination without detaching its receipt", async () => {
+    const receipt = deferred<DocumentPersistenceWriteResult>();
+    const write = vi.fn(() => receipt.promise);
+    const coordinator = new DocumentPersistenceCoordinator({ write });
+    coordinator.load("target.md", "target disk", 1);
+    coordinator.capture("target.md", "target saving", "user_edit");
+    const saving = coordinator.commit("target.md");
+    coordinator.load("source.md", "source disk", 2);
+    expect(() => coordinator.rebind("source.md", "target.md")).toThrow();
+    receipt.resolve(written);
+    await saving;
+    expect(coordinator.get("target.md")).toMatchObject({
+      markdown: "target saving",
+      baselineMarkdown: "target saving",
+      status: "saved",
+    });
+    expect(coordinator.get("source.md")?.markdown).toBe("source disk");
+  });
+
+  it("keeps a migration recoverable when the backend returns an occupied tracked path", async () => {
+    const coordinator = new DocumentPersistenceCoordinator({
+      write: async () => written,
+    });
+    coordinator.load("occupied.md", "unrelated target", 1);
+    coordinator.load("old.md", "source", 2);
+    await coordinator.beginPathMigration("old.md", "proposed.md");
+    expect(() =>
+      coordinator.completePathMigration("old.md", "occupied.md"),
+    ).toThrow();
+    expect(coordinator.abortPathMigration("old.md")?.path).toBe("old.md");
+    expect(coordinator.get("occupied.md")?.markdown).toBe("unrelated target");
+    expect(coordinator.get("old.md")?.markdown).toBe("source");
+  });
+
   it("projects a successful rename with a degraded derived index", async () => {
     const coordinator = new DocumentPersistenceCoordinator({
       write: async () => written,
@@ -390,6 +441,75 @@ describe("DocumentPersistenceCoordinator", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not project a discarded document's late save error into a reopened path", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = deferred<DocumentPersistenceWriteResult>();
+      const write = vi.fn(() => pending.promise);
+      const coordinator = new DocumentPersistenceCoordinator({
+        write,
+        saveRetryDelaysMs: [100],
+      });
+      coordinator.load("note.md", "old session", 1);
+      coordinator.capture("note.md", "old edit", "user_edit");
+      const saving = coordinator.commit("note.md");
+      const discarding = coordinator.discard("note.md");
+      coordinator.load("note.md", "reopened document", 2);
+      const changes = vi.fn();
+      coordinator.subscribe(changes);
+
+      pending.reject(new Error("late disk failure"));
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.all([saving, discarding]);
+
+      expect(changes).not.toHaveBeenCalled();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(coordinator.get("note.md")).toMatchObject({
+        markdown: "reopened document",
+        status: "clean",
+        error: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["locked", { code: "message", message: "note_locked" }],
+    ["changed Vault", new Error("note_vault_changed")],
+    ["changed baseline", "note_content_conflict"],
+  ])(
+    "keeps edits without automatic retries after a %s rejection",
+    async (_name, error) => {
+      vi.useFakeTimers();
+      try {
+        const write = vi.fn(async () => {
+          throw error;
+        });
+        const coordinator = new DocumentPersistenceCoordinator({
+          write,
+          saveRetryDelaysMs: [100, 200],
+        });
+        coordinator.load("note.md", "loaded baseline", 1);
+        coordinator.capture("note.md", "unsaved edit", "user_edit");
+        const saving = coordinator.commit("note.md");
+        const rejected = expect(saving).rejects.toBe(error);
+        await vi.runAllTimersAsync();
+        await rejected;
+
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(coordinator.get("note.md")).toMatchObject({
+          baselineMarkdown: "loaded baseline",
+          markdown: "unsaved edit",
+          status: "failed",
+        });
+        expect(coordinator.hasDirtyDocuments()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("logs debounced auto-save failures without discarding the dirty snapshot", async () => {
     vi.useFakeTimers();

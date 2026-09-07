@@ -122,7 +122,15 @@ describe("VaultNavigator corpus assignment", () => {
     });
     fileSetLock.mockResolvedValue(undefined);
     folderCreate.mockResolvedValue(undefined);
-    folderRename.mockResolvedValue("synced");
+    folderRename.mockResolvedValue({
+      indexStatus: "synced",
+      operation: {
+        previousPath: "policy",
+        appliedPaths: [],
+        pendingPaths: [],
+        recoveryVersions: [],
+      },
+    });
     knowledgeReindex.mockResolvedValue({ anchors: 0, regulations: 1 });
     vi.mocked(createDefaultNote).mockResolvedValue({
       content: '---\ntitle: "未命名文档"\n---\n\n',
@@ -157,7 +165,14 @@ describe("VaultNavigator corpus assignment", () => {
 
   async function renderNavigator() {
     await act(async () => {
-      root.render(<VaultNavigator open onClose={vi.fn()} onOpen={vi.fn()} />);
+      root.render(
+        <VaultNavigator
+          open
+          vaultPath="/vault-a"
+          onClose={vi.fn()}
+          onOpen={vi.fn()}
+        />,
+      );
     });
     await vi.waitFor(() => {
       expect(document.body.textContent).toContain("policy");
@@ -221,7 +236,14 @@ describe("VaultNavigator corpus assignment", () => {
   it("keeps the new-note field empty and uses default allocation for empty creates", async () => {
     const onOpen = vi.fn();
     await act(async () => {
-      root.render(<VaultNavigator open onClose={vi.fn()} onOpen={onOpen} />);
+      root.render(
+        <VaultNavigator
+          open
+          vaultPath="/vault-a"
+          onClose={vi.fn()}
+          onOpen={onOpen}
+        />,
+      );
     });
     await vi.waitFor(() => {
       expect(document.body.textContent).toContain("policy");
@@ -238,7 +260,10 @@ describe("VaultNavigator corpus assignment", () => {
       await Promise.resolve();
     });
 
-    expect(createDefaultNote).toHaveBeenCalledWith({ folderPrefix: "" });
+    expect(createDefaultNote).toHaveBeenCalledWith({
+      folderPrefix: "",
+      expectedVault: "/vault-a",
+    });
     expect(prepareNoteOpenFromContent).toHaveBeenCalledWith(
       expect.objectContaining({
         path: "未命名文档.md",
@@ -288,7 +313,7 @@ describe("VaultNavigator corpus assignment", () => {
       findButton("创建文件夹").click();
     });
 
-    expect(folderCreate).toHaveBeenCalledWith("policy/drafts");
+    expect(folderCreate).toHaveBeenCalledWith("policy/drafts", "/vault-a");
   });
 
   it("shows corpus choices in the selected folder details and reindexes after confirming", async () => {
@@ -381,7 +406,11 @@ describe("VaultNavigator corpus assignment", () => {
       findButton("保存名称").click();
     });
 
-    expect(fileRename).toHaveBeenCalledWith("policy/a.md", "policy/b.md");
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/a.md",
+      "policy/b.md",
+      "/vault-a",
+    );
   });
 
   it("moves a document by choosing a target folder", async () => {
@@ -400,7 +429,11 @@ describe("VaultNavigator corpus assignment", () => {
       findButton("移动到此处").click();
     });
 
-    expect(fileRename).toHaveBeenCalledWith("policy/a.md", "archive/a.md");
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/a.md",
+      "archive/a.md",
+      "/vault-a",
+    );
   });
 
   it("surfaces structured move errors instead of hiding them behind a generic label", async () => {
@@ -448,6 +481,7 @@ describe("VaultNavigator corpus assignment", () => {
     expect(fileRename).toHaveBeenCalledWith(
       "policy/未命名文档.md",
       "archive/未命名文档.md",
+      "/vault-a",
     );
   });
 
@@ -476,6 +510,7 @@ describe("VaultNavigator corpus assignment", () => {
     expect(fileRename).toHaveBeenCalledWith(
       "policy/custom-slug.md",
       "archive/custom-slug.md",
+      "/vault-a",
     );
   });
 
@@ -510,6 +545,7 @@ describe("VaultNavigator corpus assignment", () => {
     expect(fileRename).toHaveBeenCalledWith(
       "policy/未命名文档.md",
       "archive/未命名文档（1）.md",
+      "/vault-a",
     );
   });
 
@@ -561,8 +597,16 @@ describe("VaultNavigator corpus assignment", () => {
     await act(async () => {
       findButton("移动到此处").click();
     });
-    expect(fileRename).toHaveBeenCalledWith("policy/a.md", "archive/a.md");
-    expect(fileRename).toHaveBeenCalledWith("policy/b.md", "archive/b.md");
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/a.md",
+      "archive/a.md",
+      "/vault-a",
+    );
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/b.md",
+      "archive/b.md",
+      "/vault-a",
+    );
 
     await act(async () => {
       findButton("批量锁定").click();
@@ -601,7 +645,11 @@ describe("VaultNavigator corpus assignment", () => {
       findButton("移动到此处").click();
     });
 
-    expect(folderRename).toHaveBeenCalledWith("policy/", "archive/policy");
+    expect(folderRename).toHaveBeenCalledWith(
+      "policy/",
+      "archive/policy",
+      "/vault-a",
+    );
   });
 
   it("prepares visible files and closes immediately when opening a file", async () => {
@@ -619,6 +667,7 @@ describe("VaultNavigator corpus assignment", () => {
       root.render(
         <VaultNavigator
           open
+          vaultPath="/vault-a"
           onClose={onClose}
           onOpen={onOpen}
           onPrepare={onPrepare}
@@ -671,6 +720,7 @@ describe("VaultNavigator corpus assignment", () => {
       root.render(
         <VaultNavigator
           open
+          vaultPath="/vault-a"
           onClose={vi.fn()}
           onOpen={vi.fn()}
           onPrepare={onPrepare}

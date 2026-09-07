@@ -1,7 +1,9 @@
 mod kind;
 mod policy;
+pub(crate) mod repository;
 
 use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -31,6 +33,7 @@ pub struct VersionEntry {
     pub is_finalized: bool,
     pub kind: VersionKind,
     pub created_at: String,
+    pub is_legacy_unscoped: bool,
 }
 
 /// Parameters for [`create_snapshot`].
@@ -124,7 +127,7 @@ pub fn version_save_idle_outcome(
 }
 
 const VERSION_SELECT: &str = "SELECT v.id, v.file_id, v.version_no, v.label, v.content_hash,
-       v.word_count, v.is_finalized, v.kind, v.created_at";
+       v.word_count, v.is_finalized, v.kind, v.created_at, v.vault_path IS NULL";
 
 fn timestamp_version_no() -> String {
     Utc::now().format("%Y%m%d%H%M%S%6f").to_string()
@@ -158,6 +161,7 @@ fn purge_classified_derived_rows(
 
 fn ensure_snapshot_file_id(
     state: &AppState,
+    vault: &Path,
     path: &str,
     content_hash: &str,
     content: &str,
@@ -175,11 +179,10 @@ fn ensure_snapshot_file_id(
         // Disk-first saves can succeed while derived indexing is temporarily
         // degraded. Versioning has the authoritative Markdown in hand, so
         // repair the missing file row before attaching the snapshot.
-        let vault = state.vault_path()?;
-        let absolute = resolve_vault_path(&vault, path)?;
+        let absolute = resolve_vault_path(vault, path)?;
         let index_hash = index_content_hash(content);
         let entry = state.db.with_conn(|conn| {
-            index_file_from_content(conn, &vault, &absolute, content, &index_hash)
+            index_file_from_content(conn, vault, &absolute, content, &index_hash)
         })?;
         return Ok(entry.id);
     }
@@ -224,6 +227,7 @@ fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {
         is_finalized: row.get::<_, i64>(6)? != 0,
         kind,
         created_at: row.get(8)?,
+        is_legacy_unscoped: row.get(9)?,
     })
 }
 
@@ -284,8 +288,9 @@ pub(crate) fn read_version_content(
     // Diff delta: "dif:{parent_hash}:{diff_hash}"
     if let Some(rest) = storage_path.strip_prefix(CAS_DIFF_PREFIX) {
         if let Some((parent_hash, diff_hash)) = rest.split_once(':') {
-            let parent = state.cas_store()?.read_blob_content(parent_hash)?;
-            let diff = state.cas_store()?.read_blob_content(diff_hash)?;
+            let store = state.storage.cas_store(vault)?;
+            let parent = store.read_blob_content(parent_hash)?;
+            let diff = store.read_blob_content(diff_hash)?;
             return crate::cas::diff::apply_diff(&parent, &diff);
         }
         return Err(AppError::msg(format!(
@@ -294,7 +299,7 @@ pub(crate) fn read_version_content(
     }
     // Full-content CAS: "cas:{hash}"
     if let Some(hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
-        return state.cas_store()?.read_blob_content(hash);
+        return state.storage.cas_store(vault)?.read_blob_content(hash);
     }
     let abs = vault.join(".iris").join("versions").join(storage_path);
     Ok(fs::read_to_string(abs)?)
@@ -305,29 +310,41 @@ pub(crate) fn read_version_content(
 /// when it saves >30% space (diff delta storage).
 fn write_version_blob(
     state: &AppState,
+    vault: &Path,
     content: &str,
     prev_content: Option<&str>,
 ) -> AppResult<String> {
+    let store = state.storage.cas_store(vault)?;
     // Try diff-based delta first
     if let Some(prev) = prev_content {
         if let Some(diff) = crate::cas::diff::compute_diff(prev, content) {
-            let diff_hash = state.cas_store()?.store_blob(diff.as_bytes())?;
-            let parent_hash = crate::cas::hash::content_hash_str(prev);
+            // A previous snapshot may itself be stored as a delta. Its content
+            // hash alone does not guarantee a full parent blob exists.
+            let parent_hash = store.store_blob(prev.as_bytes())?;
+            let diff_hash = store.store_blob(diff.as_bytes())?;
             let path = format!("{CAS_DIFF_PREFIX}{parent_hash}:{diff_hash}");
             return Ok(path);
         }
     }
     // Fall back to full-content CAS storage
-    let hash = state.cas_store()?.store_blob(content.as_bytes())?;
+    let hash = store.store_blob(content.as_bytes())?;
     Ok(cas_storage_path(&hash))
 }
 
 fn remove_version_file(vault: &std::path::Path, storage_path: &str) {
-    if is_cas_storage_path(storage_path) {
+    if is_cas_storage_path(storage_path) || storage_path.starts_with(CAS_DIFF_PREFIX) {
         return;
     }
     let abs = vault.join(".iris").join("versions").join(storage_path);
-    let _ = fs::remove_file(&abs);
+    if let Err(error) = fs::remove_file(&abs) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                result_code = "version_legacy_file_cleanup_failed",
+                error = %error,
+                "version row was deleted but its legacy file could not be reclaimed"
+            );
+        }
+    }
 }
 
 fn delete_version_row(
@@ -336,35 +353,41 @@ fn delete_version_row(
     id: i64,
     storage_path: &str,
 ) -> AppResult<()> {
-    remove_version_file(vault, storage_path);
-    if let Some(hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
-        if let Err(e) = state.ref_counter().decrement(hash) {
-            tracing::warn!("CAS ref decrement failed for {hash}: {e}");
-        }
-    } else if let Some(rest) = storage_path.strip_prefix(CAS_DIFF_PREFIX) {
-        if let Some((parent_hash, diff_hash)) = rest.split_once(':') {
-            if let Err(e) = state.ref_counter().decrement(parent_hash) {
-                tracing::warn!("CAS ref decrement failed for parent {parent_hash}: {e}");
-            }
-            if let Err(e) = state.ref_counter().decrement(diff_hash) {
-                tracing::warn!("CAS ref decrement failed for diff {diff_hash}: {e}");
-            }
-        }
-    }
     state.db.with_conn(|conn| {
-        conn.execute("DELETE FROM versions WHERE id = ?1", [id])?;
-        Ok(())
-    })
+        in_immediate_transaction(conn, |conn| {
+            repository::delete_row_on_conn(conn, id, storage_path)
+        })
+    })?;
+    remove_version_file(vault, storage_path);
+    Ok(())
 }
 
 /// Drop oldest `auto_idle` rows when a file exceeds `max` non-finalized idle snapshots.
-pub fn enforce_auto_idle_cap(state: &AppState, file_id: i64, max: usize) -> AppResult<usize> {
+#[cfg(test)]
+fn enforce_auto_idle_cap(state: &AppState, file_id: i64, max: usize) -> AppResult<usize> {
     let vault = state.vault_path()?;
+    let path: String = state.db.with_read_conn(|conn| {
+        Ok(
+            conn.query_row("SELECT path FROM files WHERE id = ?1", [file_id], |r| {
+                r.get(0)
+            })?,
+        )
+    })?;
+    enforce_auto_idle_cap_scoped(state, &vault, &path, max)
+}
+
+fn enforce_auto_idle_cap_scoped(
+    state: &AppState,
+    vault: &Path,
+    path: &str,
+    max: usize,
+) -> AppResult<usize> {
     let to_remove: Vec<(i64, String)> = state.db.with_conn(|conn| {
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM versions
-             WHERE file_id = ?1 AND kind = 'auto_idle' AND is_finalized = 0",
-            [file_id],
+             WHERE vault_path = ?1 AND note_path = ?2 AND recycle_id IS NULL
+               AND kind = 'auto_idle' AND is_finalized = 0",
+            rusqlite::params![vault.to_string_lossy(), path],
             |r| r.get(0),
         )?;
         let count = count as usize;
@@ -374,19 +397,21 @@ pub fn enforce_auto_idle_cap(state: &AppState, file_id: i64, max: usize) -> AppR
         let excess = count - max;
         let mut stmt = conn.prepare(
             "SELECT id, storage_path FROM versions
-             WHERE file_id = ?1 AND kind = 'auto_idle' AND is_finalized = 0
+             WHERE vault_path = ?1 AND note_path = ?2 AND recycle_id IS NULL
+               AND kind = 'auto_idle' AND is_finalized = 0
              ORDER BY created_at ASC, id ASC
-             LIMIT ?2",
+             LIMIT ?3",
         )?;
-        let rows = stmt.query_map(rusqlite::params![file_id, excess as i64], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![vault.to_string_lossy(), path, excess as i64],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
         Ok(rows.flatten().collect())
     })?;
 
     let mut removed = 0;
     for (id, storage_path) in to_remove {
-        delete_version_row(state, &vault, id, &storage_path)?;
+        delete_version_row(state, vault, id, &storage_path)?;
         removed += 1;
     }
     Ok(removed)
@@ -394,7 +419,8 @@ pub fn enforce_auto_idle_cap(state: &AppState, file_id: i64, max: usize) -> AppR
 
 fn load_snapshot_context(
     conn: &rusqlite::Connection,
-    file_id: i64,
+    vault: &Path,
+    path: &str,
 ) -> AppResult<(
     Option<policy::LatestSnapshot>,
     Option<chrono::DateTime<Utc>>,
@@ -402,10 +428,10 @@ fn load_snapshot_context(
     let latest: Option<policy::LatestSnapshot> = conn
         .query_row(
             "SELECT content_hash, kind, created_at FROM versions
-             WHERE file_id = ?1
+             WHERE vault_path = ?1 AND note_path = ?2 AND recycle_id IS NULL
              ORDER BY created_at DESC, id DESC
              LIMIT 1",
-            [file_id],
+            rusqlite::params![vault.to_string_lossy(), path],
             |row| {
                 let kind_str: String = row.get(1)?;
                 let kind = VersionKind::parse(&kind_str).unwrap_or(VersionKind::Manual);
@@ -421,10 +447,10 @@ fn load_snapshot_context(
     let last_auto_idle_at: Option<chrono::DateTime<Utc>> = conn
         .query_row(
             "SELECT created_at FROM versions
-             WHERE file_id = ?1 AND kind = 'auto_idle'
+             WHERE vault_path = ?1 AND note_path = ?2 AND recycle_id IS NULL AND kind = 'auto_idle'
              ORDER BY created_at DESC, id DESC
              LIMIT 1",
-            [file_id],
+            rusqlite::params![vault.to_string_lossy(), path],
             |row| Ok(policy::parse_created_at(&row.get::<_, String>(0)?)),
         )
         .ok();
@@ -448,12 +474,46 @@ pub fn create_snapshot_outcome(
     content: &str,
     params: SnapshotParams,
 ) -> AppResult<VersionSaveOutcome> {
+    let vault = state.vault_path()?;
+    create_snapshot_outcome_in_vault(state, &vault, path, content, params)
+}
+
+/// Serialize a queued snapshot against the vault captured by its caller.
+pub(crate) fn create_snapshot_outcome_in_vault(
+    state: &AppState,
+    expected_vault: &Path,
+    path: &str,
+    content: &str,
+    params: SnapshotParams,
+) -> AppResult<VersionSaveOutcome> {
+    crate::storage::atomic_write::with_vault_move_lock(|| {
+        if state.vault_path()? != expected_vault {
+            return Err(AppError::msg("version_vault_changed"));
+        }
+        create_snapshot_under_move_lock(state, path, content, params)
+    })
+}
+
+/// Caller holds the vault operation lock for the entire note operation.
+pub(crate) fn create_snapshot_under_move_lock(
+    state: &AppState,
+    path: &str,
+    content: &str,
+    params: SnapshotParams,
+) -> AppResult<VersionSaveOutcome> {
+    let vault = state.vault_path()?;
+    let absolute = resolve_vault_path(&vault, path)?;
+    let path = absolute
+        .strip_prefix(&vault)
+        .map_err(|_| AppError::msg("version_path_outside_vault"))?
+        .to_str()
+        .ok_or_else(|| AppError::msg("version_path_invalid_utf8"))?;
     let hash = crate::cas::hash::content_hash_str(content);
-    let file_id = ensure_snapshot_file_id(state, path, &hash, content)?;
+    let file_id = ensure_snapshot_file_id(state, &vault, path, &hash, content).unwrap_or(0);
 
     let now = Utc::now();
     let decision = state.db.with_conn(|conn| {
-        let (latest, last_auto_idle_at) = load_snapshot_context(conn, file_id)?;
+        let (latest, last_auto_idle_at) = load_snapshot_context(conn, &vault, path)?;
         Ok(policy::decide_snapshot(&SnapshotDecisionInput {
             kind: params.kind,
             content_hash: &hash,
@@ -475,18 +535,18 @@ pub fn create_snapshot_outcome(
     let prev_content: Option<String> = state.db.with_read_conn(|conn| {
         let result: Result<(String,), _> = conn.query_row(
             "SELECT storage_path FROM versions
-             WHERE file_id = ?1
+             WHERE vault_path = ?1 AND note_path = ?2 AND recycle_id IS NULL
              ORDER BY created_at DESC, id DESC
              LIMIT 1",
-            [file_id],
+            rusqlite::params![vault.to_string_lossy(), path],
             |row| Ok((row.get::<_, String>(0)?,)),
         );
         Ok(result.ok().map(|(p,)| p))
     })?;
     let prev = prev_content
         .as_ref()
-        .and_then(|p| read_version_content(state, &state.vault_path().ok()?, p).ok());
-    let storage_path = write_version_blob(state, content, prev.as_deref())?;
+        .and_then(|p| read_version_content(state, &vault, p).ok());
+    let storage_path = write_version_blob(state, &vault, content, prev.as_deref())?;
 
     let wc = character_count_excluding_whitespace(content);
     let created_at = now.to_rfc3339();
@@ -496,8 +556,8 @@ pub fn create_snapshot_outcome(
         in_immediate_transaction(conn, |conn| {
             increment_cas_refs_for_storage_path(conn, &storage_path)?;
             conn.execute(
-                "INSERT INTO versions (file_id, version_no, label, content_hash, storage_path, word_count, is_finalized, kind, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO versions (file_id, version_no, label, content_hash, storage_path, word_count, is_finalized, kind, created_at, vault_path, note_path)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 rusqlite::params![
                     file_id,
                     &version_no,
@@ -508,6 +568,8 @@ pub fn create_snapshot_outcome(
                     is_finalized,
                     params.kind.as_str(),
                     created_at,
+                    vault.to_string_lossy(),
+                    path,
                 ],
             )?;
             Ok(conn.last_insert_rowid())
@@ -515,7 +577,7 @@ pub fn create_snapshot_outcome(
     })?;
 
     if params.kind == VersionKind::AutoIdle {
-        let _ = enforce_auto_idle_cap(state, file_id, AUTO_IDLE_MAX_PER_FILE)?;
+        let _ = enforce_auto_idle_cap_scoped(state, &vault, path, AUTO_IDLE_MAX_PER_FILE)?;
     }
 
     info!(
@@ -536,41 +598,74 @@ pub fn create_snapshot_outcome(
             is_finalized: params.is_finalized,
             kind: params.kind,
             created_at,
+            is_legacy_unscoped: false,
         }),
         skip_reason: None,
     })
 }
 
 pub fn version_list(state: &AppState, path: &str) -> AppResult<Vec<VersionEntry>> {
+    version_list_including_unassigned(state, path, false)
+}
+
+/// Unknown path history is exposed only when explicitly requested by the UI.
+pub(crate) fn version_list_including_unassigned(
+    state: &AppState,
+    path: &str,
+    include_legacy_unassigned: bool,
+) -> AppResult<Vec<VersionEntry>> {
+    let vault = state.vault_path()?;
     state.db.with_conn(|conn| {
         let sql = format!(
             "{VERSION_SELECT}
-             FROM versions v JOIN files f ON f.id = v.file_id
-             WHERE f.path = ?1
+             FROM versions v
+             WHERE ((v.note_path = ?1 AND (v.vault_path = ?2 OR v.vault_path IS NULL))
+                    OR (?3 AND v.note_path IS NULL AND v.vault_path IS NULL)) AND v.recycle_id IS NULL
              ORDER BY v.created_at DESC"
         );
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map([path], map_version_row)?;
-        Ok(rows.flatten().collect())
+        let rows = stmt.query_map(rusqlite::params![path, vault.to_string_lossy(), include_legacy_unassigned], map_version_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
     })
 }
 
 pub fn version_preview(state: &AppState, version_id: i64) -> AppResult<String> {
-    let storage_path: String = state.db.with_conn(|conn| {
-        Ok(conn.query_row(
-            "SELECT storage_path FROM versions WHERE id = ?1",
-            [version_id],
-            |r| r.get(0),
-        )?)
-    })?;
-
     let vault = state.vault_path()?;
-    read_version_content(state, &vault, &storage_path).map_err(|error| match error {
+    let (storage_path, _, hash, _) = load_accessible_version(state, &vault, version_id)?;
+    verified_content(state, &vault, &storage_path, &hash).map_err(|error| match error {
         AppError::CasUnreadable(_) => AppError::CasUnreadable(
             "版本快照不可读（可能已损坏或加密密钥丢失），该版本无法预览。".into(),
         ),
         other => other,
     })
+}
+
+fn load_accessible_version(
+    state: &AppState,
+    vault: &Path,
+    id: i64,
+) -> AppResult<(String, Option<String>, String, bool)> {
+    state.db.with_read_conn(|conn| {
+        Ok(conn.query_row(
+            "SELECT storage_path, note_path, content_hash, vault_path IS NULL FROM versions
+             WHERE id = ?1 AND (vault_path = ?2 OR vault_path IS NULL) AND recycle_id IS NULL",
+            rusqlite::params![id, vault.to_string_lossy()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?)
+    })
+}
+
+fn verified_content(
+    state: &AppState,
+    vault: &Path,
+    storage_path: &str,
+    hash: &str,
+) -> AppResult<String> {
+    let content = read_version_content(state, vault, storage_path)?;
+    if crate::cas::hash::content_hash_str(&content) != hash {
+        return Err(AppError::msg("version_content_hash_mismatch"));
+    }
+    Ok(content)
 }
 
 /// Creates a pre-restore snapshot and returns the selected Markdown.
@@ -583,38 +678,64 @@ pub fn version_restore(
     version_id: i64,
     current_content: &str,
 ) -> AppResult<String> {
-    let (storage_path, path): (String, String) = state.db.with_conn(|conn| {
-        Ok(conn.query_row(
-            "SELECT v.storage_path, f.path
-             FROM versions v JOIN files f ON f.id = v.file_id
-             WHERE v.id = ?1",
-            [version_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?)
-    })?;
+    version_restore_scoped(state, version_id, current_content, None, None, false)
+}
 
-    let pre_restore =
-        create_snapshot(state, &path, current_content, SnapshotParams::pre_restore())?;
-    if pre_restore.is_none() {
-        return Err(AppError::msg(
-            "恢复前备份未能创建，已取消恢复以保护当前正文",
-        ));
-    }
+/// Legacy restoration requires explicit target and vault confirmation; it never
+/// assigns the unknown original row to the selected vault.
+pub fn version_restore_scoped(
+    state: &AppState,
+    version_id: i64,
+    current_content: &str,
+    target_path: Option<&str>,
+    expected_vault: Option<&str>,
+    allow_legacy_unscoped: bool,
+) -> AppResult<String> {
+    crate::storage::atomic_write::with_vault_move_lock(|| {
+        let vault = state.vault_path()?;
+        if expected_vault.is_some_and(|expected| expected != vault.to_string_lossy()) {
+            return Err(AppError::msg("version_vault_changed"));
+        }
+        let (storage_path, path, hash, legacy) =
+            load_accessible_version(state, &vault, version_id)?;
+        if legacy && (!allow_legacy_unscoped || target_path.is_none() || expected_vault.is_none()) {
+            return Err(AppError::msg("version_legacy_confirmation_required"));
+        }
+        if !legacy && target_path.is_some_and(|target| Some(target) != path.as_deref()) {
+            return Err(AppError::msg("version_target_mismatch"));
+        }
+        let path = target_path
+            .or(path.as_deref())
+            .ok_or_else(|| AppError::msg("version_target_required"))?;
+        let content = verified_content(state, &vault, &storage_path, &hash)?;
+        let pre_restore = create_snapshot_under_move_lock(
+            state,
+            path,
+            current_content,
+            SnapshotParams::pre_restore(),
+        )?;
+        if pre_restore.entry.is_none() {
+            return Err(AppError::msg(
+                "恢复前备份未能创建，已取消恢复以保护当前正文",
+            ));
+        }
 
-    let vault = state.vault_path()?;
-    read_version_content(state, &vault, &storage_path)
+        Ok(content)
+    })
 }
 
 pub fn version_delete(state: &AppState, version_id: i64) -> AppResult<()> {
-    let (storage_path,): (String,) = state.db.with_conn(|conn| {
-        Ok(conn.query_row(
-            "SELECT storage_path FROM versions WHERE id = ?1",
-            [version_id],
-            |r| Ok((r.get(0)?,)),
-        )?)
-    })?;
+    crate::storage::atomic_write::with_vault_move_lock(|| {
+        version_delete_under_move_lock(state, version_id)
+    })
+}
 
+pub(crate) fn version_delete_under_move_lock(state: &AppState, version_id: i64) -> AppResult<()> {
     let vault = state.vault_path()?;
+    let (storage_path, _, _, legacy) = load_accessible_version(state, &vault, version_id)?;
+    if legacy {
+        return Err(AppError::msg("version_legacy_delete_requires_ownership"));
+    }
     delete_version_row(state, &vault, version_id, &storage_path)
 }
 
@@ -639,50 +760,36 @@ pub fn version_save_pre_close(
 }
 
 pub fn version_cleanup(state: &AppState) -> AppResult<usize> {
-    let vault = state.vault_path()?;
-    let cutoff = Utc::now()
-        .checked_sub_signed(chrono::Duration::days(7))
-        .unwrap_or(Utc::now())
-        .to_rfc3339();
+    crate::storage::atomic_write::with_vault_move_lock(|| {
+        let vault = state.vault_path()?;
+        let cutoff = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(7))
+            .unwrap_or(Utc::now())
+            .to_rfc3339();
 
-    // 收集待清理版本：旧 auto_idle（既有规则）+ 内容不可读的快照（自动降级，
-    // 内容已无法恢复，保留行只留无意义元数据，用户无感知）。
-    let candidates: Vec<(i64, String, String, bool, String)> = state.db.with_conn(|conn| {
-        let mut stmt =
-            conn.prepare("SELECT id, storage_path, kind, is_finalized, created_at FROM versions")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, i64>(3)? != 0,
-                r.get::<_, String>(4)?,
-            ))
+        // Retention is determined by snapshot policy, never by whether today's
+        // key or filesystem can read a blob. Preserve manual/finalized recovery
+        // material even when unavailable; explicit deletion is a separate action.
+        let candidates: Vec<(i64, String)> = state.db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, storage_path FROM versions
+             WHERE kind = 'auto_idle' AND is_finalized = 0 AND created_at < ?1
+               AND vault_path = ?2 AND recycle_id IS NULL",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![cutoff, vault.to_string_lossy()], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+            Ok(rows.collect::<Result<_, _>>()?)
         })?;
-        Ok(rows.flatten().collect())
-    })?;
 
-    let mut cleaned = 0;
-    for (id, storage_path, kind, is_finalized, created_at) in candidates {
-        let unreadable = matches!(
-            read_version_content(state, &vault, &storage_path),
-            Err(AppError::CasUnreadable(_))
-        );
-        let stale_idle = kind == "auto_idle" && !is_finalized && created_at < cutoff;
-        if unreadable || stale_idle {
-            if unreadable {
-                tracing::warn!(
-                    result_code = "version_cleanup_remove_unreadable",
-                    version_id = id,
-                    "removing version snapshot whose CAS blob is unreadable"
-                );
-            }
+        let mut cleaned = 0;
+        for (id, storage_path) in candidates {
             delete_version_row(state, &vault, id, &storage_path)?;
             cleaned += 1;
         }
-    }
 
-    Ok(cleaned)
+        Ok(cleaned)
+    })
 }
 
 #[cfg(test)]
@@ -787,8 +894,156 @@ mod tests {
     }
 
     #[test]
-    fn version_cleanup_removes_unreadable_versions_and_stale_idle() {
+    fn durable_history_survives_index_prune_and_reindex() {
         let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        fs::write(vault.join("note.md"), "current disk body").unwrap();
+        let snapshot = version_save_manual(&state, "note.md", "historical body")
+            .unwrap()
+            .unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute("DELETE FROM files WHERE path = 'note.md'", [])?;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(version_list(&state, "note.md").unwrap().len(), 1);
+        assert_eq!(
+            version_preview(&state, snapshot.id).unwrap(),
+            "historical body"
+        );
+        assert!(version_save_manual(&state, "note.md", "historical body")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "current disk body"
+        );
+    }
+
+    #[test]
+    fn durable_history_isolates_same_path_between_vaults() {
+        let (dir, state) = test_state();
+        seed_file_in_db(&state, "note.md", "Note");
+        let a = state.vault_path().unwrap();
+        let snapshot_a = version_save_manual(&state, "note.md", "same body")
+            .unwrap()
+            .unwrap();
+        let b = dir.path().join("vault-b");
+        fs::create_dir_all(&b).unwrap();
+        state.set_vault(b).unwrap();
+        assert!(version_list(&state, "note.md").unwrap().is_empty());
+        assert!(version_preview(&state, snapshot_a.id).is_err());
+        assert!(version_restore(&state, snapshot_a.id, "current B").is_err());
+        assert!(version_delete(&state, snapshot_a.id).is_err());
+        let snapshot_b = version_save_manual(&state, "note.md", "same body")
+            .unwrap()
+            .unwrap();
+        assert_ne!(snapshot_a.id, snapshot_b.id);
+        state.set_vault(a).unwrap();
+        assert_eq!(
+            version_list(&state, "note.md").unwrap()[0].id,
+            snapshot_a.id
+        );
+        assert_eq!(version_preview(&state, snapshot_a.id).unwrap(), "same body");
+    }
+
+    #[test]
+    fn snapshot_bound_to_an_expected_vault_rejects_a_later_selection() {
+        let (dir, state) = test_state();
+        let vault_a = state.vault_path().unwrap();
+        let vault_b = dir.path().join("vault-b");
+        fs::create_dir_all(&vault_b).unwrap();
+        state.set_vault(vault_b.clone()).unwrap();
+
+        let error = create_snapshot_outcome_in_vault(
+            &state,
+            &vault_a,
+            "note.md",
+            "body captured in A",
+            SnapshotParams::manual(),
+        )
+        .expect_err("queued snapshot must not cross the vault boundary");
+
+        assert!(error.to_string().contains("version_vault_changed"));
+        assert!(version_list(&state, "note.md").unwrap().is_empty());
+        state
+            .db
+            .with_read_conn(|conn| {
+                let count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM versions WHERE vault_path = ?1",
+                    [vault_b.to_string_lossy()],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(count, 0);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn legacy_history_is_marked_and_requires_explicit_non_destructive_restore() {
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        let historical = "legacy historical body";
+        let legacy_rel = "legacy/legacy-1.md";
+        fs::create_dir_all(vault.join(".iris/versions/legacy")).unwrap();
+        fs::write(vault.join(".iris/versions").join(legacy_rel), historical).unwrap();
+        fs::write(vault.join("note.md"), "current disk body").unwrap();
+        let hash = crate::cas::hash::content_hash_str(historical);
+        let legacy_id = state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO versions
+                 (file_id, version_no, content_hash, storage_path, kind, created_at, note_path)
+                 VALUES (0, 'legacy-1', ?1, ?2, 'manual', datetime('now'), 'note.md')",
+                    rusqlite::params![hash, legacy_rel],
+                )?;
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap();
+
+        let listed = version_list(&state, "note.md").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].is_legacy_unscoped);
+        assert_eq!(version_preview(&state, legacy_id).unwrap(), historical);
+        assert!(version_restore(&state, legacy_id, "current editor body").is_err());
+
+        let known = version_save_manual(&state, "note.md", historical)
+            .unwrap()
+            .expect("unknown legacy history must not deduplicate a current-vault snapshot");
+        assert!(!known.is_legacy_unscoped);
+        let expected_vault = vault.to_string_lossy().into_owned();
+        let restored = version_restore_scoped(
+            &state,
+            legacy_id,
+            "current editor body",
+            Some("note.md"),
+            Some(&expected_vault),
+            true,
+        )
+        .unwrap();
+        assert_eq!(restored, historical);
+        state
+            .db
+            .with_read_conn(|conn| {
+                let ownership: Option<String> = conn.query_row(
+                    "SELECT vault_path FROM versions WHERE id = ?1",
+                    [legacy_id],
+                    |row| row.get(0),
+                )?;
+                assert!(ownership.is_none(), "legacy row must remain unassigned");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn version_cleanup_preserves_unreadable_manual_versions_and_only_expires_idle() {
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
         seed_file_in_db(&state, "note.md", "Note");
 
         // 可读快照（新，不应被清理）。
@@ -819,7 +1074,7 @@ mod tests {
             })
             .unwrap();
 
-        // 不可读版本：finalize + manual，内容已永久不可解（应被自动清理）。
+        // A missing key is not proof that a finalized manual snapshot is disposable.
         let lost_body = b"# Lost forever";
         let lost_hash = crate::cas::hash::content_hash(lost_body);
         let lost_path = state.cas_store().unwrap().object_path(&lost_hash).unwrap();
@@ -835,14 +1090,14 @@ mod tests {
             .db
             .with_conn(|conn| {
                 conn.execute(
-                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path)
-                     VALUES (?1, 'lost-1', NULL, ?2, 0, 1, 'manual', '2026-01-01T00:00:00+00:00', ?3)",
-                    rusqlite::params![file_id, lost_hash, format!("cas:{lost_hash}")],
+                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path, vault_path, note_path)
+                     VALUES (?1, 'lost-1', NULL, ?2, 0, 1, 'manual', '2026-01-01T00:00:00+00:00', ?3, ?4, 'note.md')",
+                    rusqlite::params![file_id, lost_hash, format!("cas:{lost_hash}"), vault.to_string_lossy()],
                 )?;
                 conn.execute(
-                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path)
-                     VALUES (?1, 'stale-1', NULL, ?2, 0, 0, 'auto_idle', '2026-01-01T00:00:00+00:00', ?3)",
-                    rusqlite::params![file_id, readable_hash, readable_storage],
+                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path, vault_path, note_path)
+                     VALUES (?1, 'stale-1', NULL, ?2, 0, 0, 'auto_idle', '2026-01-01T00:00:00+00:00', ?3, ?4, 'note.md')",
+                    rusqlite::params![file_id, readable_hash, readable_storage, vault.to_string_lossy()],
                 )?;
                 Ok(())
             })
@@ -850,18 +1105,18 @@ mod tests {
 
         assert!(version_preview(&state, entry.id).is_ok());
         let cleaned = version_cleanup(&state).unwrap();
-        assert_eq!(
-            cleaned, 2,
-            "unreadable + stale auto_idle must both be cleaned"
-        );
+        assert_eq!(cleaned, 1, "only an expired auto_idle may be removed");
 
         let remaining = version_list(&state, "note.md").unwrap();
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].id, entry.id, "readable snapshot must survive");
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.iter().any(|version| version.id == entry.id));
+        assert!(remaining
+            .iter()
+            .any(|version| version.version_no == "lost-1"));
         assert_eq!(
             state.ref_counter().get_count(&lost_hash).unwrap(),
-            0,
-            "unreadable version cleanup must release the CAS reference"
+            1,
+            "unreadable manual snapshots must retain their blob ownership"
         );
     }
 
@@ -1035,6 +1290,46 @@ mod tests {
     }
 
     #[test]
+    fn consecutive_delta_snapshots_remain_readable_after_a_previous_delta() {
+        let (_dir, state) = test_state();
+        seed_file_in_db(&state, "note.md", "Note");
+        let base = (0..200)
+            .map(|i| format!("stable line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let second_body = base.replace("stable line 50\n", "first edit\n");
+        let third_body = second_body.replace("stable line 150\n", "second edit\n");
+        let first = version_save_manual(&state, "note.md", &base)
+            .unwrap()
+            .unwrap();
+        let second = version_save_manual(&state, "note.md", &second_body)
+            .unwrap()
+            .unwrap();
+        let third = version_save_manual(&state, "note.md", &third_body)
+            .unwrap()
+            .unwrap();
+        let second_storage: String = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [second.id],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert!(
+            second_storage.starts_with("dif:"),
+            "fixture must exercise an actual delta parent"
+        );
+        assert_eq!(version_preview(&state, first.id).unwrap(), base);
+        assert_eq!(version_preview(&state, second.id).unwrap(), second_body);
+        assert_eq!(version_preview(&state, third.id).unwrap(), third_body);
+        version_delete(&state, second.id).unwrap();
+        assert_eq!(version_preview(&state, third.id).unwrap(), third_body);
+    }
+
+    #[test]
     fn diff_storage_increments_and_decrements_both_refs() {
         let (_dir, state) = test_state();
         seed_file_in_db(&state, "note.md", "Note");
@@ -1197,8 +1492,58 @@ mod tests {
     }
 
     #[test]
+    fn failed_version_row_delete_keeps_its_cas_reference() {
+        let (_dir, state) = test_state();
+        let entry = version_save_manual(&state, "note.md", "protected body")
+            .unwrap()
+            .unwrap();
+        let storage: String = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [entry.id],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        let hash = storage.strip_prefix("cas:").unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_version_delete BEFORE DELETE ON versions
+                 BEGIN SELECT RAISE(ABORT, 'fault'); END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(version_delete(&state, entry.id).is_err());
+        assert_eq!(state.ref_counter().get_count(hash).unwrap(), 1);
+        assert!(state
+            .cas_store()
+            .unwrap()
+            .object_path(hash)
+            .unwrap()
+            .is_file());
+        let remaining = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM versions WHERE id = ?1",
+                    [entry.id],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(remaining, 1);
+    }
+
+    #[test]
     fn enforce_auto_idle_cap_deletes_oldest_when_over_limit() {
         let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
         let file_id = {
             let mut id = 0_i64;
             state
@@ -1208,14 +1553,15 @@ mod tests {
                     for i in 0..31 {
                         let version_no = format!("202601010000000{i:02}");
                         conn.execute(
-                            "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, kind, created_at)
-                             VALUES (?1, ?2, ?3, ?4, 0, 'auto_idle', ?5)",
+                            "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, kind, created_at, vault_path, note_path)
+                             VALUES (?1, ?2, ?3, ?4, 0, 'auto_idle', ?5, ?6, 'note.md')",
                             rusqlite::params![
                                 id,
                                 version_no,
                                 format!("hash{i}"),
                                 format!("{id}/{version_no}.md"),
                                 format!("2026-01-01T00:{i:02}:00Z"),
+                                vault.to_string_lossy(),
                             ],
                         )?;
                     }
@@ -1257,24 +1603,25 @@ mod tests {
     #[test]
     fn version_cleanup_only_removes_stale_auto_idle() {
         let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
         state
             .db
             .with_conn(|conn| {
                 seed_file(conn, "note.md", "Note");
                 conn.execute(
-                    "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, kind, created_at)
-                     VALUES (1, '20200101000000000', 'old_auto', '1/old_auto.md', 0, 'auto_idle', '2020-01-01T00:00:00Z')",
-                    [],
+                    "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, kind, created_at, vault_path, note_path)
+                     VALUES (1, '20200101000000000', 'old_auto', '1/old_auto.md', 0, 'auto_idle', '2020-01-01T00:00:00Z', ?1, 'note.md')",
+                    [vault.to_string_lossy()],
                 )?;
                 conn.execute(
-                    "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, kind, created_at)
-                     VALUES (1, '20200101000000001', 'old_manual', '1/old_manual.md', 0, 'manual', '2020-01-01T00:00:00Z')",
-                    [],
+                    "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, kind, created_at, vault_path, note_path)
+                     VALUES (1, '20200101000000001', 'old_manual', '1/old_manual.md', 0, 'manual', '2020-01-01T00:00:00Z', ?1, 'note.md')",
+                    [vault.to_string_lossy()],
                 )?;
                 conn.execute(
-                    "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, kind, created_at)
-                     VALUES (1, '20990101000000000', 'new_auto', '1/new_auto.md', 0, 'auto_idle', datetime('now'))",
-                    [],
+                    "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, kind, created_at, vault_path, note_path)
+                     VALUES (1, '20990101000000000', 'new_auto', '1/new_auto.md', 0, 'auto_idle', datetime('now'), ?1, 'note.md')",
+                    [vault.to_string_lossy()],
                 )?;
                 Ok(())
             })

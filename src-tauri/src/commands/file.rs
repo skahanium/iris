@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -11,20 +10,17 @@ use crate::cas::hash::content_hash as content_hash_bytes;
 use crate::error::{AppError, AppResult};
 use crate::feed::fetch::{FeedHttpClient, FetchPurpose, ProdNetGate};
 use crate::indexer::frontmatter::resolve_display_title;
-use crate::indexer::scan::{collect_vault_folders, index_file, index_vault_incremental, FileEntry};
+use crate::indexer::scan::{collect_vault_folders, index_vault_incremental, FileEntry};
 use crate::recycle::{discard_document, trash_document};
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use uuid::Uuid;
 
-use crate::crypto::classified_io;
-use crate::crypto::vault_key::VAULT_KEY;
-use crate::storage::atomic_write::{
-    atomic_write, move_directory_no_replace_locked, with_vault_move_lock,
-};
+use crate::storage::asset_operations::{create_asset, decode_asset};
+use crate::storage::atomic_write::with_vault_move_lock;
+use crate::storage::folder_move::{validate_folder_path, FolderMoveResult};
 use crate::storage::note_title::title_from_path;
 use crate::storage::note_write::{
-    noop_write_receipt, FileWriteIndexStatus, FileWriteResult, NoteWriteService,
+    decode_note_payload as decode_file_content, noop_write_receipt, FileWritePrecondition,
+    FileWriteResult, NoteWriteService,
 };
 use crate::storage::paths::{
     is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
@@ -89,34 +85,6 @@ fn query_is_locked(db: &crate::storage::db::Database, path: &str) -> AppResult<b
     })
 }
 
-fn decode_file_content(raw_bytes: &[u8]) -> AppResult<String> {
-    if classified_io::has_csef_magic(raw_bytes) {
-        let vk_guard = VAULT_KEY
-            .get()
-            .ok_or_else(|| AppError::msg("保险库未初始化"))?;
-        let vk = vk_guard
-            .read()
-            .map_err(|e| AppError::msg(format!("lock error: {e}")))?;
-        let key = vk.key()?;
-        let decrypted = classified_io::decrypt_cef(raw_bytes, key)?;
-        String::from_utf8(decrypted).map_err(|_| AppError::msg("File is not valid UTF-8"))
-    } else {
-        std::str::from_utf8(raw_bytes)
-            .map(str::to_owned)
-            .map_err(|_| AppError::msg("File is not valid UTF-8"))
-    }
-}
-
-/// Vault-relative image/asset path (e.g. `assets/uuid.png`).
-pub fn is_vault_asset_path(relative: &str) -> bool {
-    let normalized = relative.replace('\\', "/");
-    if !normalized.starts_with("assets/") {
-        return false;
-    }
-    let name = normalized.strip_prefix("assets/").unwrap_or("");
-    !name.is_empty() && !name.ends_with('/') && !name.contains("..")
-}
-
 pub(crate) fn allow_vault_assets_in_asset_protocol(app: &AppHandle, vault: &std::path::Path) {
     let Some(scopes) = app.try_state::<tauri::scope::Scopes>() else {
         return;
@@ -132,71 +100,6 @@ pub(crate) fn allow_vault_assets_in_asset_protocol(app: &AppHandle, vault: &std:
 
 fn default_create_content(_document_title: &str) -> String {
     String::new()
-}
-
-fn validate_folder_path(path: &str) -> AppResult<()> {
-    if path.contains('\\') {
-        return Err(AppError::msg("Backslashes are not allowed in folder paths"));
-    }
-    let trimmed = path.trim_matches('/');
-    if trimmed.trim().is_empty() {
-        return Err(AppError::msg("Folder path cannot be empty"));
-    }
-    if !is_user_note_path(trimmed) {
-        return Err(AppError::msg("Folder path cannot target Iris metadata"));
-    }
-    const INVALID: &[char] = &[':', '*', '?', '"', '<', '>', '|'];
-    for segment in trimmed.split('/') {
-        if segment.is_empty() || segment == "." || segment == ".." {
-            return Err(AppError::msg("Invalid folder path segment"));
-        }
-        if segment.chars().any(|c| INVALID.contains(&c)) {
-            return Err(AppError::msg("Invalid folder path character"));
-        }
-    }
-    Ok(())
-}
-
-fn remap_folder_child_path(old_path: &str, new_path: &str, file_path: &str) -> Option<String> {
-    if file_path == old_path {
-        return Some(new_path.trim_matches('/').to_string());
-    }
-    let prefix = if old_path.ends_with('/') || old_path.is_empty() {
-        old_path.to_string()
-    } else {
-        format!("{old_path}/")
-    };
-    let suffix = file_path.strip_prefix(&prefix)?;
-    let new_prefix = new_path.trim_matches('/');
-    if new_prefix.is_empty() {
-        Some(suffix.trim_start_matches('/').to_string())
-    } else {
-        Some(format!("{new_prefix}/{}", suffix.trim_start_matches('/')))
-    }
-}
-
-fn folder_rename_reindex_paths(
-    old_path: &str,
-    new_path: &str,
-    affected_files: &[String],
-    modified_sources: &[String],
-) -> Vec<String> {
-    let mut paths = BTreeSet::new();
-    for path in affected_files {
-        if let Some(mapped) = remap_folder_child_path(old_path, new_path, path) {
-            if is_user_note_path(&mapped) {
-                paths.insert(mapped);
-            }
-        }
-    }
-    for path in modified_sources {
-        let mapped = remap_folder_child_path(old_path, new_path, path)
-            .unwrap_or_else(|| path.trim_matches('/').to_string());
-        if is_user_note_path(&mapped) {
-            paths.insert(mapped);
-        }
-    }
-    paths.into_iter().collect()
 }
 
 fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
@@ -489,6 +392,7 @@ pub async fn file_write(
     state: State<'_, Arc<AppState>>,
     path: String,
     content: String,
+    precondition: Option<FileWritePrecondition>,
 ) -> AppResult<FileWriteResult> {
     if !is_accessible_note_path(&path) {
         return Err(AppError::msg("只能写入用户笔记，不允许修改内部元数据路径"));
@@ -500,7 +404,8 @@ pub async fn file_write(
         )));
     }
     let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || file_write_inner(state, path, content))
+    let vault = state.vault_path()?;
+    tokio::task::spawn_blocking(move || file_write_inner(state, path, content, vault, precondition))
         .await
         .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
@@ -509,8 +414,23 @@ fn file_write_inner(
     state: Arc<AppState>,
     path: String,
     content: String,
+    expected_vault: std::path::PathBuf,
+    precondition: Option<FileWritePrecondition>,
 ) -> AppResult<FileWriteResult> {
-    NoteWriteService::write(&state, &path, &content)
+    with_vault_move_lock(|| {
+        if state.vault_path()? != expected_vault {
+            return Err(AppError::msg("note_vault_changed"));
+        }
+        match precondition.as_ref() {
+            Some(precondition) => NoteWriteService::write_checked_under_move_lock(
+                &state,
+                &path,
+                &content,
+                precondition,
+            ),
+            None => NoteWriteService::write_under_move_lock(&state, &path, &content),
+        }
+    })
 }
 
 /// Write a binary asset under `assets/` (editor image drop / paste).
@@ -520,26 +440,11 @@ pub async fn vault_asset_write(
     path: String,
     data_base64: String,
 ) -> AppResult<String> {
-    if !is_vault_asset_path(&path) {
-        return Err(AppError::msg("资源路径必须位于 assets/ 下"));
-    }
     let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
+    let state = state.inner().clone();
     tokio::task::spawn_blocking(move || {
-        const MAX_BYTES: usize = 20 * 1024 * 1024;
-        if let Some(parent) = abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let bytes = STANDARD
-            .decode(data_base64.trim())
-            .map_err(|e| AppError::msg(format!("无效的图片数据: {e}")))?;
-        if bytes.is_empty() {
-            return Err(AppError::msg("图片数据为空"));
-        }
-        if bytes.len() > MAX_BYTES {
-            return Err(AppError::msg("图片超过 20MB 限制"));
-        }
-        atomic_write(&abs, &bytes)?;
+        let bytes = decode_asset(&data_base64)?;
+        create_asset(&state, &vault, &path, &bytes, || Ok(()))?;
         Ok(path)
     })
     .await
@@ -552,6 +457,8 @@ pub async fn vault_asset_import_url(
     state: State<'_, Arc<AppState>>,
     url: String,
 ) -> AppResult<String> {
+    let vault = state.vault_path()?;
+    let state = state.inner().clone();
     let trimmed = url.trim();
     let parsed =
         reqwest::Url::parse(trimmed).map_err(|_| AppError::msg("vault_asset_invalid_url"))?;
@@ -574,15 +481,10 @@ pub async fn vault_asset_import_url(
         return Err(AppError::msg("vault_asset_empty_image"));
     }
 
-    let vault = state.vault_path()?;
     let path = format!("assets/{}.{}", Uuid::new_v4(), extension);
-    let abs = resolve_vault_path(&vault, &path)?;
     let bytes = result.bytes;
     tokio::task::spawn_blocking(move || {
-        if let Some(parent) = abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(&abs, &bytes)?;
+        create_asset(&state, &vault, &path, &bytes, || Ok(()))?;
         Ok(path)
     })
     .await
@@ -643,15 +545,35 @@ pub fn folder_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<String>> {
 }
 
 #[tauri::command]
-pub fn folder_create(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+pub fn folder_create(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    expected_vault: Option<String>,
+) -> AppResult<()> {
     validate_folder_path(&path)?;
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
-    if abs.exists() {
-        return Err(AppError::msg("Folder already exists"));
-    }
-    fs::create_dir_all(&abs)?;
-    Ok(())
+    let expected_vault = expected_vault
+        .map(std::path::PathBuf::from)
+        .map(|vault| {
+            vault
+                .canonicalize()
+                .map_err(|_| AppError::msg("note_vault_changed"))
+        })
+        .transpose()?;
+    with_vault_move_lock(|| {
+        let vault = state.vault_path()?;
+        if expected_vault
+            .as_ref()
+            .is_some_and(|expected| expected != &vault)
+        {
+            return Err(AppError::msg("note_vault_changed"));
+        }
+        let abs = resolve_vault_path(&vault, &path)?;
+        if abs.exists() {
+            return Err(AppError::msg("Folder already exists"));
+        }
+        fs::create_dir_all(&abs)?;
+        Ok(())
+    })
 }
 
 /// Rename/move a folder and cascade wikilink updates for all affected files.
@@ -660,116 +582,24 @@ pub async fn folder_rename(
     state: State<'_, Arc<AppState>>,
     old_path: String,
     new_path: String,
-) -> AppResult<FileWriteIndexStatus> {
+    expected_vault: String,
+) -> AppResult<FolderMoveResult> {
+    let expected_vault = std::path::PathBuf::from(expected_vault);
     let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || folder_rename_inner(&state, old_path, new_path))
-        .await
-        .map_err(|e| AppError::msg(format!("task join: {e}")))?
+    tokio::task::spawn_blocking(move || {
+        crate::storage::folder_move::move_folder(&state, &expected_vault, &old_path, &new_path)
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
+#[cfg(test)]
 fn folder_rename_inner(
     state: &Arc<AppState>,
     old_path: String,
     new_path: String,
-) -> AppResult<FileWriteIndexStatus> {
-    with_vault_move_lock(|| folder_rename_inner_locked(state, old_path, new_path))
-}
-
-fn folder_rename_inner_locked(
-    state: &Arc<AppState>,
-    old_path: String,
-    new_path: String,
-) -> AppResult<FileWriteIndexStatus> {
-    validate_folder_path(&old_path)?;
-    validate_folder_path(&new_path)?;
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &old_path)?;
-    let new_abs = resolve_vault_path(&vault, &new_path)?;
-    if !abs.is_dir() {
-        return Err(AppError::msg("Source path is not a folder"));
-    }
-    let affected_files: Vec<String> = state.db.with_read_conn(|conn| {
-        let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ?1")?;
-        let prefix = if old_path.ends_with('/') || old_path.is_empty() {
-            old_path.to_string()
-        } else {
-            format!("{old_path}/")
-        };
-        let rows = stmt.query_map([format!("{prefix}%")], |row| row.get::<_, String>(0))?;
-        Ok(rows.flatten().collect())
-    })?;
-
-    let mut index_degraded = false;
-    // The physical move is the authoritative step. A competing creator owns
-    // the destination atomically, before any backlink or index mutation runs.
-    move_directory_no_replace_locked(&abs, &new_abs)?;
-
-    let mut all_modified_sources: Vec<String> = Vec::new();
-    for file_path in &affected_files {
-        let rel_old = file_path.as_str();
-        let rel_new = if let Some(suffix) = rel_old.strip_prefix(&old_path) {
-            let trimmed = suffix.trim_start_matches('/');
-            format!("{}/{}", new_path.trim_end_matches('/'), trimmed)
-        } else {
-            continue;
-        };
-
-        match cascade_rewrite_wikilinks_on_disk(
-            state,
-            &vault,
-            rel_old,
-            &rel_new,
-            Some((&old_path, &new_path)),
-        ) {
-            Ok(mut mods) => all_modified_sources.append(&mut mods),
-            Err(_) => {
-                index_degraded = true;
-                tracing::warn!(
-                    result_code = "folder_rename_cascade_degraded",
-                    "folder rename continued after wikilink cascade degradation"
-                );
-            }
-        }
-    }
-
-    let reindex_paths =
-        folder_rename_reindex_paths(&old_path, &new_path, &affected_files, &all_modified_sources);
-    for rel in &reindex_paths {
-        let Ok(abs_path) = resolve_vault_path(&vault, rel) else {
-            index_degraded = true;
-            continue;
-        };
-        if let Ok(hash) = crate::indexer::scan::file_hash(&abs_path) {
-            state.storage.write_guard.mark(rel, &hash);
-        }
-        let indexed = state
-            .db
-            .with_conn(|conn| index_file(conn, &vault, &abs_path))
-            .is_ok();
-        if indexed {
-            state.embedding_scheduler().notify_index_committed();
-        } else {
-            index_degraded = true;
-            NoteWriteService::schedule_index_repair(state, rel);
-        }
-    }
-
-    if state
-        .db
-        .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
-        .is_err()
-    {
-        index_degraded = true;
-        for rel in &reindex_paths {
-            NoteWriteService::schedule_index_repair(state, rel);
-        }
-    }
-
-    Ok(if index_degraded {
-        FileWriteIndexStatus::Degraded
-    } else {
-        FileWriteIndexStatus::Synced
-    })
+) -> AppResult<FolderMoveResult> {
+    crate::storage::folder_move::move_folder(state, &state.vault_path()?, &old_path, &new_path)
 }
 
 /// Delete an empty folder. Fails if the folder is not empty.
@@ -823,11 +653,15 @@ pub async fn file_rename(
     state: State<'_, Arc<AppState>>,
     path: String,
     new_path: String,
+    expected_vault: String,
 ) -> AppResult<FileWriteResult> {
+    let expected_vault = std::path::PathBuf::from(expected_vault);
     let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || file_rename_inner(state, path, new_path))
-        .await
-        .map_err(|e| AppError::msg(format!("task join: {e}")))?
+    tokio::task::spawn_blocking(move || {
+        file_rename_inner_for_vault(state, expected_vault, path, new_path)
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 /// Move a note to the filename represented by its sole inline title.
@@ -952,12 +786,31 @@ fn allocate_document_title_path(
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn file_rename_inner(
     state: Arc<AppState>,
     path: String,
     new_path: String,
 ) -> AppResult<FileWriteResult> {
-    with_vault_move_lock(|| file_rename_inner_locked(&state, path, new_path))
+    let expected_vault = state.vault_path()?;
+    file_rename_inner_for_vault(state, expected_vault, path, new_path)
+}
+
+fn file_rename_inner_for_vault(
+    state: Arc<AppState>,
+    expected_vault: std::path::PathBuf,
+    path: String,
+    new_path: String,
+) -> AppResult<FileWriteResult> {
+    let expected_vault = expected_vault
+        .canonicalize()
+        .map_err(|_| AppError::msg("note_vault_changed"))?;
+    with_vault_move_lock(|| {
+        if state.vault_path()? != expected_vault {
+            return Err(AppError::msg("note_vault_changed"));
+        }
+        file_rename_inner_locked(&state, path, new_path)
+    })
 }
 
 fn file_rename_inner_locked(
@@ -970,73 +823,12 @@ fn file_rename_inner_locked(
     Ok(receipt.write)
 }
 
-/// Rewrite wikilink text in all files referencing `old_path` on disk.
-/// Returns the list of modified source file paths.
-/// `moved_source_root` remaps source paths that moved with a folder before the
-/// database paths have been refreshed. Callers reindex after this completes.
-fn cascade_rewrite_wikilinks_on_disk(
-    state: &Arc<AppState>,
-    vault: &std::path::Path,
-    old_path: &str,
-    new_path: &str,
-    moved_source_root: Option<(&str, &str)>,
-) -> AppResult<Vec<String>> {
-    let source_paths: Vec<String> = state.db.with_read_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT f.path
-             FROM links l
-             JOIN files f ON f.id = l.source_id
-             JOIN files t ON t.id = l.target_id
-             WHERE t.path = ?1",
-        )?;
-        let rows = stmt.query_map([old_path], |row| row.get::<_, String>(0))?;
-        Ok(rows.flatten().collect())
-    })?;
-
-    let mut modified = Vec::new();
-
-    for source_path in &source_paths {
-        let src_path = remap_moved_source_path(source_path, moved_source_root);
-        let abs = resolve_vault_path(vault, &src_path)?;
-        if !abs.exists() {
-            tracing::warn!(
-                result_code = "file_rename_cascade_source_missing",
-                "file rename skipped a missing wikilink cascade source"
-            );
-            continue;
-        }
-        let content = read_file_lossy(&abs)?;
-
-        let updated = crate::storage::note_move::rewrite_wikilinks(&content, old_path, new_path);
-        if updated != content {
-            NoteWriteService::ensure_unlocked(state, &src_path)?;
-            crate::storage::note_operations::protect_snapshot(state, &src_path, &content)?;
-            NoteWriteService::write_under_move_lock(state, &src_path, &updated)?;
-            modified.push(src_path);
-        }
-    }
-
-    Ok(modified)
-}
-
-fn remap_moved_source_path(source_path: &str, moved_source_root: Option<(&str, &str)>) -> String {
-    let Some((old_root, new_root)) = moved_source_root else {
-        return source_path.to_string();
-    };
-    let Some(suffix) = source_path.strip_prefix(old_root) else {
-        return source_path.to_string();
-    };
-    let Some(relative) = suffix.strip_prefix('/') else {
-        return source_path.to_string();
-    };
-    format!("{}/{}", new_root.trim_end_matches('/'), relative)
-}
-
 #[tauri::command]
 pub async fn file_create(
     state: State<'_, Arc<AppState>>,
     path: String,
     content: Option<String>,
+    expected_vault: Option<String>,
 ) -> AppResult<FileWriteResult> {
     if !is_accessible_note_path(&path) {
         return Err(AppError::msg("只能创建用户笔记，不允许写入内部元数据路径"));
@@ -1053,7 +845,19 @@ pub async fn file_create(
     tokio::task::spawn_blocking(move || {
         let document_title = title_from_path(&path);
         let body = content.unwrap_or_else(|| default_create_content(&document_title));
-        create_file_inner(&state, &path, &body)
+        if let Some(expected_vault) = expected_vault {
+            let expected_vault = std::path::PathBuf::from(expected_vault)
+                .canonicalize()
+                .map_err(|_| AppError::msg("note_vault_changed"))?;
+            with_vault_move_lock(|| {
+                if state.vault_path()? != expected_vault {
+                    return Err(AppError::msg("note_vault_changed"));
+                }
+                NoteWriteService::create_under_move_lock(&state, &path, &body)
+            })
+        } else {
+            create_file_inner(&state, &path, &body)
+        }
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
@@ -1271,7 +1075,7 @@ mod file_io_pipeline_tests {
     use super::*;
     use crate::crypto::classified_io;
     use crate::crypto::vault_key::{VaultKey, VAULT_KEY, VAULT_KEY_TEST_LOCK};
-    use crate::indexer::scan::content_hash;
+    use crate::indexer::scan::{content_hash, index_file};
     use crate::storage::db::Database;
     use crate::storage::migrate::migrate_up;
     use crate::storage::note_write::FileWriteIndexStatus;
@@ -1512,6 +1316,35 @@ Body",
     }
 
     #[test]
+    fn queued_file_move_cannot_apply_after_switching_vaults() {
+        let dir = tempdir().unwrap();
+        let vault_a = dir.path().join("a");
+        let vault_b = dir.path().join("b");
+        fs::create_dir_all(&vault_a).unwrap();
+        fs::create_dir_all(&vault_b).unwrap();
+        fs::write(vault_a.join("old.md"), "from a").unwrap();
+        fs::write(vault_b.join("old.md"), "from b").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault_a.clone()).unwrap();
+        state.set_vault(vault_b.clone()).unwrap();
+
+        let error =
+            file_rename_inner_for_vault(state, vault_a.clone(), "old.md".into(), "new.md".into())
+                .unwrap_err();
+
+        assert!(error.to_string().contains("note_vault_changed"));
+        assert_eq!(
+            fs::read_to_string(vault_a.join("old.md")).unwrap(),
+            "from a"
+        );
+        assert_eq!(
+            fs::read_to_string(vault_b.join("old.md")).unwrap(),
+            "from b"
+        );
+        assert!(!vault_b.join("new.md").exists());
+    }
+
+    #[test]
     fn move_preserves_backlink_bytes_and_creates_recovery_snapshot() {
         let temp = tempfile::tempdir().unwrap();
         let vault = temp.path().join("vault");
@@ -1741,6 +1574,77 @@ Body",
     }
 
     #[test]
+    fn folder_move_rejects_locked_descendant_before_disk_changes() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("old")).unwrap();
+        fs::write(vault.join("old/note.md"), "protected").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| index_file(conn, &vault, &vault.join("old/note.md")))
+            .unwrap();
+        set_file_lock(&state, "old/note.md", true).unwrap();
+
+        assert!(folder_rename_inner(&state, "old".into(), "new".into()).is_err());
+        assert_eq!(
+            fs::read_to_string(vault.join("old/note.md")).unwrap(),
+            "protected"
+        );
+        assert!(!vault.join("new").exists());
+    }
+
+    #[test]
+    fn folder_move_discovers_backlinks_without_relying_on_the_index() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("old")).unwrap();
+        fs::write(vault.join("old/note.md"), "body").unwrap();
+        fs::write(vault.join("ref.md"), "See [[old/note.md]].\r\n").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+
+        folder_rename_inner(&state, "old".into(), "new".into()).unwrap();
+        assert_eq!(
+            fs::read_to_string(vault.join("ref.md")).unwrap(),
+            "See [[new/note.md]].\r\n"
+        );
+        assert!(!crate::version::version_list(&state, "ref.md")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn folder_move_preserves_version_identity_after_index_pruning() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("old")).unwrap();
+        fs::write(vault.join("old/note.md"), "body").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| index_file(conn, &vault, &vault.join("old/note.md")))
+            .unwrap();
+        let history = crate::version::create_snapshot(
+            &state,
+            "old/note.md",
+            "historical body",
+            crate::version::SnapshotParams::manual(),
+        )
+        .unwrap()
+        .unwrap();
+
+        folder_rename_inner(&state, "old".into(), "new".into()).unwrap();
+        let versions = crate::version::version_list(&state, "new/note.md").unwrap();
+        assert!(versions.iter().any(|version| version.id == history.id));
+        assert!(crate::version::version_list(&state, "old/note.md")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn folder_rename_inner_reports_degraded_after_physical_move_when_indexing_fails() {
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
@@ -1754,7 +1658,7 @@ Body",
                 index_file(conn, &vault, &vault.join("old/note.md"))?;
                 conn.execute_batch(
                     "CREATE TRIGGER fail_folder_rename_index
-                     BEFORE INSERT ON files
+                     BEFORE UPDATE OF title ON files
                      WHEN NEW.path = 'new/note.md'
                      BEGIN
                        SELECT RAISE(ABORT, 'simulated index failure');
@@ -1766,7 +1670,7 @@ Body",
 
         let status = folder_rename_inner(&state, "old".to_string(), "new".to_string()).unwrap();
 
-        assert_eq!(status, FileWriteIndexStatus::Degraded);
+        assert_eq!(status.index_status, FileWriteIndexStatus::Degraded);
         assert!(!vault.join("old/note.md").exists());
         assert_eq!(
             fs::read_to_string(vault.join("new/note.md")).unwrap(),
@@ -1808,7 +1712,7 @@ Body",
 
         let status = folder_rename_inner(&state, "old".to_string(), "new".to_string()).unwrap();
 
-        assert_eq!(status, FileWriteIndexStatus::Synced);
+        assert_eq!(status.index_status, FileWriteIndexStatus::Synced);
         assert_eq!(
             fs::read_to_string(vault.join("new/source.md")).unwrap(),
             "Inside [[new/target.md]].\n"
@@ -1869,52 +1773,255 @@ Body",
             .unwrap();
         let updated = "---\ntitle: New\n---\n\nBody survives index failure";
 
-        let result = file_write_inner(state, "note.md".to_string(), updated.to_string()).unwrap();
+        let expected_vault = state.vault_path().unwrap();
+        let result = file_write_inner(
+            state,
+            "note.md".to_string(),
+            updated.to_string(),
+            expected_vault,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(result.index_status, FileWriteIndexStatus::Degraded);
         assert_eq!(fs::read_to_string(vault.join("note.md")).unwrap(), updated);
         assert_eq!(result.content_hash, content_hash(updated));
     }
+
     #[test]
-    fn wikilink_rewrite_skips_stale_inbound_sources() {
+    fn guarded_file_write_rejects_stale_disk_baseline_without_overwriting() {
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
         fs::create_dir_all(&vault).unwrap();
-        fs::write(
-            vault.join("target.md"),
-            "# Target
-",
-        )
-        .unwrap();
+        fs::write(vault.join("note.md"), "new external body").unwrap();
         let state = AppState::new(dir.path().join("data")).unwrap();
         state.set_vault(vault.clone()).unwrap();
-        state
-            .db
-            .with_conn(|conn| {
-                migrate_up(conn)?;
-                conn.execute_batch(
-                    "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
-                     VALUES (1, 'target.md', 'Target', 'h1', '2020-01-01', '2020-01-01'),
-                            (2, 'missing-source.md', 'Missing', 'h2', '2020-01-02', '2020-01-02');
-                     INSERT INTO links (source_id, target_id, context)
-                     VALUES (2, 1, 'Missing links [[Target]]');",
-                )?;
-                Ok(())
-            })
-            .unwrap();
-
-        let modified = cascade_rewrite_wikilinks_on_disk(
-            &state,
-            &vault,
-            "target.md",
-            "folder/target.md",
-            None,
-        )
-        .unwrap();
-
-        assert!(modified.is_empty());
+        let expected = state.vault_path().unwrap();
+        let result = file_write_inner(
+            state,
+            "note.md".into(),
+            "stale editor body".into(),
+            expected.clone(),
+            Some(FileWritePrecondition {
+                expected_vault: expected.to_string_lossy().into_owned(),
+                base_content_hash: Some(content_hash("old loaded body")),
+            }),
+        );
+        assert!(
+            result.is_err(),
+            "stale loaded content must not overwrite an external change"
+        );
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "new external body"
+        );
     }
 
+    #[test]
+    fn guarded_file_write_missing_baseline_never_overwrites_existing_note() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("note.md"), "already occupied").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        let expected = state.vault_path().unwrap();
+        let result = file_write_inner(
+            state,
+            "note.md".into(),
+            "new note".into(),
+            expected.clone(),
+            Some(FileWritePrecondition {
+                expected_vault: expected.to_string_lossy().into_owned(),
+                base_content_hash: None,
+            }),
+        );
+        assert!(result.is_err(), "missing baseline must mean create-only");
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "already occupied"
+        );
+    }
+
+    #[test]
+    fn guarded_file_write_uses_editor_origin_not_current_command_vault() {
+        let dir = tempdir().unwrap();
+        let original = dir.path().join("a");
+        let vault = dir.path().join("b");
+        fs::create_dir_all(&original).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(original.join("note.md"), "same body").unwrap();
+        fs::write(vault.join("note.md"), "same body").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        let expected = state.vault_path().unwrap();
+        let result = file_write_inner(
+            state,
+            "note.md".into(),
+            "edit from old tab".into(),
+            expected,
+            Some(FileWritePrecondition {
+                expected_vault: original
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                base_content_hash: Some(content_hash("same body")),
+            }),
+        );
+        assert!(
+            result.is_err(),
+            "command-time capture is not the editor's Vault identity"
+        );
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "same body"
+        );
+        assert_eq!(
+            fs::read_to_string(original.join("note.md")).unwrap(),
+            "same body"
+        );
+    }
+
+    #[test]
+    fn guarded_file_write_creates_then_updates_without_manual_versions() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        let expected = state.vault_path().unwrap();
+        let created = file_write_inner(
+            state.clone(),
+            "nested/note.md".into(),
+            "first body".into(),
+            expected.clone(),
+            Some(FileWritePrecondition {
+                expected_vault: expected.to_string_lossy().into_owned(),
+                base_content_hash: None,
+            }),
+        )
+        .unwrap();
+        let updated = file_write_inner(
+            state.clone(),
+            "nested/note.md".into(),
+            "second body".into(),
+            expected.clone(),
+            Some(FileWritePrecondition {
+                expected_vault: expected.to_string_lossy().into_owned(),
+                base_content_hash: Some(created.content_hash),
+            }),
+        )
+        .unwrap();
+        assert_eq!(updated.content_hash, content_hash("second body"));
+        assert_eq!(
+            fs::read_to_string(vault.join("nested/note.md")).unwrap(),
+            "second body"
+        );
+        assert_eq!(
+            state
+                .db
+                .with_read_conn(|conn| Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM versions",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )?))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn guarded_file_write_compares_classified_plaintext_baseline_and_keeps_encryption() {
+        let _guard = VAULT_KEY_TEST_LOCK.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        unlock_test_vault(&vault);
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        let expected = state.vault_path().unwrap();
+        let first = file_write_inner(
+            state.clone(),
+            ".classified/secret.md".into(),
+            "first private body".into(),
+            expected.clone(),
+            Some(FileWritePrecondition {
+                expected_vault: expected.to_string_lossy().into_owned(),
+                base_content_hash: None,
+            }),
+        )
+        .unwrap();
+        let second = file_write_inner(
+            state.clone(),
+            ".classified/secret.md".into(),
+            "second private body".into(),
+            expected.clone(),
+            Some(FileWritePrecondition {
+                expected_vault: expected.to_string_lossy().into_owned(),
+                base_content_hash: Some(first.content_hash.clone()),
+            }),
+        )
+        .unwrap();
+        assert_eq!(second.content_hash, content_hash("second private body"));
+        let encrypted = fs::read(vault.join(".classified/secret.md")).unwrap();
+        assert!(classified_io::has_csef_magic(&encrypted));
+        assert_eq!(
+            decode_file_content(&encrypted).unwrap(),
+            "second private body"
+        );
+        assert!(file_write_inner(
+            state,
+            ".classified/secret.md".into(),
+            "stale private edit".into(),
+            expected.clone(),
+            Some(FileWritePrecondition {
+                expected_vault: expected.to_string_lossy().into_owned(),
+                base_content_hash: Some(first.content_hash),
+            })
+        )
+        .is_err());
+        assert_eq!(
+            fs::read(vault.join(".classified/secret.md")).unwrap(),
+            encrypted
+        );
+    }
+
+    #[test]
+    fn queued_file_write_rejects_vault_switch_before_worker_dispatch() {
+        let dir = tempdir().unwrap();
+        let vault_a = dir.path().join("a");
+        let vault_b = dir.path().join("b");
+        fs::create_dir_all(&vault_a).unwrap();
+        fs::create_dir_all(&vault_b).unwrap();
+        fs::write(vault_a.join("note.md"), "from a").unwrap();
+        fs::write(vault_b.join("note.md"), "from b").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault_a).unwrap();
+        let queued_vault = state.vault_path().unwrap();
+        state.set_vault(vault_b.clone()).unwrap();
+
+        let result = file_write_inner(
+            state,
+            "note.md".into(),
+            "late edit from a".into(),
+            queued_vault.clone(),
+            None,
+        );
+
+        assert!(
+            result.is_err(),
+            "a queued write must not follow active Vault"
+        );
+        assert_eq!(
+            fs::read_to_string(queued_vault.join("note.md")).unwrap(),
+            "from a"
+        );
+        assert_eq!(
+            fs::read_to_string(vault_b.join("note.md")).unwrap(),
+            "from b"
+        );
+    }
     #[test]
     fn file_link_summary_counts_inbound_and_outbound_links() {
         let dir = tempdir().unwrap();
@@ -2006,6 +2113,7 @@ mod path_tests {
 
     #[test]
     fn vault_asset_path_must_live_under_assets() {
+        use crate::storage::asset_operations::is_vault_asset_path;
         assert!(is_vault_asset_path("assets/photo.png"));
         assert!(!is_vault_asset_path("notes/x.md"));
         assert!(!is_vault_asset_path("assets/../secret.png"));
@@ -2031,33 +2139,5 @@ mod path_tests {
         assert_eq!(image_extension_for_content_type("text/html"), None);
         assert_eq!(extension_from_url_path("/a/b/c.PNG"), Some("png"));
         assert_eq!(extension_from_url_path("/a/b/c.jpg?x=1"), None);
-    }
-
-    #[test]
-    fn folder_rename_reindex_paths_are_limited_to_moved_and_modified_files() {
-        let paths = folder_rename_reindex_paths(
-            "old",
-            "new",
-            &[
-                "old/a.md".to_string(),
-                "old/deep/b.md".to_string(),
-                "other/ignore.md".to_string(),
-            ],
-            &[
-                "refs/source.md".to_string(),
-                "new/a.md".to_string(),
-                "refs/source.md".to_string(),
-                "old/ref.md".to_string(),
-            ],
-        );
-        assert_eq!(
-            paths,
-            vec![
-                "new/a.md".to_string(),
-                "new/deep/b.md".to_string(),
-                "new/ref.md".to_string(),
-                "refs/source.md".to_string()
-            ]
-        );
     }
 }

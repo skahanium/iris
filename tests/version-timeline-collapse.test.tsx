@@ -44,6 +44,7 @@ function manualEntry(id = 1): VersionEntry {
 }
 
 const VersionTimelineHarness = VersionTimeline as unknown as (props: {
+  vaultPath: string;
   open: boolean;
   onClose: () => void;
   notePath: string | null;
@@ -94,6 +95,7 @@ describe("VersionTimeline collapsed auto backups", () => {
           open: true,
           onClose: () => {},
           notePath: "note.md",
+          vaultPath: "/vault-A",
           currentContent: "# current",
           onRestore: async () => {},
           onFinalizeCurrent: (path, content, label) =>
@@ -118,6 +120,7 @@ describe("VersionTimeline collapsed auto backups", () => {
           open: true,
           onClose: () => {},
           notePath: "note.md",
+          vaultPath: "/vault-A",
           currentContent: "# current",
           onRestore: async () => {},
           onFinalizeCurrent: (path, content, label) =>
@@ -153,6 +156,7 @@ describe("VersionTimeline collapsed auto backups", () => {
           open: true,
           onClose: () => {},
           notePath: "note.md",
+          vaultPath: "/vault-A",
           currentContent: "# stale current",
           getCurrentContent,
           onRestore,
@@ -182,8 +186,13 @@ describe("VersionTimeline collapsed auto backups", () => {
     });
 
     expect(confirm).toHaveBeenCalled();
-    expect(getCurrentContent).toHaveBeenCalledTimes(1);
-    expect(versionRestore).toHaveBeenCalledWith(1, "# fresh current");
+    // Capture before reading the version, then reject intervening edits before applying it.
+    expect(getCurrentContent).toHaveBeenCalledTimes(2);
+    expect(versionRestore).toHaveBeenCalledWith(1, "# fresh current", {
+      targetPath: "note.md",
+      expectedVault: "/vault-A",
+      allowLegacyUnscoped: false,
+    });
     expect(onRestore).toHaveBeenCalledWith("# restored");
   });
 
@@ -196,6 +205,7 @@ describe("VersionTimeline collapsed auto backups", () => {
           open: true,
           onClose: () => {},
           notePath: "note.md",
+          vaultPath: "/vault-A",
           currentContent: "# stale current",
           getCurrentContent,
           onRestore: async () => {},

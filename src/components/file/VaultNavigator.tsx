@@ -117,6 +117,7 @@ function vaultFileIcon(file: VaultFileItem): LucideIcon {
 
 interface VaultNavigatorProps {
   open: boolean;
+  vaultPath: string;
   onClose: () => void;
   onOpen: (
     path: string,
@@ -249,6 +250,7 @@ import { TreeFolder } from "./VaultNavigatorTree";
 
 export function VaultNavigatorBody({
   open,
+  vaultPath,
   onClose,
   onOpen,
   onPrepare,
@@ -297,7 +299,7 @@ export function VaultNavigatorBody({
     name: string;
   } | null>(null);
 
-  const fileActions = useVaultFileActions({
+  const fileActions = useVaultFileActions(vaultPath, {
     onOpen,
     onBeforeFilePathChange,
     onFilePathChanged,

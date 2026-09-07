@@ -108,6 +108,7 @@ interface VersionSchedulerPort {
 }
 
 interface AppOverlaysProps {
+  vaultPath: string;
   activePath: string | null;
   restoreVersion: (content: string) => Promise<void>;
   autoVersionSettings: {
@@ -199,6 +200,7 @@ interface AppOverlaysProps {
 }
 
 export function AppOverlays({
+  vaultPath,
   activePath,
   restoreVersion,
   autoVersionSettings,
@@ -271,6 +273,7 @@ export function AppOverlays({
       />
       <VaultNavigator
         open={overlays.fileSheet}
+        vaultPath={vaultPath}
         onClose={() => overlays.closeOverlay("fileSheet")}
         onOpen={(path, source, options) =>
           openNoteLeavingHome(path, options?.titleHint, {
@@ -332,6 +335,7 @@ export function AppOverlays({
         >
           <ManagementCenterPanel
             open={overlays.managementCenterOpen}
+            vaultPath={vaultPath}
             onClose={() => overlays.closeOverlay("managementCenter")}
             section={overlays.managementCenterSection}
             detail={overlays.managementCenterDetail}
@@ -421,6 +425,10 @@ export function AppOverlays({
           }
         >
           <VersionTimeline
+            vaultPath={vaultPath}
+            documentSessionId={
+              tabs.find((tab) => tab.path === activePath)?.documentSessionId
+            }
             open={overlays.versionOpen}
             onClose={() => overlays.closeOverlay("version")}
             notePath={activePath}

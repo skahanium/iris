@@ -450,6 +450,7 @@ function App() {
     clearSuppressShellUi,
     beginSuppressShellUi,
   } = useAppPersistenceLifecycle({
+    vaultPath,
     activeFileLocked,
     activePath,
     activePathRef,
@@ -871,6 +872,7 @@ function App() {
 
   const navigatorBridge = {
     activePath: activeWorkspacePath,
+    vaultPath,
     onOpenDocument: guardedOpenNote,
     onPrepareNote: prepareVisibleNote,
     fileLifecycle: {
@@ -1040,6 +1042,7 @@ function App() {
         }
         overlays={
           <AppOverlays
+            vaultPath={vaultPath}
             activePath={activePath}
             restoreVersion={restoreCurrentVersionWithPromotion}
             bumpVaultIndex={bumpVaultIndex}

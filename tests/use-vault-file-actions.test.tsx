@@ -34,11 +34,13 @@ type HookApi = ReturnType<typeof useVaultFileActions>;
 function Harness({
   apiRef,
   callbacks,
+  vaultPath,
 }: {
   apiRef: { current: HookApi | null };
   callbacks: VaultFileActionCallbacks;
+  vaultPath: string;
 }) {
-  apiRef.current = useVaultFileActions(callbacks);
+  apiRef.current = useVaultFileActions(vaultPath, callbacks);
   return null;
 }
 
@@ -98,7 +100,15 @@ describe("useVaultFileActions", () => {
     vi.mocked(fileSetLock).mockResolvedValue(undefined);
     vi.mocked(fileDelete).mockResolvedValue(undefined);
     vi.mocked(folderCreate).mockResolvedValue(undefined);
-    vi.mocked(folderRename).mockResolvedValue("synced");
+    vi.mocked(folderRename).mockResolvedValue({
+      indexStatus: "synced",
+      operation: {
+        previousPath: "policy",
+        appliedPaths: [],
+        pendingPaths: [],
+        recoveryVersions: [],
+      },
+    });
 
     host = document.createElement("div");
     document.body.append(host);
@@ -111,9 +121,9 @@ describe("useVaultFileActions", () => {
     vi.clearAllMocks();
   });
 
-  function renderHook() {
+  function renderHook(vaultPath = "/vault-a") {
     act(() => {
-      root.render(createElement(Harness, { apiRef, callbacks }));
+      root.render(createElement(Harness, { apiRef, callbacks, vaultPath }));
     });
   }
 
@@ -130,7 +140,11 @@ describe("useVaultFileActions", () => {
       "policy/a.md",
       "policy/b.md",
     );
-    expect(fileRename).toHaveBeenCalledWith("policy/a.md", "policy/b.md");
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/a.md",
+      "policy/b.md",
+      "/vault-a",
+    );
     expect(callbacks.onFilePathChanged).toHaveBeenCalledWith(
       "policy/a.md",
       "policy/b.md",
@@ -237,7 +251,7 @@ describe("useVaultFileActions", () => {
       "policy/a.md",
       "archive/a.md",
     );
-    expect(folderRename).toHaveBeenCalledWith("policy/", "archive");
+    expect(folderRename).toHaveBeenCalledWith("policy/", "archive", "/vault-a");
     expect(callbacks.onFilePathChanged).toHaveBeenNthCalledWith(
       2,
       "policy/b.md",
@@ -256,12 +270,207 @@ describe("useVaultFileActions", () => {
       });
     });
 
-    expect(fileRename).toHaveBeenCalledWith("policy/a.md", "archive/a.md");
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/a.md",
+      "archive/a.md",
+      "/vault-a",
+    );
     expect(callbacks.onFilePathChanged).toHaveBeenCalledWith(
       "policy/a.md",
       "archive/a.md",
       "A",
     );
+  });
+
+  it("文件夹部分链接失败仍接纳移动回执，而不伪装为索引失败", async () => {
+    vi.mocked(folderRename).mockResolvedValueOnce({
+      indexStatus: "synced",
+      operation: {
+        previousPath: "policy",
+        appliedPaths: ["archive/a.md", "archive/b.md"],
+        pendingPaths: ["references.md"],
+        recoveryVersions: [["references.md", 15]],
+      },
+    });
+    renderHook();
+    await act(async () => {
+      await apiRef.current?.rename(
+        { kind: "folder", path: "policy/" },
+        "archive",
+        {
+          files: [NOTE_A, NOTE_B],
+          fileTitle: (file) => file.title,
+        },
+      );
+    });
+    expect(callbacks.onFilePathChanged).toHaveBeenCalledTimes(2);
+    expect(callbacks.onFilePathChangeFailed).not.toHaveBeenCalled();
+    expect(callbacks.onIndexDegraded).not.toHaveBeenCalled();
+    expect(apiRef.current?.error).toBe("文件已移动，部分反向链接待处理");
+  });
+
+  it("多文件后缀失败不撤销已确认的前缀迁移", async () => {
+    vi.mocked(fileRename).mockReset();
+    vi.mocked(fileRename)
+      .mockResolvedValueOnce({
+        entry: {
+          id: 1,
+          path: "archive/a.md",
+          title: "A",
+          updated_at: "",
+          word_count: 0,
+        },
+        contentHash: "h",
+        indexStatus: "synced",
+      })
+      .mockRejectedValueOnce(new Error("second move failed"));
+    renderHook();
+    await act(async () => {
+      await apiRef.current?.move(
+        { kind: "files", files: [NOTE_A, NOTE_B] },
+        "archive/",
+        {
+          files: [NOTE_A, NOTE_B],
+          fileTitle: (file) => file.title,
+        },
+      );
+    });
+    expect(callbacks.onFilePathChanged).toHaveBeenCalledWith(
+      "policy/a.md",
+      "archive/a.md",
+      "A",
+    );
+    expect(callbacks.onFilePathChangeFailed).toHaveBeenCalledTimes(1);
+    expect(callbacks.onFilePathChangeFailed).toHaveBeenCalledWith(
+      "policy/b.md",
+    );
+  });
+
+  it("目录保存屏障等待期间切库仍把动作开始时的 Vault 传给 IPC", async () => {
+    let releaseBarrier: (() => void) | undefined;
+    const barrier = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    vi.mocked(callbacks.onBeforeFilePathChange!).mockImplementationOnce(
+      () => barrier,
+    );
+    renderHook("/vault-a");
+    let move: Promise<string | null> | undefined;
+    await act(async () => {
+      move = apiRef.current?.rename(
+        { kind: "folder", path: "policy/" },
+        "archive",
+        { files: [NOTE_A], fileTitle: (file) => file.title },
+      );
+      await Promise.resolve();
+    });
+    renderHook("/vault-b");
+    await act(async () => {
+      releaseBarrier?.();
+      await move;
+    });
+
+    expect(folderRename).toHaveBeenCalledWith("policy/", "archive", "/vault-a");
+  });
+
+  it("单文件提交回执后的 changed 异常不会 abort 旧路径", async () => {
+    vi.mocked(callbacks.onFilePathChanged!).mockImplementationOnce(() => {
+      throw new Error("tab reconcile failed");
+    });
+    renderHook();
+    await act(async () => {
+      await apiRef.current?.rename({ kind: "file", file: NOTE_A }, "b", {
+        files: [NOTE_A],
+        fileTitle: (file) => file.title,
+      });
+    });
+
+    expect(callbacks.onFilePathChangeFailed).not.toHaveBeenCalled();
+    expect(apiRef.current?.error).toContain("已移动");
+  });
+
+  it("提交后的界面异常不会覆盖 durable pending warning", async () => {
+    vi.mocked(fileRename).mockResolvedValueOnce({
+      entry: {
+        id: 1,
+        path: "policy/b.md",
+        title: "B",
+        updated_at: "",
+        word_count: 0,
+      },
+      contentHash: "h",
+      indexStatus: "synced",
+      operation: {
+        previousPath: "policy/a.md",
+        appliedPaths: ["policy/b.md"],
+        pendingPaths: ["policy/c.md"],
+        recoveryVersions: [["policy/c.md", 12]],
+      },
+    });
+    vi.mocked(callbacks.onFilePathChanged!).mockImplementationOnce(() => {
+      throw new Error("tab reconcile failed");
+    });
+    renderHook();
+
+    await act(async () => {
+      await apiRef.current?.rename({ kind: "file", file: NOTE_A }, "b", {
+        files: [NOTE_A],
+        fileTitle: (file) => file.title,
+      });
+    });
+
+    expect(apiRef.current?.error).toContain("部分反向链接待处理");
+    expect(apiRef.current?.error).toContain("界面同步失败");
+    expect(callbacks.onFilePathChangeFailed).not.toHaveBeenCalled();
+  });
+
+  it("cleanup recovery warning 作为已提交事实展示", async () => {
+    vi.mocked(fileRename).mockResolvedValueOnce({
+      entry: {
+        id: 1,
+        path: "policy/b.md",
+        title: "B",
+        updated_at: "",
+        word_count: 0,
+      },
+      contentHash: "h",
+      indexStatus: "synced",
+      operation: {
+        previousPath: "policy/a.md",
+        appliedPaths: ["policy/b.md", "policy/c.md"],
+        pendingPaths: [],
+        recoveryVersions: [["policy/c.md", 12]],
+        recoveryWarnings: ["move_backlink_cleanup_required"],
+      },
+    });
+    renderHook();
+
+    await act(async () => {
+      await apiRef.current?.rename({ kind: "file", file: NOTE_A }, "b", {
+        files: [NOTE_A],
+        fileTitle: (file) => file.title,
+      });
+    });
+
+    expect(apiRef.current?.error).toContain("恢复清理待处理");
+    expect(callbacks.onFilePathChangeFailed).not.toHaveBeenCalled();
+  });
+
+  it("目录提交回执后的 refresh 异常不会 abort 任一旧路径", async () => {
+    vi.mocked(refresh).mockImplementationOnce(() => {
+      throw new Error("catalog refresh failed");
+    });
+    renderHook();
+    await act(async () => {
+      await apiRef.current?.move(
+        { kind: "folder", path: "policy/" },
+        "archive/",
+        { files: [NOTE_A, NOTE_B], fileTitle: (file) => file.title },
+      );
+    });
+
+    expect(callbacks.onFilePathChangeFailed).not.toHaveBeenCalled();
+    expect(apiRef.current?.error).toContain("已移动");
   });
 
   it("锁定：before → fileSetLock → changed → refresh", async () => {
@@ -306,7 +515,7 @@ describe("useVaultFileActions", () => {
       created = await apiRef.current!.createFolder("", "drafts");
     });
     expect(created).toBe("drafts/");
-    expect(folderCreate).toHaveBeenCalledWith("drafts");
+    expect(folderCreate).toHaveBeenCalledWith("drafts", "/vault-a");
     expect(refresh).toHaveBeenCalled();
   });
 
@@ -334,6 +543,7 @@ describe("useVaultFileActions", () => {
 
     expect(createDefaultNote).toHaveBeenCalledWith({
       folderPrefix: "notes/",
+      expectedVault: "/vault-a",
     });
     expect(callbacks.onOpen).toHaveBeenCalledWith(
       "notes/新文档.md",

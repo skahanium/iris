@@ -8,6 +8,8 @@ export interface CreatedNote {
 }
 
 export interface CreateDefaultNoteOptions {
+  /** Vault captured by the initiating navigator before any asynchronous work. */
+  expectedVault?: string;
   /** Open-tab titles not yet visible in {@link fileList} (e.g. other blank tabs). */
   extraTakenTitles?: Iterable<string>;
   /** Target folder prefix, e.g. `notes/` — empty for vault root. */
@@ -47,7 +49,7 @@ export async function createDefaultNote(
     );
     const content = buildDefaultNoteContent(title);
     try {
-      const receipt = await fileCreate(path, content);
+      const receipt = await fileCreate(path, content, options.expectedVault);
       return { content, path: receipt.entry.path, title };
     } catch (e) {
       if (isCreateConflict(e)) {

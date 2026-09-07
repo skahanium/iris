@@ -124,7 +124,12 @@ fn candidate_title(content: &str, stored_title: &str, path: &str) -> Option<Stri
 fn history_title(state: &AppState, path: &str) -> Option<String> {
     let versions = crate::version::version_list(state, path).ok()?;
     for version in versions {
-        let content = crate::version::version_preview(state, version.id).ok()?;
+        if version.is_legacy_unscoped {
+            continue;
+        }
+        let Ok(content) = crate::version::version_preview(state, version.id) else {
+            continue;
+        };
         if let Some(title) = title_from_content(&content) {
             return Some(title);
         }
@@ -208,11 +213,19 @@ fn audit_missing_documents(
     Vec<UnavailableDocumentRecoveryItem>,
 )> {
     let vault = state.vault_path()?;
-    let indexed: Vec<(String, String)> = state.db.with_read_conn(|conn| {
+    let mut indexed: Vec<(String, String)> = state.db.with_read_conn(|conn| {
         let mut statement = conn.prepare("SELECT path, title FROM files ORDER BY path")?;
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.flatten().collect())
     })?;
+    for path in state
+        .db
+        .with_read_conn(|conn| crate::version::repository::active_paths(conn, &vault))?
+    {
+        if !indexed.iter().any(|(existing, _)| existing == &path) {
+            indexed.push((path.clone(), title_from_path(&path)));
+        }
+    }
 
     let mut recoverable = Vec::new();
     let mut unavailable = Vec::new();
@@ -225,6 +238,9 @@ fn audit_missing_documents(
         }
         let mut recovered = None;
         for version in crate::version::version_list(state, &path)? {
+            if version.is_legacy_unscoped {
+                continue;
+            }
             let Ok(content) = crate::version::version_preview(state, version.id) else {
                 continue;
             };
@@ -269,29 +285,9 @@ fn is_unified_diff(content: &str) -> bool {
 }
 
 fn active_version_object_hashes(state: &AppState) -> AppResult<HashSet<String>> {
-    let storage_paths: Vec<String> = state.db.with_read_conn(|conn| {
-        let mut statement = conn.prepare("SELECT storage_path FROM versions")?;
-        let rows = statement.query_map([], |row| row.get(0))?;
-        Ok(rows.flatten().collect())
-    })?;
-    let mut hashes = HashSet::new();
-    for storage_path in storage_paths {
-        if let Some(hash) = storage_path.strip_prefix("cas:") {
-            if valid_object_hash(hash) {
-                hashes.insert(hash.to_string());
-            }
-        } else if let Some(diff) = storage_path.strip_prefix("dif:") {
-            if let Some((parent, patch)) = diff.split_once(':') {
-                if valid_object_hash(parent) {
-                    hashes.insert(parent.to_string());
-                }
-                if valid_object_hash(patch) {
-                    hashes.insert(patch.to_string());
-                }
-            }
-        }
-    }
-    Ok(hashes)
+    state
+        .db
+        .with_read_conn(crate::version::repository::referenced_object_hashes)
 }
 
 fn orphan_document_content(state: &AppState, object_hash: &str) -> AppResult<String> {
@@ -343,17 +339,19 @@ fn audit_orphaned_documents(state: &AppState) -> AppResult<Vec<OrphanedDocumentR
 }
 
 fn audit_document_recovery(state: &AppState) -> AppResult<DocumentRecoveryAudit> {
-    let title_issues = audit_titles(state)?
-        .into_iter()
-        .filter(|item| item.reason != "missing_markdown")
-        .collect();
-    let (missing_documents, unavailable_documents) = audit_missing_documents(state)?;
-    let orphaned_documents = audit_orphaned_documents(state)?;
-    Ok(DocumentRecoveryAudit {
-        title_issues,
-        missing_documents,
-        orphaned_documents,
-        unavailable_documents,
+    crate::storage::atomic_write::with_vault_move_lock(|| {
+        let title_issues = audit_titles(state)?
+            .into_iter()
+            .filter(|item| item.reason != "missing_markdown")
+            .collect();
+        let (missing_documents, unavailable_documents) = audit_missing_documents(state)?;
+        let orphaned_documents = audit_orphaned_documents(state)?;
+        Ok(DocumentRecoveryAudit {
+            title_issues,
+            missing_documents,
+            orphaned_documents,
+            unavailable_documents,
+        })
     })
 }
 
@@ -363,30 +361,26 @@ fn restore_missing_document(
     version_id: i64,
     expected_content_hash: &str,
 ) -> AppResult<FileWriteResult> {
-    if !is_user_note_path(path) || !path.to_ascii_lowercase().ends_with(".md") {
-        return Err(AppError::msg("invalid missing-document recovery path"));
-    }
-    let stored_hash: String = state.db.with_read_conn(|conn| {
-        conn.query_row(
-            "SELECT v.content_hash
-             FROM versions v JOIN files f ON f.id = v.file_id
-             WHERE v.id = ?1 AND f.path = ?2",
-            rusqlite::params![version_id, path],
-            |row| row.get(0),
-        )
-        .map_err(Into::into)
-    })?;
-    if stored_hash != expected_content_hash {
-        return Err(AppError::msg(
-            "recovery snapshot changed; run the audit again",
-        ));
-    }
-    let content = crate::version::version_preview(state, version_id)?;
-    if crate::cas::hash::content_hash_str(&content) != expected_content_hash {
-        return Err(AppError::msg("recovery snapshot integrity check failed"));
-    }
-    // `create` is atomic and refuses to overwrite a newly recreated file.
-    NoteWriteService::create(state, path, &content)
+    crate::storage::atomic_write::with_vault_move_lock(|| {
+        if !is_user_note_path(path) || !path.to_ascii_lowercase().ends_with(".md") {
+            return Err(AppError::msg("invalid missing-document recovery path"));
+        }
+        let vault = state.vault_path()?;
+        let stored_hash = state.db.with_read_conn(|conn| {
+            crate::version::repository::owned_hash(conn, &vault, path, version_id)
+        })?;
+        if stored_hash != expected_content_hash {
+            return Err(AppError::msg(
+                "recovery snapshot changed; run the audit again",
+            ));
+        }
+        let content = crate::version::version_preview(state, version_id)?;
+        if crate::cas::hash::content_hash_str(&content) != expected_content_hash {
+            return Err(AppError::msg("recovery snapshot integrity check failed"));
+        }
+        // `create` is atomic and refuses to overwrite a newly recreated file.
+        NoteWriteService::create_under_move_lock(state, path, &content)
+    })
 }
 
 fn restore_orphaned_document(
@@ -394,12 +388,14 @@ fn restore_orphaned_document(
     object_hash: &str,
     target_path: &str,
 ) -> AppResult<FileWriteResult> {
-    if !is_user_note_path(target_path) || !target_path.to_ascii_lowercase().ends_with(".md") {
-        return Err(AppError::msg("invalid orphan-document recovery path"));
-    }
-    let content = orphan_document_content(state, object_hash)?;
-    // `create` is atomic and preserves any file created after the audit.
-    NoteWriteService::create(state, target_path, &content)
+    crate::storage::atomic_write::with_vault_move_lock(|| {
+        if !is_user_note_path(target_path) || !target_path.to_ascii_lowercase().ends_with(".md") {
+            return Err(AppError::msg("invalid orphan-document recovery path"));
+        }
+        let content = orphan_document_content(state, object_hash)?;
+        // `create` is atomic and preserves any file created after the audit.
+        NoteWriteService::create_under_move_lock(state, target_path, &content)
+    })
 }
 
 /// Read-only audit for missing indexed documents and unattached Markdown CAS blobs.
@@ -489,6 +485,13 @@ mod tests {
             .unwrap()
             .expect("version snapshot");
         fs::remove_dir_all(document.parent().unwrap()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute("DELETE FROM files WHERE path = ?1", [path])?;
+                Ok(())
+            })
+            .unwrap();
 
         let audit = audit_document_recovery(&state).unwrap();
         assert_eq!(audit.missing_documents.len(), 1);
