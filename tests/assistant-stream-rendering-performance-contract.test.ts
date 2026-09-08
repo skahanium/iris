@@ -9,7 +9,9 @@ describe("assistant stream rendering performance contract", () => {
   it("sends each committed streaming delta directly to the isolated tail", () => {
     const src = read("src/components/ai/AiMessageBubble.tsx");
 
-    expect(src).toContain("content={streamingContent}");
+    expect(src).toContain(
+      "content={streaming ? streamingContent : finalizedContent}",
+    );
     expect(src).toContain("createStreamingRenderableContent(content)");
     expect(src).not.toContain("useStreamingContent");
   });
@@ -22,16 +24,18 @@ describe("assistant stream rendering performance contract", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
     const reveal = read("src/components/ai/hooks/useAssistantAnswerReveal.ts");
 
-    expect(panel).toContain("useAssistantAnswerReveal");
-    expect(panel).toContain("presentationReveal");
-    expect(panel).toContain("StreamingLineBudgetRefContext.Provider");
+    const bubble = read("src/components/ai/AiMessageBubble.tsx");
+    expect(bubble).toContain("useAssistantAnswerReveal");
+    expect(bubble).toContain("StreamingLineBudgetRefContext.Provider");
+    expect(panel).not.toContain("presentationReveal");
+    expect(panel).not.toContain("useAssistantAnswerReveal");
     expect(panel).toContain("scheduleComposerClear");
     expect(panel).toContain("composerClearEpoch");
     expect(panel).not.toContain("clearComposer:");
     expect(reveal).toContain("nextRevealLength");
     expect(reveal).not.toContain("ASSISTANT_ANSWER_REVEAL_MIN_STEP = 2");
     expect(reveal).not.toContain("ASSISTANT_ANSWER_REVEAL_IMMEDIATE_CHARS");
-    const body = read("src/components/ai/StreamingMessageBody.tsx");
+    const body = read("src/components/ai/WindowedMarkdownBlock.tsx");
     expect(body).toContain("readTailLineBudget");
   });
 
@@ -44,7 +48,8 @@ describe("assistant stream rendering performance contract", () => {
     expect(bubble).toContain(
       'streaming ? "overflow-visible" : "overflow-hidden"',
     );
-    expect(tailRule).toContain("white-space: pre-wrap");
+    expect(tailRule).not.toContain("white-space: pre-wrap");
+    expect(tailRule).not.toContain("min-height");
     expect(tailRule).toContain("overflow-wrap: break-word");
     expect(tailRule).not.toContain("anywhere");
     expect(tailRule).not.toContain("word-break");
@@ -62,18 +67,13 @@ describe("assistant stream rendering performance contract", () => {
     expect(streamingRule).not.toContain("content-visibility");
   });
 
-  it("allows content-visibility only for finalized assistant bubbles", () => {
+  it("gives measured block placeholders sole ownership of offscreen height", () => {
     const css = read("src/styles/globals.css");
-    const afterFinalized =
-      css.split(".ai-message-bubble-assistant:not([data-streaming])")[1] ?? "";
-    const finalizedRule = afterFinalized.split("}")[0] ?? "";
-    const afterStreaming =
-      css.split(".ai-message-bubble-streaming[data-streaming]")[1] ?? "";
-    const streamingRule = afterStreaming.split("}")[0] ?? "";
-
-    expect(finalizedRule).toContain("content-visibility: auto");
-    expect(finalizedRule).toContain("contain-intrinsic-size");
-    expect(streamingRule).not.toContain("content-visibility: auto");
+    expect(css).not.toContain("contain-intrinsic-size: auto 320px");
+    expect(css).toContain("overflow-anchor: none");
+    expect(read("src/components/ai/AiMessageBubble.tsx")).not.toContain(
+      "<FinalizedMessageBody",
+    );
   });
 
   it("assistant bubbles expose stable data attributes for finalized and streaming states", () => {

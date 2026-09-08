@@ -30,7 +30,13 @@ pub fn estimate_tokens(text: &str) -> usize {
 /// one path to normalize it while another persists the raw content would leak it back into history.
 pub fn sanitize_meta_analysis_prefix(text: &str) -> String {
     let without_reasoning = strip_reasoning_tags(text);
-    let trimmed = strip_leaked_internal_protocol_prefix(&without_reasoning).trim();
+    let without_tool_protocol = strip_leading_content_tool_protocol(&without_reasoning);
+    if contains_unquoted_tool_proposal(without_tool_protocol) {
+        // A preface followed by an unparsed proposal is still an invalid
+        // answer, not a successful lookup. Use the existing provider recovery.
+        return String::new();
+    }
+    let trimmed = strip_leaked_internal_protocol_prefix(without_tool_protocol).trim();
     if trimmed.is_empty() {
         return trimmed.to_string();
     }
@@ -76,6 +82,92 @@ pub fn sanitize_provider_visible_content(provider_id: &str, text: &str) -> Strin
 
 fn strip_minimax_control_tokens(text: &str) -> String {
     text.replace("]<|minimax|>[", "").replace("<|minimax|>", "")
+}
+
+/// A content-embedded tool proposal is not an answer or an execution. Keep
+/// leading protocol blocks private, including partial streamed prefixes. Code
+/// fences, ordinary HTML and explanatory prose remain untouched. An empty
+/// response then follows the existing bounded provider recovery path.
+fn strip_leading_content_tool_protocol(text: &str) -> &str {
+    const OPEN: &str = "<tool_call>";
+    const CLOSE: &str = "</tool_call>";
+    let mut rest = text.trim_start();
+    loop {
+        if rest.is_empty() || OPEN.starts_with(rest) {
+            return "";
+        }
+        let Some(body) = rest.strip_prefix(OPEN) else {
+            return rest;
+        };
+        let body = body.trim_start();
+        if !body.is_empty()
+            && !"<function=".starts_with(body)
+            && !body.starts_with("<function=")
+            && !body.starts_with('{')
+        {
+            return rest;
+        }
+        let Some(end) = rest.find(CLOSE) else {
+            return "";
+        };
+        rest = rest[end + CLOSE.len()..].trim_start();
+    }
+}
+
+fn contains_unquoted_tool_proposal(text: &str) -> bool {
+    if !text.contains("<tool_call>") {
+        return false;
+    }
+    let mut fence: Option<(u8, usize)> = None;
+    let mut inline_ticks = 0;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        let bytes = trimmed.as_bytes();
+        let marker = bytes.first().copied().unwrap_or(0);
+        let run = bytes.iter().take_while(|byte| **byte == marker).count();
+        if indent <= 3 && matches!(marker, b'`' | b'~') && run >= 3 {
+            match fence {
+                None if inline_ticks == 0 => fence = Some((marker, run)),
+                Some((open, count))
+                    if open == marker && run >= count && trimmed[run..].trim().is_empty() =>
+                {
+                    fence = None;
+                }
+                _ => {}
+            }
+        } else if fence.is_none() && indent < 4 {
+            let bytes = line.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                if bytes[index] == b'`' && (index == 0 || bytes[index - 1] != b'\\') {
+                    let count = bytes[index..]
+                        .iter()
+                        .take_while(|byte| **byte == b'`')
+                        .count();
+                    if inline_ticks == 0 {
+                        inline_ticks = count;
+                    } else if inline_ticks == count {
+                        inline_ticks = 0;
+                    }
+                    index += count;
+                    continue;
+                }
+                if bytes[index] == b'<' && inline_ticks == 0 {
+                    if let Some(body) = text[offset + index..].strip_prefix("<tool_call>") {
+                        let body = body.trim_start();
+                        if body.starts_with('{') || body.starts_with("<function=") {
+                            return true;
+                        }
+                    }
+                }
+                index += 1;
+            }
+        }
+        offset += line.len();
+    }
+    false
 }
 
 /// Whether a partial streaming prefix must remain private until it can be classified.
@@ -349,6 +441,58 @@ fn strip_reasoning_tags(content: &str) -> String {
 #[cfg(test)]
 mod provider_protocol_tests {
     use super::*;
+
+    #[test]
+    fn content_tool_protocol_after_a_preface_is_not_a_final_answer() {
+        let call = "<tool_call>\n{\"name\":\"web_search\",\"parameters\":{\"query\":\"synthetic current status\"}}\n</tool_call>";
+        for prefix in ["我来帮你查一下。", "我来帮你查一下。]<]minimax[>["] {
+            assert_eq!(
+                sanitize_provider_visible_content("custom", &format!("{prefix}{call}")),
+                ""
+            );
+        }
+        for literal in [
+            format!("示例：\n```xml\n{call}\n```"),
+            format!("示例：\n~~~~xml\n{call}\n~~~~"),
+            format!("示例：`{call}`"),
+            "解释 <tool_call> 标签。".into(),
+        ] {
+            assert_eq!(
+                sanitize_provider_visible_content("custom", &literal),
+                literal
+            );
+        }
+    }
+
+    #[test]
+    fn leading_content_tool_protocol_is_never_visible_even_when_split_or_unclosed() {
+        let protocol = "<tool_call>\n<function=web_search>\n<parameter=query>synthetic current status</parameter>\n</function>\n</tool_call>";
+        for (index, character) in protocol.char_indices() {
+            let prefix = &protocol[..index + character.len_utf8()];
+            assert_eq!(
+                sanitize_provider_visible_content("custom", prefix),
+                "",
+                "protocol prefix at byte {index}"
+            );
+        }
+        assert_eq!(
+            sanitize_provider_visible_content(
+                "custom",
+                &format!("{protocol}{protocol}\n公开答复。")
+            ),
+            "公开答复。"
+        );
+        for literal in [
+            "```xml\n<tool_call><function=example></function></tool_call>\n```",
+            "解释 <tool_call> 标签。",
+            "<table><tr><td>正常表格</td></tr></table>",
+        ] {
+            assert_eq!(
+                sanitize_provider_visible_content("custom", literal),
+                literal
+            );
+        }
+    }
 
     #[test]
     fn minimax_control_tokens_and_tagged_reasoning_never_reach_visible_content() {

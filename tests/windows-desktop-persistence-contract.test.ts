@@ -9,6 +9,21 @@ function read(path: string): string {
 describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
   const runnerPath = "scripts/run-windows-persistence-e2e.mjs";
 
+  it("runs synthetic streaming acceptance in the same real WebView before touching vault fixtures", () => {
+    const runner = read(runnerPath);
+    expect(runner).toContain("--stream-replay");
+    expect(runner).toContain(
+      "/tests/fixtures/assistant-stream-replay/index.html",
+    );
+    expect(runner.indexOf("await runStreamingReplay(sessionId)")).toBeLessThan(
+      runner.indexOf('await invokeTauri(sessionId, "vault_set"'),
+    );
+    const fixture = read("tests/fixtures/assistant-stream-replay/replay.tsx");
+    expect(fixture).toContain("AiMessageList");
+    expect(fixture).not.toContain("assistantRunStart");
+    expect(fixture).not.toContain("invoke(");
+  });
+
   it("提供独立的 Windows 桌面执行入口，而不是复用 jsdom acceptance", () => {
     const pkg = JSON.parse(read("package.json")) as {
       scripts: Record<string, string>;

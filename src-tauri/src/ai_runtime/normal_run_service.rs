@@ -19,7 +19,7 @@ use crate::ai_runtime::run_engine::{FailoverStreamingProvider, RunEngine, RunEve
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::ai_runtime::tool_executor::ToolRegistry;
-use crate::ai_runtime::tool_surface::{ToolSurfaceInput, ToolSurfacePlan, ToolSurfacePlanner};
+use crate::ai_runtime::tool_surface::{ToolSurfacePlan, ToolSurfacePlanner};
 use crate::ai_runtime::{LlmMessage, MessageContent, MessageRole};
 use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
 use crate::app::AppState;
@@ -30,19 +30,7 @@ fn plan_tool_surface(
     context: &crate::ai_runtime::run_context::RunContext,
     authorized_capabilities: &[CapabilityId],
 ) -> ToolSurfacePlan {
-    let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
-        web_enabled: authorized_capabilities
-            .iter()
-            .any(|capability| capability.as_str() == "web.search"),
-        requires_current_web_evidence: matches!(
-            context.envelope.verification_requirement,
-            VerificationRequirement::CurrentRunWeb
-        ),
-        prefer_search_for_current_facts: context.envelope.web_reason
-            == WebDecisionReason::VolatileExternalFact,
-        effort: context.envelope.effort,
-        authorized_capabilities: authorized_capabilities.to_vec(),
-    });
+    let plan = ToolSurfacePlanner::for_envelope(&context.envelope, authorized_capabilities);
     tracing::debug!(
         effort = ?plan.effort,
         expose_web_search = plan.expose_web_search,
@@ -552,6 +540,7 @@ async fn dispatch_normal_run_after_context(
         web_reason = ?context.envelope.web_reason,
         web_execution = match context.envelope.freshness {
             Freshness::Offline => "skipped",
+            Freshness::WebPreferred if plan_tool_surface(context, authorized_capabilities).requires_web_observation => "observation_required",
             Freshness::WebPreferred => "model_decides",
             Freshness::WebRequired => "evidence_required",
         },

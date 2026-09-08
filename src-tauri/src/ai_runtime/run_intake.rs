@@ -933,6 +933,14 @@ impl ExclusionClassifier {
         if local_only {
             return offline(WebDecisionReason::ExplicitLocalOnly);
         }
+        // A transformation's supplied body is data. Inspect its instruction
+        // prefix, while retaining combined requests such as “translate and verify”.
+        let directive_text = directive_text
+            .split_once(['：', ':'])
+            .filter(|(instruction, body)| {
+                !body.starts_with("//") && is_local_transformation_request(instruction)
+            })
+            .map_or(directive_text, |(instruction, _)| instruction);
         let explicit_web = has_explicit_web_instruction(directive_text);
 
         // Only trusted runtime facts bypass the Web surface.  Conversation
@@ -940,7 +948,18 @@ impl ExclusionClassifier {
         // choices for the model, not Host-side capability revocations: a user
         // may challenge a prior factual answer or ask to verify it in any of
         // those forms.
-        if !explicit_web && is_trusted_runtime_request(directive_text) {
+        if !explicit_web
+            && is_trusted_runtime_request(directive_text)
+            && !directive_text
+                .split(['，', ',', '；', ';', '。', '\n'])
+                .any(|clause| {
+                    !is_trusted_runtime_request(clause) && is_volatile_external_request(clause)
+                })
+            && !contains_any(
+                directive_text,
+                &["热映", "上映", "发布", "新闻", "比赛", "股价", "总统"],
+            )
+        {
             return offline(WebDecisionReason::TrustedRuntimeFact);
         }
 
@@ -1112,10 +1131,14 @@ fn has_explicit_web_instruction(message: &str) -> bool {
     // an instruction to search again.  The model still receives the generic
     // WebPreferred surface when enabled and can decide to verify a disputed
     // factual claim from conversation context.
-    if message.starts_with("why did ")
+    if (message.starts_with("why did ")
         || message.starts_with("why was ")
         || message.starts_with("为什么你")
-        || message.starts_with("为什么刚才")
+        || message.starts_with("为什么刚才"))
+        && !contains_any(
+            message,
+            &["请", "please", "当前", "最新", "现在", "current", "latest"],
+        )
     {
         return false;
     }
@@ -1154,36 +1177,47 @@ fn has_explicit_web_instruction(message: &str) -> bool {
 }
 
 fn is_trusted_runtime_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "今天是几月几日",
-            "今天几月几日",
-            "今天是几号",
-            "今天几号",
-            "当前日期",
-            "本机日期",
-            "现在几点",
-            "当前时间",
-            "本机时间",
-            "应用版本",
-            "iris 版本",
-            "今天星期几",
-            "what day of the week is it today",
-            "which day of the week is it today",
-            "what day is it",
-            "what day of week is it",
-            "what is today's weekday",
-            "what is today's date",
-            "current local time",
-            "what is the local time",
-            "what time is it locally",
-            "show local date",
-            "app version",
-            "application version",
-            "iris version",
-        ],
-    )
+    let runtime_phrases = [
+        "当前应用版本",
+        "当前 iris 版本",
+        "current app version",
+        "current application version",
+        "current iris version",
+        "今天是几月几日",
+        "今天几月几日",
+        "今天是几号",
+        "今天几号",
+        "当前日期",
+        "本机日期",
+        "现在几点",
+        "当前时间",
+        "本机时间",
+        "应用版本",
+        "iris 版本",
+        "今天星期几",
+        "what day of the week is it today",
+        "which day of the week is it today",
+        "what day is it",
+        "what day of week is it",
+        "what is today's weekday",
+        "what is today's date",
+        "current local time",
+        "what is the local time",
+        "what time is it locally",
+        "show local date",
+        "app version",
+        "application version",
+        "iris version",
+    ];
+    if !contains_any(message, &runtime_phrases) {
+        return false;
+    }
+    let remaining = runtime_phrases
+        .iter()
+        .fold(message.to_ascii_lowercase(), |text, phrase| {
+            text.replace(phrase, "")
+        });
+    !is_volatile_external_request(&remaining)
 }
 
 fn is_volatile_external_request(message: &str) -> bool {
@@ -1191,7 +1225,15 @@ fn is_volatile_external_request(message: &str) -> bool {
     // now”, but it does not by itself assert a current external fact.  Keep
     // Web available as a preference; do not turn it into a strict factual
     // contract merely because the conversation is being discussed.
-    if is_reflective_dialogue_request(message) {
+    if is_reflective_dialogue_request(message)
+        && !contains_any(
+            message,
+            &[
+                "当前", "最新", "即将", "热映", "上映", "发布", "新闻", "股价", "比赛", "current",
+                "latest", "upcoming",
+            ],
+        )
+    {
         return false;
     }
     contains_any(
@@ -1199,6 +1241,15 @@ fn is_volatile_external_request(message: &str) -> bool {
         &[
             "最新",
             "近期",
+            "即将",
+            "热映",
+            "正在上映",
+            "总统是谁",
+            "总理是谁",
+            "首相是谁",
+            "upcoming",
+            "in theaters",
+            "who is the president",
             "最近",
             "当前",
             "现在",

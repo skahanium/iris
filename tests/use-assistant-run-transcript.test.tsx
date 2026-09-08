@@ -62,7 +62,10 @@ function RevealProjectionProbe({
   run: ReturnType<typeof replayAssistantRunEvents>;
   presentation: AssistantPresentationState;
 }) {
-  const reveal = useAssistantAnswerReveal(presentation);
+  const reveal = useAssistantAnswerReveal({
+    ...presentation,
+    answerComplete: presentation.answerComplete || run.state === "completed",
+  });
   useAssistantConversationProjection({
     run,
     presentation,
@@ -1315,6 +1318,18 @@ describe("useAssistantConversationProjection", () => {
           runId: "run-old",
           seq: 2,
           stateVersion: 1,
+          timestamp: "2026-08-03T00:00:00.500Z",
+          type: "stage_changed",
+          payload: {
+            kind: "stage_changed",
+            state: "preparing",
+            stage: "正在准备",
+          },
+        },
+        {
+          runId: "run-old",
+          seq: 3,
+          stateVersion: 1,
           timestamp: "2026-08-03T00:00:01.000Z",
           type: "stage_changed",
           payload: {
@@ -1325,7 +1340,7 @@ describe("useAssistantConversationProjection", () => {
         },
         {
           runId: "run-old",
-          seq: 3,
+          seq: 4,
           stateVersion: 2,
           timestamp: "2026-08-03T00:00:02.000Z",
           type: "content_delta",
@@ -1333,7 +1348,7 @@ describe("useAssistantConversationProjection", () => {
         },
         {
           runId: "run-old",
-          seq: 4,
+          seq: 5,
           stateVersion: 3,
           timestamp: "2026-08-03T00:00:03.000Z",
           type: "completed",
@@ -1347,7 +1362,7 @@ describe("useAssistantConversationProjection", () => {
             run={oldRun}
             presentation={{
               runId: "run-old",
-              lastSeq: 4,
+              lastSeq: 5,
               resyncFromSeq: null,
               pendingEvents: [],
               processItems: [],
@@ -1357,11 +1372,13 @@ describe("useAssistantConversationProjection", () => {
           />,
         ),
       );
-      while (frameCallbacks.size > 0) {
+      let frameTime = 0;
+      while (frameCallbacks.size > 0 && frameTime < 120_000) {
+        frameTime += 1000 / 60;
         const callbacks = Array.from(frameCallbacks.values());
         frameCallbacks.clear();
         act(() => {
-          callbacks.forEach((callback) => callback(16));
+          callbacks.forEach((callback) => callback(frameTime));
         });
       }
       expect(

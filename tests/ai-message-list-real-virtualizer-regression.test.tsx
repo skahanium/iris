@@ -24,6 +24,128 @@ describe("AiMessageList real virtualizer regression", () => {
     vi.restoreAllMocks();
   });
 
+  it("accepts observer row heights without forcing a second layout read", () => {
+    const callbacks = new Map<Element, ResizeObserverCallback>();
+    class TestObserver {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        callbacks.set(target, this.callback);
+      }
+      unobserve(target: Element) {
+        callbacks.delete(target);
+      }
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", TestObserver);
+    try {
+      act(() =>
+        root.render(
+          <AiMessageList
+            messages={[
+              { role: "assistant", content: "合成正文", runId: "measured" },
+            ]}
+            streaming={false}
+          />,
+        ),
+      );
+      const row = host.querySelector<HTMLElement>("[data-conversation-row]")!;
+      const callback = callbacks.get(row)!;
+      expect(callback).toBeTypeOf("function");
+      const readRect = vi.spyOn(row, "getBoundingClientRect");
+      act(() =>
+        callback(
+          [
+            {
+              target: row,
+              borderBoxSize: [{ blockSize: 173, inlineSize: 420 }],
+            } as unknown as ResizeObserverEntry,
+          ],
+          {} as ResizeObserver,
+        ),
+      );
+      expect(readRect).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps user and assistant DOM mounted across remote completion and the next turn", () => {
+    const user = {
+      role: "user" as const,
+      content: "问题",
+      clientRequestId: "request-1",
+    };
+    const assistant = {
+      role: "assistant" as const,
+      content: "第一段。\n\n正在增长",
+      clientRequestId: "request-1",
+      runId: "run-1",
+    };
+    act(() =>
+      root.render(<AiMessageList messages={[user, assistant]} streaming />),
+    );
+    const userBody = host.querySelector(".ai-message-bubble-user");
+    const assistantBody = host.querySelector('[data-role="assistant"]');
+    expect(userBody).not.toBeNull();
+    expect(assistantBody).not.toBeNull();
+    act(() =>
+      root.render(
+        <AiMessageList messages={[user, assistant]} streaming={false} />,
+      ),
+    );
+    expect(host.querySelector(".ai-message-bubble-user")).toBe(userBody);
+    expect(host.querySelector('[data-role="assistant"]')).toBe(assistantBody);
+    act(() =>
+      root.render(
+        <AiMessageList
+          messages={[
+            user,
+            assistant,
+            { role: "user", content: "下一问", clientRequestId: "request-2" },
+          ]}
+          streaming
+        />,
+      ),
+    );
+    expect(host.querySelector('[data-role="assistant"]')).toBe(assistantBody);
+  });
+
+  it("keeps offscreen completed content bounded and preserves its measured row placeholder", () => {
+    const messages = Array.from({ length: 120 }, (_, index) => ({
+      role: "assistant" as const,
+      content: `历史${index}`,
+      runId: `history-${index}`,
+    }));
+    act(() =>
+      root.render(<AiMessageList messages={messages} streaming={false} />),
+    );
+    expect(host.querySelectorAll("[data-conversation-row]")).toHaveLength(120);
+    expect(
+      host.querySelectorAll(".ai-message-bubble-assistant").length,
+    ).toBeLessThan(40);
+    expect(
+      host
+        .querySelector('[data-conversation-row="100"]')
+        ?.getAttribute("style"),
+    ).toContain("height:");
+  });
+
+  it("keeps return-to-latest available after the remote Run has completed", () => {
+    act(() =>
+      root.render(
+        <AiMessageList
+          messages={[
+            { role: "assistant", content: "完成回答", runId: "completed" },
+          ]}
+          streaming={false}
+        />,
+      ),
+    );
+    const viewport = host.querySelector("[data-radix-scroll-area-viewport]")!;
+    act(() => viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 })));
+    expect(host.querySelector('[aria-label="回到最新"]')).not.toBeNull();
+  });
+
   it("does not enter a nested update loop while streaming a non-empty assistant message", async () => {
     const consoleError = vi
       .spyOn(console, "error")

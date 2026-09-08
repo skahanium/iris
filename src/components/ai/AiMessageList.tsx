@@ -1,5 +1,13 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { observeElementOffset, useVirtualizer } from "@tanstack/react-virtual";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { ArrowDown, Check, Copy, RotateCcw } from "lucide-react";
 
@@ -68,6 +76,8 @@ export interface ChatLine {
   sourceSummary?: import("@/types/ai").SourceSummaryEntry[];
   /** Local-only playback state; durable Run completion must not cancel it. */
   presentationStreaming?: boolean;
+  /** Local playback consumes the authoritative body in the bubble, never per-frame transcript writes. */
+  answerPresentation?: import("./hooks/useAssistantAnswerReveal").AssistantAnswerPresentation;
 }
 
 export interface AssistantPendingInputCard {
@@ -336,10 +346,71 @@ export const AiMessageList = memo(function AiMessageList({
       (last?.role === "system" &&
         !messages.some((m) => m.role === "assistant")));
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const liveStreamRef = useRef<HTMLDivElement | null>(null);
-  const [liveFooterHeight, setLiveFooterHeight] = useState(0);
+  const geometryCallbackRef = useRef<() => void>(() => undefined);
+  const [presentedOffsets, setPresentedOffsets] = useState(
+    () => new Map<string, number>(),
+  );
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const onPresented = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const detail: unknown = event.detail;
+      if (!detail || typeof detail !== "object") return;
+      const { runId, resetEpoch, length } = detail as Record<string, unknown>;
+      if (
+        typeof runId !== "string" ||
+        typeof resetEpoch !== "number" ||
+        typeof length !== "number" ||
+        !Number.isFinite(length) ||
+        length < 0
+      )
+        return;
+      const key = JSON.stringify([runId, resetEpoch]);
+      setPresentedOffsets((offsets) => {
+        const previous = offsets.get(key);
+        if (previous !== undefined && previous >= length) return offsets;
+        const next = new Map(offsets);
+        next.set(key, Math.floor(length));
+        return next;
+      });
+    };
+    viewport.addEventListener("iris-answer-presented", onPresented);
+    return () =>
+      viewport.removeEventListener("iris-answer-presented", onPresented);
+  }, []);
+  const presentations = useMemo(
+    () =>
+      messages.map((message) => {
+        const metadata = message.answerPresentation;
+        if (!metadata) return undefined;
+        const offset = presentedOffsets.get(
+          JSON.stringify([metadata.runId, metadata.resetEpoch]),
+        );
+        return offset === undefined
+          ? metadata
+          : { ...metadata, initialVisibleLength: offset };
+      }),
+    [messages, presentedOffsets],
+  );
+  const pendingPlayback = useMemo(
+    () =>
+      messages.map((message, index) => {
+        const metadata = presentations[index];
+        if (!metadata || metadata.settled) return false;
+        const offset = metadata.initialVisibleLength;
+        // Pin through the one terminal notification, including a partially shown stop.
+        return (
+          offset === undefined ||
+          (!metadata.stopped &&
+            (!metadata.complete ||
+              offset < restoreChatLineContent(message).length))
+        );
+      }),
+    [messages, presentations],
+  );
   const toast = useToast();
-  const { historicalRows, liveRows } = useMemo(() => {
+  const conversationRows = useMemo(() => {
     const pendingAssistantExists = pendingInput
       ? messages.some(
           (message) =>
@@ -390,23 +461,17 @@ export const AiMessageList = memo(function AiMessageList({
                 : [messageRow, ...inputRow];
             }),
           ];
-    const nextHistorical: MessageRow[] = [];
-    const nextLive: MessageRow[] = [];
-    for (const row of conversationRows) {
-      if (isLiveConversationRow(row, messages, streaming)) {
-        nextLive.push(row);
-      } else {
-        nextHistorical.push(row);
-      }
-    }
-    return { historicalRows: nextHistorical, liveRows: nextLive };
+    return [
+      ...conversationRows.filter((row) => row.type !== "thinking"),
+      ...conversationRows.filter((row) => row.type === "thinking"),
+    ];
   }, [messages, pendingInput, showStandaloneThinking, streaming]);
 
   const messagesForIdentityRef = useRef(messages);
   messagesForIdentityRef.current = messages;
   const getItemKey = useCallback(
     (index: number): string => {
-      const row = historicalRows[index];
+      const row = conversationRows[index];
       if (!row || row.type === "empty" || row.type === "thinking") {
         return row?.type ?? `row:${index}`;
       }
@@ -420,7 +485,7 @@ export const AiMessageList = memo(function AiMessageList({
       }
       return messageIdentity;
     },
-    [historicalRows],
+    [conversationRows],
   );
 
   // Actual row height comes exclusively from the batched ResizeObserver. These
@@ -428,7 +493,7 @@ export const AiMessageList = memo(function AiMessageList({
   // so streaming text cannot churn virtual total size before measurement.
   const estimateRowSize = useCallback(
     (index: number): number => {
-      const row = historicalRows[index];
+      const row = conversationRows[index];
       if (!row || row.type === "empty" || row.type === "thinking") return 80;
       if (row.type === "citations") return 72;
       if (row.type === "input_required") return 144;
@@ -436,121 +501,74 @@ export const AiMessageList = memo(function AiMessageList({
       if (!message) return 112;
       return message.role === "assistant" ? 168 : 96;
     },
-    [historicalRows, messages],
+    [conversationRows, messages],
   );
 
+  const rowHeightsRef = useRef(new Map<string, number>());
   const rowVirtualizer = useVirtualizer({
-    count: historicalRows.length,
+    count: conversationRows.length,
     getScrollElement: () => viewportRef.current,
-    getItemKey,
-
-    estimateSize: estimateRowSize,
-    overscan: 8,
-  });
-  const rowVirtualizerRef = useRef(rowVirtualizer);
-  rowVirtualizerRef.current = rowVirtualizer;
-  const pendingMeasureNodesRef = useRef<Set<HTMLDivElement>>(new Set());
-  const measureFrameRef = useRef<number | null>(null);
-  const resizeObserverRef = useRef<ResizeObserver | null>(null);
-
-  const scheduleMeasureFrame = useCallback(() => {
-    if (measureFrameRef.current !== null) return;
-    measureFrameRef.current = window.requestAnimationFrame(() => {
-      measureFrameRef.current = null;
-      const nodes = Array.from(pendingMeasureNodesRef.current);
-      pendingMeasureNodesRef.current.clear();
-
-      for (const measureNode of nodes) {
-        if (!measureNode.isConnected) continue;
-        rowVirtualizerRef.current.measureElement(measureNode);
-      }
-    });
-  }, []);
-
-  const measureRowElement = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return;
-      pendingMeasureNodesRef.current.add(node);
-      scheduleMeasureFrame();
-
-      if (typeof ResizeObserver === "undefined") return;
-      if (!resizeObserverRef.current) {
-        resizeObserverRef.current = new ResizeObserver((entries) => {
-          for (const entry of entries) {
-            const target = entry.target;
-            if (!(target instanceof HTMLDivElement) || !target.isConnected) {
-              continue;
-            }
-            pendingMeasureNodesRef.current.add(target);
-            scheduleMeasureFrame();
-          }
-        });
-      }
-      resizeObserverRef.current.observe(node);
+    initialOffset: () => viewportRef.current?.scrollTop ?? 0,
+    // Initialization and reconciliation must also leave scrolling to the anchor.
+    scrollToFn: () => undefined,
+    observeElementOffset: (instance, callback) => {
+      // Refs were empty during render; seed the mounted viewport before events.
+      callback(instance.scrollElement?.scrollTop ?? 0, false);
+      return observeElementOffset(instance, callback);
     },
-    [scheduleMeasureFrame],
-  );
-
-  const virtualTotalSize = rowVirtualizer.getTotalSize();
+    getItemKey,
+    estimateSize: estimateRowSize,
+    measureElement: (element, entry) => {
+      const index = Number(element.getAttribute("data-index"));
+      const height =
+        (entry?.borderBoxSize?.[0]?.blockSize ??
+          element.getBoundingClientRect().height) ||
+        estimateRowSize(index);
+      rowHeightsRef.current.set(getItemKey(index), height);
+      return height;
+    },
+    overscan: 8,
+    paddingStart: 12,
+    paddingEnd: 12,
+    initialRect: { width: 420, height: 640 },
+    onChange: () => geometryCallbackRef.current(),
+  });
+  // The reading anchor is the sole scroll writer, including delayed row sizes.
+  rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+  const measureRowElement = rowVirtualizer.measureElement;
   const virtualItems = rowVirtualizer.getVirtualItems();
+  const visibleRows = new Set(virtualItems.map((item) => item.index));
+  const measuredRows = new Map(
+    virtualItems.map((item) => [item.index, item.size]),
+  );
+  for (const [index, height] of measuredRows) {
+    if (height > 0) rowHeightsRef.current.set(getItemKey(index), height);
+  }
   const activeStreamingMessage =
-    last && isAssistantStreaming(last, messages.length - 1, messages, streaming)
+    last?.role === "assistant" &&
+    (isAssistantStreaming(last, messages.length - 1, messages, streaming) ||
+      pendingPlayback[messages.length - 1])
       ? last
       : null;
   const activeStreamKey = activeStreamingMessage
     ? assistantMessageIdentity(activeStreamingMessage, messages.length - 1)
     : null;
-  const contentRevision =
-    Math.round(virtualTotalSize) +
-    historicalRows.length +
-    Math.round(liveFooterHeight);
-  const { following, returnToLatest } = useConversationReadingAnchor({
-    viewportRef,
-    active: streaming || activeStreamingMessage != null || pendingInput != null,
-    revision: contentRevision,
-    streamKey: conversationFollowStreamKey({
-      live: streaming || activeStreamingMessage != null || pendingInput != null,
-      userClientRequestId: lastUser?.clientRequestId,
-      userRunId: lastUser?.runId,
-      activeStreamKey,
-      pendingInputRunId: pendingInput?.runId,
-    }),
-  });
-
-  useEffect(() => {
-    const node = liveStreamRef.current;
-    if (!node) {
-      setLiveFooterHeight(0);
-      return;
-    }
-    const publishHeight = (height: number) => {
-      const next = Math.round(height);
-      setLiveFooterHeight((prev) => (prev === next ? prev : next));
-    };
-    publishHeight(node.getBoundingClientRect().height);
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const height =
-        entries[0]?.contentRect.height ?? node.getBoundingClientRect().height;
-      publishHeight(height);
+  const { following, returnToLatest, scheduleGeometry } =
+    useConversationReadingAnchor({
+      viewportRef,
+      active:
+        streaming || activeStreamingMessage != null || pendingInput != null,
+      revision: conversationRows.length,
+      streamKey: conversationFollowStreamKey({
+        live:
+          streaming || activeStreamingMessage != null || pendingInput != null,
+        userClientRequestId: lastUser?.clientRequestId,
+        userRunId: lastUser?.runId,
+        activeStreamKey,
+        pendingInputRunId: pendingInput?.runId,
+      }),
     });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [liveRows]);
-
-  useEffect(() => {
-    const pendingMeasureNodes = pendingMeasureNodesRef.current;
-
-    return () => {
-      if (measureFrameRef.current !== null) {
-        window.cancelAnimationFrame(measureFrameRef.current);
-        measureFrameRef.current = null;
-      }
-      pendingMeasureNodes.clear();
-      resizeObserverRef.current?.disconnect();
-      resizeObserverRef.current = null;
-    };
-  }, []);
+  geometryCallbackRef.current = scheduleGeometry;
 
   // Stable per-index callback cache. Inline arrows like `() => onRetract(i)`
   // create new function refs every render, breaking AiMessageBubble's memo
@@ -645,7 +663,7 @@ export const AiMessageList = memo(function AiMessageList({
     const isSelected = selectedIndices?.has(i) ?? false;
 
     if (m.role === "assistant") {
-      const msgContent = m.content || "";
+      const msgContent = restoreChatLineContent(m);
       // Fetch or create stable callbacks for this index. The Map persists
       // across renders, so the same index always gets the same function ref,
       // preserving AiMessageBubble's memo during streaming re-renders.
@@ -682,6 +700,7 @@ export const AiMessageList = memo(function AiMessageList({
               key={assistantMessageIdentity(m, i)}
               role="assistant"
               content={msgContent || undefined}
+              answerPresentation={presentations[i]}
               messageIdentity={assistantMessageIdentity(m, i)}
               streaming={assistantStreaming}
               processItems={m.processItems}
@@ -735,68 +754,79 @@ export const AiMessageList = memo(function AiMessageList({
     return <AiMessage role={m.role} content={m.content} />;
   };
 
+  const mountedRows = new Map(
+    Array.from(
+      viewportRef.current?.querySelectorAll<HTMLElement>(
+        "[data-conversation-row]",
+      ) ?? [],
+    ).map((node) => [Number(node.dataset.conversationRow), node]),
+  );
+  const nativeSelection = window.getSelection();
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <ScrollArea
         className="ai-conversation-scroll min-h-0 flex-1"
         viewportRef={viewportRef}
       >
-        <div
-          className="relative py-3"
-          style={{ height: `${virtualTotalSize}px` }}
-        >
-          {virtualItems.map((virtualRow) => {
-            const row = historicalRows[virtualRow.index];
-            if (!row) return null;
+        <div className="relative py-3" data-conversation-content="">
+          {conversationRows.map((row, index) => {
+            const key = getItemKey(index);
+            const existing = mountedRows.get(index);
+            const live =
+              isLiveConversationRow(row, messages, streaming) ||
+              (row.type === "message" && pendingPlayback[row.messageIndex]);
+            const selection = nativeSelection;
+            const preserved =
+              existing &&
+              (existing.contains(document.activeElement) ||
+                (selection &&
+                  !selection.isCollapsed &&
+                  selection.containsNode(existing, true)));
+            const mounted =
+              conversationRows.length <= 40 ||
+              visibleRows.has(index) ||
+              live ||
+              preserved ||
+              (row.type === "message" &&
+                (row.messageIndex === lastUserIndex ||
+                  selectedIndices?.has(row.messageIndex)));
             return (
               <div
-                key={getItemKey(virtualRow.index)}
-                ref={measureRowElement}
-                data-index={virtualRow.index}
+                key={key}
+                ref={mounted ? measureRowElement : undefined}
+                data-index={index}
+                data-conversation-row={index}
+                data-row-identity={key}
                 data-row-kind={row.type}
+                data-live-stream={live ? "" : undefined}
                 data-conversation-park={
-                  streaming &&
-                  row.type === "message" &&
-                  row.messageIndex === lastUserIndex
+                  row.type === "message" && row.messageIndex === lastUserIndex
                     ? ""
                     : undefined
                 }
-                className="absolute left-0 top-0 w-full px-3"
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
+                className="w-full px-3"
+                style={
+                  mounted
+                    ? undefined
+                    : {
+                        height:
+                          rowHeightsRef.current.get(key) ??
+                          estimateRowSize(index),
+                      }
+                }
               >
-                <div className="pb-4">{renderRow(row)}</div>
+                {mounted ? <div className="pb-4">{renderRow(row)}</div> : null}
               </div>
             );
           })}
         </div>
-        {liveRows.length > 0 ? (
-          <div ref={liveStreamRef} className="px-3" data-live-stream="">
-            {liveRows.map((row, liveIndex) => {
-              const message =
-                row.type === "empty" || row.type === "thinking"
-                  ? undefined
-                  : messages[row.messageIndex];
-              const liveKey =
-                row.type === "empty" || row.type === "thinking"
-                  ? `${row.type}:${liveIndex}`
-                  : message
-                    ? `${assistantMessageIdentity(message, row.messageIndex)}:${row.type}`
-                    : `live:${liveIndex}`;
-              return (
-                <div key={liveKey} data-row-kind={row.type} className="pb-4">
-                  {renderRow(row)}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
         <div
           className="h-24 shrink-0"
           aria-hidden="true"
           data-conversation-spacer=""
         />
       </ScrollArea>
-      {(streaming || activeStreamingMessage != null) && !following ? (
+      {messages.length > 0 && !following ? (
         <button
           type="button"
           aria-label="回到最新"

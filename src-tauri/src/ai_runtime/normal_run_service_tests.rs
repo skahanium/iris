@@ -94,12 +94,721 @@ fn direct_request() -> AssistantRunStartRequest {
     }
 }
 
+/// Explicitly opted-in live regression. Reuses the existing read-only profile
+/// discovery, single-use approval binding and isolated credential hydration.
+/// This entry never runs as part of ordinary regression tests.
+#[tokio::test]
+#[ignore = "requires a fresh approved two-route preflight and paid live services"]
+async fn timeliness_live_natural_questions_campaign() {
+    use super::agent_capacity_eval::{
+        approve_live_profile, discover_live_profile_candidates_from_database,
+        prepare_approved_live_pilot, restore_and_consume_live_preflight_campaign,
+        LiveCampaignRunCap, LiveCostConfirmation, LivePilotCallProbe,
+    };
+    assert_eq!(
+        std::env::var("IRIS_AGENT_EVAL_COST_CONFIRMATION").as_deref(),
+        Ok("two-route-12-run-campaign")
+    );
+    let source = std::path::PathBuf::from(
+        std::env::var_os("IRIS_AGENT_EVAL_SOURCE_DB").expect("source required"),
+    );
+    let data =
+        std::path::PathBuf::from(std::env::var_os("IRIS_DATA_DIR").expect("data root required"));
+    let config = std::path::PathBuf::from(
+        std::env::var_os("IRIS_CONFIG_DIR").expect("config root required"),
+    );
+    let session_id = std::env::var("IRIS_AGENT_EVAL_SESSION").expect("session required");
+    let profiles = std::env::var("IRIS_AGENT_EVAL_APPROVED_PROFILE").expect("profiles required");
+    let profiles = profiles.split(',').collect::<Vec<_>>();
+    assert_eq!(profiles.len(), 2);
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace");
+    let output = workspace.join("target/agent-eval");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let candidates =
+        discover_live_profile_candidates_from_database(&source).expect("read-only discovery");
+    let mut sessions = restore_and_consume_live_preflight_campaign(
+        &output.join(format!("live-{session_id}.json")),
+        &session_id,
+        [profiles[0], profiles[1]],
+        candidates,
+        now,
+        &source,
+        &data,
+        &config,
+    )
+    .expect("current approved session");
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let mut prepared = Vec::new();
+    for (session, profile) in sessions.iter_mut().zip(&profiles) {
+        let approval =
+            approve_live_profile(session, Some(profile), now).expect("approve selected route");
+        prepared.push(
+            prepare_approved_live_pilot(
+                session,
+                Some(approval.token()),
+                Some(LiveCostConfirmation::TwoRouteCampaign),
+                now,
+                &LivePilotCallProbe::default(),
+            )
+            .expect("isolated route"),
+        );
+    }
+    let cases = [
+        ("近期有什么好看的电影正在热映或者即将上映吗?", true, false),
+        ("近期有什么好看的电影正在热映或者即将上映吗?", true, false),
+        (
+            "我在上海，只看当前正在热映的电影，不要即将上映的。",
+            true,
+            true,
+        ),
+        ("那下个月即将上映的呢？", true, true),
+        (
+            "近期 NBA 有什么值得关注的动态，尤其是交易或转会方面？",
+            true,
+            false,
+        ),
+        ("近期有什么好看的电影正在热映或者即将上映吗?", false, false),
+    ];
+    let mut report = Vec::new();
+    let mut models = 0_u32;
+    let mut network = 0_u32;
+    let focus = std::env::var("IRIS_AGENT_EVAL_TIMELINESS_FOCUS").unwrap_or_default();
+    assert!(matches!(focus.as_str(), "" | "boundaries" | "continuity"));
+    for (route, prepared) in prepared.iter().enumerate() {
+        let state = prepared.state();
+        let mut previous = None;
+        for (case, (question, web_enabled, follow_up)) in cases.iter().enumerate() {
+            let boundary_case = case == 0 || case == 5;
+            if (focus == "boundaries" && !boundary_case) || (focus == "continuity" && boundary_case)
+            {
+                continue;
+            }
+            assert!(models < 96, "campaign model budget exhausted");
+            let mut request = direct_request();
+            request.client_request_id = format!("timeliness-live-{route}-{case}");
+            request.turn.message = (*question).into();
+            request.web_enabled = *web_enabled;
+            request.session = if *follow_up { previous.clone() } else { None };
+            let sink = RecordingSink::default();
+            let accepted =
+                RunIntake::start_with_sink(&state.db, request, &sink).expect("production intake");
+            previous = Some(accepted.session.clone());
+            let telemetry = EvaluationTelemetryTap::default();
+            let started = std::time::Instant::now();
+            super::normal_run_service::execute_normal_run_with_eval_telemetry_cap(
+                Arc::clone(state),
+                accepted.clone(),
+                None,
+                &sink,
+                &telemetry,
+                LiveCampaignRunCap {
+                    max_model_turns: (96 - models).min(8),
+                    max_tool_calls: 24,
+                    max_network_tool_calls: (72 - network).min(6),
+                },
+            )
+            .await;
+            let elapsed = started.elapsed().as_millis();
+            let usage = telemetry.snapshot();
+            network += usage.web_tool_calls();
+            let run = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+                .expect("snapshot")
+                .expect("run");
+            let messages = NormalSessionRepository::load_messages(
+                &state.db,
+                &accepted.session.session_key,
+                20,
+            )
+            .expect("messages");
+            let final_message = messages.iter().rev().find(|message| {
+                message.role == "assistant"
+                    && message.run_id.as_deref() == Some(accepted.run_id.as_str())
+            });
+            let answer = final_message
+                .map(|message| message.content.as_str())
+                .unwrap_or_default();
+            let links = AgentEvidenceRepository::list_current_run_web_citation_links(
+                &state.db,
+                &accepted.run_id,
+            )
+            .expect("sources");
+            let diagnostic = state
+                .db
+                .with_read_conn(|conn| {
+                    let json: String = conn.query_row(
+                        "SELECT provider_route_summary_json FROM agent_runs WHERE run_id = ?1",
+                        [&accepted.run_id],
+                        |row| row.get(0),
+                    )?;
+                    Ok(serde_json::from_str::<serde_json::Value>(&json)?["toolLoop"].clone())
+                })
+                .expect("safe diagnostic");
+            let model_turns = diagnostic["modelTurns"]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or(usage.model_turns())
+                .max(usage.model_turns());
+            models += model_turns;
+            let excerpts = state.db.with_read_conn(|conn| {
+                let mut statement = conn.prepare("SELECT e.url, e.retrieved_at, substr(e.bounded_excerpt, 1, 2000) FROM agent_run_evidence r JOIN session_evidence e ON e.id = r.evidence_id WHERE r.run_id = ?1 AND e.source_type = 'web'")?;
+                let rows = statement.query_map([&accepted.run_id], |row| Ok(serde_json::json!({
+                    "url":row.get::<_, String>(0)?, "retrievedAt":row.get::<_, Option<String>>(1)?, "excerpt":row.get::<_, Option<String>>(2)?,
+                })))?.collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            }).expect("bounded public evidence");
+            report.push(serde_json::json!({ "route":route + 1, "case":case + 1, "prompt":question,
+                "webEnabled":web_enabled, "state":run.run.state, "answer":answer,
+                "sources":links.iter().map(|link| serde_json::json!({"label":link.label,"title":link.title,"url":link.url})).collect::<Vec<_>>(),
+                "selectedSources":final_message.map(|message| &message.web_citations),
+                "citationBinding":final_message.and_then(|message| message.citation_binding.as_ref()),
+                "elapsedMs":elapsed, "modelTurns":model_turns, "completedModelTurns":usage.model_turns(), "webToolCalls":usage.web_tool_calls(), "excerpts":excerpts,
+                "tokens":(usage.total_tokens() > 0).then_some(usage.total_tokens()), "diagnostic":diagnostic, "quality":"pending_review",
+                "failureCodes":run.events.iter().filter_map(|event| match event.payload() { RunEventPayload::Failed { code, .. } => Some(code.as_str()), _ => None }).collect::<Vec<_>>() }));
+            // Only the fixed public prompts, visible answers, public source metadata
+            // and safe numeric diagnostics are persisted; never raw model packets.
+            std::fs::write(
+                output.join(format!("timeliness-{session_id}.json")),
+                serde_json::to_vec_pretty(&report).expect("serialize report"),
+            )
+            .expect("write report");
+            println!(
+                "timeliness_live route={} case={} state={:?} sources={} elapsed_ms={elapsed}",
+                route + 1,
+                case + 1,
+                run.run.state,
+                links.len()
+            );
+            if !web_enabled {
+                assert_eq!(usage.web_tool_calls(), 0, "offline must never dispatch Web");
+            }
+            assert!(models <= 96 && network <= 72, "campaign cap");
+        }
+    }
+    assert_eq!(
+        report.len(),
+        match focus.as_str() {
+            "boundaries" => 4,
+            "continuity" => 8,
+            _ => 12,
+        }
+    );
+}
+
+#[test]
+fn timeliness_observation_intake_does_not_confuse_runtime_or_supplied_text_with_external_facts() {
+    for (message, reason) in [
+        (
+            "近期有什么好看的电影正在热映或者即将上映吗?",
+            WebDecisionReason::VolatileExternalFact,
+        ),
+        (
+            "今天几号，近期有什么正在热映的电影？",
+            WebDecisionReason::VolatileExternalFact,
+        ),
+        (
+            "What is today's date and the current weather in Tokyo?",
+            WebDecisionReason::VolatileExternalFact,
+        ),
+        (
+            "即将上映的影片有哪些？",
+            WebDecisionReason::VolatileExternalFact,
+        ),
+        ("法国总统是谁？", WebDecisionReason::VolatileExternalFact),
+        (
+            "为什么你不核实当前版本是否发布？",
+            WebDecisionReason::VolatileExternalFact,
+        ),
+        (
+            "翻译这句话：近期电影即将上映。",
+            WebDecisionReason::DefaultOnline,
+        ),
+        (
+            "总结提供的材料：今天的新闻和股价。",
+            WebDecisionReason::DefaultOnline,
+        ),
+        ("今天几号？", WebDecisionReason::TrustedRuntimeFact),
+    ] {
+        let mut request = direct_request();
+        request.web_enabled = true;
+        request.turn.message = message.into();
+        assert_eq!(
+            RunIntake::resolve_envelope(&request)
+                .expect("envelope")
+                .web_reason,
+            reason,
+            "{message}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn timeliness_observation_original_movie_question_executes_before_a_model_can_skip_search() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"根据公开资料整理影片范围。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+    )]).await.expect("model boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-implicit-movie",
+    );
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.web_enabled = true;
+    request.turn.message = "近期有什么好看的电影正在热映或者即将上映吗?".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let calls = llm.finish().await.expect("model completed");
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("snapshot")
+        .expect("run");
+    assert_eq!(response.run.state, RunState::Completed);
+    let executed = response
+        .events
+        .iter()
+        .filter_map(|event| match event.payload() {
+            RunEventPayload::ToolStarted { capability, .. } => Some(capability.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(executed, ["web_search", "web_fetch"], "the original question must cause real search and fetch even when the model only returns text");
+    assert!(
+        !AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
+            .expect("evidence")
+            .is_empty()
+    );
+    let search_health = super::mcp_runtime_registry::web_evidence_provider_health(
+        &state.db,
+        "headless-contract-mcp",
+        "web.search",
+    )
+    .expect("search health")
+    .expect("one real search");
+    assert_eq!(
+        search_health.success_count, 1,
+        "the fetch must not hide another search"
+    );
+    let first_messages = calls[0].body["messages"].as_array().expect("messages");
+    assert!(
+        first_messages.iter().any(|message| message["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("mainland China"))),
+        "the production prompt must declare the geographic default"
+    );
+    let bootstrap = first_messages
+        .iter()
+        .filter_map(|message| message["content"].as_str())
+        .filter_map(|content| serde_json::from_str::<serde_json::Value>(content).ok())
+        .find(|value| value["kind"] == "host_web_bootstrap")
+        .expect("Host observation");
+    assert!(
+        bootstrap["query"]
+            .as_str()
+            .is_some_and(|query| query.contains("中国大陆")),
+        "the first actual search must carry the default scope, not only the prose prompt"
+    );
+    assert!(first_messages.iter().any(|message| message["content"]
+        .as_str()
+        .is_some_and(|content| content.contains("host_web_bootstrap"))));
+    assert!(
+        !first_messages
+            .iter()
+            .any(|message| message["role"] == "tool"),
+        "Host observations must not impersonate model calls"
+    );
+}
+
+#[tokio::test]
+async fn timeliness_observation_explicit_url_fetches_without_an_unnecessary_search() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"指定页面的正文说明了测试状态。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+    )]).await.expect("model boundary");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-explicit-url",
+    );
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.web_enabled = true;
+    request.turn.message = "请阅读[这个页面](https://source.invalid/contract)，并概述内容。".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("snapshot")
+        .expect("run");
+    assert_eq!(response.run.state, RunState::Completed);
+    let executed = response
+        .events
+        .iter()
+        .filter_map(|event| match event.payload() {
+            RunEventPayload::ToolStarted { capability, .. } => Some(capability.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(executed, ["web_fetch"]);
+    assert!(
+        super::mcp_runtime_registry::web_evidence_provider_health(
+            &state.db,
+            "headless-contract-mcp",
+            "web.search"
+        )
+        .expect("search health")
+        .is_none(),
+        "web_fetch must not dispatch a hidden search inside the Broker"
+    );
+    assert_eq!(llm.finish().await.expect("model completed").len(), 1);
+}
+
+#[tokio::test]
+async fn timeliness_fetch_outside_current_run_is_repairable_before_dispatch() {
+    let directory = tempfile::tempdir().expect("temp");
+    let state = AppState::new(directory.path().join("data")).expect("state");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"fetch-unseen\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"urls\\\":[\\\"https://unseen.invalid/page\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"依据已经读取的资料，测试状态可以确认。[W1]\"}}]}\n\ndata: [DONE]\n\n"),
+    ]).await.expect("model");
+    install_test_routing(&state, &llm.base_url, "iris-test-verified-tools-url-repair");
+    let sink = RecordingSink::default();
+    let accepted =
+        RunIntake::start_with_sink(&state.db, web_tool_loop_request(), &sink).expect("accept");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let run = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("snapshot")
+        .expect("run");
+    assert_eq!(
+        run.run.state,
+        RunState::Completed,
+        "an unselected URL is a repairable proposal error"
+    );
+    let calls = llm.finish().await.expect("two model turns");
+    assert!(calls[1]
+        .body
+        .to_string()
+        .contains("web_url_not_in_current_run"));
+    assert_eq!(
+        run.events
+            .iter()
+            .filter(|event| matches!(event.payload(), RunEventPayload::ToolStarted { .. }))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn timeliness_later_fetch_uses_run_labels_instead_of_restarting_at_w1() {
+    let directory = tempfile::tempdir().expect("temp");
+    let state = AppState::new(directory.path().join("data")).expect("state");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse("web_fetch", serde_json::json!({"urls":["https://source.invalid/b"]}))),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"第二份来源的正文支持测试状态。[W2]\"}}]}\n\ndata: [DONE]\n\n"),
+    ]).await.expect("model");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-citation-continuity",
+    );
+    let sink = RecordingSink::default();
+    let mut request = web_tool_loop_request();
+    request.turn.message = "比较 https://source.invalid/a 和 https://source.invalid/b".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let calls = llm.finish().await.expect("model turns");
+    let observed = calls[1].body["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "tool")
+        .expect("fetch observation");
+    let value: serde_json::Value =
+        serde_json::from_str(observed["content"].as_str().expect("content")).expect("JSON");
+    assert_eq!(
+        value["output"]["results"][0]["citation_label"], "[W2]",
+        "the second source must keep its Run-local label when fetched alone"
+    );
+}
+
+#[tokio::test]
+async fn timeliness_follow_up_maps_run_citations_and_persists_only_selected_sources() {
+    let directory = tempfile::tempdir().expect("temp");
+    let state = AppState::new(directory.path().join("data")).expect("state");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"上一条资料。[W1]\"}}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"第二份当前资料支持这个答复。[W2]\"}}]}\n\ndata: [DONE]\n\n"),
+    ]).await.expect("model");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-follow-up-citations",
+    );
+    let sink = RecordingSink::default();
+    let mut first = web_tool_loop_request();
+    first.turn.message = "读取 https://source.invalid/old".into();
+    let previous = RunIntake::start_with_sink(&state.db, first, &sink).expect("first run");
+    execute_normal_run(Arc::clone(&state), previous.clone(), None, None, &sink).await;
+    let before =
+        NormalSessionRepository::load_messages(&state.db, &previous.session.session_key, 10)
+            .expect("history");
+    let previous_answer = before.last().expect("first answer").content.clone();
+
+    let mut next = web_tool_loop_request();
+    next.client_request_id = "follow-up-run-local-citations".into();
+    next.session = Some(previous.session.clone());
+    next.turn.message = "近期有什么好看的电影正在热映或者即将上映吗?".into();
+    let accepted = RunIntake::start_with_sink(&state.db, next, &sink).expect("follow-up");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let sources =
+        AgentEvidenceRepository::list_current_run_web_citation_links(&state.db, &accepted.run_id)
+            .expect("sources");
+    assert_eq!(sources.len(), 2);
+    let messages =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("reloaded messages");
+    let answer = messages.last().expect("answer");
+    assert!(
+        answer.content.contains(&format!("]({})", sources[1].url)),
+        "current W2 must resolve independently of old session citations: {}",
+        answer.content
+    );
+    assert!(!answer.content.contains(&sources[0].url));
+    assert_eq!(
+        answer.web_citations.len(),
+        1,
+        "unselected fetched bodies are not final sources"
+    );
+    assert_eq!(answer.web_citations[0].url, sources[1].url);
+    assert_eq!(answer.web_citations[0].index, 2);
+    assert_eq!(
+        answer
+            .evidence_refs
+            .as_ref()
+            .expect("modern selection")
+            .len(),
+        1
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .find(|message| message.role == "assistant"
+                && message.run_id.as_deref() == Some(previous.run_id.as_str()))
+            .expect("old answer")
+            .content,
+        previous_answer
+    );
+    assert_eq!(llm.finish().await.expect("two model answers").len(), 2);
+}
+
+#[tokio::test]
+async fn timeliness_native_tool_argument_fragments_reach_one_real_dispatch() {
+    let directory = tempfile::tempdir().expect("temp");
+    let state = AppState::new(directory.path().join("data")).expect("state");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let chunks = [
+        serde_json::json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"fragmented-search","type":"function","function":{"name":"web_search","arguments":"{\"query\":\""}}]}}]}),
+        serde_json::json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"different current source\"}"}}]}}]}),
+    ];
+    let stream = format!(
+        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        chunks[0], chunks[1]
+    );
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(&stream), HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"资料中的测试状态已经确认。[W1]\"}}]}\n\ndata: [DONE]\n\n")]).await.expect("model");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-native-fragments",
+    );
+    let sink = RecordingSink::default();
+    let accepted =
+        RunIntake::start_with_sink(&state.db, web_tool_loop_request(), &sink).expect("accept");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let calls = llm.finish().await.expect("model calls");
+    assert_eq!(calls.len(), 2);
+    let run = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("get")
+        .expect("run");
+    assert_eq!(run.run.state, RunState::Completed);
+    assert_eq!(
+        run.events
+            .iter()
+            .filter(|event| matches!(event.payload(), RunEventPayload::ToolStarted { .. }))
+            .count(),
+        3,
+        "Host search/fetch plus one reassembled model search"
+    );
+}
+
 fn web_tool_loop_request() -> AssistantRunStartRequest {
     let mut request = direct_request();
     request.client_request_id = "headless-normal-web-tool-loop".into();
     request.turn.message = "请联网核实 synthetic 的最新状态".into();
     request.web_enabled = true;
     request
+}
+
+#[tokio::test]
+async fn timeliness_offline_content_tool_protocol_retries_without_external_dispatch() {
+    let directory = tempfile::tempdir().expect("temp");
+    let state = AppState::new(directory.path().join("data")).expect("state");
+    let raw = serde_json::json!({"choices":[{"delta":{"content":"我来帮你查一下最近的电影资讯。]<]minimax[>[<tool_call>\n{\"name\":\"web_search\",\"parameters\":{\"query\":\"current movies\"}}\n</tool_call>"}}]});
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&format!("data: {raw}\n\ndata: [DONE]\n\n")),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"联网已关闭，无法确认当前上映情况。\"}}]}\n\ndata: [DONE]\n\n"),
+    ]).await.expect("model");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-offline-protocol",
+    );
+    let mut request = direct_request();
+    request.turn.message = "近期有什么好看的电影正在热映或者即将上映吗?".into();
+    let sink = RecordingSink::default();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let messages =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("messages");
+    assert_eq!(
+        messages.last().expect("answer").content,
+        "联网已关闭，无法确认当前上映情况。"
+    );
+    assert_eq!(llm.finish().await.expect("bounded provider retry").len(), 2);
+    let run = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("get")
+        .expect("run");
+    assert!(!run
+        .events
+        .iter()
+        .any(|event| matches!(event.payload(), RunEventPayload::ToolStarted { .. })));
+}
+
+#[tokio::test]
+async fn timeliness_repair_rejected_proposals_are_not_searches_and_keep_safe_diagnostics() {
+    let directory = tempfile::tempdir().expect("temp");
+    let state = AppState::new(directory.path().join("data")).expect("state");
+    install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(&tool_call_sse_with_id("bad-args", "web_search", serde_json::json!({"query":42}))),
+        HttpResponseScript::sse(&tool_call_sse_with_id("unknown", "private-sentinel-tool", serde_json::json!({}))),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"已有资料说明了影片状态。[W1]\"}}]}\n\ndata: [DONE]\n\n"),
+    ]).await.expect("model");
+    install_test_routing(&state, &llm.base_url, "iris-test-verified-tools-repair");
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.web_enabled = true;
+    request.turn.message = "近期有什么好看的电影正在热映或者即将上映吗?".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let calls = llm.finish().await.expect("model calls");
+    let run = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("get")
+        .expect("run");
+    assert_eq!(run.run.state, RunState::Completed);
+    assert_eq!(
+        run.events
+            .iter()
+            .filter(|event| matches!(event.payload(), RunEventPayload::ToolStarted { .. }))
+            .count(),
+        2,
+        "only Host search/fetch actually ran"
+    );
+    assert!(calls[1]
+        .body
+        .to_string()
+        .contains("arguments_schema_mismatch"));
+    let diagnostic: serde_json::Value = state
+        .db
+        .with_read_conn(|conn| {
+            let value: String = conn.query_row(
+                "SELECT provider_route_summary_json FROM agent_runs WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )?;
+            Ok(serde_json::from_str(&value)?)
+        })
+        .expect("diagnostic");
+    let loop_data = &diagnostic["toolLoop"];
+    assert_eq!(loop_data["rejectedProposals"], 2);
+    assert_eq!(loop_data["repairRounds"], 2);
+    assert_eq!(loop_data["dispatched"], 2);
+    assert_eq!(loop_data["noProgressRounds"], 0);
+    assert_eq!(
+        loop_data["firstRejection"]["reason"],
+        "arguments_schema_mismatch"
+    );
+    assert!(!loop_data.to_string().contains("private-sentinel-tool"));
+    assert!(!loop_data.to_string().contains("近期"));
+}
+
+#[tokio::test]
+async fn timeliness_failed_bootstrap_keeps_one_tool_enabled_research_opportunity() {
+    let directory = tempfile::tempdir().expect("temp");
+    let state = AppState::new(directory.path().join("data")).expect("state");
+    // No configured Web service: an actual broker attempt must be distinct
+    // from a rejected model proposal, and must not skip the repair turn.
+    let answer = "data: {\"choices\":[{\"delta\":{\"content\":\"暂时没有可用资料。\"}}]}\n\ndata: [DONE]\n\n";
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(answer),
+        HttpResponseScript::sse(answer),
+    ])
+    .await
+    .expect("model");
+    install_test_routing(
+        &state,
+        &llm.base_url,
+        "iris-test-verified-tools-research-recovery",
+    );
+    let sink = RecordingSink::default();
+    let request = web_tool_loop_request();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    let calls = tokio::time::timeout(Duration::from_secs(3), llm.finish())
+        .await
+        .expect("both model turns must run")
+        .expect("calls");
+    assert_eq!(calls.len(), 2);
+    assert!(calls[1].body["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .any(|tool| tool["function"]["name"] == "web_search"));
+    let run = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("get")
+        .expect("run");
+    assert_eq!(run.run.state, RunState::Completed);
+    let messages =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("messages");
+    let final_text = &messages.last().expect("answer").content;
+    assert!(!final_text.contains("用药") && !final_text.contains("签证"));
+    let diagnostic: serde_json::Value = state
+        .db
+        .with_read_conn(|conn| {
+            let json: String = conn.query_row(
+                "SELECT provider_route_summary_json FROM agent_runs WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )?;
+            Ok(serde_json::from_str(&json)?)
+        })
+        .expect("diagnostic");
+    assert_eq!(
+        diagnostic["toolLoop"]["exit"]["observationPerformed"], false,
+        "no configured service is a capability block, not a performed search"
+    );
 }
 
 fn direct_required_web_request() -> AssistantRunStartRequest {
@@ -1543,7 +2252,7 @@ async fn strict_current_fact_repairs_out_of_run_w8_then_completes_with_limitatio
         assistant_messages[0].content
     );
     assert!(
-        assistant_messages[0].content.contains("不能作为处分"),
+        assistant_messages[0].content.contains("无法据此确认"),
         "strict degradation must forbid applicability conclusions: {}",
         assistant_messages[0].content
     );

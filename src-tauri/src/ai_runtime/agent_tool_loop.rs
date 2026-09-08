@@ -192,10 +192,27 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
     fn on_tool_proposals_not_dispatched(&self, _run_id: &str) -> AppResult<()> {
         Ok(())
     }
+
+    fn recover_rejected_proposals(
+        &self,
+        _run_id: &str,
+        _has_visible_output: bool,
+    ) -> AppResult<bool> {
+        Ok(false)
+    }
 }
 
 /// Run-bound side of a tool loop.
 pub(crate) trait ToolLoopExecutor: Send + Sync {
+    /// Accept only Host-created, content-free counters and enum codes.
+    fn record_tool_loop_diagnostic(&self, _event: serde_json::Value) {}
+
+    /// Read-only, Run-specific validation after JSON/schema validation and
+    /// before provider binding, execution counters or tool lifecycle events.
+    fn proposal_rejection_reason(&self, _call: &ToolCall) -> AppResult<Option<&'static str>> {
+        Ok(None)
+    }
+
     /// Validate, authorize, audit and execute one model-requested tool call.
     fn execute<'a>(
         &'a self,
@@ -285,6 +302,20 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         false
     }
 
+    fn requires_web_observation(&self) -> bool {
+        self.requires_web_evidence()
+    }
+
+    /// Executors may distinguish a real observation from a known capability
+    /// block before any search service could be reached.
+    fn web_observation_performed(&self) -> Option<bool> {
+        None
+    }
+
+    fn web_capability_blocked(&self) -> bool {
+        false
+    }
+
     /// Whether a final model answer is invalid until this executor has
     /// registered evidence from an explicitly granted external read tool.
     fn requires_external_evidence(&self) -> bool {
@@ -337,7 +368,7 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
 
 pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIX: &str = "本轮未取得足够的可核验来源正文";
 pub(crate) const EVIDENCE_LIMITED_RESPONSE: &str =
-    "本轮未取得足够的可核验来源正文。已检索的线索不能作为处分、生效、用药或签证结论的依据。你可以稍后重试、粘贴官方原文，或用 @ 附上相关笔记。";
+    "本轮未取得足够的可核验来源正文，无法确认问题涉及的当前情况。未核实的线索不能作为当前事实的依据。";
 
 /// Executes the only permitted shape of an Agent tool loop.
 #[derive(Debug, Clone, Copy)]
@@ -545,8 +576,12 @@ impl AgentToolLoop {
         // former receives one tool-enabled repair; asking the model to repair
         // the latter cannot create a source and used to turn an empty or
         // failed search into a provider/internal failure.
-        let mut web_search_attempted_without_evidence = false;
+        let mut web_observation_performed = executor
+            .web_observation_performed()
+            .unwrap_or_else(|| executor.has_web_evidence());
         let mut no_progress_rounds = 0_u8;
+        let mut rejected_rounds = 0_u8;
+        let mut failed_service_rounds = 0_u8;
         let mut synthesis_required = false;
         let synthesis_tools = tools
             .iter()
@@ -556,6 +591,8 @@ impl AgentToolLoop {
         let requires_factual_completion =
             executor.requires_web_evidence() || executor.requires_external_evidence();
 
+        let outcome = async {
+        ensure_run_not_cancelled(run_id)?;
         if model_turns.saturating_add(1) < self.max_model_turns {
             if let Some(compaction) = executor.conversation_memory_compaction_request()? {
                 let compaction_messages = vec![
@@ -646,7 +683,8 @@ impl AgentToolLoop {
             }
         }
 
-        if executor.requires_web_evidence() {
+        ensure_run_not_cancelled(run_id)?;
+        if executor.requires_web_observation() {
             let bootstrap_actions = executor.required_web_bootstrap_action_count();
             let remaining = self.max_tool_calls.saturating_sub(tool_calls);
             let network_used = tool_calls_by_class
@@ -685,7 +723,7 @@ impl AgentToolLoop {
                 if let Some(telemetry) = telemetry {
                     telemetry.record_bootstrap_web_tool_calls(bootstrap.tool_calls);
                 }
-                web_search_attempted_without_evidence = true;
+                web_observation_performed = executor.web_observation_performed().unwrap_or(bootstrap.tool_calls > 0);
                 let position = messages
                     .iter()
                     .rposition(|message| matches!(message.role, MessageRole::User))
@@ -700,6 +738,7 @@ impl AgentToolLoop {
                         reasoning_content: None,
                     },
                 );
+                if web_observation_performed { observer.on_tools_finished()?; }
             }
         }
 
@@ -768,10 +807,14 @@ impl AgentToolLoop {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
             model_turns += 1;
+            executor.record_tool_loop_diagnostic(serde_json::json!({"event":"model", "modelTurns":model_turns}));
             if let Some(usage) = usage.as_deref_mut() {
                 usage.model_turns = model_turns;
             }
             let model_started_at = std::time::Instant::now();
+            if executor.requires_web_observation() && !web_observation_performed {
+                observer.on_tools_starting()?;
+            }
             let provider_turn = provider.answer_turn(
                 provider_run_id,
                 &messages,
@@ -874,11 +917,11 @@ impl AgentToolLoop {
                 // constraint was available, and must not turn a question into
                 // a misleading evidence-limited refusal.
                 let natural_clarification = is_natural_clarification(&content);
-                if executor.requires_web_evidence()
-                    && !executor.has_web_evidence()
+                if (executor.requires_web_evidence() && !executor.has_web_evidence()
+                    || executor.requires_web_observation() && !web_observation_performed && !executor.web_capability_blocked())
                     && !natural_clarification
                 {
-                    if web_search_attempted_without_evidence
+                    if synthesis_required
                         || missing_evidence_repair_used
                         || model_turns >= self.max_model_turns
                     {
@@ -1098,9 +1141,10 @@ impl AgentToolLoop {
             }
 
             let mut discovery_calls_this_turn = 0_u32;
-            let proposal_dispositions = plan_tool_proposals(
+            let mut proposal_dispositions = plan_tool_proposals(
                 &response.tool_calls,
                 &active_allowed_tools,
+                active_tools,
                 discovery_calls_this_turn,
                 tool_calls,
                 &tool_calls_by_class,
@@ -1108,20 +1152,46 @@ impl AgentToolLoop {
                 &fingerprints,
                 self,
             );
+            for (call, disposition) in &mut proposal_dispositions {
+                if *disposition == ToolCallDisposition::Dispatched {
+                    if let Some(reason) = executor.proposal_rejection_reason(call)? {
+                        *disposition = ToolCallDisposition::Rejected(reason);
+                    }
+                }
+            }
+            for (call, disposition) in &proposal_dispositions {
+                let reason = match disposition {
+                    ToolCallDisposition::Rejected(reason) => *reason,
+                    ToolCallDisposition::Deferred => "deferred_for_feedback",
+                    ToolCallDisposition::Dispatched => "accepted",
+                };
+                let name = crate::ai_runtime::tool_catalog::catalog_find(&call.function.name)
+                    .map_or("unknown", |entry| entry.name);
+                executor.record_tool_loop_diagnostic(serde_json::json!({"event":"proposal", "tool":name, "reason":reason, "modelTurn":model_turns}));
+            }
             if proposal_dispositions
                 .iter()
                 .all(|(_, disposition)| *disposition != ToolCallDisposition::Dispatched)
             {
                 provider.on_tool_proposals_not_dispatched(provider_run_id)?;
-                messages.push(tool_proposal_feedback_instruction(&proposal_dispositions));
-                no_progress_rounds = no_progress_rounds.saturating_add(1);
-                if no_progress_rounds >= 2 || model_turns.saturating_add(1) >= self.max_model_turns
+                messages.push(tool_proposal_feedback_instruction(&proposal_dispositions, active_tools, self.max_model_turns.saturating_sub(model_turns), self.max_tool_calls.saturating_sub(tool_calls), self.max_network_tool_calls.saturating_sub(*tool_calls_by_class.get(&ToolBudgetClass::Network).unwrap_or(&0))));
+                rejected_rounds = rejected_rounds.saturating_add(1);
+                executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair", "round":rejected_rounds}));
+                if rejected_rounds == 2 && model_turns.saturating_add(1) < self.max_model_turns
+                    && provider.recover_rejected_proposals(provider_run_id, observer.has_visible_content())?
+                {
+                    rejected_rounds = 0;
+                    executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair_switch"}));
+                    continue;
+                }
+                if rejected_rounds >= 2 || model_turns.saturating_add(1) >= self.max_model_turns
                 {
                     synthesis_required = true;
-                    messages.push(tool_surface_closed_instruction());
+                    messages.push(LlmMessage { role: MessageRole::System, content: "Tool proposal repair is exhausted. No rejected action ran. Synthesize supported information from actual observations and state what remains unresolved.".into(), tool_call_id: None, tool_calls: None, reasoning_content: None });
                 }
                 continue;
             }
+            rejected_rounds = 0;
 
             let mut dispatched_response = response.clone();
             dispatched_response.tool_calls = proposal_dispositions
@@ -1138,6 +1208,7 @@ impl AgentToolLoop {
             observer.on_tools_starting()?;
             messages.push(assistant_tool_message(&dispatched_response));
             let mut round_made_progress = false;
+            let mut round_had_success = false;
             for call in &dispatched_response.tool_calls {
                 ensure_run_not_cancelled(run_id)?;
                 let valid_arguments = valid_call_arguments(call);
@@ -1187,13 +1258,20 @@ impl AgentToolLoop {
                                     telemetry.record_executed_tool_call(&call.function.name);
                                 }
                                 provider.on_tool_call_dispatched(provider_run_id)?;
-                                let result = executor.execute(run_id, call, tool_calls).await?;
+                                let result = match executor.execute(run_id, call, tool_calls).await {
+                                    Ok(result) => result,
+                                    Err(error) => {
+                                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"tool_error", "tool":crate::ai_runtime::tool_catalog::catalog_find(&call.function.name).map_or("unknown", |entry| entry.name), "reason":SafeRunErrorCode::from_app_error(&error).as_str()}));
+                                        return Err(error);
+                                    }
+                                };
                                 if matches!(
                                     call.function.name.as_str(),
-                                    "web_search" | "web.search"
+                                    "web_search" | "web.search" | "web_fetch"
                                 ) {
-                                    web_search_attempted_without_evidence = true;
+                                    web_observation_performed |= executor.web_observation_performed().unwrap_or(true);
                                 }
+                                round_had_success |= result.success;
                                 if result.success {
                                     successful_fingerprints.insert(fingerprint);
                                 }
@@ -1224,20 +1302,22 @@ impl AgentToolLoop {
                 messages.push(message);
             }
             if !non_dispatched.is_empty() {
-                messages.push(tool_proposal_feedback_instruction(&non_dispatched));
+                messages.push(tool_proposal_feedback_instruction(&non_dispatched, active_tools, self.max_model_turns.saturating_sub(model_turns), self.max_tool_calls.saturating_sub(tool_calls), self.max_network_tool_calls.saturating_sub(*tool_calls_by_class.get(&ToolBudgetClass::Network).unwrap_or(&0))));
             }
             observer.on_tools_finished()?;
-            if round_made_progress {
-                no_progress_rounds = 0;
+            if round_had_success {
+                failed_service_rounds = 0;
+                no_progress_rounds = if round_made_progress { 0 } else { no_progress_rounds.saturating_add(1) };
             } else {
-                no_progress_rounds = no_progress_rounds.saturating_add(1);
+                failed_service_rounds = failed_service_rounds.saturating_add(1);
             }
+            executor.record_tool_loop_diagnostic(serde_json::json!({"event":"progress", "noProgressRounds":no_progress_rounds, "failedServiceRounds":failed_service_rounds}));
             // Never spend the final model turn on another exploratory tool
             // request. Once this round has left only one turn, close the
             // business surface and reserve that final opportunity for
             // synthesis (or the terminal structured submission tool).
             let final_turn_must_be_reserved = model_turns.saturating_add(1) >= self.max_model_turns;
-            if no_progress_rounds >= 2
+            if no_progress_rounds >= 2 || failed_service_rounds >= 2
                 || tool_calls >= self.max_tool_calls
                 || final_turn_must_be_reserved
             {
@@ -1256,6 +1336,19 @@ impl AgentToolLoop {
         } else {
             "agent_run_tool_loop_limit"
         }))
+        }.await;
+        let exit_reason = match &outcome {
+            Ok(result) if result.finish_reason == "evidence_limited" => "evidence_limited",
+            Ok(result) if is_natural_clarification(&result.content) => "clarification",
+            Ok(_) if rejected_rounds >= 2 => "recovery_exhausted",
+            Ok(_) if !web_observation_performed && executor.web_capability_blocked() => {
+                "tool_unavailable"
+            }
+            Ok(_) => "model_answer",
+            Err(error) => SafeRunErrorCode::from_app_error(error).as_str(),
+        };
+        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"exit", "reason":exit_reason, "modelTurns":model_turns, "toolCalls":tool_calls, "observationPerformed":web_observation_performed, "capabilityBlocked":executor.web_capability_blocked()}));
+        outcome
     }
 }
 
@@ -1264,7 +1357,7 @@ impl AgentToolLoop {
 /// deferred model proposal from becoming a fake provider-bound tool turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ToolCallDisposition {
-    Rejected,
+    Rejected(&'static str),
     Deferred,
     Dispatched,
 }
@@ -1285,6 +1378,7 @@ impl StreamEventObserver for SilentStreamObserver {
 fn plan_tool_proposals<'a>(
     calls: &'a [ToolCall],
     active_allowed_tools: &HashSet<&str>,
+    active_tools: &[ToolSpec],
     discovery_calls_this_turn: u32,
     tool_calls: u32,
     tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
@@ -1301,15 +1395,45 @@ fn plan_tool_proposals<'a>(
         .map(|call| {
             let executor_owns_invalid_arguments =
                 call.function.name == "spawn_subagent" && valid_call_identity(call);
-            if !active_allowed_tools.contains(call.function.name.as_str())
-                || (!valid_call_arguments(call) && !executor_owns_invalid_arguments)
-                || planned_total >= loop_policy.max_tool_calls
+            let rejection = if !active_allowed_tools.contains(call.function.name.as_str()) {
+                Some("tool_not_in_run_surface")
+            } else if call.id.trim().is_empty() {
+                Some("missing_call_id")
+            } else if !valid_call_arguments(call) && !executor_owns_invalid_arguments {
+                Some("invalid_arguments_json")
+            } else if !executor_owns_invalid_arguments
+                && active_tools
+                    .iter()
+                    .find(|tool| tool.name == call.function.name)
+                    .is_some_and(|tool| {
+                        let args =
+                            serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                                .unwrap_or_default();
+                        matches!(
+                            crate::ai_runtime::guardrails::verify_tool_args(
+                                &call.function.name,
+                                &args,
+                                &tool.input_schema
+                            ),
+                            crate::ai_runtime::guardrails::GuardResult::Block { .. }
+                        )
+                    })
             {
-                return (call, ToolCallDisposition::Rejected);
+                Some("arguments_schema_mismatch")
+            } else if planned_total >= loop_policy.max_tool_calls {
+                Some("tool_call_budget_exhausted")
+            } else {
+                None
+            };
+            if let Some(reason) = rejection {
+                return (call, ToolCallDisposition::Rejected(reason));
             }
             let fingerprint = tool_fingerprint(call);
             if successful_fingerprints.contains(&fingerprint) {
-                return (call, ToolCallDisposition::Rejected);
+                return (
+                    call,
+                    ToolCallDisposition::Rejected("tool_call_already_succeeded"),
+                );
             }
             if is_discovery_call(call) && planned_discovery >= MAX_DISCOVERY_CALLS_PER_MODEL_TURN {
                 return (call, ToolCallDisposition::Deferred);
@@ -1317,13 +1441,16 @@ fn plan_tool_proposals<'a>(
             let count = planned_fingerprints.entry(fingerprint).or_insert(0);
             *count = count.saturating_add(1);
             if *count > MAX_REPEAT_CALLS {
-                return (call, ToolCallDisposition::Rejected);
+                return (call, ToolCallDisposition::Rejected("tool_call_repeated"));
             }
             let class = catalog_tool_budget_class(&call.function.name)
                 .unwrap_or(ToolBudgetClass::ExternalRead);
             let used = planned_by_class.entry(class).or_default();
             if *used >= loop_policy.tool_call_limit(class) {
-                return (call, ToolCallDisposition::Rejected);
+                return (
+                    call,
+                    ToolCallDisposition::Rejected("tool_category_budget_exhausted"),
+                );
             }
             if is_discovery_call(call) {
                 planned_discovery = planned_discovery.saturating_add(1);
@@ -1337,23 +1464,40 @@ fn plan_tool_proposals<'a>(
 
 fn tool_proposal_feedback_instruction(
     proposals: &[(&ToolCall, ToolCallDisposition)],
+    tools: &[ToolSpec],
+    remaining_models: u32,
+    remaining_tools: u32,
+    remaining_network: u32,
 ) -> LlmMessage {
+    let surface = tools
+        .iter()
+        .map(|tool| {
+            serde_json::json!({
+                "name": tool.name, "parameters": tool.input_schema,
+            })
+        })
+        .collect::<Vec<_>>();
+    let surface = serde_json::to_string(&surface).unwrap_or_default();
     let feedback = proposals
         .iter()
         .map(|(call, disposition)| {
             let reason = match disposition {
-                ToolCallDisposition::Rejected => "rejected_before_dispatch",
+                ToolCallDisposition::Rejected(reason) => reason,
                 ToolCallDisposition::Deferred => "deferred_for_feedback",
                 ToolCallDisposition::Dispatched => "dispatched",
             };
-            format!("{}:{reason}", call.function.name)
+            if matches!(disposition, ToolCallDisposition::Rejected(_)) {
+                format!("{}:rejected_before_dispatch({reason})", call.function.name)
+            } else {
+                format!("{}:{reason}", call.function.name)
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");
     LlmMessage {
         role: MessageRole::System,
         content: format!(
-            "The previous tool proposal was not dispatched by the Host ({feedback}). It created no tool result and no external action. Correct the request using the exposed surface or answer from existing observations; do not claim that it ran."
+            "The previous tool proposal was not dispatched by the Host ({feedback}). It created no tool result and no external action. Correct the request using the exposed surface; this is not a failed search and consumed no execution budget. Remaining model turns={remaining_models}, tools={remaining_tools}, network={remaining_network}. Allowed tool names and parameter schemas: {surface}. Supply a nonempty call id and JSON object matching the schema. Do not claim the rejected action ran."
         )
         .into(),
         tool_call_id: None,
@@ -1363,46 +1507,13 @@ fn tool_proposal_feedback_instruction(
 }
 
 fn register_safe_progress(progress: &mut HashSet<String>, result: &ToolCallResult) -> bool {
-    let resource_progress = result.success
-        && safe_progress_identities(&result.output)
-            .into_iter()
-            .map(|identity| format!("{}:{identity}", result.tool_name))
-            .any(|identity| progress.insert(identity));
-    let error_progress = (!result.success)
-        .then_some(result.error.as_deref())
-        .flatten()
-        .filter(|error| !error.trim().is_empty())
-        .is_some_and(|error| {
-            progress.insert(format!(
-                "{}:error:{}",
-                result.tool_name,
-                safe_tool_error_category(error)
-            ))
-        });
-    resource_progress || error_progress
-}
-
-fn safe_tool_error_category(error: &str) -> &'static str {
-    let lower = error.to_ascii_lowercase();
-    if lower.contains("timeout") || lower.contains("timed out") {
-        "timeout"
-    } else if lower.contains("unauthorized") || lower.contains("credential") {
-        "unauthorized"
-    } else if lower.contains("forbidden") || lower.contains("permission") {
-        "forbidden"
-    } else if lower.contains("not_found") || lower.contains("not found") {
-        "not_found"
-    } else if lower.contains("rate") || lower.contains("quota") {
-        "rate_limited"
-    } else if lower.contains("invalid") || lower.contains("malformed") {
-        "invalid_response"
-    } else if lower.contains("unavailable") || lower.contains("connection") {
-        "unavailable"
-    } else if lower.contains("cancel") {
-        "cancelled"
-    } else {
-        "other"
+    let mut added = false;
+    if result.success {
+        for identity in safe_progress_identities(&result.output) {
+            added |= progress.insert(format!("{}:{identity}", result.tool_name));
+        }
     }
+    added
 }
 
 fn initial_loop_budget_instruction(

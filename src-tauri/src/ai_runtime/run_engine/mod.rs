@@ -765,7 +765,7 @@ impl RunEngine {
                     event_type: RunEventType::StageChanged,
                     payload: RunEventPayload::StageChanged {
                         state: RunState::Running,
-                        stage: "正在调用模型和工具".to_string(),
+                        stage: "正在处理".to_string(),
                         stage_code: Some(RunStageCode::ModelAndTools),
                     },
                 },
@@ -1154,7 +1154,7 @@ impl RunEngine {
                 citation_binding = Some(outcome.binding);
             }
         } else {
-            content = linkify_final_web_citations(db, &citation_evidence_ids, content);
+            content = linkify_final_web_citations(db, run_id, &citation_evidence_ids, content);
         }
         if executor.requires_web_evidence()
             && !natural_clarification
@@ -1480,7 +1480,7 @@ impl RunEngine {
                     Some(outcome.binding)
                 }
                 _ => {
-                    content = linkify_final_web_citations(db, evidence_ids, content);
+                    content = linkify_final_web_citations(db, run_id, evidence_ids, content);
                     None
                 }
             };

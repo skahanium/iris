@@ -27,7 +27,12 @@ import {
 
 import { cn } from "@/lib/utils";
 
-import { FinalizedMessageBody } from "@/components/ai/FinalizedMessageBody";
+import {
+  useAssistantAnswerReveal,
+  type AssistantAnswerPresentation,
+} from "./hooks/useAssistantAnswerReveal";
+import { StreamingLineBudgetRefContext } from "@/lib/streaming-line-budget-ref";
+import type { StreamingLineBudget } from "@/lib/streaming-line-fit";
 import { StreamingMessageBody } from "@/components/ai/StreamingMessageBody";
 import type { AssistantProcessItem } from "@/lib/assistant-process";
 import type {
@@ -45,6 +50,7 @@ interface AiMessageBubbleProps {
   content?: string;
   /** Stable message identity; separates streaming growth from message swap. */
   messageIdentity?: string;
+  answerPresentation?: AssistantAnswerPresentation;
 
   streaming?: boolean;
 
@@ -507,23 +513,14 @@ const AssistantBody = memo(function AssistantBody({
 
   return (
     <>
-      {streaming ? (
-        <StreamingMessageBody
-          className={cn("ai-message-body", proseConversation)}
-          content={streamingContent}
-          contentIdentity={contentIdentity}
-          dataProseSurface="conversation"
-          onClick={handleClick}
-        />
-      ) : (
-        <FinalizedMessageBody
-          content={finalizedContent}
-          className={cn("ai-message-body", proseConversation)}
-          dataProseSurface="conversation"
-          contentIdentity={contentIdentity}
-          onClick={handleClick}
-        />
-      )}
+      <StreamingMessageBody
+        className={cn("ai-message-body", proseConversation)}
+        content={streaming ? streamingContent : finalizedContent}
+        streaming={streaming}
+        contentIdentity={contentIdentity}
+        dataProseSurface="conversation"
+        onClick={handleClick}
+      />
     </>
   );
 });
@@ -533,10 +530,11 @@ const AssistantBody = memo(function AssistantBody({
 export const AiMessageBubble = memo(function AiMessageBubble({
   role,
 
-  content,
+  content: authoritativeContent,
   messageIdentity,
+  answerPresentation,
 
-  streaming = false,
+  streaming: receiving = false,
 
   selected = false,
 
@@ -557,6 +555,50 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   webCitations = [],
   isLastMessage = false,
 }: AiMessageBubbleProps) {
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const lineBudgetRef = useRef<StreamingLineBudget | null>(null);
+  const getLineBudget = useCallback(() => lineBudgetRef.current, []);
+  const reveal = useAssistantAnswerReveal(
+    answerPresentation
+      ? {
+          runId: answerPresentation.runId,
+          resetEpoch: answerPresentation.resetEpoch,
+          answerComplete: answerPresentation.complete,
+          stopped: answerPresentation.stopped,
+          settled: answerPresentation.settled,
+          initialVisibleLength: answerPresentation.initialVisibleLength,
+          answer: authoritativeContent ?? "",
+        }
+      : null,
+    getLineBudget,
+  );
+  useEffect(() => {
+    if (
+      !answerPresentation?.runId ||
+      (reveal.phase !== "complete" && reveal.phase !== "stopped")
+    )
+      return;
+    bubbleRef.current?.dispatchEvent(
+      new CustomEvent("iris-answer-presented", {
+        bubbles: true,
+        detail: {
+          runId: answerPresentation.runId,
+          resetEpoch: answerPresentation.resetEpoch,
+          length: reveal.answer.length,
+        },
+      }),
+    );
+  }, [answerPresentation, reveal.phase, reveal.answer.length]);
+  const content = answerPresentation ? reveal.answer : authoritativeContent;
+  const streaming = receiving || reveal.revealing;
+  const visibleProcessItems = useMemo(() => {
+    if (reveal.phase !== "draining") return processItems;
+    return processItems.map((item) =>
+      item.id === "stage:answer-complete"
+        ? { ...item, label: "正在显示答复" }
+        : item,
+    );
+  }, [processItems, reveal.phase]);
   const isUser = role === "user";
 
   const timeLabel = useMemo(() => {
@@ -641,55 +683,73 @@ export const AiMessageBubble = memo(function AiMessageBubble({
     );
   }
 
-  const hasProcessEvents = processItems.length > 0;
+  const hasProcessEvents = visibleProcessItems.length > 0;
   const showThinking = streaming && !content && !hasProcessEvents;
 
   return (
-    <div
-      className={cn(
-        "ai-message-assistant ai-message-bubble ai-message-bubble-assistant ai-message-surface-assistant relative w-full max-w-full",
-        streaming ? "overflow-visible" : "overflow-hidden",
+    <StreamingLineBudgetRefContext.Provider value={lineBudgetRef}>
+      <div
+        className={cn(
+          "ai-message-assistant ai-message-bubble ai-message-bubble-assistant ai-message-surface-assistant relative w-full max-w-full",
+          streaming ? "overflow-visible" : "overflow-hidden",
 
-        streaming && "ai-message-bubble-streaming",
+          streaming && "ai-message-bubble-streaming",
 
-        selected && "ring-1 ring-primary/50",
+          selected && "ring-1 ring-primary/50",
 
-        className,
-      )}
-      data-role={role}
-      data-streaming={streaming ? "" : undefined}
-      data-selected={selected ? "" : undefined}
-      data-last-message={isLastMessage ? "" : undefined}
-    >
-      {hasProcessEvents ? (
-        <AssistantProcessTimeline
-          events={processItems}
-          streaming={streaming}
-          hasContent={Boolean(content)}
-        />
-      ) : null}
-
-      {showThinking ? <AiThinkingIndicator /> : null}
-
-      {content ? (
-        <MarkdownErrorBoundary>
-          <AssistantBody
-            content={content}
-            contentIdentity={messageIdentity}
+          className,
+        )}
+        ref={bubbleRef}
+        data-presentation-phase={answerPresentation ? reveal.phase : undefined}
+        data-role={role}
+        data-streaming={streaming ? "" : undefined}
+        data-selected={selected ? "" : undefined}
+        data-last-message={isLastMessage ? "" : undefined}
+      >
+        {hasProcessEvents ? (
+          <AssistantProcessTimeline
+            events={visibleProcessItems}
             streaming={streaming}
-            onCitationClick={onCitationClick}
-            webCitations={webCitations}
+            hasContent={Boolean(content)}
           />
-        </MarkdownErrorBoundary>
-      ) : null}
+        ) : null}
 
-      {children}
+        {showThinking ? <AiThinkingIndicator /> : null}
 
-      {timeLabel ? (
-        <span className="px-3 pb-1.5 text-[10px] text-muted-foreground/40">
-          {timeLabel}
-        </span>
-      ) : null}
-    </div>
+        {content ? (
+          <MarkdownErrorBoundary>
+            <AssistantBody
+              content={content}
+              contentIdentity={
+                answerPresentation
+                  ? `${messageIdentity}:${answerPresentation.resetEpoch}`
+                  : messageIdentity
+              }
+              streaming={streaming}
+              onCitationClick={onCitationClick}
+              webCitations={webCitations}
+            />
+          </MarkdownErrorBoundary>
+        ) : null}
+
+        {reveal.phase === "draining" && answerPresentation ? (
+          <button
+            type="button"
+            aria-label="立即显示全部"
+            className="mx-3 mb-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={reveal.revealAll}
+          >
+            立即显示全部
+          </button>
+        ) : null}
+        {children}
+
+        {timeLabel ? (
+          <span className="px-3 pb-1.5 text-[10px] text-muted-foreground/40">
+            {timeLabel}
+          </span>
+        ) : null}
+      </div>
+    </StreamingLineBudgetRefContext.Provider>
   );
 });

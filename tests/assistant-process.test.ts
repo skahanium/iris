@@ -441,13 +441,32 @@ describe("Assistant Run 处理过程投影", () => {
 
     expect(items.map((item) => item.label)).toEqual([
       "读取网页",
-      "已改用备用检索服务",
+      "网页读取已改用备用服务",
     ]);
     expect(
       items.some((item) =>
         /mcp-custom|tavily_extract|provider_failure/.test(item.label),
       ),
     ).toBe(false);
+  });
+
+  it("区分搜索和读取的切换，同一能力重复切换只展示一次", () => {
+    const events = ["web.search", "web.fetch", "web.fetch", "web.search"].map(
+      (capability, index) =>
+        event(index + 1, "provider_switched", {
+          kind: "provider_switched",
+          capability,
+          fromProviderId: "a",
+          providerId: "b",
+          modelId: "internal",
+          reasonCode: "provider_failure",
+          attempt: 2,
+        }),
+    );
+    expect(
+      projectAssistantProcessEvents(events).map((item) => item.label),
+    ).toEqual(["搜索已改用备用服务", "网页读取已改用备用服务"]);
+    expect(events).toHaveLength(4);
   });
 
   it("将守线降级投影为未取得正文，且不与备用检索文案混用内部 id", () => {

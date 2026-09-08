@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "provider_continuation_tests.rs"]
+mod continuation_tests;
+
 /// Provider adapter contract for one direct, normal-domain answer.
 #[cfg(test)]
 pub(crate) trait DirectAnswerProvider {
@@ -108,7 +112,7 @@ fn record_model_route_diagnostic(
     model_id: &str,
     attempt: u32,
     outcome: &str,
-    error_category: Option<&str>,
+    failure: Option<crate::ai_runtime::provider_router::ProviderFailure>,
     empty_response: bool,
     had_visible_output: bool,
     had_tool_calls: bool,
@@ -123,7 +127,27 @@ fn record_model_route_diagnostic(
             "attempt": attempt,
             "protocolStage": "model_turn",
             "outcome": outcome,
-            "errorCategory": error_category,
+            "errorCategory": failure.map(|failure| {
+                use crate::ai_runtime::provider_router::ProviderFailure;
+                match failure {
+                    ProviderFailure::Unauthorized => "authentication_failed",
+                    ProviderFailure::Forbidden => "access_denied",
+                    ProviderFailure::HttpStatus(400..=499) if !matches!(failure, ProviderFailure::HttpStatus(408 | 429)) => "request_rejected",
+                    ProviderFailure::HttpStatus(408) => "timeout",
+                    ProviderFailure::Cancelled => "cancelled",
+                    ProviderFailure::Unknown => "unknown",
+                    other => failover_reason(other),
+                }
+            }),
+            "httpStatus": failure.and_then(|failure| {
+                use crate::ai_runtime::provider_router::ProviderFailure;
+                match failure {
+                    ProviderFailure::HttpStatus(status) => Some(status),
+                    ProviderFailure::Unauthorized => Some(401),
+                    ProviderFailure::Forbidden => Some(403),
+                    _ => None,
+                }
+            }),
             "emptyResponse": empty_response,
             "hadVisibleOutput": had_visible_output,
             "hadToolCalls": had_tool_calls,
@@ -200,6 +224,44 @@ mod llm_failover_guard_tests {
             false,
             true,
         ));
+    }
+
+    #[test]
+    fn rejected_proposal_retains_the_selected_route_for_bounded_repair() {
+        let db = Database::open_in_memory().expect("db");
+        let session = AssistantSessionRef {
+            domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
+            session_key: "repair-route".into(),
+        };
+        let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+            resolved: resolved(),
+            failover_candidates: Vec::new(),
+        })
+        .expect("route");
+        let provider = FailoverStreamingProvider::new(
+            route,
+            requirements(),
+            &db,
+            &session,
+            &super::super::NoopRunEventSink,
+        );
+        provider
+            .candidate_indices
+            .lock()
+            .expect("indices")
+            .insert("run".into(), 1);
+        provider
+            .on_tool_proposals_not_dispatched("run")
+            .expect("reject");
+        assert_eq!(
+            provider
+                .selected_indices
+                .lock()
+                .expect("indices")
+                .get("run"),
+            Some(&1),
+            "repair must not silently restart the primary route"
+        );
     }
 
     #[test]
@@ -281,6 +343,54 @@ mod llm_failover_guard_tests {
                 .is_none(),
             "only the rejected response candidate may be discarded"
         );
+    }
+
+    #[test]
+    fn withheld_text_repair_keeps_the_route_bound_after_real_tools() {
+        let db = Database::open_in_memory().expect("db");
+        let session = AssistantSessionRef {
+            domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
+            session_key: "text-repair-route".into(),
+        };
+        let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+            resolved: resolved(),
+            failover_candidates: Vec::new(),
+        })
+        .expect("route");
+        let provider = FailoverStreamingProvider::new(
+            route,
+            requirements(),
+            &db,
+            &session,
+            &super::super::NoopRunEventSink,
+        );
+        provider
+            .selected_indices
+            .lock()
+            .expect("indices")
+            .insert("run".into(), 1);
+        provider
+            .tool_bound_runs
+            .lock()
+            .expect("bound")
+            .insert("run".into());
+        provider.finish_text_turn("run").expect("text response");
+        assert_eq!(
+            provider
+                .selected_indices
+                .lock()
+                .expect("indices")
+                .get("run"),
+            Some(&1)
+        );
+        assert!(provider
+            .tool_bound_runs
+            .lock()
+            .expect("bound")
+            .contains("run"));
+        assert!(!provider
+            .recover_rejected_proposals("run", false)
+            .expect("no switch"));
     }
 }
 
@@ -431,6 +541,7 @@ pub(crate) struct FailoverStreamingProvider<'a> {
     candidate_continuations: Mutex<HashMap<String, SelectedResponseContinuation>>,
     candidate_indices: Mutex<HashMap<String, usize>>,
     tool_bound_runs: Mutex<HashSet<String>>,
+    proposal_recovery_runs: Mutex<HashSet<String>>,
     #[cfg(test)]
     test_streaming_client: Option<reqwest::Client>,
 }
@@ -442,6 +553,24 @@ struct SelectedResponseContinuation {
 }
 
 impl<'a> FailoverStreamingProvider<'a> {
+    fn finish_text_turn(&self, provider_state_key: &str) -> AppResult<()> {
+        self.continuations
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .remove(provider_state_key);
+        self.candidate_continuations
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .remove(provider_state_key);
+        self.candidate_indices
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .remove(provider_state_key);
+        // Text may still be withheld for evidence/source repair. Keep the
+        // selected route and real-tool binding until this Run's provider drops.
+        Ok(())
+    }
+
     pub(crate) fn new(
         route: DirectProviderRoute,
         requirements: crate::ai_runtime::provider_router::ProviderRequirements,
@@ -460,6 +589,7 @@ impl<'a> FailoverStreamingProvider<'a> {
             candidate_continuations: Mutex::new(HashMap::new()),
             candidate_indices: Mutex::new(HashMap::new()),
             tool_bound_runs: Mutex::new(HashSet::new()),
+            proposal_recovery_runs: Mutex::new(HashSet::new()),
             #[cfg(test)]
             test_streaming_client: None,
         }
@@ -579,36 +709,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                             &from_model_id,
                         );
                         if response.tool_calls.is_empty() {
-                            self.continuations
-                                .lock()
-                                .map_err(|_| {
-                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
-                                })?
-                                .remove(provider_state_key);
-                            self.selected_indices
-                                .lock()
-                                .map_err(|_| {
-                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
-                                })?
-                                .remove(provider_state_key);
-                            self.candidate_continuations
-                                .lock()
-                                .map_err(|_| {
-                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
-                                })?
-                                .remove(provider_state_key);
-                            self.candidate_indices
-                                .lock()
-                                .map_err(|_| {
-                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
-                                })?
-                                .remove(provider_state_key);
-                            self.tool_bound_runs
-                                .lock()
-                                .map_err(|_| {
-                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
-                                })?
-                                .remove(provider_state_key);
+                            self.finish_text_turn(provider_state_key)?;
                         } else {
                             let mut candidates =
                                 self.candidate_continuations.lock().map_err(|_| {
@@ -648,6 +749,36 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                 })?
                                 .contains(provider_state_key);
                         let failure = classify_failover_failure(&error);
+                        // Re-send only this model request, with the exact same tool results.
+                        // Provider binding forbids switching, not bounded same-route recovery.
+                        if failure.is_retryable() && !observer.has_visible_content() {
+                            crate::ai_runtime::circuit_breaker::record_llm_failure(
+                                &from_provider_id,
+                                &from_model_id,
+                            );
+                        }
+                        if failure.is_retryable()
+                            && !observer.has_visible_content()
+                            && !original_route_retry_used
+                        {
+                            record_model_route_diagnostic(
+                                self.db,
+                                parent_run_id,
+                                &from_provider_id,
+                                &from_model_id,
+                                dispatch_attempt,
+                                "failed",
+                                Some(failure),
+                                failure
+                                    == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
+                                false,
+                                provider_bound,
+                                "retry_same_provider",
+                            );
+                            original_route_retry_used = true;
+                            observer.reset_visible_answer_for_new_attempt();
+                            continue;
+                        }
                         if !may_failover_after_model_attempt(
                             failure,
                             observer.has_visible_content(),
@@ -660,7 +791,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                 &from_model_id,
                                 dispatch_attempt,
                                 "failed",
-                                Some(failover_reason(failure)),
+                                Some(failure),
                                 failure
                                     == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
                                 observer.has_visible_content(),
@@ -668,31 +799,6 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                 "terminal",
                             );
                             return Err(error);
-                        }
-                        if failure.is_retryable() {
-                            crate::ai_runtime::circuit_breaker::record_llm_failure(
-                                &from_provider_id,
-                                &from_model_id,
-                            );
-                        }
-                        if failure.is_retryable() && !original_route_retry_used {
-                            record_model_route_diagnostic(
-                                self.db,
-                                parent_run_id,
-                                &from_provider_id,
-                                &from_model_id,
-                                dispatch_attempt,
-                                "failed",
-                                Some(failover_reason(failure)),
-                                failure
-                                    == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
-                                false,
-                                false,
-                                "retry_same_provider",
-                            );
-                            original_route_retry_used = true;
-                            observer.reset_visible_answer_for_new_attempt();
-                            continue;
                         }
                         let Some(next_index) =
                             self.route.next_selected_index_after_for_requirements(
@@ -708,7 +814,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                 &from_model_id,
                                 dispatch_attempt,
                                 "failed",
-                                Some(failover_reason(failure)),
+                                Some(failure),
                                 failure
                                     == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
                                 false,
@@ -728,7 +834,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                             &from_model_id,
                             dispatch_attempt,
                             "failed",
-                            Some(failover_reason(failure)),
+                            Some(failure),
                             failure
                                 == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
                             false,
@@ -806,7 +912,8 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
             .remove(run_id);
-        self.candidate_indices
+        let candidate_index = self
+            .candidate_indices
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
             .remove(run_id);
@@ -820,11 +927,91 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                 .lock()
                 .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
                 .remove(run_id);
-            self.selected_indices
-                .lock()
-                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
-                .remove(run_id);
+            if let Some(index) = candidate_index {
+                self.selected_indices
+                    .lock()
+                    .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+                    .insert(run_id.to_string(), index);
+            }
         }
         Ok(())
+    }
+
+    fn recover_rejected_proposals(
+        &self,
+        run_id: &str,
+        has_visible_output: bool,
+    ) -> AppResult<bool> {
+        let bound = self
+            .tool_bound_runs
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .contains(run_id)
+            || self
+                .continuations
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+                .contains_key(run_id);
+        let failure = crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse;
+        if !may_failover_after_model_attempt(failure, has_visible_output, bound) {
+            return Ok(false);
+        }
+        let mut recovered = self
+            .proposal_recovery_runs
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?;
+        if recovered.contains(run_id) {
+            return Ok(false);
+        }
+        let selected = self
+            .selected_indices
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .get(run_id)
+            .copied()
+            .unwrap_or(0);
+        let Some(next) = self.route.next_selected_index_after_for_requirements(
+            self.requirements,
+            selected,
+            failure,
+        ) else {
+            return Ok(false);
+        };
+        let (from_provider_id, _) = self
+            .route
+            .selected_provider_model_for_requirements(self.requirements, selected)
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::NoCapableModel))?;
+        let (provider_id, model_id) = self
+            .route
+            .selected_provider_model_for_requirements(self.requirements, next)
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::NoCapableModel))?;
+        let parent_run_id =
+            crate::ai_runtime::agent_tool_loop::parent_run_id_for_provider_scope(run_id);
+        let snapshot =
+            AgentRunRepository::get_for_session(self.db, &self.session.session_key, parent_run_id)?
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+        let event = AgentRunRepository::append_event(
+            self.db,
+            AppendRunEventInput {
+                run_id: parent_run_id.to_string(),
+                state_version: snapshot.run.state_version,
+                event_type: RunEventType::ProviderSwitched,
+                payload: RunEventPayload::ProviderSwitched {
+                    capability: "model.respond".into(),
+                    from_provider_id: from_provider_id.into(),
+                    provider_id: provider_id.into(),
+                    model_id: model_id.into(),
+                    reason_code: "tool_proposal_repair_exhausted".into(),
+                    attempt: (next + 1) as u32,
+                },
+            },
+        )?;
+        self.sink.emit(&event)?;
+        self.selected_indices
+            .lock()
+            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
+            .insert(run_id.to_string(), next);
+        recovered.insert(run_id.to_string());
+        Ok(true)
     }
 }

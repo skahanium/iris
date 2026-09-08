@@ -62,6 +62,41 @@ function mountProbe() {
 }
 
 describe("useAssistantConversation", () => {
+  it("keeps view identity through intake but changes it on explicit navigation", () => {
+    mountProbe();
+    const initial = api?.conversationViewKey;
+    expect(initial).toBeDefined();
+    act(() => api?.setRunSession({ domain: "normal", sessionKey: "bound" }));
+    expect(api?.conversationViewKey).toBe(initial);
+    act(() =>
+      api?.handleLoadSession({ domain: "normal", sessionKey: "other" }, []),
+    );
+    expect(api?.conversationViewKey).not.toBe(initial);
+    const loaded = api?.conversationViewKey;
+    act(() => api?.handleNewChat());
+    expect(api?.conversationViewKey).not.toBe(loaded);
+  });
+
+  it("settles a completed answer atomically with the next outgoing question", () => {
+    mountProbe();
+    act(() =>
+      api?.setMessages([
+        {
+          role: "assistant",
+          content: "完整回答",
+          runId: "old",
+          answerPresentation: { runId: "old", resetEpoch: 0, complete: true },
+        },
+      ]),
+    );
+    act(() =>
+      api?.beginOutgoingTurn({ message: "下一题", clientRequestId: "next" }),
+    );
+    expect(api?.messages[0]?.answerPresentation?.settled).toBe(true);
+    expect(api?.messages[0]?.content).toBe("完整回答");
+    expect(api?.messages[1]?.content).toBe("下一题");
+  });
+
   it("loads only an opaque unified session reference", () => {
     mountProbe();
 

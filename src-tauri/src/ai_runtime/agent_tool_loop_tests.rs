@@ -28,12 +28,8 @@ fn assert_host_evidence_limited(content: &str) {
         "host limitation must keep the evidence-limited prefix: {content}"
     );
     assert!(
-        content.contains("不能作为处分") && content.contains("用药"),
-        "strict degradation must forbid applicability conclusions: {content}"
-    );
-    assert!(
-        content.contains("重试") && (content.contains("官方") || content.contains("@")),
-        "strict degradation must include a next step: {content}"
+        content.contains("无法确认") && !content.contains("用药") && !content.contains("签证"),
+        "the limitation must describe missing verification without unrelated domain advice: {content}"
     );
 }
 
@@ -2543,6 +2539,53 @@ async fn successful_equivalent_tool_call_is_not_executed_twice() {
 }
 
 #[tokio::test]
+async fn missing_call_id_and_invalid_json_receive_specific_repairs_without_execution_cost() {
+    for (missing_id, expected_reason) in
+        [(true, "missing_call_id"), (false, "invalid_arguments_json")]
+    {
+        let mut invalid = web_tool_call();
+        if missing_id {
+            invalid.id.clear();
+        } else {
+            invalid.function.arguments = "{".into();
+        }
+        let provider = ScriptedProvider {
+            responses: Mutex::new(VecDeque::from([
+                scripted_tool_response(invalid),
+                scripted_tool_response(web_tool_call()),
+                scripted_final_response("The observation was processed."),
+            ])),
+            calls: AtomicU32::new(0),
+            second_turn_messages: Mutex::new(Vec::new()),
+        };
+        let executor = RecordingExecutor {
+            calls: AtomicU32::new(0),
+            web_evidence: false,
+        };
+        let mut observer = NoopObserver;
+        let outcome = standard_tool_loop()
+            .execute(
+                &provider,
+                &executor,
+                "proposal-repair-contract",
+                Vec::new(),
+                vec![web_tool_spec()],
+                &mut observer,
+            )
+            .await
+            .expect("repaired proposal");
+        assert_eq!(outcome.tool_calls, 1);
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        assert!(provider
+            .second_turn_messages
+            .lock()
+            .expect("feedback")
+            .iter()
+            .any(|message| message.content.text_content().contains(expected_reason)));
+    }
+}
+
+#[tokio::test]
 async fn hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
@@ -2921,8 +2964,7 @@ async fn web_required_without_a_tool_surface_finishes_with_a_bounded_limitation(
 }
 
 #[tokio::test]
-async fn empty_web_search_finishes_with_a_bounded_limitation_without_spending_a_useless_repair_turn(
-) {
+async fn empty_web_search_preserves_a_research_repair_before_bounded_completion() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
             super::model_gateway::GatewayResponse {
@@ -2945,6 +2987,7 @@ async fn empty_web_search_finishes_with_a_bounded_limitation_without_spending_a_
                 reasoning_content: None,
                 continuation: None,
             },
+            scripted_final_response("Current status still cannot be verified."),
         ])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -2964,8 +3007,8 @@ async fn empty_web_search_finishes_with_a_bounded_limitation_without_spending_a_
         .expect("an empty current Web result should complete safely");
 
     assert_host_evidence_limited(&outcome.content);
-    assert_eq!(outcome.model_turns, 2);
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(outcome.model_turns, 3);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
@@ -3136,9 +3179,8 @@ async fn cancelled_run_never_starts_a_model_or_tool_turn() {
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
     };
-    let executor = RecordingExecutor {
+    let executor = BootstrapWebExecutor {
         calls: AtomicU32::new(0),
-        web_evidence: false,
     };
     let mut observer = NoopObserver;
     crate::ai_runtime::model_gateway::request_abort("run-cancelled-loop");

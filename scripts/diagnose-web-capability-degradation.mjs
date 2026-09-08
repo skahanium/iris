@@ -78,9 +78,13 @@ function resolveDbPath(explicit) {
 }
 
 function sqlite(dbPath, sql) {
-  const result = spawnSync("sqlite3", ["-header", "-column", dbPath, sql], {
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    "sqlite3",
+    ["-readonly", "-header", "-column", dbPath, sql],
+    {
+      encoding: "utf8",
+    },
+  );
   if (result.status !== 0) {
     throw new Error(result.stderr || "sqlite3 执行失败");
   }
@@ -120,6 +124,20 @@ const dbPath = resolveDbPath(args.db);
 process.stdout.write(`数据库: ${dbPath}\n\n`);
 
 if (args.runId) {
+  process.stdout.write(
+    "=== 联网合同与提议 → 派发 → 观察 → 退出（无正文） ===\n",
+  );
+  process.stdout.write(
+    `${sqlite(
+      dbPath,
+      `SELECT
+    json_extract(envelope_json, '$.freshness') AS freshness,
+    json_extract(envelope_json, '$.webReason') AS web_reason,
+    json_extract(provider_route_summary_json, '$.attempts') AS model_attempts,
+    json_extract(provider_route_summary_json, '$.toolLoop') AS tool_loop
+    FROM agent_runs WHERE run_id = '${args.runId.replace(/'/g, "''")}';`,
+    )}\n\n`,
+  );
   process.stdout.write(`=== Run ${args.runId}：工具与降级事件 ===\n`);
   process.stdout.write(
     `${sqlite(
@@ -129,10 +147,14 @@ if (args.runId) {
         json_extract(payload_json, '$.success') AS success,
         json_extract(payload_json, '$.code') AS code,
         json_extract(payload_json, '$.retryable') AS retryable,
-        json_extract(payload_json, '$.attemptCount') AS attempt_count
+        json_extract(payload_json, '$.attemptCount') AS attempt_count,
+        json_extract(payload_json, '$.reasonCode') AS switch_reason,
+        json_extract(payload_json, '$.attempt') AS switch_attempt,
+        json_extract(payload_json, '$.fromProviderId') AS from_provider,
+        json_extract(payload_json, '$.providerId') AS to_provider
        FROM agent_run_events
        WHERE run_id = '${args.runId.replace(/'/g, "''")}'
-         AND event_type IN ('capability_degraded', 'tool_started', 'tool_completed')
+         AND event_type IN ('capability_degraded', 'tool_started', 'tool_completed', 'provider_switched', 'failed')
        ORDER BY event_seq;`,
     )}\n\n`,
   );
@@ -140,7 +162,7 @@ if (args.runId) {
   process.stdout.write(
     `${sqlite(
       dbPath,
-      `SELECT COUNT(*) AS evidence_rows FROM session_evidence WHERE origin_run_id = '${args.runId.replace(/'/g, "''")}';`,
+      `SELECT COUNT(*) AS evidence_rows FROM session_evidence WHERE source_type = 'web' AND origin_run_id = '${args.runId.replace(/'/g, "''")}';`,
     )}\n`,
   );
   process.exit(0);

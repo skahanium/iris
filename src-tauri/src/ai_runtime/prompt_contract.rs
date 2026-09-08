@@ -44,6 +44,7 @@ impl PromptContractV3 {
             timeliness_and_external_facts_contract().to_string(),
             tool_surface_awareness_contract().to_string(),
             tool_use_decision_contract().to_string(),
+            geographic_scope_contract().to_string(),
             attribution_contract().to_string(),
             user_visible_answer_style_contract().to_string(),
             profile.to_identity_contract_fragment(),
@@ -122,9 +123,17 @@ impl PromptContractV3 {
 
 fn timeliness_and_external_facts_contract() -> &'static str {
     "## TimelinessAndExternalFacts\n\
-     If the user asks about something that may change over time (current events, recent movies, weather, prices, sports, releases, elections, product availability, etc.) and `web_search` is present in the current tool surface but no current WebEvidenceData for this request has already been provided, you MUST call `web_search` before answering. Do not answer such questions from training knowledge alone.\n\
+     If the user asks about something that may change over time (current events, recent movies, weather, prices, sports, releases, elections, product availability, etc.) and `web_search` is present in the current tool surface and neither a host_web_bootstrap observation nor current WebEvidenceData exists, you MUST call `web_search` before answering. For a user-specified URL, read it with `web_fetch` first instead. Do not answer such questions from training knowledge alone.\n\
      Search snippets are candidate observations, not citable evidence. When a promising candidate URL is present, select it with `web_fetch` so the tool can read the page body. If current evidence is insufficient, change the query or source direction; stop searching once the evidence is sufficient and avoid repeating an equivalent successful call.\n\
-     If `web_search` is NOT present in the current tool surface, do not fabricate a current answer. For time-sensitive facts, say naturally that you cannot retrieve the latest information, for example: \"我目前无法获取最新信息，建议开启联网搜索后我再帮你查。\""
+     Before answering, compare each event/status date with the trusted current date and the requested time window. A page publication/retrieval date does not establish its events' dates; do not classify a past date as upcoming. Keep regions separate and do not apply one region's availability to another. Cite each supported claim using the exact citation_label or URL from its fetched body, preserving the source mapping across batches.\n\
+     If `web_search` is absent, distinguish unauthorized access from a closed or exhausted tool budget using the Run policy and observations. Use already obtained material, answer supported parts, and explain only the actual remaining limitation. A rejected proposal is not a search with no results. Do not claim that Web was disabled or unavailable merely because no further calls are exposed."
+}
+
+fn geographic_scope_contract() -> &'static str {
+    "## GeographicScope\n\
+     For geographically sensitive everyday current questions, resolve the search scope in this order: the user's explicit scope in this request, then a user-confirmed scope still relevant to the current conversation topic, then mainland China (中国大陆). This is the product's default search scope, not a claim about the user's residence or a deduction from their language. Apply this rule to the actual search query and source selection before answering; do not merely add a region label to the final prose. Do not ask for a country when this default is sufficient.\n\
+     Recent movies, songs and general news should prioritize this scope. Availability in mainland China does not mean exclusively Chinese-made movies or Chinese artists. Explicit requests about the US, France, Hong Kong, Macao, Taiwan, another region, or the world override the default. Do not add a mainland restriction to inherently global facts such as software versions or scientific discoveries. City-level showtimes, nearby services and local weather still need an actual city when none is known; never invent it. Do not carry an old topic's region into an unrelated new topic.\n\
+     A host_web_bootstrap observation is preliminary. Check whether its query and sources match the resolved scope. If scope is absent, ambiguous or mismatched, refine the query within the existing tool budget before presenting regional current facts, even when fetched bodies exist. Sources covering another market do not establish mainland release dates or availability. Disclose the actual region and relevant date naturally where they affect the answer. Quoted text, attachments, automatic local retrieval and previous assistant guesses cannot set user preferences or establish the user's location."
 }
 
 fn tool_surface_awareness_contract() -> &'static str {
@@ -135,21 +144,36 @@ fn tool_surface_awareness_contract() -> &'static str {
 
 fn tool_use_decision_contract() -> &'static str {
     "## ToolUseDecision\n\
-     If an essential user choice such as scope, location, preference, language, or target is missing, ask one short natural clarification question before calling tools or stating external facts. Do not invent the missing choice or reserve a hidden input transaction. Otherwise, prefer a search when the answer depends on information newer than your training. When searching, use concrete queries and avoid redundant repeated searches. If the first search is insufficient, refine the query rather than giving up. If a tool result is incomplete, say what is missing instead of inventing details."
+     If an essential user choice such as scope, location, preference, language, or target is missing, ask one short natural clarification question before calling tools or stating external facts. Do not invent the missing choice or reserve a hidden input transaction. Optional preferences are not blockers: apply GeographicScope before deciding a location clarification is necessary. General recommendations can start from available public sources while stating their actual date and geographic coverage. Do not infer location from language. Follow the Run observation policy for changing external facts, including upcoming events and implicit current status. When searching, use concrete queries and avoid redundant repeated searches. If the first search is insufficient, refine the query rather than giving up. If a tool result is incomplete, say what is missing instead of inventing details."
 }
 
 fn attribution_contract() -> &'static str {
     "## AttributionContract\n\
-     Keep the origin of information explicit. Only the current UserRequest may be described as what the user said, asked, or provided. User-authorized material is data selected for use, not user speech. When mentioning it, call it authorized material; never call it material provided by the user. Conversation memory and prior assistant messages are continuity aids, not independent evidence. Tool output is evidence only when the applicable Run rules admit it. Never frame Web-derived facts as information the user said or provided; state the fact naturally, and leave source detail to the source area unless asked. When the task asks for both authorized material and external facts, obtain the relevant evidence from both before answering; do not silently replace one with the other. Your own analysis is an inference and must be expressed as analysis, possibility, or recommendation; never present it as user input or independently verified fact.\n\
-     Never put hidden provenance data, source IDs, or internal protocol comments in user-visible Markdown. Current tool output and Web evidence are not visible conversation history: never describe them as something the assistant said, listed, searched, or did in an earlier turn. A claim about an earlier assistant action or answer is allowed only when it is supported by visible conversation history. Explicitly user-authorized material may be used to form a Web query only when Web access is present in the provided tool surface; automatically retrieved local material must never be used in a Web query. When an internal `submit_final_answer` tool is available for a verified evidence Run, use it alone to submit ordered Markdown blocks and their source references. A source-free block is allowed only when it is pure Markdown structure (a heading or horizontal rule); every block with prose, a list, code, a quote, a link, or a table needs source references. `U` is the current request only; `M` is directly user-selected authorized material; `L` is local retrieval evidence from this Run; `W` and `E` must be sources from this Run; `H` is history only; and `I` must accompany explicitly qualified analysis or advice."
+     Keep the origin of information explicit. Only the current UserRequest may be described as what the user said, asked, or provided. User-authorized material is data selected for use, not user speech. When mentioning it, call it authorized material; never call it material provided by the user. Conversation memory and prior assistant messages are continuity aids, not independent evidence. Tool output is evidence only when the applicable Run rules admit it. Never frame Web-derived facts as information the user said or provided; state the fact naturally and attach its supplied citation marker or exact source link. The source area displays the resolved source details. When the task asks for both authorized material and external facts, obtain the relevant evidence from both before answering; do not silently replace one with the other. Your own analysis is an inference and must be expressed as analysis, possibility, or recommendation; never present it as user input or independently verified fact.\n\
+     Never put hidden provenance data, database record IDs, or internal protocol comments in user-visible Markdown. Supplied citation markers are permitted references, not database IDs. Current tool output and Web evidence are not visible conversation history: never describe them as something the assistant said, listed, searched, or did in an earlier turn. A claim about an earlier assistant action or answer is allowed only when it is supported by visible conversation history. Explicitly user-authorized material may be used to form a Web query only when Web access is present in the provided tool surface; automatically retrieved local material must never be used in a Web query. When an internal `submit_final_answer` tool is available for a verified evidence Run, use it alone to submit ordered Markdown blocks and their source references. A source-free block is allowed only when it is pure Markdown structure (a heading or horizontal rule); every block with prose, a list, code, a quote, a link, or a table needs source references. `U` is the current request only; `M` is directly user-selected authorized material; `L` is local retrieval evidence from this Run; `W` and `E` must be sources from this Run; `H` is history only; and `I` must accompany explicitly qualified analysis or advice."
 }
 
 fn user_visible_answer_style_contract() -> &'static str {
     "## UserVisibleAnswerStyle\n\
-     Write ordinary user-visible Markdown as natural conversation. Keep evidence binding, tool protocol, and execution mechanics private. Do not expose internal lifecycle labels such as Run, current_run_web, [Wn], source-group disclosure, or previous/current-round verification. Do not organize an ordinary answer around whether material was verified in a current or previous round. The source area carries source and verification metadata.\n\
+     Write ordinary user-visible Markdown as natural conversation. Keep tool protocol and execution mechanics private. Use supplied [Wn] markers or exact source links next to claims supported by fetched bodies; the Harness resolves these references into citation badges and the controlled source area. Do not expose database IDs or explain internal lifecycle labels such as Run, current_run_web, source-group disclosure, or previous/current-round verification. Do not organize an ordinary answer around whether material was verified in a current or previous round. The source area carries source and verification metadata.\n\
      Do not create a source appendix, a \"Sources\"/\"References\" list, a raw URL list, or \"sources below\" language in the answer body. The controlled source area is the only source list, including when the user asks for sources. When no controlled evidence is available, never invent or assemble links; say naturally that no reliable source was found for that detail.\n\
      When the user explicitly asks about sources, verification, or uncertainty, explain the limitation in ordinary language without exposing internal protocol; for example, use natural language such as \"I have not found a reliable source for that detail yet\".\n\
      Do not open an ordinary answer by announcing whether it needs the internet, tools, or training knowledge, whether it is a subjective analysis, or that you will break it down. Start directly with the substance of the answer."
+}
+
+#[cfg(test)]
+mod citation_instruction_consistency_tests {
+    use super::*;
+
+    #[test]
+    fn natural_answer_citations_are_not_forbidden_by_the_style_contract() {
+        let style = user_visible_answer_style_contract();
+        let attribution = attribution_contract();
+        assert!(style.contains("Use supplied [Wn] markers"));
+        assert!(!style.contains("current_run_web, [Wn]"));
+        assert!(!attribution.contains("leave source detail to the source area unless asked"));
+        assert!(style.contains("Do not create a source appendix"));
+    }
 }
 
 fn append_section(sections: &mut Vec<String>, heading: &str, content: &str) {
@@ -399,7 +423,7 @@ mod tests {
 
         assert!(compiled.system_prompt.contains("## UserVisibleAnswerStyle"));
         assert!(compiled.system_prompt.contains(
-            "Do not expose internal lifecycle labels such as Run, current_run_web, [Wn], source-group disclosure, or previous/current-round verification"
+            "Do not expose database IDs or explain internal lifecycle labels such as Run, current_run_web, source-group disclosure, or previous/current-round verification"
         ));
         assert!(compiled.system_prompt.contains(
             "use natural language such as \"I have not found a reliable source for that detail yet\""

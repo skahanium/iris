@@ -43,6 +43,58 @@ describe("charsFittingInWidth", () => {
 });
 
 describe("nextRevealLength", () => {
+  it("advances only one consecutive newline per update", () => {
+    expect(
+      nextRevealLength({
+        current: "a",
+        target: "a\n\n\n\nb",
+        remainingPx: 100,
+        lineWidthPx: 240,
+        measure: asciiMeasure,
+      }),
+    ).toBe(2);
+  });
+
+  it("never divides a family emoji grapheme", () => {
+    const family = "👨‍👩‍👧‍👦";
+    const target = family.repeat(20);
+    const next = nextRevealLength({
+      current: "",
+      target,
+      remainingPx: 8,
+      lineWidthPx: 240,
+      measure: asciiMeasure,
+    });
+    expect(next).toBe(family.length);
+  });
+
+  it("advances a grapheme wider than the viewport without stalling forever", () => {
+    const family = "👨‍👩‍👧‍👦";
+    expect(
+      nextRevealLength({
+        current: "",
+        target: family,
+        remainingPx: 20,
+        lineWidthPx: 20,
+        maxAdvancePx: 20,
+        measure: asciiMeasure,
+      }),
+    ).toBe(family.length);
+  });
+
+  it("does not cut the bounded measurement prefix through a grapheme", () => {
+    const target = "a".repeat(510) + "👨‍👩‍👧‍👦";
+    const next = nextRevealLength({
+      current: "",
+      target,
+      remainingPx: 10000,
+      lineWidthPx: 10000,
+      maxAdvancePx: 10000,
+      measure: () => 1,
+    });
+    expect([510, target.length]).toContain(next);
+  });
+
   it("releases a short increment that still fits on the current line in one step", () => {
     expect(
       nextRevealLength({
@@ -115,7 +167,7 @@ describe("nextRevealLength", () => {
         lineWidthPx: 240,
         measure: asciiMeasure,
       }),
-    ).toBe("hello\n\n".length);
+    ).toBe("hello\n".length);
   });
 });
 

@@ -42,6 +42,7 @@ export function projectAssistantProcessEvents(
 ): AssistantProcessItem[] {
   const items: AssistantProcessItem[] = [];
   const toolIndexes = new Map<string, number>();
+  const shownWebSwitches = new Set<string>();
   let answerTerminalAt: number | null = null;
   let answerTerminalLabel: string | null = null;
 
@@ -126,6 +127,13 @@ export function projectAssistantProcessEvents(
         answerTerminalLabel = "已取消";
         break;
       case "provider_switched":
+        if (
+          event.payload.capability &&
+          isWebCapability(event.payload.capability)
+        ) {
+          if (shownWebSwitches.has(event.payload.capability)) break;
+          shownWebSwitches.add(event.payload.capability);
+        }
         items.push({
           id: `provider-switch:${event.seq}`,
           kind: "stage",
@@ -225,8 +233,9 @@ function providerSwitchProcessLabel(capability: string | undefined): string {
     case "model.respond":
       return "已切换到备用模型";
     case "web.search":
+      return "搜索已改用备用服务";
     case "web.fetch":
-      return "已改用备用检索服务";
+      return "网页读取已改用备用服务";
     default:
       return "服务不可用，已切换到备用服务";
   }

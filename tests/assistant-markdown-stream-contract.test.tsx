@@ -61,7 +61,7 @@ describe("assistant Run transcript rendering", () => {
     ).toBe(false);
   });
 
-  it("pins the live streaming assistant below the virtualizer", async () => {
+  it("keeps the live streaming assistant in the same ordered parent as completed rows", async () => {
     await act(async () => {
       root.render(
         <AiMessageList
@@ -88,7 +88,7 @@ describe("assistant Run transcript rendering", () => {
       document.body.querySelector(
         "[data-index] .ai-message-bubble-assistant[data-streaming]",
       ),
-    ).toBeNull();
+    ).not.toBeNull();
     expect(live?.innerHTML).not.toContain("translateY");
     expect(
       document.body.querySelector("[data-conversation-park]"),
@@ -126,6 +126,9 @@ describe("assistant Run transcript rendering", () => {
       );
     });
 
+    const originalBubble = host.querySelector(".ai-message-bubble-assistant");
+    const originalRow = originalBubble?.closest("[data-conversation-row]");
+    const originalParent = originalRow?.parentElement;
     await act(async () => {
       root.render(
         <AiMessageList
@@ -141,6 +144,13 @@ describe("assistant Run transcript rendering", () => {
     });
 
     expect(document.body.textContent).toContain("final content");
+    expect(host.querySelector(".ai-message-bubble-assistant")).toBe(
+      originalBubble,
+    );
+    expect(originalBubble?.closest("[data-conversation-row]")).toBe(
+      originalRow,
+    );
+    expect(originalRow?.parentElement).toBe(originalParent);
   });
 
   it("renders required input inside the owning conversation turn", async () => {

@@ -90,6 +90,16 @@ fn mcp_failover_events(
     winner_provider_id: &str,
     capability: &str,
 ) -> Vec<McpFailoverEvent> {
+    // The Broker skips providers without the requested mapping. Their place
+    // in the shared route must not manufacture a failed fetch transition.
+    let snapshots = snapshots
+        .iter()
+        .filter(|snapshot| match capability {
+            "web.fetch" => snapshot.web_fetch_mapping_json.is_some(),
+            "web.search" => snapshot.web_search_mapping_json.is_some(),
+            _ => false,
+        })
+        .collect::<Vec<_>>();
     let Some(winner_index) = snapshots
         .iter()
         .position(|snapshot| snapshot.id == winner_provider_id)
@@ -827,11 +837,26 @@ impl<'a> NormalRunToolExecutor<'a> {
         } else {
             serde_json::json!("one_fetched_body")
         };
-        let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
+        let mut packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
             &query,
             &packed_items,
             MAX_WEB_EXCERPT_CHARS,
         );
+        // Broker packets are numbered within a single fetch batch. Only the
+        // Run ledger owns W labels across Host bootstrap and later model reads.
+        let citations = AgentEvidenceRepository::list_current_run_web_citation_links(
+            &self.state.db,
+            &self.accepted.run_id,
+        )?;
+        for packet in &mut packets {
+            let url = packet.source_path.as_deref().unwrap_or_default();
+            let citation = citations
+                .iter()
+                .find(|citation| normalize_fetch_url(&citation.url) == normalize_fetch_url(url))
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::UnverifiedWebCitation))?;
+            packet.citation_label = citation.label.clone();
+            packet.id = format!("run-web-{}", citation.index);
+        }
         let resource_ids = packets
             .iter()
             .map(|packet| packet.id.clone())
@@ -1331,9 +1356,24 @@ fn failed_fetch_urls(
 
 fn explicit_user_urls(message: &str) -> BTreeSet<String> {
     message
-        .split_whitespace()
-        .filter(|part| part.trim().starts_with("https://"))
+        .match_indices("https://")
+        .map(|(start, _)| &message[start..])
+        .map(|tail| {
+            tail.split(|c: char| {
+                c.is_whitespace()
+                    || matches!(
+                        c,
+                        '<' | '>' | '"' | '\'' | ')' | ']' | '}' | '，' | '。' | '；' | '）' | '】'
+                    )
+            })
+            .next()
+            .unwrap_or_default()
+        })
         .map(normalize_fetch_url)
+        .filter(|candidate| {
+            reqwest::Url::parse(candidate)
+                .is_ok_and(|url| url.scheme() == "https" && url.host_str().is_some())
+        })
         .collect()
 }
 
@@ -1651,9 +1691,136 @@ fn safe_external_tool_failure(error: &AppError) -> &'static str {
 }
 
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
+    fn proposal_rejection_reason(&self, call: &ToolCall) -> AppResult<Option<&'static str>> {
+        if call.function.name != WEB_FETCH_TOOL_NAME {
+            return Ok(None);
+        }
+        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)?;
+        let requested = args["urls"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let mut permitted =
+            AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?
+                .into_iter()
+                .map(|url| normalize_fetch_url(&url))
+                .collect::<BTreeSet<_>>();
+        permitted.extend(explicit_user_urls(&self.context.user_message));
+        permitted.extend(
+            self.run_web_evidence
+                .lock()
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
+                .candidate_urls
+                .iter()
+                .cloned(),
+        );
+        Ok(validate_current_run_fetch_urls(&requested, &permitted)
+            .err()
+            .map(|_| "web_url_not_in_current_run"))
+    }
+
+    fn record_tool_loop_diagnostic(&self, event: serde_json::Value) {
+        if self.subagent_depth != 0 {
+            return;
+        }
+        let result = self.state.db.with_conn(|conn| {
+            let transaction = rusqlite::Transaction::new_unchecked(
+                conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let conn = &transaction;
+            let stored: String = conn.query_row(
+                "SELECT provider_route_summary_json FROM agent_runs WHERE run_id = ?1",
+                [&self.accepted.run_id],
+                |row| row.get(0),
+            )?;
+            let mut summary: serde_json::Value = serde_json::from_str(&stored)?;
+            let data = summary
+                .as_object_mut()
+                .ok_or_else(|| AppError::msg("invalid_route_summary"))?
+                .entry("toolLoop")
+                .or_insert_with(|| {
+                    serde_json::json!({
+                        "schemaVersion":1, "rejectedProposals":0, "repairRounds":0,
+                        "dispatched":0, "noProgressRounds":0, "failedServiceRounds":0, "events":[]
+                    })
+                });
+            let increment = |data: &mut serde_json::Value, key: &str| {
+                data[key] = serde_json::json!(data[key].as_u64().unwrap_or(0).saturating_add(1));
+            };
+            match event["event"].as_str() {
+                Some("proposal") => {
+                    increment(data, "proposals");
+                    if !matches!(
+                        event["reason"].as_str(),
+                        Some("accepted" | "deferred_for_feedback")
+                    ) {
+                        increment(data, "rejectedProposals");
+                        if data.get("firstRejection").is_none() {
+                            data["firstRejection"] = event.clone();
+                        }
+                    }
+                }
+                Some("repair") => increment(data, "repairRounds"),
+                Some("dispatch") => increment(data, "dispatched"),
+                Some("result") => {
+                    if event["success"] != true && data.get("firstFailure").is_none() {
+                        data["firstFailure"] = event.clone();
+                    }
+                    increment(
+                        data,
+                        if event["success"] == true {
+                            "successfulResults"
+                        } else {
+                            "failedResults"
+                        },
+                    );
+                    if event["tool"] == "web_search" {
+                        data["lastSearch"] = event.clone();
+                    }
+                    if event["tool"] == "web_fetch" {
+                        data["lastFetch"] = event.clone();
+                    }
+                }
+                Some("progress") => {
+                    data["noProgressRounds"] = event["noProgressRounds"].clone();
+                    data["failedServiceRounds"] = event["failedServiceRounds"].clone();
+                }
+                Some("tool_error") => {
+                    increment(data, "executionErrors");
+                    if data.get("firstFailure").is_none() {
+                        data["firstFailure"] = event.clone();
+                    }
+                }
+                Some("model") => data["modelTurns"] = event["modelTurns"].clone(),
+                Some("exit") => data["exit"] = event.clone(),
+                _ => {}
+            }
+            let events = data["events"]
+                .as_array_mut()
+                .ok_or_else(|| AppError::msg("invalid_loop_diagnostic"))?;
+            if events.len() >= 12 {
+                events.remove(0);
+            }
+            events.push(event.clone());
+            conn.execute(
+                "UPDATE agent_runs SET provider_route_summary_json = ?1 WHERE run_id = ?2",
+                rusqlite::params![serde_json::to_string(&summary)?, self.accepted.run_id],
+            )?;
+            transaction.commit()?;
+            Ok(())
+        });
+        if result.is_err() {
+            tracing::warn!(reason = "tool_loop_diagnostic_persist_failed");
+        }
+    }
+
     fn required_web_bootstrap_action_count(&self) -> u32 {
         u32::from(
-            self.requires_web_evidence()
+            self.requires_web_observation()
                 && self
                     .allowed_tool_names
                     .iter()
@@ -1662,7 +1829,11 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     .allowed_tool_names
                     .iter()
                     .any(|name| name == WEB_FETCH_TOOL_NAME),
-        ) * 2
+        ) * if explicit_user_urls(&self.context.user_message).is_empty() {
+            2
+        } else {
+            1
+        }
     }
 
     fn conversation_memory_compaction_request(
@@ -1713,8 +1884,8 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     ) -> Pin<Box<dyn Future<Output = AppResult<Option<RequiredWebBootstrapObservation>>> + Send + 'a>>
     {
         Box::pin(async move {
-            if !self.requires_web_evidence()
-                || remaining_tool_calls < 2
+            if !self.requires_web_observation()
+                || remaining_tool_calls < self.required_web_bootstrap_action_count()
                 || !self
                     .allowed_tool_names
                     .iter()
@@ -1727,13 +1898,37 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 return Ok(None);
             }
 
+            let explicit_urls = explicit_user_urls(&self.context.user_message)
+                .into_iter()
+                .take(2)
+                .collect::<Vec<_>>();
+            if !explicit_urls.is_empty() {
+                let call = ToolCall::new(
+                    "host-bootstrap-web-fetch",
+                    WEB_FETCH_TOOL_NAME,
+                    serde_json::json!({ "urls": explicit_urls }).to_string(),
+                );
+                let fetch = self.execute(run_id, &call, 1).await?;
+                return Ok(Some(RequiredWebBootstrapObservation {
+                    tool_calls: 1,
+                    network_tool_calls: 1,
+                    observation: serde_json::json!({
+                        "kind": "host_web_bootstrap",
+                        "fetch": fetch,
+                        "note": "Host attempted the user-specified URLs. Check success and relevance; failed reads are not evidence. Continue with other authorized sources if needed."
+                    }).to_string(),
+                }));
+            }
+
+            let query = self
+                .context
+                .bootstrap_web_query(&chrono::Utc::now().format("%Y-%m-%d").to_string());
             let search_call = ToolCall {
                 id: "host-bootstrap-web-search".into(),
                 call_type: "function".into(),
                 function: FunctionCall {
                     name: WEB_SEARCH_TOOL_NAME.into(),
-                    arguments: serde_json::json!({ "query": self.context.user_message })
-                        .to_string(),
+                    arguments: serde_json::json!({ "query": query }).to_string(),
                 },
             };
             let search = self.execute(run_id, &search_call, 1).await?;
@@ -1763,9 +1958,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             let tool_calls = if fetch.is_some() { 2 } else { 1 };
             let observation = serde_json::json!({
                 "kind": "host_web_bootstrap",
-                "search": search.output,
-                "fetch": fetch.as_ref().map(|result| &result.output),
-                "note": "Host executed this required search and selected-body fetch before this answer turn. Treat fetched bodies as current-Run observations; failed URLs are not evidence."
+                "query": query,
+                "search": search,
+                "fetch": fetch,
+                "note": "Host attempted search and available candidate bodies before this answer turn. Check success, dates, geography and relevance; a completed attempt is not proof. Continue searching or reading within budget when results are missing, stale or unrelated. Apply GeographicScope to the query and sources. If this preliminary observation misses the user's explicit or conversational scope, or the mainland China default for regional everyday questions, refine the search before answering. State actual coverage; do not infer residence."
             })
             .to_string();
             Ok(Some(RequiredWebBootstrapObservation {
@@ -1783,6 +1979,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         Box::pin(async move {
+            if crate::ai_runtime::model_gateway::is_abort_requested(run_id) {
+                return Err(AppError::run(SafeRunErrorCode::Cancelled));
+            }
             if !self
                 .allowed_tool_names
                 .iter()
@@ -1901,6 +2100,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     Err(_) => return Err(AppError::msg("tool_event_persistence_failed")),
                 }
             };
+            self.record_tool_loop_diagnostic(
+                serde_json::json!({"event":"dispatch", "tool":entry.name,
+                "host":call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX)}),
+            );
             let result = if let Some(result) = gate_outcome.tool_result {
                 result
             } else if entry.requires_confirmation {
@@ -1930,6 +2133,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 self.dispatch_non_web_tool(&call.function.name, &args, None)
                     .await
             };
+            self.record_tool_loop_diagnostic(serde_json::json!({"event":"result", "tool":entry.name,
+                "success":result.success, "reason": self.web_failure().map(|failure| failure.code.as_str()),
+                "resultCount": result.output.get("count").and_then(serde_json::Value::as_u64).unwrap_or(0),
+                "brokerAttempts":self.web_attempt_count()}));
             audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
             self.register_local_tool_evidence(run_id, &call.function.name, &args, &result)?;
             let summary = if result.success {
@@ -2191,6 +2398,29 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 == crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb
     }
 
+    fn web_observation_performed(&self) -> Option<bool> {
+        Some(self.web_attempt_count() > 0 && !self.web_capability_blocked())
+    }
+
+    fn web_capability_blocked(&self) -> bool {
+        self.web_attempt_count() > 0
+            && self.ordered_web_provider_snapshots().is_empty()
+            && self
+                .run_web_evidence
+                .lock()
+                .is_ok_and(|state| state.evidence_ids.is_empty())
+    }
+
+    fn requires_web_observation(&self) -> bool {
+        self.subagent_depth == 0
+            && self.verification_targets.is_none()
+            && crate::ai_runtime::tool_surface::ToolSurfacePlanner::for_envelope(
+                &self.context.envelope,
+                &self.authorized_capabilities,
+            )
+            .requires_web_observation
+    }
+
     fn requires_external_evidence(&self) -> bool {
         self.subagent_depth == 0
             && self.context.envelope.verification_requirement
@@ -2227,7 +2457,24 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .map(|state| state.unverified_leads.clone())
             .unwrap_or_default();
         if leads.is_empty() {
-            return crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE.to_string();
+            let reason = match self.web_failure().map(|failure| failure.code) {
+                Some(SafeRunErrorCode::WebProviderTimeout) => "检索服务请求超时，未取得可用结果。",
+                Some(SafeRunErrorCode::WebProviderUnavailable) => {
+                    "当前没有可用的联网服务，无法取得外部资料。"
+                }
+                Some(SafeRunErrorCode::WebProviderAuthFailed) => {
+                    "联网服务的身份验证失败，未取得外部资料。"
+                }
+                Some(SafeRunErrorCode::WebEvidenceInvalid) => {
+                    "返回的材料没有可核实的正文，无法据此确认当前情况。"
+                }
+                Some(_) => "联网服务调用失败，未取得足够的可核实资料。",
+                None => "现有材料不足以支持答复中的事实，相关部分仍无法确认。",
+            };
+            return format!(
+                "{}。{reason}",
+                crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE_PREFIX
+            );
         }
         let items = leads
             .into_iter()
@@ -2236,7 +2483,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "本轮未取得足够的可核验来源正文。以下是未核实线索；它们不能作为处分、生效、用药或签证结论的依据。你可以稍后重试、粘贴官方原文，或用 @ 附上相关笔记。\n\n{items}"
+            "本轮未取得足够的可核验来源正文。搜索取得了以下未核实线索，但正文读取或核验未成功，无法据此确认当前情况：\n\n{items}"
         )
     }
 
@@ -5391,6 +5638,12 @@ mod tests {
             [McpFailoverEvent { model_id, reason_code, .. }]
                 if model_id == "backup_fetch" && reason_code == "provider_failure"
         ));
+        let mut search_only_primary = snapshots.clone();
+        search_only_primary[0].web_fetch_mapping_json = None;
+        assert!(
+            mcp_failover_events(&search_only_primary, "backup", "web.fetch").is_empty(),
+            "skipping a search-only provider is not a failed fetch or a failover"
+        );
         assert!(
             mcp_failover_events(&snapshots, "native.fetch", "web.fetch").is_empty(),
             "native.fetch is not an MCP route winner and must not emit ProviderSwitched"

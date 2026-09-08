@@ -45,20 +45,39 @@ export function charsFittingInWidth(
   if (maxPx <= 0 || text.length === 0) return 0;
   if (measure(text) <= maxPx) return text.length;
 
+  const ends = graphemeEnds(text);
   let lo = 0;
-  let hi = text.length;
+  let hi = ends.length;
   while (lo < hi) {
-    const mid = alignEndToCodePoint(text, Math.ceil((lo + hi) / 2));
-    const clamped = Math.min(text.length, mid);
-    if (clamped <= lo) break;
-    if (measure(text.slice(0, clamped)) <= maxPx) {
-      lo = clamped;
-    } else {
-      const previous = previousCodePointStart(text, clamped);
-      hi = previous <= lo ? lo : previous;
-    }
+    const mid = Math.ceil((lo + hi) / 2);
+    if (measure(text.slice(0, ends[mid - 1])) <= maxPx) lo = mid;
+    else hi = mid - 1;
   }
-  return lo;
+  return lo === 0 ? 0 : ends[lo - 1]!;
+}
+
+// Segment only the bounded pending prefix, not the growing answer on each frame.
+const graphemeSegmenter = new Intl.Segmenter(undefined, {
+  granularity: "grapheme",
+});
+
+/** The final network chunk may still gain a combining mark, modifier or ZWJ. */
+export function stableGraphemePrefix(value: string): string {
+  if (!value) return value;
+  let end =
+    graphemeSegmenter.segment(value).containing(value.length - 1)?.index ?? 0;
+  const last = value.charCodeAt(value.length - 1);
+  // A half surrogate may become an emoji modifier attached to the prior cluster.
+  if (last >= 0xd800 && last <= 0xdbff && end > 0)
+    end = graphemeSegmenter.segment(value).containing(end - 1)?.index ?? 0;
+  return value.slice(0, end);
+}
+
+function graphemeEnds(value: string): number[] {
+  return Array.from(
+    graphemeSegmenter.segment(value),
+    ({ index, segment }) => index + segment.length,
+  );
 }
 
 export function nextRevealLength({
@@ -67,12 +86,14 @@ export function nextRevealLength({
   remainingPx,
   lineWidthPx,
   measure,
+  maxAdvancePx,
 }: {
   current: string;
   target: string;
   remainingPx: number;
   lineWidthPx: number;
   measure: (text: string) => number;
+  maxAdvancePx?: number;
 }): number {
   if (!target.startsWith(current) && current.length > 0) {
     return Math.min(current.length, target.length);
@@ -80,21 +101,48 @@ export function nextRevealLength({
   const pending = target.slice(current.length);
   if (!pending) return current.length;
 
-  const newlineAt = pending.indexOf("\n");
-  if (newlineAt === 0) {
-    let end = 0;
-    while (end < pending.length && pending[end] === "\n") end += 1;
-    return current.length + end;
+  const leadingBreak = pending.startsWith("\r\n")
+    ? 2
+    : pending.startsWith("\n")
+      ? 1
+      : 0;
+  if (leadingBreak) {
+    return (
+      current.length +
+      (maxAdvancePx === undefined || maxAdvancePx >= lineWidthPx
+        ? leadingBreak
+        : 0)
+    );
   }
 
-  const linePending = newlineAt === -1 ? pending : pending.slice(0, newlineAt);
+  // Stop at a grapheme boundary. Slicing at a numeric character limit can divide
+  // a joined emoji or combining sequence even when the binary search is safe.
+  let prefixEnd = 0;
+  for (const { index, segment } of graphemeSegmenter.segment(pending)) {
+    if (segment.includes("\n")) break;
+    prefixEnd = index + segment.length;
+    if (prefixEnd >= 512) break;
+  }
+  const linePending = pending.slice(0, prefixEnd);
+  const trailingBreak = pending.startsWith("\r\n", prefixEnd)
+    ? 2
+    : pending.startsWith("\n", prefixEnd)
+      ? 1
+      : 0;
   const lineWidth = Math.max(1, lineWidthPx);
   const remaining = Math.max(0, remainingPx);
-  const fractionPx = lineWidth * STREAMING_LINE_FILL_FRACTION;
+  const fractionPx = Math.min(
+    lineWidth * STREAMING_LINE_FILL_FRACTION,
+    maxAdvancePx ?? Infinity,
+  );
   const pendingWidth = measure(linePending);
 
   if (pendingWidth <= remaining && pendingWidth <= fractionPx) {
-    return current.length + linePending.length + (newlineAt === -1 ? 0 : 1);
+    return (
+      current.length +
+      linePending.length +
+      (maxAdvancePx === undefined && trailingBreak ? trailingBreak : 0)
+    );
   }
 
   const budgetPx =
@@ -107,7 +155,15 @@ export function nextRevealLength({
   const fit = charsFittingInWidth(linePending, budgetPx, measure);
   if (fit > 0) return current.length + fit;
 
-  return current.length + nextCodePointEnd(linePending, 0);
+  const first = graphemeEnds(linePending)[0] ?? 0;
+  // Never force a character through a depleted time budget. Wide graphemes may
+  // exceed the remaining space and wrap, but they must still fit the time credit.
+  if (
+    maxAdvancePx !== undefined &&
+    Math.min(lineWidth, measure(linePending.slice(0, first))) > maxAdvancePx
+  )
+    return current.length;
+  return current.length + first;
 }
 
 export function fallbackLineBudget(): StreamingLineBudget {
@@ -133,7 +189,9 @@ export function readTailLineBudget(
 
   try {
     const range = document.createRange();
-    range.selectNodeContents(textNode);
+    const end = textNode.length;
+    range.setStart(textNode, Math.max(0, end - 1));
+    range.setEnd(textNode, end);
     if (typeof range.getClientRects !== "function") {
       return { remainingPx: lineWidthPx, lineWidthPx, font };
     }
@@ -142,7 +200,14 @@ export function readTailLineBudget(
     if (!last) {
       return { remainingPx: lineWidthPx, lineWidthPx, font };
     }
-    const remainingPx = Math.max(0, lineWidthPx - last.width);
+    const box = tail.getBoundingClientRect();
+    const remainingPx = Math.max(
+      0,
+      Math.min(
+        lineWidthPx,
+        box.width > 0 ? box.right - last.right : lineWidthPx - last.width,
+      ),
+    );
     return { remainingPx, lineWidthPx, font };
   } catch {
     return { remainingPx: lineWidthPx, lineWidthPx, font };
@@ -154,25 +219,6 @@ export function alignEndToCodePoint(value: string, end: number): number {
   const code = value.charCodeAt(end - 1);
   if (code >= 0xd800 && code <= 0xdbff) return end + 1;
   return end;
-}
-
-function nextCodePointEnd(value: string, start: number): number {
-  if (start >= value.length) return value.length;
-  const code = value.charCodeAt(start);
-  if (code >= 0xd800 && code <= 0xdbff && start + 1 < value.length) {
-    return start + 2;
-  }
-  return start + 1;
-}
-
-function previousCodePointStart(value: string, end: number): number {
-  if (end <= 1) return 0;
-  const code = value.charCodeAt(end - 1);
-  if (code >= 0xdc00 && code <= 0xdfff && end >= 2) {
-    const high = value.charCodeAt(end - 2);
-    if (high >= 0xd800 && high <= 0xdbff) return end - 2;
-  }
-  return end - 1;
 }
 
 function computedFont(element: HTMLElement): string {
@@ -203,14 +249,16 @@ function lastTextNode(root: Node): Text | null {
   return last;
 }
 
+let textMeasureContext: CanvasRenderingContext2D | null | undefined;
+
 function canvasTextWidth(font: string, text: string): number {
   if (typeof document === "undefined" || !text) return 0;
   if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent)) {
     return 0;
   }
   try {
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
+    textMeasureContext ??= document.createElement("canvas").getContext("2d");
+    const context = textMeasureContext;
     if (!context) return 0;
     context.font = font;
     const width = context.measureText(text).width;

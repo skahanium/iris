@@ -1,13 +1,11 @@
 //! Finalized assistant message body.
 //!
-//! Finalized messages never use the streaming Markdown worker. They render
-//! synchronously through the contract renderer, which already has a bounded
-//! finalized render cache. History messages therefore appear immediately on
-//! session switch instead of cycling through a worker placeholder.
+//! Compatibility entry sharing the continuous block renderer. Existing callers
+//! with pre-rendered HTML can still provide it directly.
 
-import { useMemo, type MouseEvent as ReactMouseEvent } from "react";
+import { type MouseEvent as ReactMouseEvent } from "react";
 
-import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
+import { StreamingMessageBody } from "./StreamingMessageBody";
 
 import { toTrustedHtml } from "@/lib/sanitize";
 
@@ -27,16 +25,21 @@ export function FinalizedMessageBody({
   dataProseSurface?: string;
   onClick?: (event: ReactMouseEvent<HTMLDivElement>) => void;
 }) {
-  const html = useMemo(() => {
-    if (providedHtml) return providedHtml;
-    return renderMarkdownWithProfile(content, "chat_assistant", {
-      streaming: false,
-    }).output;
-  }, [content, providedHtml]);
+  if (providedHtml === undefined)
+    return (
+      <StreamingMessageBody
+        content={content}
+        streaming={false}
+        contentIdentity={contentIdentity}
+        className={className}
+        dataProseSurface={dataProseSurface}
+        onClick={onClick}
+      />
+    );
 
   return (
     <div
-      dangerouslySetInnerHTML={{ __html: toTrustedHtml(html) }}
+      dangerouslySetInnerHTML={{ __html: toTrustedHtml(providedHtml) }}
       data-content-identity={contentIdentity}
       className={className}
       data-prose-surface={dataProseSurface}

@@ -79,6 +79,7 @@ export function useAssistantConversation({
 }: UseAssistantConversationParams) {
   const payloadStoreRef = useRef(getAiPayloadStore());
   const [messages, setMessagesState] = useState<ChatLine[]>([]);
+  const [conversationViewKey, setConversationViewKey] = useState(0);
   const [runSession, setRunSession] = useState<AssistantSessionRef | null>(
     null,
   );
@@ -127,6 +128,7 @@ export function useAssistantConversation({
   }, []);
 
   const handleNewChat = useCallback(() => {
+    setConversationViewKey((key) => key + 1);
     clearContextReferences();
     bubbleSelection.clear();
     setMessages([]);
@@ -192,7 +194,22 @@ export function useAssistantConversation({
         ) {
           return previous;
         }
-        return [...previous, user];
+        return [
+          ...previous.map((message) =>
+            message.answerPresentation?.complete &&
+            !message.answerPresentation.stopped
+              ? {
+                  ...message,
+                  answerPresentation: {
+                    ...message.answerPresentation,
+                    settled: true,
+                  },
+                  presentationStreaming: false,
+                }
+              : message,
+          ),
+          user,
+        ];
       });
       setStreaming(true);
     },
@@ -307,6 +324,7 @@ export function useAssistantConversation({
 
   const handleLoadSession = useCallback(
     (session: AssistantSessionRef, loaded: ChatLine[]) => {
+      setConversationViewKey((key) => key + 1);
       setRunSession(session);
       setMessages(
         restoreChatLinesForPersistence(loaded, payloadStoreRef.current),
@@ -379,6 +397,7 @@ export function useAssistantConversation({
     handleQuoteToInput,
     handleRetract,
     messages,
+    conversationViewKey,
     patchAssistantMessage,
 
     runSession,

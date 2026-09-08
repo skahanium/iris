@@ -146,7 +146,9 @@ async fn collect_web_evidence_with_queries(
 
     let mut collected = Vec::new();
     let mut usage = WebEvidenceUsage::default();
-    if !planned_queries.is_empty() {
+    // Zero discovery capacity is the fetch-only contract, not a request for
+    // a search whose results are discarded. Never spend search quota here.
+    if input.max_search_results > 0 && !planned_queries.is_empty() {
         for fetch in collect_planned_query_fetches(
             db,
             planned_queries,
@@ -2237,7 +2239,9 @@ fn usable_fetch_body(text: &str, title: &str, requested_url: &str) -> bool {
 }
 
 fn apply_page_provider_fetch(item: &mut WebEvidenceItem, page: PageProviderFetch) {
-    if item.title.trim().is_empty() && !page.title.trim().is_empty() {
+    if (item.title.trim().is_empty() || item.title == item.url || item.title == item.canonical_url)
+        && !page.title.trim().is_empty()
+    {
         item.title = page.title;
     }
     if !page.text.trim().is_empty() {
@@ -2784,6 +2788,72 @@ mod tests {
             &item("https://example.com/search-result"),
             &allowed,
         ));
+    }
+
+    #[test]
+    fn explicit_url_fetch_uses_the_page_title_instead_of_the_url_placeholder() {
+        let mut item = explicit_url_item("https://example.com/article");
+        apply_page_fetch(
+            &mut item,
+            PageFetchResult {
+                title: "Actual article title".into(),
+                text: "Article body".into(),
+            },
+        );
+        assert_eq!(item.title, "Actual article title");
+    }
+
+    #[tokio::test]
+    async fn fetch_only_broker_entrypoints_never_dispatch_search_even_with_a_query() {
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "fetch-only-boundary".into(),
+                name: "fetch-only-boundary".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: contract_mcp_transport("search-fetch"),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(
+                    r#"{"tool":"search","queryArg":"query","maxResultsArg":"max_results"}"#.into(),
+                ),
+                web_fetch_mapping_json: Some(r#"{"tool":"fetch","urlArg":"url"}"#.into()),
+            },
+        )
+        .unwrap();
+        let input = WebEvidenceBrokerInput {
+            query: "nonempty original question".into(),
+            urls: vec!["https://source.invalid/contract".into()],
+            enabled: true,
+            max_search_results: 0,
+            max_fetches: 1,
+            provider_snapshots:
+                crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(&db)
+                    .unwrap(),
+            provider_selection_frozen: true,
+        };
+        for output in [
+            collect_initial_run_web_evidence_with_usage(&db, input.clone())
+                .await
+                .unwrap(),
+            collect_web_evidence_with_usage(&db, input).await.unwrap(),
+        ] {
+            assert_eq!(output.usage.successful_search_requests.mcp, 0);
+            assert_eq!(output.usage.successful_page_fetches, 1);
+            assert_eq!(output.items.len(), 1);
+            assert!(output.items[0].fetched_excerpt.is_some());
+        }
+        assert!(
+            crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
+                &db,
+                "fetch-only-boundary",
+                "web.search"
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 
     #[test]

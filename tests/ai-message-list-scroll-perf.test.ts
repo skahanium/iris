@@ -17,12 +17,14 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
     });
   });
 
-  describe("Fix 2: live streaming row is outside the virtualizer", () => {
+  describe("Fix 2: live and completed rows share one stable parent", () => {
     it("keeps historical estimates independent from live stream height", () => {
       const s = read("src/components/ai/AiMessageList.tsx");
       expect(s).not.toContain("estimateSize: () => 112");
       expect(s).toContain("estimateRowSize");
-      expect(s).toContain("historicalRows");
+      expect(s).toContain("conversationRows");
+      expect(s).not.toContain("historicalRows");
+      expect(s).not.toContain("liveRows.map");
       expect(s).toContain("data-live-stream");
       expect(s).not.toContain("? 320");
       expect(s).not.toContain("content.length *");
@@ -47,19 +49,13 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
       expect(s).toContain("measureRowElement");
     });
 
-    it("batches virtualizer row measurements on animation frames", () => {
+    it("uses TanStack row observation and delegates compensation to the anchor", () => {
       const s = read("src/components/ai/AiMessageList.tsx");
-      const scheduleCallback = s.split("const scheduleMeasureFrame")[1] ?? "";
-      const rowCallback = s.split("const measureRowElement")[1] ?? "";
-
-      expect(scheduleCallback).toContain("requestAnimationFrame");
-      expect(scheduleCallback).toContain("cancelAnimationFrame");
-      expect(scheduleCallback).toContain("pendingMeasureNodesRef");
-      expect(rowCallback).toContain("ResizeObserver");
-      expect(rowCallback).toContain("scheduleMeasureFrame");
-      expect(scheduleCallback).not.toContain(
-        "rowVirtualizerRef.current.measureElement(node)",
+      expect(s).toContain(
+        "rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false",
       );
+      expect(s).toContain("geometryCallbackRef.current()");
+      expect(s).not.toContain("new ResizeObserver");
     });
   });
 
@@ -77,11 +73,11 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
 
       expect(s).toContain("const activeStreamingMessage");
       expect(s).toContain("const activeStreamKey");
-      expect(s).toContain("const contentRevision");
+      expect(s).toContain("scheduleGeometry");
       expect(s).toContain("conversationFollowStreamKey");
       expect(s).toContain("userClientRequestId");
-      expect(s).toContain("revision: contentRevision");
-      expect(s).toContain("liveFooterHeight");
+      expect(s).toContain("revision: conversationRows.length");
+      expect(s).not.toContain("liveFooterHeight");
       expect(s).not.toContain("activeStreamingMessage?.content.length");
     });
 
@@ -90,9 +86,8 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
         "src/components/ai/hooks/useConversationReadingAnchor.ts",
       );
 
-      expect(hook).toContain(
-        "lastObservedScrollTopRef.current = result.scrollTop;",
-      );
+      expect(hook).toContain("lastScrollTop = actualScrollTop;");
+      expect(hook).toContain("iris-conversation-geometry");
       expect(hook).toContain("conversationFollowTarget");
       expect(hook.match(/viewport\.scrollTop =/g)?.length).toBe(1);
       expect(hook).not.toContain("setTailRevision");
@@ -111,8 +106,8 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
     it("keeps following while a message is still in streaming presentation", () => {
       const s = read("src/components/ai/AiMessageList.tsx");
 
-      expect(s).toContain(
-        "active: streaming || activeStreamingMessage != null",
+      expect(s).toMatch(
+        /active:\s*streaming \|\| activeStreamingMessage != null/,
       );
     });
 

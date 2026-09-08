@@ -18,7 +18,7 @@ describe("assistantMessageIdentity", () => {
         },
         7,
       ),
-    ).toBe("run:run-a|assistant|turn-a");
+    ).toBe("run:run-a|assistant|");
   });
 
   it("falls back through request, seq and index", () => {

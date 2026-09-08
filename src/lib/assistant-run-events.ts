@@ -250,7 +250,7 @@ function applyEvent(
         : state.webReason,
     webSearched:
       state.webSearched ||
-      ((payload.kind === "tool_started" || payload.kind === "tool_completed") &&
+      (payload.kind === "tool_completed" &&
         isWebSearchCapability(payload.capability)),
     capabilityDegradation:
       payload.kind === "capability_degraded"
@@ -465,8 +465,10 @@ export function userVisibleRunFailureMessage(
   message: string,
   webSearched: boolean,
 ): string {
-  if (code === "agent_run_provider_unavailable" && webSearched) {
-    return "联网检索已完成，但模型服务暂时不可用。请稍后重试或在设置中更换模型。";
+  if (code === "agent_run_provider_unavailable") {
+    return webSearched
+      ? "搜索步骤已结束，但后续答复生成失败。请重试。"
+      : "本次答复生成失败。请重试。";
   }
   switch (code) {
     case "agent_run_web_provider_timeout":

@@ -7,13 +7,16 @@
 //! This module is the single place that turns request signals into a concrete
 //! tool-surface plan.
 
-use crate::ai_runtime::run_contract::{CapabilityId, Effort};
+use crate::ai_runtime::run_contract::{
+    CapabilityId, Effort, ExecutionEnvelope, Freshness, SecurityDomain, VerificationRequirement,
+    WebDecisionReason,
+};
 
 /// Web-tool instruction that should be injected into the prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WebToolInstruction {
     None,
-    PreferSearchForCurrentFacts,
+    MustObserveCurrentFacts,
     MustSearchIfNeeded,
     NoWebDoNotFabricate,
 }
@@ -25,7 +28,7 @@ pub(crate) struct ToolSurfaceInput {
     /// Whether the frozen Run contract requires current-Run Web evidence.
     /// This is intentionally a contract fact, not a domain classifier result.
     pub(crate) requires_current_web_evidence: bool,
-    /// Encourage search for changing public facts without gating completion.
+    /// Changing public facts require observation, independently of proof.
     pub(crate) prefer_search_for_current_facts: bool,
     pub(crate) effort: Effort,
     pub(crate) authorized_capabilities: Vec<CapabilityId>,
@@ -36,6 +39,8 @@ pub(crate) struct ToolSurfaceInput {
 pub(crate) struct ToolSurfacePlan {
     pub(crate) effort: Effort,
     pub(crate) expose_web_search: bool,
+    /// Actual observation is independent of the stricter citation contract.
+    pub(crate) requires_web_observation: bool,
     pub(crate) web_instruction: WebToolInstruction,
     /// Exact model-visible tool names frozen for this Run. Filled by the
     /// production orchestrator after combining the plan with the authorized
@@ -45,7 +50,35 @@ pub(crate) struct ToolSurfacePlan {
 
 pub(crate) struct ToolSurfacePlanner;
 
+impl ToolSurfacePlan {
+    pub(crate) fn observation_instruction(&self) -> &'static str {
+        if self.requires_web_observation {
+            "This request requires an actual authorized Web observation before a factual answer. A host_web_bootstrap observation counts as an attempt, not as proof. Inspect its success and evidence; do not repeat a successful lookup merely because it was Host-initiated. If no observation exists, use the available search/read tool. Continue with a different query or source when results are stale, irrelevant or missing. Answer supported parts and identify unresolved current facts; never replace available retrieval with a claim that you lack latest information."
+        } else if !self.expose_web_search {
+            "Web access is not authorized for this Run. Answer from allowed material; do not fabricate verification or request an external call."
+        } else {
+            "Web tools remain available for necessary follow-up verification. Ordinary knowledge, creative work and supplied-text transformations do not require retrieval merely because their data mentions current events."
+        }
+    }
+}
+
 impl ToolSurfacePlanner {
+    pub(crate) fn for_envelope(
+        envelope: &ExecutionEnvelope,
+        capabilities: &[CapabilityId],
+    ) -> ToolSurfacePlan {
+        Self::plan(ToolSurfaceInput {
+            web_enabled: envelope.security_domain == SecurityDomain::Normal
+                && envelope.freshness != Freshness::Offline,
+            requires_current_web_evidence: envelope.verification_requirement
+                == VerificationRequirement::CurrentRunWeb,
+            prefer_search_for_current_facts: envelope.web_reason
+                == WebDecisionReason::VolatileExternalFact,
+            effort: envelope.effort,
+            authorized_capabilities: capabilities.to_vec(),
+        })
+    }
+
     pub(crate) fn plan(input: ToolSurfaceInput) -> ToolSurfacePlan {
         let has_web_capability = input
             .authorized_capabilities
@@ -58,6 +91,7 @@ impl ToolSurfacePlanner {
             return ToolSurfacePlan {
                 effort: input.effort,
                 expose_web_search: false,
+                requires_web_observation: false,
                 web_instruction: if requires_current_web_evidence {
                     WebToolInstruction::NoWebDoNotFabricate
                 } else {
@@ -82,7 +116,7 @@ impl ToolSurfacePlanner {
         let web_instruction = if requires_current_web_evidence {
             WebToolInstruction::MustSearchIfNeeded
         } else if input.prefer_search_for_current_facts {
-            WebToolInstruction::PreferSearchForCurrentFacts
+            WebToolInstruction::MustObserveCurrentFacts
         } else {
             WebToolInstruction::None
         };
@@ -90,6 +124,8 @@ impl ToolSurfacePlanner {
         ToolSurfacePlan {
             effort,
             expose_web_search,
+            requires_web_observation: requires_current_web_evidence
+                || input.prefer_search_for_current_facts,
             web_instruction,
             tool_names: Vec::new(),
         }
@@ -187,7 +223,7 @@ mod tests {
         assert!(plan.expose_web_search);
         assert_eq!(
             plan.web_instruction,
-            WebToolInstruction::PreferSearchForCurrentFacts
+            WebToolInstruction::MustObserveCurrentFacts
         );
     }
 }

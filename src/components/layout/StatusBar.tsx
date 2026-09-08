@@ -32,7 +32,6 @@ interface StatusBarProps {
   readingMinutes: number;
   sessionCharsAdded?: number;
   sessionCharsRemoved?: number;
-  aiStatus: string;
   editorZoom?: number;
   onEditorZoomIn?: () => void;
   onEditorZoomOut?: () => void;
@@ -54,16 +53,11 @@ interface StatusBarProps {
   appUpdateInfo?: AppUpdateInfo | null;
   onOpenUpdateCenter?: () => void;
   onOpenGraph?: () => void;
-  /** AI 侧栏上报的 Token / 工具活动（见 UnifiedAssistantPanel） */
+  /** AI 侧栏上报的累计 Token 用量（见 UnifiedAssistantPanel） */
   assistantChrome?: AssistantChromeSnapshot | null;
   linkSummary?: FileLinkSummary | null;
   linkSummaryUnavailable?: boolean;
   onOpenKnowledgeRelations?: () => void;
-}
-
-function isClassifiedStatusLine(value: string | null | undefined) {
-  if (!value) return false;
-  return /涉密|保险库|classified/i.test(value);
 }
 
 export const StatusBar = memo(function StatusBar({
@@ -74,7 +68,6 @@ export const StatusBar = memo(function StatusBar({
   readingMinutes,
   sessionCharsAdded = 0,
   sessionCharsRemoved = 0,
-  aiStatus,
   editorZoom = 1,
   onEditorZoomIn,
   onEditorZoomOut,
@@ -104,11 +97,6 @@ export const StatusBar = memo(function StatusBar({
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
 
-  const rawStatusLine =
-    assistantChrome?.toolActivityLabel?.trim() || aiStatus.trim() || null;
-  const safeStatusLine =
-    rawStatusLine && isClassifiedStatusLine(rawStatusLine) ? "" : rawStatusLine;
-  const statusTitle = [safeStatusLine].filter(Boolean).join(" · ") || undefined;
   const showUpdateHint =
     onOpenUpdateCenter &&
     appUpdateInfo &&
@@ -359,21 +347,6 @@ export const StatusBar = memo(function StatusBar({
             <StatusBarTokenUsage
               sessionUsage={assistantChrome.sessionTokenUsage}
             />
-          </>
-        ) : null}
-        {safeStatusLine ? (
-          <>
-            <span className="text-muted-foreground/60" aria-hidden>
-              ·
-            </span>
-            <span
-              className="max-w-[14rem] truncate"
-              title={statusTitle}
-              role="status"
-              aria-live="polite"
-            >
-              {safeStatusLine}
-            </span>
           </>
         ) : null}
       </div>

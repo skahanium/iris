@@ -98,6 +98,24 @@ pub(crate) struct RunContext {
 }
 
 impl RunContext {
+    /// Form the Host's bounded preliminary query without exporting history or notes.
+    /// Only an unqualified first-turn question can receive a deterministic default.
+    /// Specific entities and conversational constraints belong to the existing model
+    /// loop; a country-name dictionary here would silently override unknown places.
+    pub(crate) fn bootstrap_web_query(&self, date: &str) -> String {
+        let default_scope = self.recent_messages.is_empty()
+            && self.conversation_memory.is_none()
+            && !self.conversation_history_coverage_incomplete
+            && self.materials.is_empty()
+            && self.content_parts.is_none()
+            && is_unqualified_regional_question(&self.user_message);
+        if default_scope {
+            format!("{} 中国大陆 {date}", self.user_message)
+        } else {
+            format!("{} {date}", self.user_message)
+        }
+    }
+
     /// Return the immutable provider/model override admitted for this Run.
     pub(crate) fn model_override(&self) -> Option<crate::ai_runtime::run_contract::ModelOverride> {
         self.envelope
@@ -224,17 +242,11 @@ impl RunContext {
         } else {
             ""
         };
-        let timeliness_instruction = if requires_current_web_evidence(
-            self.envelope.verification_requirement,
-        ) {
-            "This request is time-sensitive. If web_search is present in the current tool surface, use it before answering and use web_fetch to read selected candidate bodies; otherwise do not fabricate current facts."
-        } else if self.envelope.web_reason
-            == crate::ai_runtime::run_contract::WebDecisionReason::VolatileExternalFact
-        {
-            "This request likely depends on changing public facts. If web_search is present in the current tool surface, prefer using it before answering and use web_fetch for selected candidates. If search or fetch cannot obtain a usable page body, still complete the answer from available context and say it was not verified against a fetched page."
-        } else {
-            ""
-        };
+        let web_plan = crate::ai_runtime::tool_surface::ToolSurfacePlanner::for_envelope(
+            &self.envelope,
+            &self.envelope.required_capabilities,
+        );
+        let timeliness_instruction = web_plan.observation_instruction();
         let verification_boundary = match self.envelope.verification_requirement {
             crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb => {
                 "External factual conclusions require eligible web evidence collected for this answer. Do not use training knowledge, historical assistant messages, conversation summaries, or older citations as independent evidence. If eligible evidence is unavailable, do not guess."
@@ -254,7 +266,7 @@ impl RunContext {
         ) {
             "For ordinary volatile facts, one relevant fetched page body with an exact current-Run citation may support a bounded answer. For high-stakes facts or an explicit cross-check request, use an official source or two independent HTTPS domains. If the evidence broker reports a source conflict or the applicable threshold is not met, do not provide a factual conclusion."
         } else {
-            "If a fetched page body is available, cite it with an exact current-Run citation. Ordinary current-event answers may complete without a fetched body; do not invent URLs or claim verification."
+            "If a fetched page body is available, cite it with an exact current-Run citation. After actual retrieval attempts, ordinary current-event answers may report supported parts and unresolved details without a fetched body. Search snippets remain unverified leads; do not turn them or training knowledge into verified current facts."
         };
         format!(
             "You are Iris, operating within a constrained assistant environment. Keep execution mechanics private.\n\
@@ -346,6 +358,24 @@ fn select_bounded_recent_history(
 
 /// A partial durable summary is useful, but it must not make the omitted
 /// middle of a long session appear to be present in the Provider context.
+/// Conservative grammar for scope-free discovery questions, not an intent router.
+/// Every word must be generic: any country, city, artist, quoted instruction or
+/// other qualifier leaves the original query untouched for semantic refinement.
+fn is_unqualified_regional_question(message: &str) -> bool {
+    static GENERIC: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let grammar = GENERIC.get_or_init(|| regex::Regex::new(
+        r"(?ix)^(?:\s|[?？!！。,.，]|近期|最近|近来|最新|现在|当前|今天|今日|本周|这周|本月|这个月|下个月|下月|即将|上映|热映|发布|发行|正在|将要|有什么|有哪些|有没有|什么|哪些|好看|好听|值得关注|值得看|值得听|推荐|介绍|帮我|请问|请|一下|一些|几部|几首|新的|新|电影|影片|新歌|歌曲|音乐|新闻|消息|的|有|吗|呢|或者|和|或|what|is|are|the|some|any|latest|recent|new|upcoming|current|movies|films|songs|music|news|good|in|cinemas|theaters|now|recommend|please|'s)+$"
+    ).expect("generic regional question grammar"));
+    let lower = message.to_lowercase();
+    grammar.is_match(message)
+        && [
+            "电影", "影片", "新歌", "歌曲", "音乐", "新闻", "消息", "movies", "films", "songs",
+            "music", "news",
+        ]
+        .iter()
+        .any(|topic| lower.contains(topic))
+}
+
 /// The selected recent history is already the exact post-token-budget view,
 /// so its first sequence number is the only safe boundary to compare.
 pub(crate) fn history_coverage_is_incomplete(
@@ -564,6 +594,64 @@ mod history_selection_tests {
             previous_run_summary: None,
             interrupted_assistant_continue: false,
         }
+    }
+
+    #[test]
+    fn geographic_default_enters_only_unqualified_first_searches() {
+        let mut context = context_with_history(Vec::new());
+        for question in [
+            "近期有什么好看的电影正在热映或者即将上映吗?",
+            "最近有什么新歌？",
+            "最近的新电影有哪些？",
+            "最近有什么新闻？",
+            "What are the latest movies?",
+        ] {
+            context.user_message = question.into();
+            assert_eq!(
+                context.bootstrap_web_query("2026-09-08"),
+                format!("{question} 中国大陆 2026-09-08")
+            );
+        }
+        for question in [
+            "美国近期有什么新闻？",
+            "法国最近有什么新歌？",
+            "台湾近期上映的电影？",
+            "上海今晚有什么电影？",
+            "全球最近有什么新闻？",
+            "Rust 最新版本是什么？",
+            "最近天文学有什么新发现？",
+            "阿根廷最近有什么电影？",
+            "翻译：最近有什么电影？",
+            "请读 https://source.invalid/page",
+            "近期有什么好看的电影，别只看大陆？",
+        ] {
+            context.user_message = question.into();
+            assert_eq!(
+                context.bootstrap_web_query("2026-09-08"),
+                format!("{question} 2026-09-08")
+            );
+        }
+    }
+
+    #[test]
+    fn geographic_bootstrap_never_exports_history_or_overrides_topic_constraints() {
+        let mut context =
+            context_with_history(vec![message(1, "user", "只看法国".into(), "prior")]);
+        context.user_message = "最近有什么新歌？".into();
+        assert_eq!(
+            context.bootstrap_web_query("2026-09-08"),
+            "最近有什么新歌？ 2026-09-08"
+        );
+        let messages =
+            context.messages_with_context_material_plan(&context.context_material_plan());
+        let serialized = serde_json::to_string(&messages).expect("messages");
+        assert!(serialized.contains("user-confirmed scope"));
+        assert!(serialized.contains("只看法国"));
+        context.recent_messages.clear();
+        context.conversation_history_coverage_incomplete = true;
+        assert!(!context
+            .bootstrap_web_query("2026-09-08")
+            .contains("中国大陆"));
     }
 
     #[test]
@@ -1747,10 +1835,13 @@ mod timeliness_tests {
         context.envelope.web_reason =
             crate::ai_runtime::run_contract::WebDecisionReason::VolatileExternalFact;
         context.envelope.verification_requirement = VerificationRequirement::None;
+        context.envelope.required_capabilities.push(
+            crate::ai_runtime::run_contract::CapabilityId::new("web.search"),
+        );
         let prompt = context.system_prompt();
 
-        assert!(prompt.contains("prefer using it before answering"));
-        assert!(prompt.contains("still complete the answer"));
+        assert!(prompt.contains("requires an actual authorized Web observation"));
+        assert!(prompt.contains("Answer supported parts"));
         assert!(!prompt.contains(
             "one relevant fetched page body with an exact current-Run citation may support a bounded answer"
         ));

@@ -29,12 +29,16 @@ export function assistantMessageIdentity(
   message: AssistantMessageIdentityFields,
   fallbackIndex: number,
 ): string {
-  const durable = message.runId
-    ? `run:${message.runId}`
-    : message.clientRequestId
+  const durable =
+    message.role === "user" && message.clientRequestId
       ? `request:${message.clientRequestId}`
-      : message.seq != null
-        ? `seq:${message.seq}`
-        : `index:${fallbackIndex}`;
-  return [durable, message.role, message.turnId ?? ""].join("|");
+      : message.runId
+        ? `run:${message.runId}`
+        : message.clientRequestId
+          ? `request:${message.clientRequestId}`
+          : message.seq != null
+            ? `seq:${message.seq}`
+            : `index:${fallbackIndex}`;
+  // Intake/hydration enriches metadata without changing the rendered row.
+  return [durable, message.role, ""].join("|");
 }

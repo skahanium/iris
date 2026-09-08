@@ -2037,9 +2037,29 @@
     contain: style;
   }
 
-  .ai-message-bubble-assistant:not([data-streaming]):not([data-last-message]) {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 320px;
+  .ai-conversation-scroll [data-radix-scroll-area-viewport] {
+    overflow-anchor: none;
+    scroll-behavior: auto;
+  }
+
+  .ai-markdown-block {
+    display: flow-root;
+  }
+
+  .ai-markdown-window-spacer {
+    pointer-events: none;
+  }
+
+  .ai-markdown-row-window pre code {
+    white-space: pre-wrap;
+  }
+
+  .ai-markdown-row-window pre code span {
+    font: inherit;
+  }
+
+  .ai-markdown-row-window[data-windowed="true"] [data-source-row] p {
+    margin-block: 0;
   }
 
   .ai-message-body {
@@ -2047,9 +2067,7 @@
   }
 
   .ai-streaming-tail {
-    white-space: pre-wrap;
     overflow-wrap: break-word;
-    min-height: 1em;
   }
 
   .ai-thinking-row {

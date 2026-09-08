@@ -32,6 +32,8 @@
 | [Harness HR-7 确定性质量与 Provider 矩阵计划](./superpowers/plans/2026-08-31-agent-harness-hr7-deterministic-quality-and-provider-matrix.md) | HR-7 通用评测、多协议 mock 与真实试点授权边界      |
 | [MiniMax 协议与发布门禁加固计划](./superpowers/plans/2026-08-11-minimax-protocol-release-hardening.md)                                       | 流式隐私、模型能力与发布门禁施工证据               |
 | [RSS 订阅资料库实施计划](./superpowers/plans/2026-08-11-rss-subscription-library.md)                                                         | 全周期阶段、测试先行任务与发布门禁                 |
+| [Agent 流式显示验收](./testing/assistant-streaming-acceptance.md)                                                                            | 合成回放、回归证据、帧预算与双平台验收边界         |
+| [Harness 时效性检索验收](./testing/harness-timeliness-acceptance.md)                                                                         | 实际检索、调用恢复、双路回放与答案质量边界         |
 | [RSS 订阅资料库人工清单](./testing/rss-subscription-library-manual-checklist.md)                                                             | 全尺寸、双平台、隐私、升级与回滚验收               |
 | [v1.2.19 自适应工作区实施计划](./superpowers/plans/2026-07-31-v1.2.19-adaptive-workspace.md)                                                 | 测试先行任务、文件边界与交付顺序                   |
 | [v1.2.19 自适应工作区人工清单](./testing/v1.2.19-adaptive-workspace-manual-checklist.md)                                                     | 分辨率、主题、键盘、生命周期与真机验收             |

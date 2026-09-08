@@ -549,6 +549,30 @@ async function runScenario(sessionId, vaultPath) {
   // proves the persisted Markdown survives both close and startup boundaries.
 }
 
+// Optional acceptance using the same isolated Tauri/WebView2 session. Start
+// `npm run dev` first; the fixture imports production UI but never a model API.
+async function runStreamingReplay(sessionId) {
+  await webdriverRequest("POST", `/session/${sessionId}/url`, {
+    url: "http://127.0.0.1:1420/tests/fixtures/assistant-stream-replay/index.html",
+  });
+  const start = await waitForElement(
+    sessionId,
+    '[data-testid="stream-replay-start"]',
+  );
+  await click(sessionId, start);
+  const metrics = await waitUntil(async () => {
+    const text = await executeSync(
+      sessionId,
+      "return document.querySelector('[data-testid=\"stream-replay-metrics\"]')?.textContent;",
+    );
+    if (!text?.startsWith("{")) return false;
+    return JSON.parse(text);
+  }, "stream_replay_did_not_finish");
+  if (metrics.phase !== "complete" || metrics.bodyReplacements !== 0)
+    fail("stream_replay_continuity_failed");
+  process.stdout.write(`[desktop-stream-replay] ${JSON.stringify(metrics)}\n`);
+}
+
 async function main() {
   assertWindows();
   const appPath = applicationPath();
@@ -566,6 +590,12 @@ async function main() {
     driver = startTauriDriver(env);
     await waitForDriver();
     sessionId = await createSession(appPath);
+
+    if (process.argv.includes("--stream-replay")) {
+      await runStreamingReplay(sessionId);
+      passed = true;
+      return;
+    }
 
     await waitUntil(
       () =>

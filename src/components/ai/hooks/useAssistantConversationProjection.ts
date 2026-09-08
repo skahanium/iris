@@ -18,7 +18,10 @@ import type {
   AssistantPresentationState,
 } from "@/lib/assistant-presentation";
 import { sanitizeAssistantVisibleText } from "@/lib/assistant-visible-text";
-import { getAiPayloadStore } from "@/lib/ai-payload-store";
+import {
+  getAiPayloadStore,
+  restoreChatLineContent,
+} from "@/lib/ai-payload-store";
 import { assistantSessionLoad } from "@/lib/ipc";
 import { toolDisplayName } from "@/lib/tool-display-names";
 import type {
@@ -94,10 +97,15 @@ export function useAssistantConversationProjection({
                 "completed",
               )
             : current?.processItems;
+          const loadedContent = sanitizeAssistantVisibleText(persisted.content);
+          const currentContent = current ? restoreChatLineContent(current) : "";
+          const mayAdvanceContent =
+            loadedContent.startsWith(currentContent) &&
+            !(current?.presentationStreaming && !current.answerPresentation);
           return upsertRunMessage(previous, run.runId, {
-            ...(current?.presentationStreaming
-              ? {}
-              : { content: persisted.content }),
+            ...(mayAdvanceContent
+              ? { content: loadedContent, contentRef: undefined }
+              : {}),
             turnId: persisted.turnId,
             turnState: persisted.turnState,
             seq: persisted.seq,
@@ -145,7 +153,7 @@ export function useAssistantConversationProjection({
     if (run.lastSeq === 0 && !hasLivePresentation) return;
     if (!messages.some((message) => message.runId === run.runId)) return;
 
-    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${presentationReveal?.runId ?? ""}:${presentationReveal?.answer.length ?? 0}:${presentationReveal?.revealing ? 1 : 0}`;
+    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${presentation?.resetEpoch ?? 0}:${presentationReveal?.runId ?? ""}:${presentationReveal?.answer.length ?? 0}:${presentationReveal?.revealing ? 1 : 0}`;
     if (appliedProjectionRef.current === projectionKey) return;
     appliedProjectionRef.current = projectionKey;
 
@@ -155,7 +163,11 @@ export function useAssistantConversationProjection({
     const presentationReady =
       presentation?.runId === run.runId && presentation.resyncFromSeq === null;
     const presentationOwnsContent =
-      presentationReady && (!terminal || presentation.answerComplete);
+      presentationReady &&
+      (!terminal ||
+        presentation.answerComplete ||
+        (run.state === "completed" &&
+          (presentation.answer.length > 0 || presentationReveal?.revealing)));
     const presentationOwnsProcess = presentationReady && !terminal;
     const processItems = ensureTerminalAnswerComplete(
       presentationOwnsProcess
@@ -180,19 +192,61 @@ export function useAssistantConversationProjection({
     const visiblePresentationAnswer = revealMatchesRun
       ? sanitizeAssistantVisibleText(presentationReveal.answer)
       : "";
-    const content = presentationOwnsContent
+    let content = presentationOwnsContent
       ? visiblePresentationAnswer
       : run.content.trim()
         ? run.content
         : (currentMessage?.content ?? "");
-    const presentationStreaming =
+    let presentationStreaming =
       presentationOwnsContent &&
       (Boolean(presentationReveal?.revealing) || !terminal);
-    const fullContent = presentationOwnsContent
+    let fullContent = presentationOwnsContent
       ? sanitizeAssistantVisibleText(presentation?.answer ?? "")
       : run.content.trim()
         ? run.content
         : (currentMessage?.content ?? "");
+    // Production rows carry the complete safe target. Only their own body advances
+    // its visible prefix; durable completion and hydration cannot bypass playback.
+    const resetEpoch =
+      presentation?.runId === run.runId
+        ? (presentation.resetEpoch ?? 0)
+        : (currentMessage?.answerPresentation?.resetEpoch ?? 0);
+    const stopped = run.state === "cancelled" || run.state === "failed";
+    const answerPresentation = presentationReveal
+      ? undefined
+      : {
+          runId: run.runId,
+          resetEpoch,
+          complete:
+            run.state === "completed" ||
+            Boolean(presentationReady && presentation.answerComplete),
+          stopped,
+          settled: currentMessage?.answerPresentation?.settled,
+        };
+    if (!presentationReveal) {
+      const previous = currentMessage
+        ? restoreChatLineContent(currentMessage)
+        : "";
+      const reset =
+        currentMessage?.answerPresentation?.resetEpoch !== undefined &&
+        currentMessage.answerPresentation.resetEpoch !== resetEpoch;
+      const live = presentationReady
+        ? sanitizeAssistantVisibleText(presentation.answer)
+        : "";
+      const durable = sanitizeAssistantVisibleText(run.content);
+      // Only an explicit reset can invalidate an already accepted prefix. A late,
+      // shorter presentation event must not replace a completed durable answer.
+      let target = presentationReady ? live : durable || previous;
+      if (
+        run.state === "completed" &&
+        durable &&
+        (durable.startsWith(target) || !target)
+      )
+        target = durable;
+      if (!reset && previous.startsWith(target)) target = previous;
+      content = fullContent = target;
+      presentationStreaming = !stopped && !answerPresentation?.complete;
+    }
     const store = getAiPayloadStore();
     const existingRef = currentMessage?.contentRef;
     const refMatchesFull = Boolean(
@@ -217,6 +271,10 @@ export function useAssistantConversationProjection({
         current.content === content &&
         current.contentRef === nextContentRef &&
         current.presentationStreaming === presentationStreaming &&
+        current.answerPresentation?.resetEpoch ===
+          answerPresentation?.resetEpoch &&
+        current.answerPresentation?.complete === answerPresentation?.complete &&
+        current.answerPresentation?.stopped === answerPresentation?.stopped &&
         sameProcessItems(current.processItems, processItems)
       ) {
         return previous;
@@ -226,6 +284,7 @@ export function useAssistantConversationProjection({
         contentRef: nextContentRef,
         processItems,
         presentationStreaming,
+        answerPresentation,
       });
     });
 

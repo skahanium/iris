@@ -1,4 +1,4 @@
-﻿import { readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -47,7 +47,7 @@ describe("AI long response memory budget", () => {
     expect(content.length).toBeGreaterThan(250_000);
     expect(host.textContent?.length ?? 0).toBeLessThan(RENDERED_TEXT_BUDGET);
     expect(host.textContent).toContain("Long answer");
-    expect(host.textContent).toContain("truncated");
+    expect(host.textContent).not.toContain("truncated");
   });
 
   it("streams only a bounded tail window for very long assistant messages", async () => {
@@ -60,15 +60,15 @@ describe("AI long response memory budget", () => {
     });
 
     expect(host.textContent?.length ?? 0).toBeLessThan(40_000);
-    expect(host.textContent).toContain("truncated");
+    expect(host.textContent).not.toContain("truncated");
   });
 
-  it("builds the streaming tail window without requiring a full-content hash", () => {
+  it("retains the full streaming source without requiring a full-content hash", () => {
     const content = `${"A".repeat(100_000)}TAIL`;
     const renderable = createStreamingRenderableContent(content);
 
-    expect(renderable.length).toBeLessThan(40_000);
-    expect(renderable).toContain("truncated");
+    expect(renderable).toBe(content);
+    expect(renderable).not.toContain("truncated");
     expect(renderable).toContain("TAIL");
   });
 
@@ -82,9 +82,8 @@ describe("AI long response memory budget", () => {
     // 主区阅读内容列消费独立 --ai-focus-measure token，不硬编码 px。
     expect(css).toContain(".ai-focus-column");
     expect(css).toContain("max-width: var(--ai-focus-measure)");
-    // 长回答预算仍作用于 focus 列内的气泡，不因加宽被绕过。
-    expect(bubble).toContain("createRenderableAssistantContent");
-    expect(bubble).toContain("createStreamingRenderableContent");
+    // 完整源文交由连续 Markdown 引擎进行 DOM 窗口化。
+    expect(bubble).toContain("StreamingMessageBody");
     expect(bubble).not.toContain("max-width: none");
   });
 });

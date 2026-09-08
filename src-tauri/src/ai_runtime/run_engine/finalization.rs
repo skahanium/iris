@@ -42,10 +42,15 @@ pub(super) fn apply_required_web_degradation_notice(
 
 pub(super) fn linkify_final_web_citations(
     db: &Database,
+    run_id: &str,
     evidence_ids: &[i64],
     content: String,
 ) -> String {
-    match AgentEvidenceRepository::list_web_citation_links(db, evidence_ids) {
+    match AgentEvidenceRepository::list_selected_current_run_web_citation_links(
+        db,
+        run_id,
+        evidence_ids,
+    ) {
         Ok(cites) if !cites.is_empty() => linkify_web_citations(&content, &cites),
         Ok(_) => content,
         Err(error) => {
@@ -331,12 +336,43 @@ pub(super) fn emit_run_terminal(
     run_id: &str,
     state_version: u64,
     content: String,
-    evidence_ids: Vec<i64>,
+    mut evidence_ids: Vec<i64>,
     citation_binding: Option<CitationBinding>,
     source_summary: Option<&crate::ai_runtime::provenance::SourceSummary>,
     attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
+    // All modern final answers use the same Run-local numbering as tool
+    // packets. Session-global indices belong only to legacy history reads.
+    let available_cites = AgentEvidenceRepository::list_selected_current_run_web_citation_links(
+        db,
+        run_id,
+        &evidence_ids,
+    )?;
+    let cites = available_cites
+        .iter()
+        .filter(|cite| {
+            citation_binding.as_ref().map_or_else(
+                || content.contains(&format!("]({})", cite.url)),
+                |binding| binding.referenced_indices.contains(&cite.index),
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let all_web_ids = AgentEvidenceRepository::current_run_web_evidence_ids_for_indices(
+        db,
+        run_id,
+        &available_cites
+            .iter()
+            .map(|cite| cite.index)
+            .collect::<Vec<_>>(),
+    )?;
+    let selected_web_ids = AgentEvidenceRepository::current_run_web_evidence_ids_for_indices(
+        db,
+        run_id,
+        &cites.iter().map(|cite| cite.index).collect::<Vec<_>>(),
+    )?;
+    evidence_ids.retain(|id| !all_web_ids.contains(id) || selected_web_ids.contains(id));
     let effective_source_summary = match source_summary {
         Some(summary) => Some(summary.clone()),
         None => {
@@ -352,34 +388,6 @@ pub(super) fn emit_run_terminal(
                     );
                     None
                 }
-            }
-        }
-    };
-    let cites = if evidence_ids.is_empty() {
-        Vec::new()
-    } else if let Some(binding) = citation_binding.as_ref() {
-        match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
-            Ok(mut cites) => {
-                cites.retain(|cite| binding.referenced_indices.contains(&cite.index));
-                cites
-            }
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "current Run citation map skipped after evidence lookup failure"
-                );
-                Vec::new()
-            }
-        }
-    } else {
-        match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
-            Ok(cites) => cites,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "web citation map skipped after evidence lookup failure"
-                );
-                Vec::new()
             }
         }
     };

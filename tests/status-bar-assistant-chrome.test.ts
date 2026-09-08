@@ -91,7 +91,8 @@ describe("status bar assistant chrome", () => {
     const bar = read("src/components/layout/StatusBar.tsx");
     expect(bar).toContain("assistantChrome");
     expect(bar).toContain("StatusBarTokenUsage");
-    expect(bar).toContain("assistantChrome?.toolActivityLabel");
+    expect(bar).not.toContain("toolActivityLabel");
+    expect(bar).not.toContain("aiStatus");
   });
 
   it("StatusBar keeps the document title as a bounded location hint", () => {
@@ -143,13 +144,26 @@ describe("status bar assistant chrome", () => {
     expect(bar).not.toContain("dispatchOpenAuditTrail");
   });
 
-  it("StatusBar never renders classified vault lock state in the global status line", () => {
-    const bar = read("src/components/layout/StatusBar.tsx");
-    const app = read("src/App.impl.tsx");
-
-    expect(bar).toContain("isClassifiedStatusLine");
-    expect(bar).not.toContain("{statusLine}");
-    expect(app).not.toContain("涉密保险库已锁定");
+  it.each([
+    ["AI 空闲", "正在联网搜索"],
+    ["笔记库已同步 · 123 篇", null],
+    ["涉密保险库已锁定", null],
+  ])("底栏不再显示通用状态 %s 或工具活动", (aiStatus, toolActivityLabel) => {
+    renderStatusBarSlot({
+      activePath: null,
+      aiStatus,
+      assistantChrome: { ...EMPTY_ASSISTANT_CHROME, toolActivityLabel },
+    });
+    const bar = document.querySelector('[data-testid="status-bar"]');
+    expect(bar?.textContent).not.toContain(aiStatus);
+    if (toolActivityLabel)
+      expect(bar?.textContent).not.toContain(toolActivityLabel);
+    expect(bar?.querySelector('[role="status"]')).toBeNull();
+    expect(bar?.querySelector(`[title="${aiStatus}"]`)).toBeNull();
+    const controls = bar?.lastElementChild;
+    expect(controls?.lastElementChild?.getAttribute("data-testid")).toBe(
+      "status-bar-theme-switch",
+    );
   });
 
   it("StatusBarTokenUsage shows cumulative summary only", () => {

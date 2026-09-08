@@ -445,6 +445,7 @@ describe("AI message selection behavior", () => {
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
+    const originalSelection = selection?.toString();
 
     await act(async () => {
       body?.dispatchEvent(
@@ -465,7 +466,7 @@ describe("AI message selection behavior", () => {
     });
 
     expect(writeText).toHaveBeenCalledWith("保持选区文字");
-    expect(window.getSelection()?.toString()).toBe("保持选区文字");
+    expect(window.getSelection()?.toString()).toBe(originalSelection);
   });
 
   it("copies AI message text selection with the keyboard shortcut", async () => {

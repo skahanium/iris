@@ -34,9 +34,6 @@ import {
   assistantChromeSnapshotsEqual,
   buildAssistantChromeSnapshot,
 } from "@/lib/assistant-chrome";
-import { assistantSessionIdentity } from "@/lib/ai-message-identity";
-import { StreamingLineBudgetRefContext } from "@/lib/streaming-line-budget-ref";
-import type { StreamingLineBudget } from "@/lib/streaming-line-fit";
 
 import {
   EMPTY_ASSISTANT_CHROME,
@@ -47,7 +44,6 @@ import type { ImageAttachment } from "./AiMessageList";
 import { AssistantComposerDock } from "./AssistantComposerDock";
 import { ConversationSurface } from "./ConversationSurface";
 import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
-import { useAssistantAnswerReveal } from "./hooks/useAssistantAnswerReveal";
 import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
 import { useAssistantConversation } from "./hooks/useAssistantConversation";
 import { useAssistantConversationProjection } from "./hooks/useAssistantConversationProjection";
@@ -88,12 +84,7 @@ export function UnifiedAssistantPanel({
   const { profile: promptProfile } = usePromptProfile();
   const assistantRun = useAssistantRun();
   const { reset: resetAssistantRun } = assistantRun;
-  const lineBudgetRef = useRef<StreamingLineBudget | null>(null);
   const [composerClearEpoch, setComposerClearEpoch] = useState(0);
-  const assistantAnswerReveal = useAssistantAnswerReveal(
-    assistantRun.presentationState,
-    () => lineBudgetRef.current,
-  );
   const aiRuntime = useAiDomainRuntime({
     domainState: {
       domain: aiDomain,
@@ -175,6 +166,7 @@ export function UnifiedAssistantPanel({
     handleQuoteToInput,
     handleRetract,
     messages,
+    conversationViewKey,
     runSession,
     setMessages,
     setRunSession,
@@ -286,7 +278,6 @@ export function UnifiedAssistantPanel({
   useAssistantConversationProjection({
     run: assistantRun.eventState,
     presentation: assistantRun.presentationState,
-    presentationReveal: assistantAnswerReveal,
     session: runSession,
     messages,
     setMessages,
@@ -575,37 +566,35 @@ export function UnifiedAssistantPanel({
         </section>
       ) : null}
       <ErrorBoundary scope="AI 对话区">
-        <StreamingLineBudgetRefContext.Provider value={lineBudgetRef}>
-          <ConversationSurface
-            key={assistantSessionIdentity(runSession)}
-            messages={messages}
-            streaming={streaming}
-            pendingInput={
-              assistantRun.pendingInput && assistantRun.eventState
-                ? {
-                    runId: assistantRun.eventState.runId,
-                    prompt: assistantRun.pendingInput.prompt,
-                    fields: assistantRun.pendingInput.fields,
-                    values: pendingInputValues,
-                    submitting: submittingInput,
-                    onValueChange: (field, value) =>
-                      setPendingInputValues((previous) => ({
-                        ...previous,
-                        [field]: value,
-                      })),
-                    onSubmit: handleSubmitPendingInput,
-                    onCancel: stopStreaming,
-                  }
-                : null
-            }
-            assistantFocus={assistantFocus}
-            messageListRef={messageListRef}
-            onCitationClick={handleCitationClick}
-            onRetract={handleRetract}
-            onSelect={bubbleSelection.handleClick}
-            onQuoteToInput={handleQuoteToInput}
-          />
-        </StreamingLineBudgetRefContext.Provider>
+        <ConversationSurface
+          key={conversationViewKey}
+          messages={messages}
+          streaming={streaming}
+          pendingInput={
+            assistantRun.pendingInput && assistantRun.eventState
+              ? {
+                  runId: assistantRun.eventState.runId,
+                  prompt: assistantRun.pendingInput.prompt,
+                  fields: assistantRun.pendingInput.fields,
+                  values: pendingInputValues,
+                  submitting: submittingInput,
+                  onValueChange: (field, value) =>
+                    setPendingInputValues((previous) => ({
+                      ...previous,
+                      [field]: value,
+                    })),
+                  onSubmit: handleSubmitPendingInput,
+                  onCancel: stopStreaming,
+                }
+              : null
+          }
+          assistantFocus={assistantFocus}
+          messageListRef={messageListRef}
+          onCitationClick={handleCitationClick}
+          onRetract={handleRetract}
+          onSelect={bubbleSelection.handleClick}
+          onQuoteToInput={handleQuoteToInput}
+        />
       </ErrorBoundary>
       <div className={cn("w-full", assistantFocus && "ai-focus-column")}>
         <SelectedMessagesActionDock

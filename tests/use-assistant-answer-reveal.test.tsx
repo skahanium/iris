@@ -10,7 +10,7 @@ function Harness({
   presentation,
   getLineBudget,
 }: {
-  presentation: AssistantPresentationState | null;
+  presentation: (AssistantPresentationState & { stopped?: boolean }) | null;
   getLineBudget?: () => StreamingLineBudget | null;
 }) {
   const { runId, answer, revealing } = useAssistantAnswerReveal(
@@ -40,7 +40,7 @@ function presentationFor(
     pendingEvents: [],
     processItems: [],
     answer,
-    answerComplete: false,
+    answerComplete: true,
     resetEpoch,
   };
 }
@@ -81,17 +81,21 @@ describe("useAssistantAnswerReveal", () => {
     cancelFrame.mockRestore();
   });
 
+  let clock = 0;
   function drainFrames() {
+    let remaining = 10000;
     while (frameCallbacks.size > 0) {
       const callbacks = Array.from(frameCallbacks.values());
       frameCallbacks.clear();
+      clock += 1000 / 60;
+      if (--remaining <= 0) throw new Error("reveal failed to drain");
       act(() => {
-        callbacks.forEach((callback) => callback(16));
+        callbacks.forEach((callback) => callback(clock));
       });
     }
   }
 
-  it("aligns a short increment immediately without a typewriter", () => {
+  it("schedules short increments through the same frame budget", () => {
     act(() => {
       root.render(
         createElement(Harness, {
@@ -100,13 +104,12 @@ describe("useAssistantAnswerReveal", () => {
       );
     });
 
+    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe("");
+    expect(frameCallbacks.size).toBe(1);
+    drainFrames();
     expect(host.querySelector("output")?.getAttribute("data-answer")).toBe(
       "1234567890",
     );
-    expect(host.querySelector("output")?.getAttribute("data-revealing")).toBe(
-      "false",
-    );
-    expect(frameCallbacks.size).toBe(0);
   });
 
   it("releases a large answer over a few frames instead of one commit", () => {
@@ -190,7 +193,8 @@ describe("useAssistantAnswerReveal", () => {
       const callbacks = Array.from(frameCallbacks.values());
       frameCallbacks.clear();
       act(() => {
-        callbacks.forEach((callback) => callback(16));
+        clock += 1000 / 60;
+        callbacks.forEach((callback) => callback(clock));
       });
       const current = host
         .querySelector("output")
@@ -275,6 +279,8 @@ describe("useAssistantAnswerReveal", () => {
       );
     });
 
+    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe("");
+    drainFrames();
     expect(host.querySelector("output")?.getAttribute("data-run-id")).toBe(
       "run-new",
     );
@@ -314,5 +320,95 @@ describe("useAssistantAnswerReveal", () => {
     expect(host.querySelector("output")?.getAttribute("data-revealing")).toBe(
       "true",
     );
+  });
+  it("freezes the visible safe prefix on cancellation and cancels pending frames", () => {
+    const target = "安全文字".repeat(100);
+    act(() => root.render(<Harness presentation={presentationFor(target)} />));
+    const callbacks = [...frameCallbacks.values()];
+    frameCallbacks.clear();
+    act(() => callbacks.forEach((callback) => callback(16)));
+    const visible = host.querySelector("output")?.textContent;
+    expect(visible?.length).toBeGreaterThan(0);
+    act(() =>
+      root.render(
+        <Harness
+          presentation={{ ...presentationFor(target), stopped: true }}
+        />,
+      ),
+    );
+    expect(frameCallbacks.size).toBe(0);
+    expect(host.querySelector("output")?.textContent).toBe(visible);
+  });
+
+  it("resumes a background window without pouring out accumulated time", () => {
+    const target = "字".repeat(10000);
+    act(() => root.render(<Harness presentation={presentationFor(target)} />));
+    let callbacks = [...frameCallbacks.values()];
+    frameCallbacks.clear();
+    act(() => callbacks.forEach((callback) => callback(16)));
+    const before = host.querySelector("output")!.textContent!.length;
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    try {
+      visibility.mockReturnValue("hidden");
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      expect(frameCallbacks.size).toBe(0);
+      visibility.mockReturnValue("visible");
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      callbacks = [...frameCallbacks.values()];
+      frameCallbacks.clear();
+      act(() => callbacks.forEach((callback) => callback(600000)));
+      expect(
+        host.querySelector("output")!.textContent!.length - before,
+      ).toBeLessThanOrEqual(7);
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it("holds the final grapheme while a joined emoji is still arriving", () => {
+    for (const answer of ["前文👨", "前文👨‍", "前文👨‍👩", "前文👨‍👩‍👧‍👦"]) {
+      act(() =>
+        root.render(
+          <Harness
+            presentation={{ ...presentationFor(answer), answerComplete: false }}
+          />,
+        ),
+      );
+      drainFrames();
+      expect(host.querySelector("output")?.textContent).toBe("前文");
+    }
+    act(() =>
+      root.render(
+        <Harness
+          presentation={{ ...presentationFor("前文👨‍👩‍👧‍👦"), answerComplete: true }}
+        />,
+      ),
+    );
+    drainFrames();
+    expect(host.querySelector("output")?.textContent).toBe("前文👨‍👩‍👧‍👦");
+  });
+
+  it("keeps one second of reveal within 5% at 60 and 120 Hz", () => {
+    const countAt = (hz: number) => {
+      act(() =>
+        root.render(
+          createElement(Harness, {
+            presentation: presentationFor("文".repeat(5000), `run-${hz}`),
+          }),
+        ),
+      );
+      for (let frame = 1; frame <= hz; frame += 1) {
+        const callbacks = [...frameCallbacks.values()];
+        frameCallbacks.clear();
+        act(() =>
+          callbacks.forEach((callback) => callback((frame * 1000) / hz)),
+        );
+      }
+      return host.querySelector("output")!.textContent!.length;
+    };
+    const sixty = countAt(60);
+    const oneTwenty = countAt(120);
+    expect(sixty).toBeGreaterThan(0);
+    expect(Math.abs(oneTwenty - sixty) / sixty).toBeLessThanOrEqual(0.05);
   });
 });

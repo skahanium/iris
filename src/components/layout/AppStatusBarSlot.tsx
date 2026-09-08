@@ -55,7 +55,6 @@ export function AppStatusBarSlot({
   readingMinutes,
   sessionCharsAdded,
   sessionCharsRemoved,
-  aiStatus,
   assistantChrome,
   editorZoom,
   onEditorZoomIn,
@@ -117,7 +116,6 @@ export function AppStatusBarSlot({
       readingMinutes={readingMinutes}
       sessionCharsAdded={sessionCharsAdded}
       sessionCharsRemoved={sessionCharsRemoved}
-      aiStatus={aiStatus}
       assistantChrome={assistantChrome}
       editorZoom={editorZoom}
       onEditorZoomIn={onEditorZoomIn}
