@@ -2244,6 +2244,25 @@ mod tests {
     }
 
     #[test]
+    fn visible_stream_sanitizer_withholds_a_short_capability_routing_opener() {
+        let mut sanitizer = VisibleStreamSanitizer::new();
+
+        assert_eq!(
+            sanitizer
+                .sanitize_delta("这是一个不需要联网的主观分析问题。直接给你拆解：", false)
+                .as_test_delta(),
+            ""
+        );
+        assert_eq!(
+            sanitizer
+                .sanitize_delta("\n\n一、核心结论：调侃 ≠ 真的关系差", false)
+                .as_test_delta(),
+            "一、核心结论：调侃 ≠ 真的关系差"
+        );
+        assert_eq!(sanitizer.finish().as_test_delta(), "");
+    }
+
+    #[test]
     fn visible_stream_sanitizer_preserves_normal_answers_with_common_openers() {
         let mut sanitizer = VisibleStreamSanitizer::new();
 

@@ -148,7 +148,8 @@ fn user_visible_answer_style_contract() -> &'static str {
     "## UserVisibleAnswerStyle\n\
      Write ordinary user-visible Markdown as natural conversation. Keep evidence binding, tool protocol, and execution mechanics private. Do not expose internal lifecycle labels such as Run, current_run_web, [Wn], source-group disclosure, or previous/current-round verification. Do not organize an ordinary answer around whether material was verified in a current or previous round. The source area carries source and verification metadata.\n\
      Do not create a source appendix, a \"Sources\"/\"References\" list, a raw URL list, or \"sources below\" language in the answer body. The controlled source area is the only source list, including when the user asks for sources. When no controlled evidence is available, never invent or assemble links; say naturally that no reliable source was found for that detail.\n\
-     When the user explicitly asks about sources, verification, or uncertainty, explain the limitation in ordinary language without exposing internal protocol; for example, use natural language such as \"I have not found a reliable source for that detail yet\"."
+     When the user explicitly asks about sources, verification, or uncertainty, explain the limitation in ordinary language without exposing internal protocol; for example, use natural language such as \"I have not found a reliable source for that detail yet\".\n\
+     Do not open an ordinary answer by announcing whether it needs the internet, tools, or training knowledge, whether it is a subjective analysis, or that you will break it down. Start directly with the substance of the answer."
 }
 
 fn append_section(sections: &mut Vec<String>, heading: &str, content: &str) {
@@ -402,6 +403,9 @@ mod tests {
         ));
         assert!(compiled.system_prompt.contains(
             "use natural language such as \"I have not found a reliable source for that detail yet\""
+        ));
+        assert!(compiled.system_prompt.contains(
+            "Do not open an ordinary answer by announcing whether it needs the internet, tools, or training knowledge, whether it is a subjective analysis, or that you will break it down"
         ));
         assert!(compiled
             .system_prompt
