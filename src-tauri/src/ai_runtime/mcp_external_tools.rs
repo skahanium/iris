@@ -956,6 +956,22 @@ pub fn list_bindings(
     db.with_read_conn(|conn| list_bindings_with_conn(conn, provider_id))
 }
 
+/// Return every currently enabled, reviewed read-only binding that the user
+/// has already trusted. Run admission snapshots these bindings so a trusted
+/// tool is available when relevant without requiring a per-message chip.
+pub(crate) fn trusted_read_grants(db: &Database) -> AppResult<Vec<ExternalToolGrantRef>> {
+    Ok(list_bindings(db, None)?
+        .into_iter()
+        .filter(|binding| {
+            binding.user_trusted && binding.provider_enabled && binding.config_matches
+        })
+        .map(|binding| ExternalToolGrantRef {
+            binding_id: binding.id,
+            binding_config_hash: binding.binding_config_hash,
+        })
+        .collect())
+}
+
 fn list_bindings_with_conn(
     conn: &Connection,
     provider_id: Option<&str>,
@@ -995,9 +1011,6 @@ pub(crate) fn freeze_run_grants(
     run_id: &str,
     grants: &[ExternalToolGrantRef],
 ) -> AppResult<()> {
-    if grants.len() > 8 {
-        return Err(safe_error("external_tool_grant_limit_exceeded"));
-    }
     let mut seen = HashSet::new();
     for grant in grants {
         let binding_id = grant.binding_id.trim();

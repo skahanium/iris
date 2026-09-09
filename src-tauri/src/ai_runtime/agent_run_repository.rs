@@ -613,18 +613,6 @@ impl AgentRunRepository {
                 };
                 let (_, budget_policy_json) =
                     materialize_budget_policy(&stored_budget_policy_json, &envelope_json)?;
-                if budget_policy_json != stored_budget_policy_json {
-                    conn.execute(
-                        "UPDATE agent_runs
-                         SET budget_policy_json = ?1
-                         WHERE run_id = ?2 AND budget_policy_json = ?3",
-                        rusqlite::params![
-                            budget_policy_json,
-                            input.source_run_id,
-                            stored_budget_policy_json
-                        ],
-                    )?;
-                }
                 let now = chrono::Utc::now().to_rfc3339();
                 conn.execute(
                     "INSERT INTO agent_runs
@@ -1457,20 +1445,7 @@ impl AgentRunRepository {
                 if parse_wire::<RunState>(&status)? != RunState::AwaitingConfirmation {
                     return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
                 }
-                let (_, normalized_budget_policy_json) =
-                    materialize_budget_policy(&stored_budget_policy_json, &envelope_json)?;
-                if normalized_budget_policy_json != stored_budget_policy_json {
-                    conn.execute(
-                        "UPDATE agent_runs
-                         SET budget_policy_json = ?1
-                         WHERE run_id = ?2 AND budget_policy_json = ?3",
-                        rusqlite::params![
-                            normalized_budget_policy_json,
-                            run_id,
-                            stored_budget_policy_json
-                        ],
-                    )?;
-                }
+                let _ = materialize_budget_policy(&stored_budget_policy_json, &envelope_json)?;
                 let now = chrono::Utc::now().to_rfc3339();
                 let consumed = conn.execute(
                     "UPDATE agent_run_confirmations
@@ -2133,14 +2108,15 @@ impl AgentRunRepository {
     }
 
     ///
-    /// Legacy `{}` rows are deterministically materialized once from the
-    /// persisted execution envelope before the policy is returned.
+    /// Legacy `{}` rows are deterministically projected from the persisted
+    /// execution envelope before the policy is returned, without rewriting an
+    /// already accepted Run.
     pub(crate) fn budget_policy_for_session(
         db: &Database,
         session_key: &str,
         run_id: &str,
     ) -> AppResult<Option<RunBudgetPolicy>> {
-        db.with_conn(|conn| {
+        db.with_read_conn(|conn| {
             let stored = conn
                 .query_row(
                     "SELECT r.budget_policy_json, r.envelope_json
@@ -2154,16 +2130,7 @@ impl AgentRunRepository {
             let Some((stored_policy, envelope_json)) = stored else {
                 return Ok(None);
             };
-            let (policy, normalized_policy) =
-                materialize_budget_policy(&stored_policy, &envelope_json)?;
-            if normalized_policy != stored_policy {
-                conn.execute(
-                    "UPDATE agent_runs
-                     SET budget_policy_json = ?1
-                     WHERE run_id = ?2 AND budget_policy_json = ?3",
-                    rusqlite::params![normalized_policy, run_id, stored_policy],
-                )?;
-            }
+            let (policy, _) = materialize_budget_policy(&stored_policy, &envelope_json)?;
             Ok(Some(policy))
         })
     }

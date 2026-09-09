@@ -6,7 +6,7 @@
 //! when an authorized Web operation fails without usable evidence. Runs
 //! without `web.search` never enable either tool.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -74,68 +74,6 @@ struct WebFailure {
     code: SafeRunErrorCode,
     retryable: bool,
     reason: WebEvidenceFailureReason,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct McpFailoverEvent {
-    from_provider_id: String,
-    provider_id: String,
-    model_id: String,
-    reason_code: String,
-    attempt: u32,
-}
-
-fn mcp_failover_events(
-    snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
-    winner_provider_id: &str,
-    capability: &str,
-) -> Vec<McpFailoverEvent> {
-    // The Broker skips providers without the requested mapping. Their place
-    // in the shared route must not manufacture a failed fetch transition.
-    let snapshots = snapshots
-        .iter()
-        .filter(|snapshot| match capability {
-            "web.fetch" => snapshot.web_fetch_mapping_json.is_some(),
-            "web.search" => snapshot.web_search_mapping_json.is_some(),
-            _ => false,
-        })
-        .collect::<Vec<_>>();
-    let Some(winner_index) = snapshots
-        .iter()
-        .position(|snapshot| snapshot.id == winner_provider_id)
-    else {
-        return Vec::new();
-    };
-    snapshots
-        .windows(2)
-        .take(winner_index)
-        .enumerate()
-        .map(|(index, pair)| McpFailoverEvent {
-            from_provider_id: pair[0].id.clone(),
-            provider_id: pair[1].id.clone(),
-            model_id: mcp_mapping_tool_name(match capability {
-                "web.fetch" => pair[1].web_fetch_mapping_json.as_deref(),
-                _ => pair[1].web_search_mapping_json.as_deref(),
-            }),
-            reason_code: "provider_failure".into(),
-            attempt: (index + 2) as u32,
-        })
-        .collect()
-}
-
-fn mcp_mapping_tool_name(mapping_json: Option<&str>) -> String {
-    mapping_json
-        .and_then(|mapping| serde_json::from_str::<serde_json::Value>(mapping).ok())
-        .and_then(|mapping| {
-            mapping
-                .get("tool")
-                .or_else(|| mapping.get("tool_name"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|tool| !tool.is_empty())
-                .map(str::to_string)
-        })
-        .unwrap_or_default()
 }
 
 impl WebFailure {
@@ -332,7 +270,7 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     web_degradation_emitted: Arc<Mutex<bool>>,
     required_web_provider_snapshots:
         Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
-    web_preferred_provider_id: Arc<Mutex<Option<String>>>,
+    web_preferred_provider_ids: Arc<Mutex<HashMap<String, String>>>,
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
     /// The ChildRun retains the parent Run identity and persistence boundary.
     child_run_provider: Option<&'a dyn ToolLoopProvider>,
@@ -389,7 +327,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             web_attempt_count: Arc::new(Mutex::new(0)),
             web_degradation_emitted: Arc::new(Mutex::new(false)),
             required_web_provider_snapshots,
-            web_preferred_provider_id: Arc::new(Mutex::new(None)),
+            web_preferred_provider_ids: Arc::new(Mutex::new(HashMap::new())),
             child_run_provider: None,
             budget_policy,
             child_runs_started: Mutex::new(0),
@@ -492,7 +430,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         self.web_failure = Arc::clone(&parent.web_failure);
         self.web_attempt_count = Arc::clone(&parent.web_attempt_count);
         self.web_degradation_emitted = Arc::clone(&parent.web_degradation_emitted);
-        self.web_preferred_provider_id = Arc::clone(&parent.web_preferred_provider_id);
+        self.web_preferred_provider_ids = Arc::clone(&parent.web_preferred_provider_ids);
         self.external_evidence_ids = Arc::clone(&parent.external_evidence_ids);
         self
     }
@@ -563,21 +501,11 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .filter(|urls| !urls.is_empty())
                 .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?
         };
-        let mut current_run_urls =
-            AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?
-                .into_iter()
-                .map(|url| normalize_fetch_url(&url))
-                .collect::<BTreeSet<_>>();
-        current_run_urls.extend(explicit_user_urls(&self.context.user_message));
-        current_run_urls.extend(
-            self.run_web_evidence
-                .lock()
-                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
-                .candidate_urls
-                .iter()
-                .cloned(),
-        );
-        let urls = validate_current_run_fetch_urls(&requested_urls, &current_run_urls)?;
+        // A model-selected public HTTPS page is an input to the existing safe
+        // fetch boundary, not evidence by itself. Requiring a URL to have
+        // appeared in this Run's search results blocked legitimate direct
+        // reads and encouraged redundant discovery calls.
+        let urls = validate_public_fetch_urls(&requested_urls)?;
         if discovery_only && !urls.is_empty() {
             return Err(AppError::msg("tool_arguments_invalid"));
         }
@@ -602,7 +530,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             .unwrap_or(MAX_WEB_CANDIDATES_PER_DISCOVERY);
         // A single Web dispatch is bounded, while cross-call exploration is
         // governed exclusively by the generic network category budget.
-        let provider_snapshots = self.ordered_web_provider_snapshots();
+        let provider_snapshots = self.ordered_web_provider_snapshots(tool_name);
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.clone(),
             urls: urls.clone(),
@@ -674,8 +602,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     remaining_web_tool_budget_ms(call_started.elapsed()),
                 ));
             };
-        self.remember_web_provider_winner(&output.usage)?;
-        self.emit_mcp_failover_events(&provider_snapshots, &output.usage)?;
+        self.remember_web_provider_winner(tool_name, &output.usage)?;
         if discovery_only {
             let previously_known_urls = self
                 .run_web_evidence
@@ -1309,15 +1236,12 @@ fn local_evidence_input_from_packet(value: &serde_json::Value) -> Option<LocalEv
 /// provider must never be asked for that many raw search bodies in one strict
 /// prefetch. A response that exceeds the host cap gets exactly one smaller
 /// retry; this preserves the cap rather than hiding an unbounded payload.
-fn validate_current_run_fetch_urls(
-    urls: &[String],
-    current_run_urls: &BTreeSet<String>,
-) -> AppResult<Vec<String>> {
+fn validate_public_fetch_urls(urls: &[String]) -> AppResult<Vec<String>> {
     urls.iter()
         .map(|url| {
             let normalized = normalize_fetch_url(url);
-            if !normalized.starts_with("https://") || !current_run_urls.contains(&normalized) {
-                return Err(AppError::msg("web_url_not_in_current_run"));
+            if !normalized.starts_with("https://") {
+                return Err(AppError::msg("web_url_not_public_https"));
             }
             Ok(normalized)
         })
@@ -1703,23 +1627,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .filter_map(serde_json::Value::as_str)
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        let mut permitted =
-            AgentEvidenceRepository::current_run_web_urls(&self.state.db, &self.accepted.run_id)?
-                .into_iter()
-                .map(|url| normalize_fetch_url(&url))
-                .collect::<BTreeSet<_>>();
-        permitted.extend(explicit_user_urls(&self.context.user_message));
-        permitted.extend(
-            self.run_web_evidence
-                .lock()
-                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
-                .candidate_urls
-                .iter()
-                .cloned(),
-        );
-        Ok(validate_current_run_fetch_urls(&requested, &permitted)
+        Ok(validate_public_fetch_urls(&requested)
             .err()
-            .map(|_| "web_url_not_in_current_run"))
+            .map(|_| "web_url_not_public_https"))
     }
 
     fn record_tool_loop_diagnostic(&self, event: serde_json::Value) {
@@ -2404,7 +2314,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 
     fn web_capability_blocked(&self) -> bool {
         self.web_attempt_count() > 0
-            && self.ordered_web_provider_snapshots().is_empty()
+            && self.required_web_provider_snapshots.is_empty()
             && self
                 .run_web_evidence
                 .lock()
@@ -2434,7 +2344,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn requires_natural_source_binding(&self) -> bool {
-        self.requires_web_evidence()
+        // Natural factual answers use the finalizer's current-Run citation
+        // linker. Requiring model-authored source labels here turned a valid
+        // answer plus usable evidence into an unnecessary repair loop.
+        false
     }
 
     fn natural_source_binding_is_valid(&self, content: &str) -> bool {
@@ -2451,6 +2364,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn evidence_limited_response(&self) -> String {
+        if !self.evidence_ids().is_empty() {
+            return "本轮已取得可核验资料，但未能完成最终来源关联；已取得的正文不会被当作读取失败。请重试以完成答复。".to_string();
+        }
         let leads = self
             .run_web_evidence
             .lock()
@@ -2894,12 +2810,13 @@ impl NormalRunToolExecutor<'_> {
 
     fn ordered_web_provider_snapshots(
         &self,
+        tool_name: &str,
     ) -> Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary> {
         let preferred = self
-            .web_preferred_provider_id
+            .web_preferred_provider_ids
             .lock()
             .ok()
-            .and_then(|value| value.clone());
+            .and_then(|values| values.get(tool_name).cloned());
         let mut snapshots = self.required_web_provider_snapshots.clone();
         if let Some(preferred) = preferred {
             if let Some(index) = snapshots
@@ -2915,94 +2832,23 @@ impl NormalRunToolExecutor<'_> {
 
     fn remember_web_provider_winner(
         &self,
+        tool_name: &str,
         usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
     ) -> AppResult<()> {
         let Some(winner) = usage.providers.iter().find_map(|provider| {
-            (provider.successful_search_requests > 0).then(|| provider.provider_id.clone())
+            (if tool_name == WEB_SEARCH_TOOL_NAME {
+                provider.successful_search_requests > 0
+            } else {
+                provider.successful_page_fetches > 0
+            })
+            .then(|| provider.provider_id.clone())
         }) else {
             return Ok(());
         };
-        *self
-            .web_preferred_provider_id
+        self.web_preferred_provider_ids
             .lock()
-            .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))? = Some(winner);
-        Ok(())
-    }
-
-    fn emit_mcp_failover_events(
-        &self,
-        provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
-        usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
-    ) -> AppResult<()> {
-        if self.subagent_depth > 0 {
-            return Ok(());
-        }
-        let search_winner = usage.providers.iter().find_map(|provider| {
-            (provider.successful_search_requests > 0).then_some(provider.provider_id.as_str())
-        });
-        if let Some(winner) = search_winner {
-            self.emit_mcp_failover_events_for_capability(provider_snapshots, winner, "web.search")?;
-        }
-
-        let fetch_origin = search_winner.or_else(|| {
-            provider_snapshots
-                .first()
-                .map(|snapshot| snapshot.id.as_str())
-        });
-        let mut fetch_snapshots = provider_snapshots.to_vec();
-        if let Some(fetch_origin) = fetch_origin {
-            if let Some(index) = fetch_snapshots
-                .iter()
-                .position(|snapshot| snapshot.id == fetch_origin)
-            {
-                let origin = fetch_snapshots.remove(index);
-                fetch_snapshots.insert(0, origin);
-            }
-        }
-        if let Some(fetch_winner) = usage.providers.iter().find_map(|provider| {
-            (provider.successful_page_fetches > 0).then_some(provider.provider_id.as_str())
-        }) {
-            self.emit_mcp_failover_events_for_capability(
-                &fetch_snapshots,
-                fetch_winner,
-                "web.fetch",
-            )?;
-        }
-        Ok(())
-    }
-
-    fn emit_mcp_failover_events_for_capability(
-        &self,
-        provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
-        winner: &str,
-        capability: &str,
-    ) -> AppResult<()> {
-        for event in mcp_failover_events(provider_snapshots, winner, capability) {
-            let snapshot = AgentRunRepository::get_for_session(
-                &self.state.db,
-                &self.accepted.session.session_key,
-                &self.accepted.run_id,
-            )?
-            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
-            let persisted = AgentRunRepository::append_event(
-                &self.state.db,
-                AppendRunEventInput {
-                    run_id: self.accepted.run_id.clone(),
-                    state_version: snapshot.run.state_version,
-                    event_type: RunEventType::ProviderSwitched,
-                    payload: RunEventPayload::ProviderSwitched {
-                        capability: capability.into(),
-                        from_provider_id: event.from_provider_id,
-                        provider_id: event.provider_id,
-                        // MCP web mappings name tools rather than models.
-                        model_id: event.model_id,
-                        reason_code: event.reason_code,
-                        attempt: event.attempt,
-                    },
-                },
-            )?;
-            self.sink.emit(&persisted)?;
-        }
+            .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))?
+            .insert(tool_name.to_string(), winner);
         Ok(())
     }
 
@@ -3984,10 +3830,10 @@ mod tests {
         append_model_tool_completed_with_report, append_model_tool_started, bounded_page_evidence,
         corroborated_source_threshold_met, corroborated_web_evidence_required,
         emit_deferred_web_degradation, expected_post_content_hashes, failed_fetch_urls,
-        mcp_failover_events, normalize_fetch_url, pack_web_candidates_for_model,
-        remember_candidate_urls, validate_current_run_fetch_urls, web_output_has_usable_result,
-        web_result_limit, web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
-        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
+        normalize_fetch_url, pack_web_candidates_for_model, remember_candidate_urls,
+        validate_public_fetch_urls, web_output_has_usable_result, web_result_limit,
+        web_search_result_limit, DeferredWebDegradationInput, NormalRunToolExecutor,
+        RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -5600,57 +5446,6 @@ mod tests {
     }
 
     #[test]
-    fn mcp_failover_events_describe_only_provider_route_metadata() {
-        let snapshots = vec![
-            crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
-                id: "primary".into(),
-                kind: "mcp".into(),
-                transport_kind: "https".into(),
-                provider_config_hash: "config-a".into(),
-                web_search_mapping_json: Some(r#"{"tool":"primary_search"}"#.into()),
-                web_fetch_mapping_json: Some(r#"{"tool":"primary_fetch"}"#.into()),
-            },
-            crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
-                id: "backup".into(),
-                kind: "mcp".into(),
-                transport_kind: "https".into(),
-                provider_config_hash: "config-b".into(),
-                web_search_mapping_json: Some(r#"{"tool":"backup_search"}"#.into()),
-                web_fetch_mapping_json: Some(r#"{"tool":"backup_fetch"}"#.into()),
-            },
-        ];
-
-        let events = mcp_failover_events(&snapshots, "backup", "web.search");
-
-        assert!(matches!(
-            events.as_slice(),
-            [McpFailoverEvent { from_provider_id, provider_id, model_id, reason_code, attempt }]
-                if from_provider_id == "primary"
-                    && provider_id == "backup"
-                    && model_id == "backup_search"
-                    && reason_code == "provider_failure"
-                    && *attempt == 2
-        ));
-        assert!(mcp_failover_events(&snapshots, "primary", "web.search").is_empty());
-        let fetch_events = mcp_failover_events(&snapshots, "backup", "web.fetch");
-        assert!(matches!(
-            fetch_events.as_slice(),
-            [McpFailoverEvent { model_id, reason_code, .. }]
-                if model_id == "backup_fetch" && reason_code == "provider_failure"
-        ));
-        let mut search_only_primary = snapshots.clone();
-        search_only_primary[0].web_fetch_mapping_json = None;
-        assert!(
-            mcp_failover_events(&search_only_primary, "backup", "web.fetch").is_empty(),
-            "skipping a search-only provider is not a failed fetch or a failover"
-        );
-        assert!(
-            mcp_failover_events(&snapshots, "native.fetch", "web.fetch").is_empty(),
-            "native.fetch is not an MCP route winner and must not emit ProviderSwitched"
-        );
-    }
-
-    #[test]
     fn search_retries_with_fewer_candidates_while_fetch_never_runs_discovery() {
         assert_eq!(web_search_result_limit(12, 1), 8);
         assert_eq!(web_search_result_limit(12, 2), 2);
@@ -6090,15 +5885,15 @@ mod tests {
     }
 
     #[test]
-    fn fetch_urls_must_belong_to_the_current_run() {
-        let allowed = BTreeSet::from(["https://example.com/current".to_string()]);
-        let urls = vec!["https://foreign.example/article".to_string()];
-
+    fn public_https_urls_are_fetchable_without_prior_discovery() {
+        let urls = validate_public_fetch_urls(&["https://foreign.example/article".to_string()])
+            .expect("public HTTPS URL may be fetched through the safe boundary");
+        assert_eq!(urls, ["https://foreign.example/article"]);
         assert_eq!(
-            validate_current_run_fetch_urls(&urls, &allowed)
-                .expect_err("foreign URL must be rejected")
+            validate_public_fetch_urls(&["http://insecure.example/article".to_string()])
+                .expect_err("plain HTTP must stay rejected")
                 .to_string(),
-            "web_url_not_in_current_run"
+            "web_url_not_public_https"
         );
     }
 
@@ -6126,11 +5921,8 @@ mod tests {
         )
         .expect("candidate observation");
 
-        let urls = validate_current_run_fetch_urls(
-            &["https://example.com/chosen".to_string()],
-            &state.candidate_urls,
-        )
-        .expect("current Run candidate may be fetched");
+        let urls = validate_public_fetch_urls(&["https://example.com/chosen".to_string()])
+            .expect("current Run candidate may be fetched");
 
         assert_eq!(urls, ["https://example.com/chosen"]);
         assert!(state.evidence_ids.is_empty());

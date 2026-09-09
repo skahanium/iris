@@ -471,13 +471,13 @@ async fn timeliness_observation_explicit_url_fetches_without_an_unnecessary_sear
 }
 
 #[tokio::test]
-async fn timeliness_fetch_outside_current_run_is_repairable_before_dispatch() {
+async fn timeliness_fetches_a_public_https_url_without_prior_discovery() {
     let directory = tempfile::tempdir().expect("temp");
     let state = AppState::new(directory.path().join("data")).expect("state");
     install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"fetch-unseen\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"urls\\\":[\\\"https://unseen.invalid/page\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n"),
-        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"依据已经读取的资料，测试状态可以确认。[W1]\"}}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"依据已经读取的资料，测试状态可以确认。\"}}]}\n\ndata: [DONE]\n\n"),
     ]).await.expect("model");
     install_test_routing(&state, &llm.base_url, "iris-test-verified-tools-url-repair");
     let sink = RecordingSink::default();
@@ -490,20 +490,28 @@ async fn timeliness_fetch_outside_current_run_is_repairable_before_dispatch() {
     assert_eq!(
         run.run.state,
         RunState::Completed,
-        "an unselected URL is a repairable proposal error"
+        "a public URL is dispatched through the safe fetch boundary"
     );
     let calls = llm.finish().await.expect("two model turns");
-    assert!(calls[1]
+    assert!(!calls[1]
         .body
         .to_string()
-        .contains("web_url_not_in_current_run"));
+        .contains("web_url_not_public_https"));
     assert_eq!(
         run.events
             .iter()
             .filter(|event| matches!(event.payload(), RunEventPayload::ToolStarted { .. }))
             .count(),
-        2
+        3
     );
+    let messages =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 10)
+            .expect("messages");
+    assert!(messages
+        .last()
+        .expect("final answer")
+        .content
+        .contains("测试状态可以确认"));
 }
 
 #[tokio::test]

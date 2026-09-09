@@ -368,7 +368,7 @@ fn legacy_empty_and_v1_budgets_are_materialized_for_retry_and_active_execution()
                 "UPDATE agent_runs
              SET budget_policy_json = ?1, status = 'failed'
              WHERE run_id = 'run-1'",
-                [legacy_budget],
+                [legacy_budget.clone()],
             )?;
             Ok(())
         })
@@ -403,7 +403,8 @@ fn legacy_empty_and_v1_budgets_are_materialized_for_retry_and_active_execution()
                 )?
                 .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
-            assert!(budgets.iter().all(|budget| budget != "{}"));
+            assert_eq!(budgets[0], legacy_budget);
+            assert_ne!(budgets[1], "{}");
             Ok(())
         })
         .expect("legacy budgets are frozen once");

@@ -152,7 +152,7 @@ Agent 提交状态必须区分本地与远端事实：`已保存`、`正在连�
 - AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
 - 二级/三级详情页顶栏采用「左侧弱化返回按钮（`rounded-full` + `border-border-subtle` + `text-muted-foreground` + `aria-label="返回 X"`）+ 跨行居中标题/副标题」结构；返回按钮与主标题视觉分层，不再左对齐混排。
 - 进入 MCP 第三级（`managementCenterProviderId` 非空）时，二级「联网搜索」PanelSection（当前搜索提供方、联网已开启）整体隐藏，仅保留 `McpProfilesPanel` 详情；返回列表时恢复。
-- MCP 详情页的「外部只读工具」只承担 discovery、只读审查、显式信任 binding 与诊断：候选必须显示为“服务端声明只读、待用户审核”，副作用或不支持的 Schema 只汇总拒绝数量，不展示服务端原始 description。绑定操作必须二次确认精确 provider/tool/schema，并明确说明服务端 `readOnlyHint` 不是 Iris 对第三方行为的证明；取消确认不得调用 Upsert。启用 provider 或保存 binding 不等于授权；Composer 以 Run-local chip 单独勾选已审核 binding，发送后清空本次选择。classified 与 local-only 状态不得显示或提交这些 grant。
+- MCP 详情页的「外部只读工具」只承担 discovery、只读审查、显式信任 binding 与诊断：候选必须显示为“服务端声明只读、待用户审核”，副作用或不支持的 Schema 只汇总拒绝数量，不展示服务端原始 description。绑定操作必须二次确认精确 provider/tool/schema，并明确说明服务端 `readOnlyHint` 不是 Iris 对第三方行为的证明；取消确认不得调用 Upsert。已信任、启用且配置未漂移的只读 binding 在普通 Run 接受时自动冻结；classified 与 local-only 状态不得显示或提交这些 grant。
 - LLM 与联网搜索路由分别显示有序“主服务、备用 1、备用 2”，使用无障碍按钮上移/下移配置；MCP 联网搜索不得再渲染独立主备卡片，服务商列表即为唯一排序入口。不得把健康度排序伪装成用户顺序。输入框显式指定固定模型时，在该轮旁说明“不自动切换”。
 
 ## 交互规则
@@ -230,7 +230,7 @@ v1.2.19 在现有 Rail 体系中增加 Workspace Navigator 与 Agent Focus Surfa
 
 ### AI 能力降级状态
 
-模型续答失败只说明已确认的执行阶段，不把搜索派发或候选返回写成“联网检索已完成”，也不把笼统的 Provider 错误推断为服务宕机。工具完成后、尚无可见答复时，可在同一模型内有界重试；不得重复执行工具或隐式跨模型续接。
+模型续答失败只说明已确认的执行阶段，不把搜索派发或候选返回写成“联网检索已完成”，也不把笼统的 Provider 错误推断为服务宕机。工具完成后、尚无可见答复时，可在同一模型内有界重试；工具格式修复不得切换模型，不得重复执行工具或隐式跨模型续接。
 
 `capability_degraded` 是对话内的轻量、非终态状态：使用中性色或弱警示色，显示能力名称、用户安全说明和可重试提示，不遮挡已生成内容，也不触发全局红色错误条。只有模型完全不可用、权限拒绝、持久化失败或非法请求等整轮无法回答的故障使用红色终态错误。降级状态必须可由键盘和读屏器感知，并与最终 `completed` 状态同时成立。
 

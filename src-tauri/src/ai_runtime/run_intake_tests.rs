@@ -212,7 +212,7 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(
         envelope.verification_requirement,
-        VerificationRequirement::CurrentRunExternal
+        VerificationRequirement::None
     );
     assert!(envelope
         .required_capabilities
@@ -243,7 +243,7 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
         .iter()
         .find(|tool| tool.name == binding.exposed_name)
         .expect("granted external tool");
-    assert!(tool.description.contains("用户已显式信任"));
+    assert!(tool.description.contains("用户已信任"));
     assert!(!tool.description.contains("untrusted"));
 
     let mut ungranted = request();
@@ -257,9 +257,13 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
             true,
         )
         .iter()
-        .all(|tool| tool.name != binding.exposed_name));
+        .any(|tool| tool.name == binding.exposed_name));
 
     db.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM agent_run_mcp_tool_snapshots WHERE run_id = ?1",
+            [&ungranted.run_id],
+        )?;
         conn.execute(
             "UPDATE agent_run_mcp_tool_snapshots SET run_id = ?1 WHERE run_id = ?2",
             [&ungranted.run_id, &accepted.run_id],
@@ -2336,6 +2340,21 @@ fn high_risk_and_explicit_verify_requests_require_current_run_web_evidence() {
             .iter()
             .any(|capability| capability.as_str() == "web.search"));
     }
+}
+
+#[test]
+fn regulated_revision_date_is_current_fact_not_actionable_high_stakes_advice() {
+    let mut online = request();
+    online.web_enabled = true;
+    online.turn.message = "最新的中国共产党纪律处分条例是什么时候修订的？".into();
+
+    let envelope = RunIntake::resolve_envelope(&online).expect("current-fact envelope");
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
+    assert_eq!(
+        envelope.verification_requirement,
+        VerificationRequirement::None
+    );
 }
 
 #[test]

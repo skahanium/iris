@@ -43,28 +43,7 @@ impl RunIntake {
         let message = request.turn.message.to_ascii_lowercase();
         let directive_text = strip_quoted_segments(&message);
         let child_run_requested = needs_child_run(&directive_text);
-        let local_only = contains_any(
-            &directive_text,
-            &[
-                "local only",
-                "offline only",
-                "do not use web",
-                "without web",
-                "stay offline",
-                "use local material only",
-                "do not browse",
-                "only use the attachment",
-                "conversation only",
-                "do not search online",
-                "supplied material only",
-                "不要联网",
-                "不联网",
-                "离线完成",
-                "只看当前对话",
-                "\u{53ea}\u{7528}\u{672c}\u{5730}",
-                "\u{4ec5}\u{7528}\u{672c}\u{5730}",
-            ],
-        );
+        let local_only = has_local_only_instruction(&directive_text);
         if local_only && !request.external_tool_grants.is_empty() {
             return Err(AppError::msg("agent_run_external_tool_local_only_conflict"));
         }
@@ -275,6 +254,18 @@ impl RunIntake {
                 *path = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
                     .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
             }
+        }
+        // Existing trusted read-only bindings are ordinary task capability,
+        // not an extra prompt-level authorization ritual. Local-only and
+        // classified requests deliberately keep their existing boundaries.
+        if request.external_tool_grants.is_empty()
+            && request.security_domain == SecurityDomain::Normal
+            && !has_local_only_instruction(&strip_quoted_segments(
+                &request.turn.message.to_ascii_lowercase(),
+            ))
+        {
+            request.external_tool_grants =
+                crate::ai_runtime::mcp_external_tools::trusted_read_grants(db)?;
         }
         let envelope = Self::resolve_envelope(&request)?;
         if envelope.security_domain != SecurityDomain::Normal {
@@ -963,15 +954,6 @@ impl ExclusionClassifier {
             return offline(WebDecisionReason::TrustedRuntimeFact);
         }
 
-        // An explicit external grant is the user's selected evidence source.
-        // It must not silently expand into Web access, while finalization still
-        // requires evidence from this exact Run.
-        if !request.external_tool_grants.is_empty()
-            && !explicit_web
-            && !contains_any(directive_text, &["http://", "https://"])
-        {
-            return offline_requires_external(WebDecisionReason::DefaultOnline);
-        }
         let strict_reason = if contains_any(directive_text, &["http://", "https://"]) {
             Some(WebDecisionReason::ExplicitUrl)
         } else if is_high_stakes_current_request(directive_text) {
@@ -1001,6 +983,31 @@ impl ExclusionClassifier {
             offline(WebDecisionReason::UserDisabled)
         }
     }
+}
+
+fn has_local_only_instruction(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "local only",
+            "offline only",
+            "do not use web",
+            "without web",
+            "stay offline",
+            "use local material only",
+            "do not browse",
+            "only use the attachment",
+            "conversation only",
+            "do not search online",
+            "supplied material only",
+            "不要联网",
+            "不联网",
+            "离线完成",
+            "只看当前对话",
+            "\u{53ea}\u{7528}\u{672c}\u{5730}",
+            "\u{4ec5}\u{7528}\u{672c}\u{5730}",
+        ],
+    )
 }
 
 /// A request that rejects local notes as proof cannot enter the implicit-vault
@@ -1040,14 +1047,6 @@ fn offline_requires_web(reason: WebDecisionReason) -> WebIntentDecision {
         freshness: Freshness::Offline,
         reason,
         verification_requirement: VerificationRequirement::CurrentRunWeb,
-    }
-}
-
-fn offline_requires_external(reason: WebDecisionReason) -> WebIntentDecision {
-    WebIntentDecision {
-        freshness: Freshness::Offline,
-        reason,
-        verification_requirement: VerificationRequirement::CurrentRunExternal,
     }
 }
 
@@ -1310,6 +1309,27 @@ fn is_reflective_dialogue_request(message: &str) -> bool {
 }
 
 fn is_high_stakes_current_request(message: &str) -> bool {
+    // A request for a publication, revision, or effective-date fact is not a
+    // request for actionable legal or medical advice merely because the
+    // subject happens to be regulated. It still follows the current-fact Web
+    // path, but does not need the stricter terminal protocol.
+    if contains_any(
+        message,
+        &[
+            "什么时候修订",
+            "何时修订",
+            "修订日期",
+            "什么时候发布",
+            "何时发布",
+            "发布日期",
+            "何时施行",
+            "施行日期",
+            "什么时候生效",
+            "何时生效",
+        ],
+    ) {
+        return false;
+    }
     let high_stakes = contains_any(
         message,
         &[
@@ -1352,13 +1372,11 @@ fn is_high_stakes_current_request(message: &str) -> bool {
                 "今天",
                 "怎么做",
                 "建议",
-                "核实",
                 "生效",
                 "latest",
                 "current",
                 "today",
                 "advice",
-                "verify",
             ],
         )
 }

@@ -32,7 +32,7 @@ use crate::ai_runtime::agent_run_repository::{
 };
 use crate::ai_runtime::agent_tool_loop::{
     is_evidence_limited_response, resolved_turn_usage, AgentModelTurnBudget, AgentToolLoop,
-    ToolLoopExecutor, ToolLoopProvider, EVIDENCE_LIMITED_RESPONSE,
+    ToolLoopExecutor, ToolLoopProvider,
 };
 use crate::ai_runtime::citation_linkify::{
     bind_strict_current_run_citations, linkify_web_citations,
@@ -1125,14 +1125,19 @@ impl RunEngine {
                 // invent a source-group binding.
                 None
             } else {
-                // Natural factual answers are admitted only with exact
-                // Run-local source markers. Production reaches this branch
-                // after the ToolLoop's repair turn; this fallback also keeps
-                // direct callers from persisting an unsupported draft.
+                // Ordinary factual answers may use natural prose. The Host
+                // has already established the current-Run evidence gate; add
+                // the existing citation links without forcing the model into
+                // a second answer solely to reproduce internal source labels.
                 match bind_strict_current_run_citations(&content, &citations) {
                     Ok(outcome) => Some(outcome),
                     Err(_) => {
-                        content = EVIDENCE_LIMITED_RESPONSE.to_string();
+                        content = linkify_final_web_citations(
+                            db,
+                            run_id,
+                            &citation_evidence_ids,
+                            content,
+                        );
                         None
                     }
                 }

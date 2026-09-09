@@ -192,14 +192,6 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
     fn on_tool_proposals_not_dispatched(&self, _run_id: &str) -> AppResult<()> {
         Ok(())
     }
-
-    fn recover_rejected_proposals(
-        &self,
-        _run_id: &str,
-        _has_visible_output: bool,
-    ) -> AppResult<bool> {
-        Ok(false)
-    }
 }
 
 /// Run-bound side of a tool loop.
@@ -975,6 +967,7 @@ impl AgentToolLoop {
                         return Err(AppError::msg("agent_run_final_submission_required"));
                     }
                     final_submission_repair_used = true;
+                    synthesis_required = true;
                     // The withheld draft is continuation context only. It is
                     // never persisted or emitted, and the correction surface
                     // exposes no business tools beyond the reserved terminal
@@ -1177,13 +1170,6 @@ impl AgentToolLoop {
                 messages.push(tool_proposal_feedback_instruction(&proposal_dispositions, active_tools, self.max_model_turns.saturating_sub(model_turns), self.max_tool_calls.saturating_sub(tool_calls), self.max_network_tool_calls.saturating_sub(*tool_calls_by_class.get(&ToolBudgetClass::Network).unwrap_or(&0))));
                 rejected_rounds = rejected_rounds.saturating_add(1);
                 executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair", "round":rejected_rounds}));
-                if rejected_rounds == 2 && model_turns.saturating_add(1) < self.max_model_turns
-                    && provider.recover_rejected_proposals(provider_run_id, observer.has_visible_content())?
-                {
-                    rejected_rounds = 0;
-                    executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair_switch"}));
-                    continue;
-                }
                 if rejected_rounds >= 2 || model_turns.saturating_add(1) >= self.max_model_turns
                 {
                     synthesis_required = true;

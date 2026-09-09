@@ -98,9 +98,11 @@ fn may_failover_after_model_attempt(
     failure: crate::ai_runtime::provider_router::ProviderFailure,
     has_visible_output: bool,
     provider_bound_continuation_or_tool: bool,
+    fallback_model_used: bool,
 ) -> bool {
     !has_visible_output
         && !provider_bound_continuation_or_tool
+        && !fallback_model_used
         && failure.permits_cross_provider_failover()
 }
 
@@ -214,6 +216,7 @@ mod llm_failover_guard_tests {
             ProviderFailure::Timeout,
             true,
             false,
+            false,
         ));
     }
 
@@ -221,6 +224,17 @@ mod llm_failover_guard_tests {
     fn responses_continuation_never_crosses_provider_boundaries() {
         assert!(!may_failover_after_model_attempt(
             ProviderFailure::TemporarilyUnavailable,
+            false,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn a_run_can_cross_to_only_one_backup_model() {
+        assert!(!may_failover_after_model_attempt(
+            ProviderFailure::TemporarilyUnavailable,
+            false,
             false,
             true,
         ));
@@ -388,9 +402,6 @@ mod llm_failover_guard_tests {
             .lock()
             .expect("bound")
             .contains("run"));
-        assert!(!provider
-            .recover_rejected_proposals("run", false)
-            .expect("no switch"));
     }
 }
 
@@ -541,7 +552,6 @@ pub(crate) struct FailoverStreamingProvider<'a> {
     candidate_continuations: Mutex<HashMap<String, SelectedResponseContinuation>>,
     candidate_indices: Mutex<HashMap<String, usize>>,
     tool_bound_runs: Mutex<HashSet<String>>,
-    proposal_recovery_runs: Mutex<HashSet<String>>,
     #[cfg(test)]
     test_streaming_client: Option<reqwest::Client>,
 }
@@ -589,7 +599,6 @@ impl<'a> FailoverStreamingProvider<'a> {
             candidate_continuations: Mutex::new(HashMap::new()),
             candidate_indices: Mutex::new(HashMap::new()),
             tool_bound_runs: Mutex::new(HashSet::new()),
-            proposal_recovery_runs: Mutex::new(HashSet::new()),
             #[cfg(test)]
             test_streaming_client: None,
         }
@@ -642,6 +651,11 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                 .unwrap_or(0);
             let continuation = stored_continuation.map(|state| state.continuation);
             let mut original_route_retry_used = false;
+            // A Run gets one same-route retry and at most one cross-provider
+            // continuation. Repeated model hopping makes a simple failed
+            // request look like a long research workflow without improving
+            // the available observations.
+            let mut fallback_model_used = false;
             let mut dispatch_attempt = 0_u32;
             loop {
                 dispatch_attempt = dispatch_attempt.saturating_add(1);
@@ -783,6 +797,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                             failure,
                             observer.has_visible_content(),
                             provider_bound,
+                            fallback_model_used,
                         ) {
                             record_model_route_diagnostic(
                                 self.db,
@@ -796,7 +811,11 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                     == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
                                 observer.has_visible_content(),
                                 provider_bound,
-                                "terminal",
+                                if fallback_model_used {
+                                    "terminal_fallback_exhausted"
+                                } else {
+                                    "terminal"
+                                },
                             );
                             return Err(error);
                         }
@@ -865,6 +884,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                         )?;
                         self.sink.emit(&switched)?;
                         observer.reset_visible_answer_for_new_attempt();
+                        fallback_model_used = true;
                         selected_index = next_index;
                     }
                 }
@@ -935,83 +955,5 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
             }
         }
         Ok(())
-    }
-
-    fn recover_rejected_proposals(
-        &self,
-        run_id: &str,
-        has_visible_output: bool,
-    ) -> AppResult<bool> {
-        let bound = self
-            .tool_bound_runs
-            .lock()
-            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
-            .contains(run_id)
-            || self
-                .continuations
-                .lock()
-                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
-                .contains_key(run_id);
-        let failure = crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse;
-        if !may_failover_after_model_attempt(failure, has_visible_output, bound) {
-            return Ok(false);
-        }
-        let mut recovered = self
-            .proposal_recovery_runs
-            .lock()
-            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?;
-        if recovered.contains(run_id) {
-            return Ok(false);
-        }
-        let selected = self
-            .selected_indices
-            .lock()
-            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
-            .get(run_id)
-            .copied()
-            .unwrap_or(0);
-        let Some(next) = self.route.next_selected_index_after_for_requirements(
-            self.requirements,
-            selected,
-            failure,
-        ) else {
-            return Ok(false);
-        };
-        let (from_provider_id, _) = self
-            .route
-            .selected_provider_model_for_requirements(self.requirements, selected)
-            .ok_or_else(|| AppError::run(SafeRunErrorCode::NoCapableModel))?;
-        let (provider_id, model_id) = self
-            .route
-            .selected_provider_model_for_requirements(self.requirements, next)
-            .ok_or_else(|| AppError::run(SafeRunErrorCode::NoCapableModel))?;
-        let parent_run_id =
-            crate::ai_runtime::agent_tool_loop::parent_run_id_for_provider_scope(run_id);
-        let snapshot =
-            AgentRunRepository::get_for_session(self.db, &self.session.session_key, parent_run_id)?
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
-        let event = AgentRunRepository::append_event(
-            self.db,
-            AppendRunEventInput {
-                run_id: parent_run_id.to_string(),
-                state_version: snapshot.run.state_version,
-                event_type: RunEventType::ProviderSwitched,
-                payload: RunEventPayload::ProviderSwitched {
-                    capability: "model.respond".into(),
-                    from_provider_id: from_provider_id.into(),
-                    provider_id: provider_id.into(),
-                    model_id: model_id.into(),
-                    reason_code: "tool_proposal_repair_exhausted".into(),
-                    attempt: (next + 1) as u32,
-                },
-            },
-        )?;
-        self.sink.emit(&event)?;
-        self.selected_indices
-            .lock()
-            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
-            .insert(run_id.to_string(), next);
-        recovered.insert(run_id.to_string());
-        Ok(true)
     }
 }
