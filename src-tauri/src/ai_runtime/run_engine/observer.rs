@@ -225,9 +225,10 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     sink: &'a dyn RunEventSink,
     pending_delta: String,
     transient_content: String,
-    presentation_content: String,
-    defer_visible_deltas: bool,
-    seal_until_validated: bool,
+    candidate_rounds: u32,
+    candidate_active: bool,
+    discarded_candidates: u32,
+    replacement_requests: u32,
     emitted_generating_answer_stage: bool,
     reasoning_summaries: BTreeMap<String, String>,
     persisted_reasoning_summaries: BTreeMap<String, String>,
@@ -246,13 +247,13 @@ impl<'a> AgentRunStreamObserver<'a> {
         Self::new_with_deferred_deltas(db, run_id, running_state_version, sink, false)
     }
 
-    /// Create an observer that holds visible deltas until a verifier accepts final output.
+    /// Receive private candidates for every Agent entry; finalization alone publishes.
     pub(crate) fn new_with_deferred_deltas(
         db: &'a Database,
         run_id: &'a str,
         running_state_version: u64,
         sink: &'a dyn RunEventSink,
-        defer_visible_deltas: bool,
+        _defer_visible_deltas: bool,
     ) -> Self {
         Self {
             db,
@@ -261,9 +262,10 @@ impl<'a> AgentRunStreamObserver<'a> {
             sink,
             pending_delta: String::new(),
             transient_content: String::new(),
-            presentation_content: String::new(),
-            defer_visible_deltas,
-            seal_until_validated: false,
+            candidate_rounds: 0,
+            candidate_active: false,
+            discarded_candidates: 0,
+            replacement_requests: 0,
             emitted_generating_answer_stage: false,
             reasoning_summaries: BTreeMap::new(),
             persisted_reasoning_summaries: BTreeMap::new(),
@@ -294,71 +296,37 @@ impl<'a> AgentRunStreamObserver<'a> {
 }
 
 impl AgentRunStreamObserver<'_> {
-    /// Keep every provisional model token private until finalization binds the
-    /// exact validated body. Tool-round callbacks may not unlock this seal.
-    pub(crate) fn seal_visible_deltas_until_validated(&mut self) {
-        self.seal_until_validated = true;
-        self.defer_visible_deltas = true;
-    }
-
     /// Replace provisional provider tokens with the fully validated final body.
+    #[cfg(test)]
     pub(crate) fn bind_validated_content(&mut self, content: &str) {
         self.pending_delta.clear();
-        // Durable ContentDelta events must always reconstruct the complete
-        // validated answer; presentation deduplication is handled separately
-        // in `flush` so prior transient AnswerDelta events never erase the
-        // persisted prefix.
+        // Test fixtures submit through the same atomic finalization as production.
         self.pending_delta.push_str(content);
         self.transient_content.clear();
     }
 
-    /// Visible answer text captured before cancellation, already buffered for the UI.
+    /// No candidate is published before the terminal transaction.
     pub(crate) fn interrupt_visible_content(&self) -> String {
-        if !self.presentation_content.is_empty() {
-            return self.presentation_content.clone();
-        }
-        if self.seal_until_validated {
-            return String::new();
-        }
-        self.transient_content.clone()
+        String::new()
     }
 
-    /// Whether provisional content is intentionally withheld by a strict
-    /// finalization contract and therefore must not be persisted on cancel.
+    /// Cancellation must never materialize the private candidate as history.
     pub(crate) fn withholds_unvalidated_content(&self) -> bool {
-        self.seal_until_validated && self.presentation_content.is_empty()
+        true
     }
 
-    /// Whether this model attempt has already produced user-visible tokens.
-    /// A fallback after this point would splice two providers into one answer.
+    /// This observer only receives private candidates; publication belongs to finalization.
     pub(crate) fn has_visible_content(&self) -> bool {
-        !self.presentation_content.is_empty()
+        false
     }
 
-    /// Allow a later final turn to emit AnswerDelta after tool rounds stayed private.
-    pub(crate) fn clear_deferred_visible_deltas(&mut self) {
-        if !self.seal_until_validated {
-            self.defer_visible_deltas = false;
-        }
-    }
-
-    /// Hide provisional tokens again when another tool round begins.
-    pub(crate) fn enable_deferred_visible_deltas(&mut self) {
-        self.defer_visible_deltas = true;
-    }
-
-    /// Drop any already-streamed provisional answer before more tools run.
+    /// Discard internal draft text when tools or model recovery continue.
     pub(crate) fn reset_provisional_answer_if_any(&mut self) {
-        if self.presentation_content.is_empty() && self.transient_content.is_empty() {
-            return;
+        if !self.transient_content.is_empty() {
+            self.discarded_candidates += 1;
         }
-        if !self.presentation_content.is_empty() {
-            let _ = self
-                .sink
-                .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
-        }
-        self.presentation_content.clear();
         self.transient_content.clear();
+        self.candidate_active = false;
         self.pending_delta.clear();
     }
 
@@ -390,123 +358,24 @@ impl AgentRunStreamObserver<'_> {
         Ok(())
     }
 
-    /// Deliver the complete provisional snapshot to the live UI without persistence.
-    pub(crate) fn flush_transient(&mut self) -> AppResult<()> {
-        if self.defer_visible_deltas || self.transient_content.is_empty() {
-            return Ok(());
-        }
-        let visible = crate::ai_runtime::text_support::normalize_model_visible_text_for_stream(
-            &self.transient_content,
-        );
-        if visible == self.presentation_content {
-            return Ok(());
-        }
-        let delta = if let Some(delta) = visible.strip_prefix(&self.presentation_content) {
-            delta.to_string()
-        } else {
-            if !self.presentation_content.is_empty() {
-                let _ = self
-                    .sink
-                    .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
-            }
-            self.presentation_content.clear();
-            visible
-        };
-        if delta.is_empty() {
-            return Ok(());
-        }
-        let mut delta_remaining = delta;
-        while !delta_remaining.is_empty() {
-            let chunk = take_safe_presentation_delta_chunk(&mut delta_remaining);
-            if chunk.is_empty() {
-                break;
-            }
-            let _ = self.sink.emit_presentation(
-                self.run_id,
-                RunPresentationPayload::AnswerDelta {
-                    delta: chunk.clone(),
-                },
-            );
-            self.presentation_content.push_str(&chunk);
-        }
-        Ok(())
-    }
-
-    /// Persist and emit bounded, already-validated visible fragments.
-    ///
-    /// Final answers are bound as one string but must be split before persistence:
-    /// Run events reject payloads over the 2_000-char safe-event budget. A single long
-    /// web-grounded answer previously failed flush as `agent_run_persistence_failed`
-    /// after evidence had already registered.
-    ///
-    /// `flush` retains the historical direct observer contract for tests and
-    /// callers that do not have a durable terminal step. Production finalization
-    /// uses `flush_without_terminal`, then emits AnswerComplete after Completed.
+    /// Test harness delegates publication to the same atomic repository path.
     #[cfg(test)]
     pub(crate) fn flush(&mut self) -> AppResult<()> {
-        self.flush_internal(true)
-    }
-
-    /// Persist and emit answer deltas without claiming that the Run is complete.
-    pub(crate) fn flush_without_terminal(&mut self) -> AppResult<()> {
-        self.flush_internal(false)
-    }
-
-    fn flush_internal(&mut self, emit_terminal: bool) -> AppResult<()> {
-        if !self.pending_delta.is_empty() {
-            let final_content = mem::take(&mut self.pending_delta);
-            let presentation_delta =
-                if let Some(suffix) = final_content.strip_prefix(&self.presentation_content) {
-                    suffix.to_string()
-                } else {
-                    if !self.presentation_content.is_empty() {
-                        let _ = self
-                            .sink
-                            .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
-                    }
-                    self.presentation_content.clear();
-                    final_content.clone()
-                };
-            let mut remaining = final_content;
-            while !remaining.is_empty() {
-                let chunk = take_safe_content_delta_chunk(&mut remaining)?;
-                if chunk.is_empty() {
-                    break;
-                }
-                let persisted = AgentRunRepository::append_event(
-                    self.db,
-                    AppendRunEventInput {
-                        run_id: self.run_id.to_string(),
-                        state_version: self.running_state_version,
-                        event_type: RunEventType::ContentDelta,
-                        payload: RunEventPayload::ContentDelta {
-                            delta: chunk.clone(),
-                        },
-                    },
-                )?;
-                self.sink.emit(&persisted)?;
-            }
-            let mut presentation_remaining = presentation_delta;
-            while !presentation_remaining.is_empty() {
-                let chunk = take_safe_presentation_delta_chunk(&mut presentation_remaining);
-                if chunk.is_empty() {
-                    break;
-                }
-                let _ = self.sink.emit_presentation(
-                    self.run_id,
-                    RunPresentationPayload::AnswerDelta {
-                        delta: chunk.clone(),
-                    },
-                );
-                self.presentation_content.push_str(&chunk);
-            }
+        let events = AgentRunRepository::finalize_with_events(
+            self.db,
+            FinalizeRunInput {
+                run_id: self.run_id.to_string(),
+                state_version: self.running_state_version,
+                content: mem::take(&mut self.pending_delta),
+                evidence_ids: Vec::new(),
+                citation_map: serde_json::json!({}),
+                source_summary: Vec::new(),
+            },
+        )?;
+        for event in &events {
+            emit_durable_event_best_effort(self.sink, event);
         }
-        if emit_terminal {
-            let _ = self
-                .sink
-                .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete);
-        }
-        Ok(())
+        self.sink.emit_terminal_presentation(self.run_id)
     }
 
     fn observe_reasoning_summary(&mut self, summary_id: &str, text: &str) -> AppResult<()> {
@@ -642,44 +511,17 @@ fn looks_like_tool_argument_or_structured_data(value: &str) -> bool {
         .any(|marker| lower.contains(marker))
 }
 
-/// Keep each ContentDelta JSON under the Run event safe-text budget (2_000 chars).
-fn take_safe_content_delta_chunk(remaining: &mut String) -> AppResult<String> {
-    const SAFE_EVENT_BUDGET_CHARS: usize = 2_000;
-    const INITIAL_CHUNK_CHARS: usize = 1_500;
-    if remaining.is_empty() {
-        return Ok(String::new());
+impl Drop for AgentRunStreamObserver<'_> {
+    fn drop(&mut self) {
+        // Numeric diagnostics only; a diagnostics write cannot change publication outcome.
+        let _ = self.db.with_conn(|conn| {
+            conn.execute("UPDATE agent_runs SET provider_route_summary_json = json_set(provider_route_summary_json,
+                '$.publication.candidateRounds', ?1, '$.publication.discardedCandidates', ?2,
+                '$.publication.rejectedResets', ?3, '$.publication.resetReason', 'private_candidate_only') WHERE run_id = ?4",
+                rusqlite::params![self.candidate_rounds, self.discarded_candidates, self.replacement_requests, self.run_id])?;
+            Ok(())
+        });
     }
-    let total = remaining.chars().count();
-    let mut end = total.min(INITIAL_CHUNK_CHARS);
-    loop {
-        let chunk: String = remaining.chars().take(end).collect();
-        let payload = RunEventPayload::ContentDelta {
-            delta: chunk.clone(),
-        };
-        let encoded = serde_json::to_string(&payload)?;
-        if encoded.chars().count() <= SAFE_EVENT_BUDGET_CHARS || end <= 1 {
-            *remaining = remaining.chars().skip(chunk.chars().count()).collect();
-            return Ok(chunk);
-        }
-        end = (end * 3 / 4).max(1);
-    }
-}
-
-/// Keep live presentation deltas small enough for smooth incremental rendering.
-///
-/// Durable `ContentDelta` events are bounded by the persistence JSON budget,
-/// but presentation `AnswerDelta` events go straight to the UI. A provider that
-/// emits a whole paragraph in one chunk would otherwise make the frontend apply
-/// a large layout-affecting delta in a single frame. This chunks at Unicode
-/// scalar boundaries (Rust `char`), so surrogate pairs are never split.
-fn take_safe_presentation_delta_chunk(remaining: &mut String) -> String {
-    const PRESENTATION_CHUNK_CHARS: usize = 256;
-    if remaining.is_empty() {
-        return String::new();
-    }
-    let chunk: String = remaining.chars().take(PRESENTATION_CHUNK_CHARS).collect();
-    *remaining = remaining.chars().skip(chunk.chars().count()).collect();
-    chunk
 }
 
 impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObserver<'_> {
@@ -700,24 +542,21 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
                     return Ok(());
                 }
                 if *replace_visible {
+                    self.replacement_requests += 1;
                     self.transient_content.clear();
-                    if !self.presentation_content.is_empty() {
-                        let _ = self
-                            .sink
-                            .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
-                        self.presentation_content.clear();
-                    }
+                }
+                if !self.candidate_active && !token.is_empty() {
+                    self.candidate_rounds += 1;
+                    self.candidate_active = true;
                 }
                 self.transient_content.push_str(token);
-                if !self.defer_visible_deltas {
-                    self.flush_transient()?;
-                }
             }
             crate::ai_runtime::model_gateway::StreamEventData::ReasoningSummary {
                 summary_id,
                 text,
             } => self.observe_reasoning_summary(summary_id, text)?,
             crate::ai_runtime::model_gateway::StreamEventData::Done { .. } => {
+                self.candidate_active = false;
                 self.persist_reasoning_summaries()?
             }
             crate::ai_runtime::model_gateway::StreamEventData::ToolCall { .. }
@@ -727,15 +566,11 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
     }
 
     fn on_tools_finished(&mut self) -> AppResult<()> {
-        // Unlock provisional/final streaming between model turns, but do not emit
-        // "正在生成答复" here: later tool rounds (e.g. read_note after search) must
-        // still appear before that stage in the process timeline.
-        self.clear_deferred_visible_deltas();
+        // A tool completion never authorizes publication of the next candidate.
         Ok(())
     }
 
     fn on_tools_starting(&mut self) -> AppResult<()> {
-        self.enable_deferred_visible_deltas();
         self.reset_provisional_answer_if_any();
         Ok(())
     }
@@ -899,37 +734,6 @@ mod presentation_clock_tests {
 }
 
 #[cfg(test)]
-mod presentation_chunk_tests {
-    use super::take_safe_presentation_delta_chunk;
-
-    #[test]
-    fn large_presentation_delta_is_split_into_small_chunks() {
-        let mut remaining = "字".repeat(600);
-        let first = take_safe_presentation_delta_chunk(&mut remaining);
-        assert_eq!(first.chars().count(), 256);
-        assert_eq!(remaining.chars().count(), 344);
-        let second = take_safe_presentation_delta_chunk(&mut remaining);
-        assert_eq!(second.chars().count(), 256);
-        assert_eq!(remaining.chars().count(), 88);
-    }
-
-    #[test]
-    fn presentation_chunk_never_splits_emoji() {
-        let mut remaining = format!("a{}b", "😀");
-        let first = take_safe_presentation_delta_chunk(&mut remaining);
-        // "a😀b" is only 4 Rust chars; one chunk keeps the whole emoji intact.
-        assert_eq!(first, "a😀b");
-        assert!(remaining.is_empty());
-    }
-
-    #[test]
-    fn empty_presentation_delta_returns_empty_chunk() {
-        let mut remaining = String::new();
-        assert_eq!(take_safe_presentation_delta_chunk(&mut remaining), "");
-    }
-}
-
-#[cfg(test)]
 mod strict_publish_tests {
     use std::sync::Mutex;
 
@@ -1029,7 +833,6 @@ mod strict_publish_tests {
             &sink,
             true,
         );
-        observer.seal_visible_deltas_until_validated();
         observer.on_tools_finished().expect("tools finished");
         observer
             .observe(
@@ -1056,13 +859,20 @@ mod strict_publish_tests {
         assert!(events
             .iter()
             .all(|event| !matches!(event, RunPresentationPayload::AnswerReset)));
-        let visible = events
+        assert!(events
             .iter()
-            .filter_map(|event| match event {
-                RunPresentationPayload::AnswerDelta { delta } => Some(delta.as_str()),
+            .all(|event| !matches!(event, RunPresentationPayload::AnswerDelta { .. })));
+        let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+            .unwrap()
+            .unwrap();
+        let body: String = replay
+            .events
+            .iter()
+            .filter_map(|event| match event.payload() {
+                RunEventPayload::ContentDelta { delta } => Some(delta.as_str()),
                 _ => None,
             })
-            .collect::<String>();
-        assert_eq!(visible, "验证通过后的唯一答复。");
+            .collect();
+        assert_eq!(body, "验证通过后的唯一答复。");
     }
 }

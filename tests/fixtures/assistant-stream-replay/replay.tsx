@@ -1,6 +1,15 @@
 // Test-only Vite entry: production components, synthetic text, no provider or IPC calls.
 import { Profiler, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { useAssistantConversationProjection } from "@/components/ai/hooks/useAssistantConversationProjection";
+import {
+  createAssistantRunEventState,
+  type AssistantRunEventState,
+} from "@/lib/assistant-run-events";
+import {
+  createAssistantPresentationState,
+  type AssistantPresentationState,
+} from "@/lib/assistant-presentation";
 import { AiMessageList, type ChatLine } from "@/components/ai/AiMessageList";
 import "@/styles/globals.css";
 import "@/styles/markdown-prose.css";
@@ -76,8 +85,23 @@ const blankMetrics = (): Metrics => ({
 });
 const paragraphs =
   "# 合成流标题继续增长\n\n- 第一项\n\n- 第二项\n\n这是用于逐帧回放的合成段落。中英文混排 streaming 👨‍👩‍👧‍👦 é，检查换行与连续显示。\n\n```ts\nconst result = 42;\n```\n\n| 列一 | 列二 |\n| --- | --- |\n| 合成 | 数据 |\n\n";
+const noop = () => undefined;
 function App() {
   const [messages, setMessages] = useState<ChatLine[]>([]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const [run, setRun] = useState<AssistantRunEventState | null>(null);
+  const [presentation, setPresentation] =
+    useState<AssistantPresentationState | null>(null);
+  useAssistantConversationProjection({
+    run,
+    presentation,
+    messages,
+    setMessages,
+    setStreaming: noop,
+    setActivityHint: noop,
+    setError: noop,
+  });
   const [size, setSize] = useState(1000);
   const [width, setWidth] = useState(420);
   const [kind, setKind] = useState("mixed");
@@ -147,10 +171,18 @@ function App() {
   useEffect(() => {
     if (!playing) return;
     let frame = 0;
+    let clockStarted = false;
     let previousBody: Element | null = null;
     let completeAt = 0;
     let presentedAt = 0;
     let lastPublication = 0;
+    let firstVisibleAt = 0;
+    let draftFrames = 0;
+    let clearedFrames = 0;
+    let prematureCompleteFrames = 0;
+    let wasVisible = false;
+    let confirmedTarget = "";
+    let targetReplacements = 0;
     const scrolls: { t: number; top: number; max: number }[] = [];
     let upwardWheels = 0;
     const observedViewport = host.current?.querySelector<HTMLElement>(
@@ -180,6 +212,10 @@ function App() {
     if (PerformanceObserver.supportedEntryTypes?.includes("longtask"))
       longTaskObserver?.observe({ type: "longtask" });
     const tick = (now: number) => {
+      if (!clockStarted) {
+        started.current = now;
+        clockStarted = true;
+      }
       const elapsed = now - started.current;
       const run = runRef.current;
       // Intake binds after 150ms; target arrives in bursts over 2s, then completes.
@@ -190,7 +226,7 @@ function App() {
       if (
         elapsed >= 150 &&
         now - lastPublication >= 80 &&
-        !completeAt &&
+        (!completeAt || now - completeAt < 800) &&
         !stoppedRef.current
       ) {
         lastPublication = now;
@@ -201,21 +237,42 @@ function App() {
               ? { ...message, runId: run, turnId: `turn-${run}` }
               : message,
           );
-          const row: ChatLine = {
-            role: "assistant",
-            content: source.current.slice(0, end),
-            runId: run,
-            answerPresentation: { runId: run, resetEpoch: 0, complete },
-            presentationStreaming: !complete,
-          };
-          const index = next.findIndex(
-            (message) => message.role === "assistant" && message.runId === run,
-          );
-          if (index < 0) next.push(row);
-          else next[index] = row;
           return next;
         });
-        if (complete) completeAt = now;
+        // Replay both historical withdrawal triggers through the production projection:
+        // private candidate -> tools/reset, then committed body -> late reset/short snapshot.
+        const epoch =
+          completeAt && now - completeAt > 350 ? 2 : elapsed > 850 ? 1 : 0;
+        setRun({
+          ...createAssistantRunEventState(run),
+          state: complete ? "completed" : "running",
+          lastSeq: Math.floor(elapsed / 80),
+          content: complete
+            ? epoch === 2
+              ? "较短的迟到版本"
+              : source.current
+            : "",
+          stage: complete ? null : "正在检索并整理答复",
+        });
+        setPresentation({
+          ...createAssistantPresentationState(run),
+          lastSeq: Math.floor(elapsed / 80),
+          resetEpoch: epoch,
+          answer: epoch ? "" : "不应出现在正文中的候选文字",
+          answerComplete: complete,
+          processItems: complete
+            ? []
+            : [
+                {
+                  id: "synthetic-tool",
+                  kind: "tool",
+                  label: "联网搜索",
+                  status: "running",
+                  elapsedMs: 150,
+                },
+              ],
+        });
+        if (complete && !completeAt) completeAt = now;
       }
       const viewport = host.current?.querySelector<HTMLElement>(
         "[data-radix-scroll-area-viewport]",
@@ -227,8 +284,23 @@ function App() {
       if (previousBody && body && previousBody !== body)
         metrics.current.bodyReplacements += 1;
       if (body) previousBody = body;
+      const projected = messagesRef.current.find(
+        (message) => message.role === "assistant" && message.runId === run,
+      );
+      if (projected?.answerPresentation?.complete) {
+        if (confirmedTarget && projected.content !== confirmedTarget)
+          targetReplacements += 1;
+        confirmedTarget = projected.content;
+      }
+      const visible = Boolean(body?.textContent?.trim());
+      if (visible && !firstVisibleAt) firstVisibleAt = elapsed;
+      if (visible && !completeAt) draftFrames += 1;
+      if (wasVisible && !visible) clearedFrames += 1;
+      wasVisible ||= visible;
       const phase =
         answer?.getAttribute("data-presentation-phase") ?? "pending";
+      if (phase !== "complete" && answer?.textContent?.includes("答复完毕"))
+        prematureCompleteFrames += 1;
       metrics.current.samples.push({
         t: Math.round(elapsed * 100) / 100,
         top: viewport?.scrollTop ?? 0,
@@ -268,44 +340,60 @@ function App() {
         const detached = data.samples.findIndex((sample) => !sample.following);
         const detachTime = data.samples[detached]?.t ?? -1;
         const sorted = [...data.renderMs].sort((a, b) => a - b);
-        setSummary(
-          JSON.stringify(
-            {
-              frames: data.samples.length,
-              renderP95Ms: sorted[Math.floor(sorted.length * 0.95)] ?? 0,
-              longTasks: data.longTasks.length,
-              longTaskSupported:
-                PerformanceObserver.supportedEntryTypes?.includes("longtask") ??
-                false,
-              maxLongTaskMs: Math.max(0, ...data.longTasks),
-              bodyReplacements: data.bodyReplacements,
-              maxNodes: data.maxNodes,
-              maxAnchorDrift: data.maxAnchorDrift,
-              observers: observerStats.instances,
-              observedNodes: observerStats.observed,
-              phase,
-              viewportHeight: viewport?.clientHeight ?? 0,
-              finalScrollTop: viewport?.scrollTop ?? 0,
-              finalScrollHeight: viewport?.scrollHeight ?? 0,
-              firstDetachedAt:
-                data.samples.find((sample) => !sample.following)?.t ?? null,
-              upwardWheels,
-              detachFrames:
-                detached < 0
-                  ? []
-                  : data.samples.slice(Math.max(0, detached - 4), detached + 4),
-              detachScrolls:
-                detached < 0
-                  ? []
-                  : scrolls.filter(
-                      (sample) => Math.abs(sample.t - detachTime) < 100,
-                    ),
-              durationMs: Math.round(elapsed),
-            },
-            null,
-            2,
-          ),
+        const report = JSON.stringify(
+          {
+            frames: data.samples.length,
+            draftFrames,
+            targetReplacements,
+            finalTargetChars: confirmedTarget.length,
+            clearedFrames,
+            prematureCompleteFrames,
+            researchMs: completeAt ? completeAt - started.current : null,
+            firstVisibleMs: firstVisibleAt || null,
+            playbackCompleteMs: presentedAt
+              ? presentedAt - started.current
+              : null,
+            renderP95Ms: sorted[Math.floor(sorted.length * 0.95)] ?? 0,
+            longTasks: data.longTasks.length,
+            longTaskSupported:
+              PerformanceObserver.supportedEntryTypes?.includes("longtask") ??
+              false,
+            maxLongTaskMs: Math.max(0, ...data.longTasks),
+            bodyReplacements: data.bodyReplacements,
+            maxNodes: data.maxNodes,
+            maxAnchorDrift: data.maxAnchorDrift,
+            observers: observerStats.instances,
+            observedNodes: observerStats.observed,
+            phase,
+            viewportHeight: viewport?.clientHeight ?? 0,
+            finalScrollTop: viewport?.scrollTop ?? 0,
+            finalScrollHeight: viewport?.scrollHeight ?? 0,
+            firstDetachedAt:
+              data.samples.find((sample) => !sample.following)?.t ?? null,
+            upwardWheels,
+            detachFrames:
+              detached < 0
+                ? []
+                : data.samples.slice(Math.max(0, detached - 4), detached + 4),
+            detachScrolls:
+              detached < 0
+                ? []
+                : scrolls.filter(
+                    (sample) => Math.abs(sample.t - detachTime) < 100,
+                  ),
+            durationMs: Math.round(elapsed),
+          },
+          null,
+          2,
         );
+        setSummary(report);
+        // Optional loopback collector for native windows without a WebDriver bridge.
+        if (new URLSearchParams(location.search).get("report") === "1") {
+          void fetch("http://127.0.0.1:17543/metrics", {
+            method: "POST",
+            body: report,
+          }).catch(() => undefined);
+        }
         setPlaying(false);
       } else frame = requestAnimationFrame(tick);
     };
@@ -449,3 +537,15 @@ function App() {
   );
 }
 createRoot(document.getElementById("root")!).render(<App />);
+
+// Opt-in automation for native WebKit/WebView2; still synthetic and IPC-free.
+if (new URLSearchParams(window.location.search).has("auto")) {
+  const begin = () => {
+    const button = document.querySelector<HTMLButtonElement>(
+      '[data-testid="stream-replay-start"]',
+    );
+    if (button) button.click();
+    else window.setTimeout(begin, 100);
+  };
+  window.setTimeout(begin, 100);
+}

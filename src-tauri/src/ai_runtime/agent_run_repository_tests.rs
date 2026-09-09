@@ -1383,7 +1383,14 @@ fn finalization_writes_assistant_message_run_terminal_state_and_event_atomically
         replay.run.final_message_id.as_deref(),
         Some(message_id.as_str())
     );
-    assert_eq!(replay.events.len(), 4);
+    assert_eq!(replay.events.len(), 5);
+    assert!(
+        matches!(replay.events[3].payload(), RunEventPayload::ContentDelta { delta } if delta == "这是唯一的最终答复。")
+    );
+    assert!(matches!(
+        replay.events[4].payload(),
+        RunEventPayload::Completed { .. }
+    ));
     db.with_read_conn(|conn| {
         let messages: i64 = conn.query_row(
             "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1 AND role = 'assistant'",

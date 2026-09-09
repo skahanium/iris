@@ -18,10 +18,7 @@ import type {
   AssistantPresentationState,
 } from "@/lib/assistant-presentation";
 import { sanitizeAssistantVisibleText } from "@/lib/assistant-visible-text";
-import {
-  getAiPayloadStore,
-  restoreChatLineContent,
-} from "@/lib/ai-payload-store";
+import { restoreChatLineContent } from "@/lib/ai-payload-store";
 import { assistantSessionLoad } from "@/lib/ipc";
 import { toolDisplayName } from "@/lib/tool-display-names";
 import type {
@@ -33,7 +30,7 @@ import type { AssistantAnswerReveal } from "./useAssistantAnswerReveal";
 export interface AssistantConversationProjectionOptions {
   run: AssistantRunEventState | null;
   presentation?: AssistantPresentationState | null;
-  /** Smoothed live answer scoped to a specific Run; must match `run.runId`. */
+  /** Legacy caller compatibility; provisional playback never owns the body. */
   presentationReveal?: AssistantAnswerReveal;
   session?: AssistantSessionRef | null;
   messages: readonly ChatLine[];
@@ -55,7 +52,6 @@ export interface AssistantConversationProjectionOptions {
 export function useAssistantConversationProjection({
   run,
   presentation,
-  presentationReveal,
   session,
   messages,
   setMessages,
@@ -67,6 +63,10 @@ export function useAssistantConversationProjection({
 }: AssistantConversationProjectionOptions) {
   const appliedProjectionRef = useRef<string | null>(null);
   const hydratedCompletedRunsRef = useRef(new Set<string>());
+  const classifiedResultRef = useRef<{
+    key: string;
+    result: Promise<string>;
+  } | null>(null);
 
   useEffect(() => {
     if (
@@ -98,13 +98,20 @@ export function useAssistantConversationProjection({
               )
             : current?.processItems;
           const loadedContent = sanitizeAssistantVisibleText(persisted.content);
-          const currentContent = current ? restoreChatLineContent(current) : "";
           const mayAdvanceContent =
-            loadedContent.startsWith(currentContent) &&
-            !(current?.presentationStreaming && !current.answerPresentation);
+            Boolean(loadedContent) && !current?.answerPresentation?.complete;
           return upsertRunMessage(previous, run.runId, {
             ...(mayAdvanceContent
-              ? { content: loadedContent, contentRef: undefined }
+              ? {
+                  content: loadedContent,
+                  contentRef: undefined,
+                  presentationStreaming: false,
+                  answerPresentation: {
+                    runId: run.runId,
+                    resetEpoch: 0,
+                    complete: true,
+                  },
+                }
               : {}),
             turnId: persisted.turnId,
             turnState: persisted.turnState,
@@ -121,6 +128,62 @@ export function useAssistantConversationProjection({
   }, [run, session, setMessages]);
 
   useEffect(() => {
+    if (!classifiedContextRef) {
+      classifiedResultRef.current = null;
+      return;
+    }
+    if (run?.state !== "completed" || !takeClassifiedResult) return;
+    let disposed = false;
+    const runId = run.runId;
+    const key = `${classifiedContextRef}:${runId}`;
+    if (classifiedResultRef.current?.key !== key) {
+      classifiedResultRef.current = {
+        key,
+        result: takeClassifiedResult({
+          runId,
+          contextRef: classifiedContextRef,
+        }),
+      };
+    }
+    void classifiedResultRef.current.result
+      .then((body) => {
+        if (disposed) return;
+        const content = sanitizeAssistantVisibleText(body);
+        if (!content.trim()) throw new Error("classified_result_empty");
+        setMessages((previous) => {
+          const current = previous.find(
+            (message) =>
+              message.role === "assistant" && message.runId === runId,
+          );
+          if (current?.answerPresentation?.complete) return previous;
+          return upsertRunMessage(previous, runId, {
+            content,
+            contentRef: undefined,
+            presentationStreaming: false,
+            processItems: ensureTerminalAnswerComplete(
+              current?.processItems,
+              "completed",
+            ),
+            answerPresentation: { runId, resetEpoch: 0, complete: true },
+          });
+        });
+      })
+      .catch(() => {
+        if (!disposed) setError("涉密回答已失效；请重新附带当前文档后重试。");
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [
+    run?.runId,
+    run?.state,
+    classifiedContextRef,
+    takeClassifiedResult,
+    setMessages,
+    setError,
+  ]);
+
+  useEffect(() => {
     if (!run) return;
     // The Run acceptance event can arrive before the conversation projection
     // has appended its user/assistant placeholder. Do not mark the whole
@@ -135,10 +198,7 @@ export function useAssistantConversationProjection({
       setActivityHint(run.stage);
       return;
     }
-    if (
-      ["completed", "failed", "cancelled"].includes(run.state ?? "") ||
-      (presentation?.runId === run.runId && presentation.answerComplete)
-    ) {
+    if (["completed", "failed", "cancelled"].includes(run.state ?? "")) {
       if (run.state !== "failed" && run.state !== "cancelled") {
         setActivityHint(null);
       }
@@ -153,7 +213,7 @@ export function useAssistantConversationProjection({
     if (run.lastSeq === 0 && !hasLivePresentation) return;
     if (!messages.some((message) => message.runId === run.runId)) return;
 
-    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${presentation?.resetEpoch ?? 0}:${presentationReveal?.runId ?? ""}:${presentationReveal?.answer.length ?? 0}:${presentationReveal?.revealing ? 1 : 0}`;
+    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${run.state}:${run.resyncFromSeq}`;
     if (appliedProjectionRef.current === projectionKey) return;
     appliedProjectionRef.current = projectionKey;
 
@@ -162,12 +222,6 @@ export function useAssistantConversationProjection({
     );
     const presentationReady =
       presentation?.runId === run.runId && presentation.resyncFromSeq === null;
-    const presentationOwnsContent =
-      presentationReady &&
-      (!terminal ||
-        presentation.answerComplete ||
-        (run.state === "completed" &&
-          (presentation.answer.length > 0 || presentationReveal?.revealing)));
     const presentationOwnsProcess = presentationReady && !terminal;
     const processItems = ensureTerminalAnswerComplete(
       presentationOwnsProcess
@@ -186,80 +240,33 @@ export function useAssistantConversationProjection({
     const currentMessage = messages.find(
       (message) => message.role === "assistant" && message.runId === run.runId,
     );
-    const revealMatchesRun =
-      presentationReveal?.runId === run.runId &&
-      presentation?.runId === run.runId;
-    const visiblePresentationAnswer = revealMatchesRun
-      ? sanitizeAssistantVisibleText(presentationReveal.answer)
-      : "";
-    let content = presentationOwnsContent
-      ? visiblePresentationAnswer
-      : run.content.trim()
-        ? run.content
-        : (currentMessage?.content ?? "");
-    let presentationStreaming =
-      presentationOwnsContent &&
-      (Boolean(presentationReveal?.revealing) || !terminal);
-    let fullContent = presentationOwnsContent
-      ? sanitizeAssistantVisibleText(presentation?.answer ?? "")
-      : run.content.trim()
-        ? run.content
-        : (currentMessage?.content ?? "");
-    // Production rows carry the complete safe target. Only their own body advances
-    // its visible prefix; durable completion and hydration cannot bypass playback.
-    const resetEpoch =
-      presentation?.runId === run.runId
-        ? (presentation.resetEpoch ?? 0)
-        : (currentMessage?.answerPresentation?.resetEpoch ?? 0);
+    // A completed, contiguous durable snapshot is the only normal-domain target.
+    // Presentation deltas/reset are retained for wire compatibility, never publication.
     const stopped = run.state === "cancelled" || run.state === "failed";
-    const answerPresentation = presentationReveal
-      ? undefined
-      : {
-          runId: run.runId,
-          resetEpoch,
-          complete:
-            run.state === "completed" ||
-            Boolean(presentationReady && presentation.answerComplete),
-          stopped,
-          settled: currentMessage?.answerPresentation?.settled,
-        };
-    if (!presentationReveal) {
-      const previous = currentMessage
-        ? restoreChatLineContent(currentMessage)
+    const durable = sanitizeAssistantVisibleText(run.content);
+    const ready =
+      run.state === "completed" &&
+      run.resyncFromSeq === null &&
+      !classifiedContextRef &&
+      Boolean(durable.trim());
+    const frozen = currentMessage?.answerPresentation?.complete;
+    const content = frozen
+      ? restoreChatLineContent(currentMessage)
+      : ready
+        ? durable
         : "";
-      const reset =
-        currentMessage?.answerPresentation?.resetEpoch !== undefined &&
-        currentMessage.answerPresentation.resetEpoch !== resetEpoch;
-      const live = presentationReady
-        ? sanitizeAssistantVisibleText(presentation.answer)
-        : "";
-      const durable = sanitizeAssistantVisibleText(run.content);
-      // Only an explicit reset can invalidate an already accepted prefix. A late,
-      // shorter presentation event must not replace a completed durable answer.
-      let target = presentationReady ? live : durable || previous;
-      if (
-        run.state === "completed" &&
-        durable &&
-        (durable.startsWith(target) || !target)
-      )
-        target = durable;
-      if (!reset && previous.startsWith(target)) target = previous;
-      content = fullContent = target;
-      presentationStreaming = !stopped && !answerPresentation?.complete;
-    }
-    const store = getAiPayloadStore();
-    const existingRef = currentMessage?.contentRef;
-    const refMatchesFull = Boolean(
-      existingRef && fullContent && store.getText(existingRef) === fullContent,
-    );
-    let nextContentRef = existingRef;
-    if (fullContent && fullContent !== content) {
-      if (!refMatchesFull) {
-        nextContentRef = store.putText(fullContent, "assistant_message");
-      }
-    } else if (!refMatchesFull) {
-      nextContentRef = undefined;
-    }
+    const answerPresentation = {
+      runId: run.runId,
+      resetEpoch: 0,
+      complete: Boolean(frozen || ready),
+      stopped: !frozen && stopped,
+      settled: currentMessage?.answerPresentation?.settled,
+    };
+    const presentationStreaming = !stopped && !answerPresentation.complete;
+    // Completion without a body (e.g. an event gap) is still waiting for publication.
+    const readyProcessItems = answerPresentation.complete
+      ? processItems
+      : processItems.filter((item) => item.id !== "stage:answer-complete");
 
     setMessages((previous) => {
       const current = previous.find(
@@ -269,22 +276,26 @@ export function useAssistantConversationProjection({
       if (
         current &&
         current.content === content &&
-        current.contentRef === nextContentRef &&
+        current.contentRef === undefined &&
         current.presentationStreaming === presentationStreaming &&
         current.answerPresentation?.resetEpoch ===
           answerPresentation?.resetEpoch &&
         current.answerPresentation?.complete === answerPresentation?.complete &&
         current.answerPresentation?.stopped === answerPresentation?.stopped &&
-        sameProcessItems(current.processItems, processItems)
+        sameProcessItems(current.processItems, readyProcessItems)
       ) {
         return previous;
       }
       return upsertRunMessage(previous, run.runId, {
-        content,
-        contentRef: nextContentRef,
-        processItems,
+        content: current?.answerPresentation?.complete
+          ? restoreChatLineContent(current)
+          : content,
+        contentRef: undefined,
+        processItems: readyProcessItems,
         presentationStreaming,
-        answerPresentation,
+        answerPresentation: current?.answerPresentation?.complete
+          ? current.answerPresentation
+          : answerPresentation,
       });
     });
 
@@ -296,25 +307,9 @@ export function useAssistantConversationProjection({
     if (run.state === "completed") {
       setStreaming(false);
       setActivityHint(null);
-      if (
-        run.events.at(-1)?.payload.kind === "completed" &&
-        classifiedContextRef &&
-        takeClassifiedResult
-      ) {
-        void takeClassifiedResult({
-          runId: run.runId,
-          contextRef: classifiedContextRef,
-        })
-          .then((content) =>
-            setMessages((previous) =>
-              upsertRunMessage(previous, run.runId, { content }),
-            ),
-          )
-          .catch(() => setError("涉密回答已失效；请重新附带当前文档后重试。"));
-      }
       return;
     }
-    if (run.state === "failed") {
+    if (run.state === "failed" && !frozen) {
       setStreaming(false);
       setActivityHint(null);
       setMessages((previous) =>
@@ -331,7 +326,7 @@ export function useAssistantConversationProjection({
       if (event) setError(userVisibleRunFailure(run, event));
       return;
     }
-    if (run.state === "cancelled") {
+    if (run.state === "cancelled" && !frozen) {
       setStreaming(false);
       setActivityHint(null);
       setMessages((previous) => appendCancellationNotice(previous, run.runId));
@@ -340,7 +335,6 @@ export function useAssistantConversationProjection({
     classifiedContextRef,
     messages,
     presentation,
-    presentationReveal,
     run,
     setActivityHint,
     setError,

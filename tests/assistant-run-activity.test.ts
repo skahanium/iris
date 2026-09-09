@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { deriveRunOutputting } from "@/lib/assistant-run-activity";
 
 describe("deriveRunOutputting", () => {
-  it("ends outputting when presentation answerComplete arrives before durable completed", () => {
+  it("keeps processing until durable completion even when presentation completes first", () => {
     expect(
       deriveRunOutputting(
         { runId: "run-1", state: "running" },
         { runId: "run-1", answerComplete: true },
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("keeps outputting while running without answerComplete", () => {

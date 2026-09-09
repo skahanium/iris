@@ -620,16 +620,16 @@ fn direct_engine_calls_provider_once_and_finalizes_one_run() {
         .expect("get run")
         .expect("run exists");
     assert_eq!(replay.run.state, RunState::Completed);
-    assert_eq!(replay.events.len(), 4);
+    assert_eq!(replay.events.len(), 5);
     assert!(replay.run.final_message_id.is_some());
     let emitted = sink.events.lock().expect("recording sink lock");
     assert_eq!(
         emitted.len(),
-        3,
+        4,
         "only persisted post-accepted events emit here"
     );
     assert_eq!(emitted[0]["type"], "stage_changed");
-    assert_eq!(emitted[2]["type"], "completed");
+    assert_eq!(emitted[3]["type"], "completed");
 }
 
 #[tokio::test]
@@ -2317,15 +2317,14 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run exists");
-    assert_eq!(replay.run.state, RunState::Running);
-    assert_eq!(replay.run.state_version, event_state_version(&running));
-    assert_eq!(replay.events.len(), 4);
+    assert_eq!(replay.run.state, RunState::Completed);
+    assert_eq!(replay.run.state_version, event_state_version(&running) + 1);
+    assert_eq!(replay.events.len(), 5);
     assert_eq!(
-        serde_json::to_value(replay.events.last().expect("delta event")).expect("serialize delta")
-            ["payload"]["delta"],
+        serde_json::to_value(&replay.events[3]).expect("serialize delta")["payload"]["delta"],
         "稳定片段"
     );
-    assert_eq!(sink.events.lock().expect("sink lock").len(), 1);
+    assert_eq!(sink.events.lock().expect("sink lock").len(), 2);
 }
 
 #[test]
@@ -2457,7 +2456,7 @@ async fn evaluation_direct_run_records_real_oversized_final_output_rejection() {
 }
 
 #[test]
-fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
+fn tool_loop_observer_keeps_candidates_private_after_tools_finish() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let preparing = AgentRunRepository::append_event(
@@ -2567,11 +2566,9 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
         .filter(|event| event["kind"] == "answer_delta")
         .collect::<Vec<_>>();
     assert!(
-        answer_deltas.len() >= 2,
-        "final turn after tools must emit multiple AnswerDelta events, got {presentation:?}"
+        answer_deltas.is_empty(),
+        "intermediate tool completion cannot authorize publication"
     );
-    assert_eq!(answer_deltas[0]["delta"], "第");
-    assert_eq!(answer_deltas[1]["delta"], "一");
     assert!(
         sink.events
             .lock()
@@ -2655,7 +2652,7 @@ fn tool_loop_observer_defers_generating_stage_until_after_later_tool_rounds() {
 }
 
 #[test]
-fn tool_loop_observer_resets_provisional_answer_when_tools_restart() {
+fn tool_loop_observer_discards_private_candidates_without_reset_when_tools_restart() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let preparing = AgentRunRepository::append_event(
@@ -2716,7 +2713,7 @@ fn tool_loop_observer_resets_provisional_answer_when_tools_restart() {
             .lock()
             .expect("presentation lock")
             .len(),
-        1
+        0
     );
 
     observer
@@ -2727,10 +2724,7 @@ fn tool_loop_observer_resets_provisional_answer_when_tools_restart() {
         .lock()
         .expect("presentation lock")
         .clone();
-    assert_eq!(presentation.len(), 2);
-    assert_eq!(presentation[0]["kind"], "answer_delta");
-    assert_eq!(presentation[0]["delta"], "半成品答复\n");
-    assert_eq!(presentation[1]["kind"], "answer_reset");
+    assert!(presentation.is_empty());
 
     observer
         .observe(
@@ -2752,7 +2746,7 @@ fn tool_loop_observer_resets_provisional_answer_when_tools_restart() {
             .lock()
             .expect("presentation lock")
             .len(),
-        2,
+        0,
         "tokens during a later tool round must stay deferred"
     );
 }
@@ -2992,13 +2986,8 @@ async fn streaming_direct_engine_persists_deltas_and_one_terminal_message() {
         .presentation_events
         .lock()
         .expect("presentation sink lock");
-    assert_eq!(presentation_events.len(), 4);
-    assert_eq!(presentation_events[0]["kind"], "answer_delta");
-    assert_eq!(presentation_events[0]["delta"], "流式片段");
-    assert_eq!(presentation_events[1]["kind"], "answer_reset");
-    assert_eq!(presentation_events[2]["kind"], "answer_delta");
-    assert_eq!(presentation_events[2]["delta"], "流式最终答复");
-    assert_eq!(presentation_events[3]["kind"], "answer_complete");
+    assert_eq!(presentation_events.len(), 1);
+    assert_eq!(presentation_events[0]["kind"], "answer_complete");
     assert_eq!(
         serde_json::to_value(&replay.events[3]).expect("serialize delta")["payload"]["delta"],
         "流式最终答复"
@@ -3036,10 +3025,11 @@ async fn streaming_direct_engine_never_emits_a_model_authored_source_appendix() 
         .lock()
         .expect("presentation lock")
         .clone();
-    let visible = presentation
+    let emitted = sink.events.lock().expect("durable events");
+    let visible = emitted
         .iter()
-        .filter(|event| event["kind"] == "answer_delta")
-        .filter_map(|event| event["delta"].as_str())
+        .filter(|event| event["type"] == "content_delta")
+        .filter_map(|event| event["payload"]["delta"].as_str())
         .collect::<String>();
     assert_eq!(visible, "结论已经给出。");
     assert!(presentation
@@ -3388,6 +3378,63 @@ async fn terminal_sink_failure_recovers_without_reexecution() {
         .expect("first replay")
         .expect("run");
     assert_eq!(replay.run.state, RunState::Completed);
+    assert_eq!(
+        replay
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    serde_json::to_value(event).expect("event")["type"].as_str(),
+                    Some("failed" | "completed" | "cancelled")
+                )
+            })
+            .count(),
+        1
+    );
+    let replay_again = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("second replay")
+        .expect("run");
+    assert_eq!(replay_again.run.state, RunState::Completed);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn body_sink_failure_recovers_the_exact_committed_answer() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockStreamingProvider {
+        calls: AtomicU32::new(0),
+        failure: None,
+    };
+    let sink = SelectiveFailingSink {
+        fail_type: "content_delta",
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+
+    RunEngine::execute_direct_streaming_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+    )
+    .await
+    .expect("a delivery failure cannot overwrite a durable completed result");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("first replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Completed);
+    let body: String = replay
+        .events
+        .iter()
+        .filter_map(|event| match event.payload() {
+            RunEventPayload::ContentDelta { delta } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(body, "流式最终答复");
     assert_eq!(
         replay
             .events

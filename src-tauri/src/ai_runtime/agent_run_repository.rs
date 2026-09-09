@@ -693,6 +693,9 @@ impl AgentRunRepository {
                 if input.state_version != stored_state_version {
                     return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
+                if matches!(&input.payload, RunEventPayload::ContentDelta { .. }) {
+                    return Err(AppError::msg("agent_run_finalization_required"));
+                }
                 validate_tool_call_lifecycle(conn, &input.run_id, &input.payload)?;
                 let next_state = state_for_event(&input.payload).unwrap_or(state);
                 let next_state = transition_to(state, next_state).map_err(|error| {
@@ -954,10 +957,27 @@ impl AgentRunRepository {
 
     /// Atomically persist final output, terminal Run state, and completed event.
     pub(crate) fn finalize(db: &Database, input: FinalizeRunInput) -> AppResult<String> {
+        let events = Self::finalize_with_events(db, input)?;
+        events
+            .last()
+            .and_then(|event| match event.payload() {
+                RunEventPayload::Completed { message_id, .. } => message_id.clone(),
+                _ => None,
+            })
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidFinalOutput))
+    }
+
+    /// Commit the complete answer transcript and terminal fact atomically.
+    /// Returned events are safe to deliver only after this transaction succeeds.
+    pub(crate) fn finalize_with_events(
+        db: &Database,
+        input: FinalizeRunInput,
+    ) -> AppResult<Vec<AssistantRunEvent>> {
         if input.content.trim().is_empty() || input.content.chars().count() > 32_000 {
             return Err(AppError::run(SafeRunErrorCode::InvalidFinalOutput));
         }
-        db.with_conn(|conn| {
+        let diagnostic_run_id = input.run_id.clone();
+        let result = db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
                 let (session_id, turn_id, status, stored_version): (i64, String, String, u64) = conn
                     .query_row(
@@ -1022,6 +1042,19 @@ impl AgentRunRepository {
                     "SELECT COALESCE(MAX(event_seq), 0) + 1 FROM agent_run_events WHERE run_id = ?1",
                     [&input.run_id], |row| row.get(0),
                 )?;
+                let mut events = Vec::new();
+                let mut event_seq = event_seq;
+                let mut remaining = input.content.clone();
+                while !remaining.is_empty() {
+                    let delta = take_safe_content_delta_chunk(&mut remaining)?;
+                    let payload = RunEventPayload::ContentDelta { delta };
+                    validate_safe_event_payload(&payload)?;
+                    let event = AssistantRunEvent::new(&input.run_id, event_seq, stored_version, RunEventType::ContentDelta, &now, payload).map_err(AppError::msg)?;
+                    insert_event(conn, &event)?;
+                    events.push(event);
+                    event_seq += 1;
+                }
+                conn.execute("UPDATE agent_runs SET provider_route_summary_json = json_set(provider_route_summary_json, '$.publication', json_object('version', 1, 'publishedTargets', 1, 'publishedChars', ?1, 'readyElapsedMs', MAX(0, CAST((julianday(?2) - julianday(created_at)) * 86400000 AS INTEGER)))) WHERE run_id = ?3", rusqlite::params![input.content.chars().count(), now, input.run_id])?;
                 let event = AssistantRunEvent::new(
                     &input.run_id, event_seq, next_version, RunEventType::Completed, &now,
                     RunEventPayload::Completed {
@@ -1031,9 +1064,18 @@ impl AgentRunRepository {
                 ).map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
                 conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;
-                Ok(message_id)
+                events.push(event);
+                Ok(events)
             })
-        })
+        });
+        if matches!(&result, Err(AppError::Run(SafeRunErrorCode::TerminalState))) {
+            // Only new publications carry this marker. Never mutate legacy Run history.
+            let _ = db.with_conn(|conn| {
+                conn.execute("UPDATE agent_runs SET provider_route_summary_json = json_set(provider_route_summary_json, '$.publication.rejectedFinalizations', COALESCE(json_extract(provider_route_summary_json, '$.publication.rejectedFinalizations'), 0) + 1, '$.publication.finalizationRejectionReason', 'already_committed') WHERE run_id = ?1 AND json_extract(provider_route_summary_json, '$.publication.version') = 1", [&diagnostic_run_id])?;
+                Ok(())
+            });
+        }
+        result
     }
 
     /// Persist a sanitized partial assistant reply after the user cancelled a live stream.
@@ -3035,5 +3077,28 @@ fn not_found_or_db(error: rusqlite::Error) -> AppError {
         AppError::run(SafeRunErrorCode::RunNotFound)
     } else {
         error.into()
+    }
+}
+
+/// Keep each ContentDelta JSON under the Run event safe-text budget (2_000 chars).
+pub(crate) fn take_safe_content_delta_chunk(remaining: &mut String) -> AppResult<String> {
+    const SAFE_EVENT_BUDGET_CHARS: usize = 2_000;
+    const INITIAL_CHUNK_CHARS: usize = 1_500;
+    if remaining.is_empty() {
+        return Ok(String::new());
+    }
+    let total = remaining.chars().count();
+    let mut end = total.min(INITIAL_CHUNK_CHARS);
+    loop {
+        let chunk: String = remaining.chars().take(end).collect();
+        let payload = RunEventPayload::ContentDelta {
+            delta: chunk.clone(),
+        };
+        let encoded = serde_json::to_string(&payload)?;
+        if encoded.chars().count() <= SAFE_EVENT_BUDGET_CHARS || end <= 1 {
+            *remaining = remaining.chars().skip(chunk.chars().count()).collect();
+            return Ok(chunk);
+        }
+        end = (end * 3 / 4).max(1);
     }
 }

@@ -494,12 +494,109 @@ async fn live_follow_up_continuation_probe() {
         );
         return;
     }
-    let accepted = RunIntake::start(&state.db, request()).unwrap();
+    // Optional user-authorized incident replay. Read the old Run without mutating it,
+    // and copy only its public conversation history into the isolated pilot database.
+    let mut replay_request = request();
+    if let Ok(original_run) = std::env::var("IRIS_PUBLICATION_REPLAY_RUN") {
+        use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
+        let source_conn = rusqlite::Connection::open_with_flags(
+            &source,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let (source_session, before_seq, message): (i64, i64, String) = source_conn.query_row(
+            "SELECT m.session_id, m.seq, m.content FROM session_messages m JOIN agent_runs r ON r.session_id = m.session_id AND r.turn_id = m.turn_id WHERE r.run_id = ?1 AND r.security_domain = 'normal' AND m.role = 'user'",
+            [&original_run], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).expect("original public user turn must exist");
+        let session = NormalSessionRepository::create(&state.db).unwrap();
+        let mut stmt = source_conn.prepare("SELECT m.role, m.content FROM session_messages m WHERE m.session_id = ?1 AND m.seq < ?2 AND m.role IN ('user','assistant') AND (m.turn_id IS NULL OR EXISTS (SELECT 1 FROM agent_runs r WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id AND r.status = 'completed')) ORDER BY m.seq").unwrap();
+        let history = stmt
+            .query_map(rusqlite::params![source_session, before_seq], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        state.db.with_conn(|conn| {
+            for (index, (role, content)) in history.iter().enumerate() {
+                conn.execute("INSERT INTO session_messages (session_id, seq, role, content, content_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![session.session_id, index + 1, role, content, crate::cas::hash::content_hash_str(content), chrono::Utc::now().to_rfc3339()])?;
+            }
+            Ok(())
+        }).unwrap();
+        replay_request.session = Some(crate::ai_runtime::run_contract::AssistantSessionRef {
+            domain: SecurityDomain::Normal,
+            session_key: session.session_key,
+        });
+        replay_request.turn.message = message;
+        eprintln!("publication_replay history_messages={}", history.len());
+    }
+    let accepted = RunIntake::start(&state.db, replay_request).unwrap();
+
+    let context_ready = crate::ai_runtime::run_context::RunContextAssembler::assemble(
+        &state.db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .is_ok();
+    let registry_ready =
+        crate::ai_runtime::tool_executor::ToolRegistry::for_run(&state.db, &accepted.run_id)
+            .is_ok();
+    let route_ready = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
+        &state.db,
+        crate::llm::config::ModelPoolRequirements {
+            context_tokens: 1024,
+            has_images: false,
+            needs_tools: true,
+            needs_reasoning: false,
+        },
+    )
+    .is_ok();
+    eprintln!("publication_replay context_ready={context_ready} registry_ready={registry_ready} route_ready={route_ready}");
+    struct PublicationAudit<'a> {
+        db: &'a Database,
+        invalid: std::sync::atomic::AtomicU32,
+    }
+    impl RunEventSink for PublicationAudit<'_> {
+        fn emit(
+            &self,
+            event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+        ) -> AppResult<()> {
+            if matches!(event.payload(), RunEventPayload::ContentDelta { .. }) {
+                let committed = self.db.with_read_conn(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT status = 'completed' FROM agent_runs WHERE run_id = ?1",
+                        [event.run_id()],
+                        |row| row.get::<_, bool>(0),
+                    )?)
+                })?;
+                if !committed {
+                    self.invalid
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            Ok(())
+        }
+        fn emit_presentation(&self, _: &str, event: RunPresentationPayload) -> AppResult<()> {
+            if matches!(
+                event,
+                RunPresentationPayload::AnswerDelta { .. } | RunPresentationPayload::AnswerReset
+            ) {
+                self.invalid
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(())
+        }
+    }
+    let audit = PublicationAudit {
+        db: &state.db,
+        invalid: std::sync::atomic::AtomicU32::new(0),
+    };
     crate::ai_runtime::normal_run_service::execute_normal_run_with_eval_telemetry_cap(
         std::sync::Arc::clone(state),
         accepted.clone(),
         None,
-        &super::super::NoopRunEventSink,
+        &audit,
         &EvaluationTelemetryTap::default(),
         LiveCampaignRunCap {
             max_model_turns: 8,
@@ -508,9 +605,19 @@ async fn live_follow_up_continuation_probe() {
         },
     )
     .await;
+    assert_eq!(
+        audit.invalid.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "candidate or reset escaped publication gate"
+    );
     let snapshot = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .unwrap()
         .unwrap();
+    for event in &snapshot.events {
+        if let RunEventPayload::Failed { code, .. } = event.payload() {
+            eprintln!("publication_replay failure_code={code:?}");
+        }
+    }
     eprintln!(
         "continuation_probe state={:?} diagnostic={}",
         snapshot.run.state,

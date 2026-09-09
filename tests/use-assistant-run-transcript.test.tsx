@@ -93,7 +93,7 @@ afterEach(() => {
 });
 
 describe("useAssistantConversationProjection", () => {
-  it("连续 presentation delta 必须累积显示，而不是停留在首段", () => {
+  it("连续候选 delta 在正式提交前始终不可见", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
       { role: "assistant", content: "", runId: "run-1", turnId: "turn-1" },
@@ -144,7 +144,7 @@ describe("useAssistantConversationProjection", () => {
         />,
       ),
     );
-    expect(messages[1]?.content).toBe("第一段");
+    expect(messages[1]?.content).toBe("");
 
     act(() =>
       root?.render(
@@ -162,10 +162,10 @@ describe("useAssistantConversationProjection", () => {
         />,
       ),
     );
-    expect(messages[1]?.content).toBe("第一段第二段");
+    expect(messages[1]?.content).toBe("");
   });
 
-  it("answerComplete 先到而 durable completed 丢失时仍结束 streaming", () => {
+  it("answerComplete 先到时仍等待 durable completed", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
       {
@@ -239,7 +239,7 @@ describe("useAssistantConversationProjection", () => {
         />,
       ),
     );
-    expect(streaming).toBe(false);
+    expect(streaming).toBe(true);
   });
 
   it("HR-4：终态遇到展示序号缺口时以同 Run 的可靠正文收敛", () => {
@@ -328,7 +328,7 @@ describe("useAssistantConversationProjection", () => {
     expect(messages[1]?.content).toBe("可靠最终正文");
   });
 
-  it("取消时若直播正文尚未 complete，仍保留半成品气泡并提示可继续", () => {
+  it("提交前取消只显示取消通知，不发布候选正文", () => {
     messages = [
       { role: "user", content: "写一篇长文", runId: "run-1", turnId: "turn-1" },
       {
@@ -420,17 +420,18 @@ describe("useAssistantConversationProjection", () => {
       ),
     );
 
-    expect(messages[1]?.role).toBe("assistant");
-    expect(messages[1]?.content).toBe("这是已经流式露出的半成品正文");
+    expect(messages[1]?.role).toBe("system");
+    expect(messages[1]?.content).toBe("本次回答已取消。");
     expect(
       messages.some((message) => message.content.includes("发送继续")),
-    ).toBe(true);
+    ).toBe(false);
     expect(
-      messages[1]?.processItems?.some((item) => item.label === "答复完毕"),
+      messages[1]?.processItems?.some((item) => item.label === "答复完毕") ??
+        false,
     ).toBe(false);
   });
 
-  it("失败终态保留已露出的正文，但过程回落为失败而非答复完毕", () => {
+  it("提交前失败不发布候选正文，也不显示答复完毕", () => {
     messages = [
       { role: "user", content: "最近新闻", runId: "run-1", turnId: "turn-1" },
       {
@@ -506,14 +507,11 @@ describe("useAssistantConversationProjection", () => {
       ),
     );
 
-    expect(messages[1]?.content).toBe("已经安全展示的前半段。");
-    expect(messages[1]?.presentationStreaming).toBe(false);
-    expect(
-      messages[1]?.processItems?.some((item) => item.label === "答复完毕"),
-    ).toBe(false);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.role).toBe("user");
   });
 
-  it("直播中展示序号缺口时保留已露出正文，不用空耐久正文覆盖", () => {
+  it("展示序号缺口不得把未提交候选写入正文", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
       {
@@ -568,10 +566,10 @@ describe("useAssistantConversationProjection", () => {
       ),
     );
 
-    expect(messages[1]?.content).toBe("已经露出的局部");
+    expect(messages[1]?.content).toBe("");
   });
 
-  it("adds a durable content delta only to the active assistant placeholder", () => {
+  it("waits for completion before exposing a durable content delta", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
       { role: "assistant", content: "", runId: "run-1", turnId: "turn-1" },
@@ -636,7 +634,7 @@ describe("useAssistantConversationProjection", () => {
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
       {
         role: "assistant",
-        content: "世界",
+        content: "",
         runId: "run-1",
         turnId: "turn-1",
         processItems: [{ id: "stage:3", label: "正在生成答复" }],
@@ -853,7 +851,7 @@ describe("useAssistantConversationProjection", () => {
     act(() =>
       root?.render(
         <Probe
-          run={replayAssistantRunEvents("run-1", [
+          run={replayCompleteFixture("run-1", [
             {
               runId: "run-1",
               seq: 1,
@@ -873,6 +871,14 @@ describe("useAssistantConversationProjection", () => {
               timestamp: "2026-07-13T12:00:01.000Z",
               type: "content_delta",
               payload: { kind: "content_delta", delta: "第一答" },
+            },
+            {
+              runId: "run-1",
+              seq: 3,
+              stateVersion: 1,
+              timestamp: "2026-07-13T12:00:02Z",
+              type: "completed",
+              payload: { kind: "completed", messageId: "answer-1" },
             },
           ] satisfies AssistantRunEvent[])}
         />,
@@ -1120,7 +1126,7 @@ describe("useAssistantConversationProjection", () => {
     expect(messages.every((message) => message.runId === "run-2")).toBe(true);
   });
 
-  it("uses the smoothed presentation answer when reveal is active", () => {
+  it("ignores legacy presentation playback before commitment", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-reveal", turnId: "turn-1" },
       {
@@ -1182,12 +1188,12 @@ describe("useAssistantConversationProjection", () => {
       ),
     );
 
-    expect(messages[1]?.content).toBe("完整");
+    expect(messages[1]?.content).toBe("");
     expect(messages[1]?.presentationStreaming).toBe(true);
-    expect(restoreChatLineContent(messages[1]!)).toBe("完整答复");
+    expect(restoreChatLineContent(messages[1]!)).toBe("");
   });
 
-  it("keeps the bubble streaming while reveal drains after completion", () => {
+  it("sets the immutable full target for bubble-local playback on commitment", () => {
     messages = [
       {
         role: "user",
@@ -1205,7 +1211,7 @@ describe("useAssistantConversationProjection", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    const completed = replayAssistantRunEvents("run-complete", [
+    const completed = replayCompleteFixture("run-complete", [
       {
         runId: "run-complete",
         seq: 1,
@@ -1270,8 +1276,8 @@ describe("useAssistantConversationProjection", () => {
       ),
     );
 
-    expect(messages[1]?.content).toBe("完整");
-    expect(messages[1]?.presentationStreaming).toBe(true);
+    expect(messages[1]?.content).toBe("完整答复");
+    expect(messages[1]?.answerPresentation?.complete).toBe(true);
   });
 
   it("new_run_never_projects_previous_reveal_answer", () => {
@@ -1448,7 +1454,7 @@ describe("useAssistantConversationProjection", () => {
     document.body.append(host);
     root = createRoot(host);
 
-    const newRun = replayAssistantRunEvents("run-new", [
+    const newRun = replayCompleteFixture("run-new", [
       {
         runId: "run-new",
         seq: 1,
@@ -1507,3 +1513,31 @@ describe("useAssistantConversationProjection", () => {
     ).toBe("本轮持久化正文");
   });
 });
+
+function replayCompleteFixture(runId: string, events: AssistantRunEvent[]) {
+  const accepted = events[0]!;
+  return replayAssistantRunEvents(
+    runId,
+    [
+      accepted,
+      {
+        ...accepted,
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "preparing",
+          stage: "正在准备",
+        },
+      },
+      {
+        ...accepted,
+        type: "stage_changed",
+        payload: { kind: "stage_changed", state: "running", stage: "正在处理" },
+      },
+      ...events.slice(1),
+    ].map((event, index) => ({
+      ...event,
+      seq: index + 1,
+    })) as AssistantRunEvent[],
+  );
+}

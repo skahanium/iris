@@ -5,23 +5,19 @@ const MAX_FINAL_OUTPUT_CHARS: usize = 32_000;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum RunFinalizationStage {
-    StreamFlush,
     WebDegradation,
     EvidenceValidation,
     FinalOutputValidation,
     SqliteFinalize,
-    EventDelivery,
 }
 
 impl RunFinalizationStage {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::StreamFlush => "stream_flush",
             Self::WebDegradation => "web_degradation",
             Self::EvidenceValidation => "evidence_validation",
             Self::FinalOutputValidation => "final_output_validation",
             Self::SqliteFinalize => "sqlite_finalize",
-            Self::EventDelivery => "event_delivery",
         }
     }
 }
@@ -303,32 +299,8 @@ pub(super) fn validated_current_run_final_submission(
         })
 }
 
-pub(super) fn flush_validated_stream_or_fail(
-    db: &Database,
-    run_id: &str,
-    state_version: u64,
-    observer: &mut AgentRunStreamObserver<'_>,
-    sink: &impl RunEventSink,
-) -> AppResult<()> {
-    observer.flush_without_terminal().map_err(|error| {
-        let code = if error.to_string().contains("delivery") || error.to_string().contains("emit") {
-            SafeRunErrorCode::EventDeliveryFailed
-        } else {
-            SafeRunErrorCode::PersistenceFailed
-        };
-        fail_finalization_with_sink(
-            db,
-            run_id,
-            state_version,
-            sink,
-            RunFinalizationFailure::new(RunFinalizationStage::StreamFlush, code, error.to_string()),
-        )
-        .expect_err("finalization failure helper always returns an error")
-    })
-}
-
 /// Shared Direct/ToolLoop terminal contract:
-/// validated deltas → durable message/`completed` → AnswerComplete → clear abort handle.
+/// Atomically commit the unique body and terminal events, then deliver them to the UI.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_run_terminal(
     db: &Database,
@@ -397,7 +369,7 @@ pub(super) fn emit_run_terminal(
         effective_source_summary.as_ref(),
         attribution,
     );
-    if let Err(error) = AgentRunRepository::finalize(
+    let committed_events = match AgentRunRepository::finalize_with_events(
         db,
         FinalizeRunInput {
             run_id: run_id.to_string(),
@@ -411,17 +383,23 @@ pub(super) fn emit_run_terminal(
                 .unwrap_or_default(),
         },
     ) {
-        return fail_finalization_with_sink(
-            db,
-            run_id,
-            state_version,
-            sink,
-            RunFinalizationFailure::new(
-                RunFinalizationStage::SqliteFinalize,
-                SafeRunErrorCode::PersistenceFailed,
-                error.to_string(),
-            ),
-        );
+        Ok(events) => events,
+        Err(error) => {
+            return fail_finalization_with_sink(
+                db,
+                run_id,
+                state_version,
+                sink,
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::SqliteFinalize,
+                    SafeRunErrorCode::PersistenceFailed,
+                    error.to_string(),
+                ),
+            )
+        }
+    };
+    for event in &committed_events {
+        emit_durable_event_best_effort(sink, event);
     }
     match NormalSessionRepository::get(db, &session.session_key) {
         Ok(Some(normal_session)) => {
@@ -450,11 +428,6 @@ pub(super) fn emit_run_terminal(
             "conversation memory refresh skipped after completed Run"
         ),
     }
-    let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)
-        .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
-        .and_then(|response| response.events.last().cloned())
-        .ok_or_else(|| AppError::run(SafeRunErrorCode::PersistenceFailed))?;
-    emit_durable_event_best_effort(sink, &completed);
     // Terminal presentation delivery is best-effort: it is a live UI
     // projection of an already-durable Completed fact, so a failed emit must
     // never turn a successfully persisted Run into an error.

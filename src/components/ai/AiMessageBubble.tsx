@@ -572,12 +572,33 @@ export const AiMessageBubble = memo(function AiMessageBubble({
       : null,
     getLineBudget,
   );
+  const playbackTimingRef = useRef<{
+    key: string;
+    readyAt: number;
+    firstVisibleAt: number | null;
+    reported: boolean;
+  } | null>(null);
   useEffect(() => {
+    if (!answerPresentation?.runId || !answerPresentation.complete) return;
+    const now = performance.now();
+    const key = `${answerPresentation.runId}:${answerPresentation.resetEpoch}`;
+    if (playbackTimingRef.current?.key !== key) {
+      playbackTimingRef.current = {
+        key,
+        readyAt: now,
+        firstVisibleAt: null,
+        reported: false,
+      };
+    }
+    const timing = playbackTimingRef.current;
+    if (!reveal.answer.length) return;
+    timing.firstVisibleAt ??= now;
     if (
-      !answerPresentation?.runId ||
+      timing.reported ||
       (reveal.phase !== "complete" && reveal.phase !== "stopped")
     )
       return;
+    timing.reported = true;
     bubbleRef.current?.dispatchEvent(
       new CustomEvent("iris-answer-presented", {
         bubbles: true,
@@ -585,6 +606,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
           runId: answerPresentation.runId,
           resetEpoch: answerPresentation.resetEpoch,
           length: reveal.answer.length,
+          readyToFirstVisibleMs: timing.firstVisibleAt - timing.readyAt,
+          playbackMs: now - timing.readyAt,
         },
       }),
     );
@@ -595,7 +618,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
     if (reveal.phase !== "draining") return processItems;
     return processItems.map((item) =>
       item.id === "stage:answer-complete"
-        ? { ...item, label: "正在显示答复" }
+        ? { ...item, label: "正在显示答复", status: "running" as const }
         : item,
     );
   }, [processItems, reveal.phase]);

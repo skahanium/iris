@@ -27,22 +27,15 @@ export function isActiveOutputRunState(
 
 /**
  * Single source of truth for Stop/Send and “正在回答”.
- * Presentation answerComplete ends outputting even if durable `completed` is late.
+ * Only the durable lifecycle ends generation; local playback is independent.
  */
 export function deriveRunOutputting(
   run: Pick<AssistantRunEventState, "runId" | "state"> | null | undefined,
-  presentation:
+  _presentation:
     | Pick<AssistantPresentationState, "runId" | "answerComplete">
     | null
     | undefined,
 ): boolean {
   if (!run?.state || isTerminalRunState(run.state)) return false;
-  if (
-    presentation &&
-    presentation.runId === run.runId &&
-    presentation.answerComplete
-  ) {
-    return false;
-  }
   return isActiveOutputRunState(run.state);
 }

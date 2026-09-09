@@ -134,7 +134,8 @@ if (args.runId) {
     json_extract(envelope_json, '$.freshness') AS freshness,
     json_extract(envelope_json, '$.webReason') AS web_reason,
     json_extract(provider_route_summary_json, '$.attempts') AS model_attempts,
-    json_extract(provider_route_summary_json, '$.toolLoop') AS tool_loop
+    json_extract(provider_route_summary_json, '$.toolLoop') AS tool_loop,
+    json_extract(provider_route_summary_json, '$.publication') AS publication
     FROM agent_runs WHERE run_id = '${args.runId.replace(/'/g, "''")}';`,
     )}\n\n`,
   );
@@ -154,7 +155,7 @@ if (args.runId) {
         json_extract(payload_json, '$.providerId') AS to_provider
        FROM agent_run_events
        WHERE run_id = '${args.runId.replace(/'/g, "''")}'
-         AND event_type IN ('capability_degraded', 'tool_started', 'tool_completed', 'provider_switched', 'failed')
+         AND event_type IN ('capability_degraded', 'tool_started', 'tool_completed', 'provider_switched', 'content_delta', 'completed', 'failed')
        ORDER BY event_seq;`,
     )}\n\n`,
   );

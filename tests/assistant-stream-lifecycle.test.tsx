@@ -89,7 +89,7 @@ describe("stream lifecycle continuity", () => {
     );
   });
 
-  it("projects complete authoritative targets into local playback, including reset and stop", () => {
+  it("projects complete authoritative targets into local playback, ignoring stale reset and stop", () => {
     let messages: ChatLine[] = [
       { role: "user", content: "问题", runId: "run" },
       { role: "assistant", content: "", runId: "run" },
@@ -136,7 +136,7 @@ describe("stream lifecycle continuity", () => {
     }
     try {
       act(() => root.render(<Probe state="running" />));
-      expect(messages[1]?.content).toBe("完整");
+      expect(messages[1]?.content).toBe("");
       expect(messages[1]?.answerPresentation).toMatchObject({
         runId: "run",
         resetEpoch: 0,
@@ -146,12 +146,12 @@ describe("stream lifecycle continuity", () => {
       expect(messages[1]?.content).toBe("完整回答");
       expect(messages[1]?.answerPresentation?.complete).toBe(true);
       act(() => root.render(<Probe state="running" epoch={1} answer="" />));
-      expect(messages[1]?.content).toBe("");
-      expect(messages[1]?.answerPresentation?.resetEpoch).toBe(1);
+      expect(messages[1]?.content).toBe("完整回答");
+      expect(messages[1]?.answerPresentation?.resetEpoch).toBe(0);
       act(() =>
         root.render(<Probe state="cancelled" epoch={1} answer="安全前缀" />),
       );
-      expect(messages[1]?.answerPresentation?.stopped).toBe(true);
+      expect(messages[1]?.answerPresentation?.stopped).toBe(false);
     } finally {
       act(() => root.unmount());
       host.remove();
@@ -265,8 +265,11 @@ describe("stream lifecycle continuity", () => {
             }),
           ),
         );
-        expect(messages[1]?.content).toBe("完整");
-        expect(messages[1]?.presentationStreaming).toBe(true);
+        expect(messages[1]?.content).toBe(
+          completed ? "完整回答的剩余内容" : "",
+        );
+        expect(messages[1]?.answerPresentation?.complete).toBe(completed);
+        expect(messages[1]?.presentationStreaming).toBe(!completed);
       }
     } finally {
       act(() => root.unmount());

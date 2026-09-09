@@ -3,6 +3,8 @@
 mod finalization;
 mod observer;
 mod providers;
+#[cfg(test)]
+mod publication_tests;
 mod recovery;
 
 pub(crate) use finalization::classify_tool_loop_failure;
@@ -14,6 +16,7 @@ pub(crate) use providers::*;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
+#[cfg(test)]
 use std::mem;
 use std::pin::Pin;
 use std::sync::{Mutex, OnceLock};
@@ -268,7 +271,7 @@ impl RunEngine {
                 },
             )?;
         }
-        AgentRunRepository::finalize(
+        let events = AgentRunRepository::finalize_with_events(
             db,
             FinalizeRunInput {
                 run_id: run_id.to_string(),
@@ -279,10 +282,9 @@ impl RunEngine {
                 source_summary: Vec::new(),
             },
         )?;
-        let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .and_then(|response| response.events.last().cloned())
-            .ok_or_else(|| AppError::msg("agent_run_completed_event_missing"))?;
-        emit_durable_event_best_effort(sink, &completed);
+        for event in &events {
+            emit_durable_event_best_effort(sink, event);
+        }
         crate::ai_runtime::model_gateway::clear_abort(run_id);
         Ok(())
     }
@@ -800,12 +802,6 @@ impl RunEngine {
         let finalization_required = tools.iter().any(|tool| {
             tool.name == crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME
         });
-        if executor.requires_web_evidence()
-            || executor.requires_external_evidence()
-            || finalization_required
-        {
-            observer.seal_visible_deltas_until_validated();
-        }
         let tool_loop =
             tool_loop_override.unwrap_or_else(|| AgentToolLoop::from_policy(&budget_policy));
         let outcome = if let Some(telemetry) = telemetry {
@@ -899,7 +895,6 @@ impl RunEngine {
                 return Err(error);
             }
         }
-        observer.clear_deferred_visible_deltas();
         // `EVIDENCE_LIMITED_RESPONSE` is created by the Host after it has
         // withheld an unsupported model draft. It is a complete, safe normal
         // answer, not provider output that should be subjected to the model
@@ -1186,8 +1181,6 @@ impl RunEngine {
         )? {
             return Ok(());
         }
-        observer.bind_validated_content(&content);
-        flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
         let terminal_evidence_ids = if is_evidence_limited_response(&content) {
             Vec::new()
         } else if let Some(structured_evidence_ids) = structured_evidence_ids {
@@ -1395,19 +1388,6 @@ impl RunEngine {
                 ),
             );
         }
-        if let Err(error) = observer.flush_transient() {
-            return fail_finalization_with_sink(
-                db,
-                run_id,
-                running_state_version,
-                sink,
-                RunFinalizationFailure::new(
-                    RunFinalizationStage::EventDelivery,
-                    SafeRunErrorCode::EventDeliveryFailed,
-                    error.to_string(),
-                ),
-            );
-        }
         if !response.tool_calls.is_empty() {
             let failed = AgentRunRepository::append_event(
                 db,
@@ -1494,8 +1474,6 @@ impl RunEngine {
         )? {
             return Ok(());
         }
-        observer.bind_validated_content(&content);
-        flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
         finalize_and_emit_with_sink(
             db,
             session,

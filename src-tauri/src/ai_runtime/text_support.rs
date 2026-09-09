@@ -679,15 +679,6 @@ fn is_markdown_https_link(value: &str) -> bool {
         .is_some_and(|(_, url)| url.starts_with("https://") && url.ends_with(')'))
 }
 
-/// Return the stable visible prefix for every streamed answer.
-///
-/// A trailing source heading is held until the following tokens prove whether
-/// it starts a source appendix or normal prose. The terminal path runs the
-/// same normalizer before persistence.
-pub(crate) fn normalize_model_visible_text_for_stream(text: &str) -> String {
-    normalize_model_visible_text(trim_partial_visible_text_suffix(text))
-}
-
 /// Whether a non-empty answer is only a display title rather than a complete
 /// response. This is structural rather than a language-quality score, so
 /// short greetings and explicit list/code forms remain valid.
@@ -708,46 +699,6 @@ pub(crate) fn is_title_only_visible_answer(content: &str) -> bool {
         && !plain
             .chars()
             .any(|character| matches!(character, '。' | '！' | '？' | '.' | '!' | '?'))
-}
-
-fn trim_partial_visible_text_suffix(text: &str) -> &str {
-    let mut trim_at = text.len();
-    if let Some(start) = trailing_source_appendix_heading_candidate_start(text) {
-        trim_at = trim_at.min(start);
-    }
-    if trim_at == text.len() {
-        text
-    } else {
-        text[..trim_at].trim_end()
-    }
-}
-
-fn trailing_source_appendix_heading_candidate_start(text: &str) -> Option<usize> {
-    let start = text.rfind('\n').map_or(0, |index| index + 1);
-    let candidate = text[start..].trim();
-    let normalized = normalize_partial_model_source_heading(candidate);
-    (!normalized.is_empty()
-        && [
-            "资料来源",
-            "参考来源",
-            "参考资料",
-            "来源",
-            "sources",
-            "references",
-        ]
-        .iter()
-        .any(|heading| heading.starts_with(&normalized)))
-    .then_some(start)
-}
-
-fn normalize_partial_model_source_heading(candidate: &str) -> String {
-    candidate
-        .trim_start_matches('#')
-        .trim()
-        .trim_start_matches(['*', '_'])
-        .trim_end_matches(['*', '_', ':', '：'])
-        .trim()
-        .to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -893,28 +844,5 @@ mod tests {
         );
 
         assert_eq!(visible, "结论已经给出。");
-    }
-
-    #[test]
-    fn visible_model_stream_withholds_a_pending_bold_source_heading() {
-        assert_eq!(
-            normalize_model_visible_text_for_stream("结论已经给出。\n\n**来源：**"),
-            "结论已经给出。"
-        );
-    }
-
-    #[test]
-    fn visible_model_stream_withholds_a_source_heading_after_a_single_newline() {
-        assert_eq!(
-            normalize_model_visible_text_for_stream("结论已经给出。\n来源"),
-            "结论已经给出。"
-        );
-    }
-
-    #[test]
-    fn visible_model_stream_releases_a_source_heading_when_prose_follows() {
-        let answer = "资料来源\n可靠的资料来源应优先采用原始公告。";
-
-        assert_eq!(normalize_model_visible_text_for_stream(answer), answer);
     }
 }

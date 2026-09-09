@@ -515,7 +515,7 @@ describe("useAssistantRun", () => {
     expect(mockAssistantRunGet).toHaveBeenCalled();
   });
 
-  it("answerComplete 使 isBusy 变为 false，即使 durable 仍是 running", async () => {
+  it("临时 answerComplete 不结束仍未提交的 durable Run", async () => {
     let emitPresentation:
       | ((
           event: Parameters<
@@ -586,7 +586,7 @@ describe("useAssistantRun", () => {
     });
 
     expect(runApi?.presentationState?.answerComplete).toBe(true);
-    expect(runApi?.isBusy).toBe(false);
+    expect(runApi?.isBusy).toBe(true);
     expect(["accepted", "preparing", "running", "verifying"]).toContain(
       runApi?.runState,
     );

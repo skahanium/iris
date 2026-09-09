@@ -111,7 +111,7 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 - 普通回答：自然正文，可附受控来源区；不要求 `submit_final_answer`。
 - WebPreferred：有证据时展示当前 Run 来源；日常 `VolatileExternalFact` 必须实际搜索，有适合候选时读取正文。缺少正文可基于实际观察说明缺口，不能把训练知识冒充当前事实，也不因无摘录整轮失败。最低观察只负责启动，不得因首次搜索或抓取无结果就跳过仍有预算的调整机会。
 - `HighStakesCurrentFact`、用户明示核实、显式 URL、`CitationCheck` 或交叉核实：必须取得合格正文。只有搜索片段、来源冲突或跨 Run evidence 均不得通过；无摘录时 Host 有内容降级，不得下适用结论。
-- 严格路径仍在验证后一次发布；证据不足时限制说明不得携带 citation map、source summary 或来源卡片。
+- 普通直答、联网、笔记问答统一在现有检查及终态提交后一次发布；证据不足时限制说明不得携带 citation map、source summary 或来源卡片。
 - `ProvenancePolicy` 统一解析 `Wn`、`E{id}`、`L{id}`、`Mn`；`[Cn]` 和数据库裸 ID 只用于内部或展示。
 - Harness 校验来源存在、归属、时效和声明的覆盖关系，不宣称完成自由文本 NLI。
 
@@ -155,3 +155,7 @@ Gateway 为本轮冻结 tools、continuation、parallel calls、streaming 和 st
 - chat-only Provider 仅执行 Direct 或显示明确能力降级。
 - 不稳定自定义 endpoint 不通过一次文本连通测试升级为 Agent-capable。
 - 任何 Provider 都受同一权限、预算、来源和终态合同。
+
+## Agent 正文确认后发布（2026-09-08）
+
+整个 Agent 对话（普通直答、联网及笔记问答）先在内部完成生成、安全净化、完整性及来源处理，再确认唯一正文并平滑显示。工具结束不得解除草稿封存；正常路径不得撤回已显示正文。普通域最终正文分块、会话消息、来源与 completed 在同一事务提交后才投影；涉密域仍只使用既有内存结果。前端只消费已完成的权威正文，晚到 reset 或较短快照不能改写目标；本地播放结束才显示“答复完毕”。首字更晚出现是明确选择，不增加核验模型调用。实现与回放证据未完成前不宣称无撤回验收通过。
