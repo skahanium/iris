@@ -2350,6 +2350,7 @@ dependencies = [
  "rusqlite",
  "rustls",
  "rustls-platform-verifier",
+ "same-file",
  "scraper",
  "serde",
  "serde_json",

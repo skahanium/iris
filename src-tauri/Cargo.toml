@@ -88,6 +88,10 @@ windows = { version = "0.62", features = [
     "Win32_System_Threading",
 ] }
 windows-registry = "0.6"
+# Stable std still gates volume serial / file index behind
+# `windows_by_handle`. walkdir already pulls this Unlicense/MIT crate;
+# it is the existing identity helper instead of writing Win32 `unsafe`.
+same-file = "1.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 system-configuration = "0.7"

@@ -1120,11 +1120,10 @@ fn same_file_identity(left: &Path, right: &Path) -> AppResult<bool> {
 
 #[cfg(windows)]
 fn same_file_identity(left: &Path, right: &Path) -> AppResult<bool> {
-    use std::os::windows::fs::MetadataExt;
-    let left = fs::metadata(left)?;
-    let right = fs::metadata(right)?;
-    Ok(left.volume_serial_number() == right.volume_serial_number()
-        && left.file_index() == right.file_index())
+    // Stable Rust does not expose volume serial / file index on
+    // `MetadataExt` (`windows_by_handle`). `same_file` uses the Win32
+    // handle query that matches Unix `dev`/`ino` identity for hard links.
+    same_file::is_same_file(left, right).map_err(Into::into)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -1355,6 +1354,20 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(vault.join("new/a.md")).unwrap(), "alpha");
         assert!(checkpoint.journal_path.is_file());
+    }
+
+    #[test]
+    fn same_file_identity_treats_hard_links_as_one_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original.bin");
+        let linked = directory.path().join("linked.bin");
+        let copy = directory.path().join("copy.bin");
+        fs::write(&original, b"payload").unwrap();
+        fs::hard_link(&original, &linked).unwrap();
+        fs::write(&copy, b"payload").unwrap();
+
+        assert!(same_file_identity(&original, &linked).unwrap());
+        assert!(!same_file_identity(&original, &copy).unwrap());
     }
 
     #[test]
