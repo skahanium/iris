@@ -14,6 +14,7 @@ describe("assistant stream rendering performance contract", () => {
     );
     expect(src).toContain("createStreamingRenderableContent(content)");
     expect(src).not.toContain("useStreamingContent");
+    expect(src).not.toContain("useMarkdownRenderWorker");
   });
 
   it("removes the obsolete streaming content throttle module", () => {

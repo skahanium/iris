@@ -29,6 +29,27 @@ const workspaceRoot = path.resolve(
   "..",
 );
 
+function isolatedLiveRoots() {
+  const temporaryRoot = mkdtempSync(
+    path.join(os.tmpdir(), "iris-agent-eval-isolated-"),
+  );
+  const dataDir = path.join(temporaryRoot, "data");
+  const configDir = path.join(temporaryRoot, "config");
+  mkdirSync(dataDir);
+  mkdirSync(configDir);
+  writeFileSync(path.join(dataDir, "iris.db"), "synthetic sqlite placeholder");
+  return { temporaryRoot, dataDir, configDir };
+}
+
+function productGateChildEnvironment(overrides) {
+  const environment = {
+    ...process.env,
+    ...overrides,
+  };
+  delete environment.IRIS_AGENT_EVAL_SOURCE_DB;
+  return environment;
+}
+
 test("smoke release gate requires all 24 deterministic interaction cases to pass", () => {
   assert.throws(
     () =>
@@ -320,10 +341,9 @@ test("product gate refuses to claim quality without an explicit live result", ()
       [path.join(workspaceRoot, "scripts/agent-eval.mjs"), "gate"],
       {
         cwd: workspaceRoot,
-        env: {
-          ...process.env,
+        env: productGateChildEnvironment({
           IRIS_AGENT_EVAL_MODE: "smoke",
-        },
+        }),
         encoding: "utf8",
       },
     );
@@ -509,6 +529,49 @@ test("product quality accepts only v4 trace reports that are bound to human revi
   );
 });
 
+test("product gate rejects missing credential roots before claiming validator ran", () => {
+  const directory = path.join(workspaceRoot, "target", "agent-eval");
+  mkdirSync(directory, { recursive: true });
+  const suffix = `${process.pid}-${Date.now()}`;
+  const first = path.join(directory, `missing-root-live-a-${suffix}.json`);
+  const second = path.join(directory, `missing-root-live-b-${suffix}.json`);
+  const review = path.join(directory, `missing-root-review-${suffix}.json`);
+  writeFileSync(first, "{}");
+  writeFileSync(second, "{}");
+  writeFileSync(review, "{}");
+  try {
+    const child = spawnSync(
+      process.execPath,
+      [path.join(workspaceRoot, "scripts/agent-eval.mjs"), "gate"],
+      {
+        cwd: workspaceRoot,
+        env: productGateChildEnvironment({
+          IRIS_DATA_DIR: path.join(os.tmpdir(), `iris-missing-data-${suffix}`),
+          IRIS_CONFIG_DIR: path.join(
+            os.tmpdir(),
+            `iris-missing-config-${suffix}`,
+          ),
+          IRIS_AGENT_EVAL_LIVE_RESULTS: [first, second].join(path.delimiter),
+          IRIS_AGENT_EVAL_LIVE_REVIEW: review,
+        }),
+        encoding: "utf8",
+      },
+    );
+
+    assert.notEqual(child.status, 0);
+    assert.match(child.stderr, /agent_eval_live_credential_root_invalid/);
+    assert.doesNotMatch(
+      child.stderr,
+      /agent_eval_live_result_strict_validation_failed/,
+    );
+    assert.equal(existsSync(path.join(directory, "product-gate.json")), false);
+  } finally {
+    for (const artifact of [first, second, review]) {
+      rmSync(artifact, { force: true });
+    }
+  }
+});
+
 test("product gate runs the Rust strict validator before trusting live counters", () => {
   const directory = path.join(workspaceRoot, "target", "agent-eval");
   mkdirSync(directory, { recursive: true });
@@ -554,17 +617,19 @@ test("product gate runs the Rust strict validator before trusting live counters"
       items: [],
     }),
   );
+  const roots = isolatedLiveRoots();
   try {
     const child = spawnSync(
       process.execPath,
       [path.join(workspaceRoot, "scripts/agent-eval.mjs"), "gate"],
       {
         cwd: workspaceRoot,
-        env: {
-          ...process.env,
+        env: productGateChildEnvironment({
+          IRIS_DATA_DIR: roots.dataDir,
+          IRIS_CONFIG_DIR: roots.configDir,
           IRIS_AGENT_EVAL_LIVE_RESULTS: [first, second].join(path.delimiter),
           IRIS_AGENT_EVAL_LIVE_REVIEW: review,
-        },
+        }),
         encoding: "utf8",
       },
     );
@@ -576,6 +641,7 @@ test("product gate runs the Rust strict validator before trusting live counters"
     );
     assert.equal(existsSync(path.join(directory, "product-gate.json")), false);
   } finally {
+    rmSync(roots.temporaryRoot, { recursive: true, force: true });
     for (const artifact of [first, second, review]) {
       rmSync(artifact, { force: true });
     }
