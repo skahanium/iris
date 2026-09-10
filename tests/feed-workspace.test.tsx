@@ -587,11 +587,14 @@ describe("FeedWorkspace", () => {
   it("状态写入失败时重新加载详情以回滚详情投影", async () => {
     feedItemSetState.mockRejectedValueOnce(new Error("database"));
     await renderWorkspace();
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-item-i1")).toBeTruthy(),
+    );
     act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
-    await waitFor(() => screen.getByTestId("feed-toggle-read"));
+    const toggle = await screen.findByTestId("feed-toggle-read");
     const detailCalls = feedItemGet.mock.calls.length;
 
-    act(() => fireEvent.click(screen.getByTestId("feed-toggle-read")));
+    act(() => fireEvent.click(toggle));
     await waitFor(() =>
       expect(feedItemGet.mock.calls.length).toBeGreaterThan(detailCalls),
     );
