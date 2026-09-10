@@ -46,6 +46,8 @@ pub mod guardrails;
 pub mod mcp_external_tools;
 pub mod mcp_host_runtime;
 pub mod mcp_runtime_registry;
+#[cfg(test)]
+pub(crate) mod mcp_stdio_test_support;
 pub mod model_gateway;
 pub(crate) mod normal_run_service;
 #[cfg(test)]

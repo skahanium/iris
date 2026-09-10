@@ -2449,38 +2449,8 @@ mod tests {
     }
 
     fn contract_mcp_transport(mode: &str) -> String {
-        if cfg!(windows) {
-            serde_json::json!({
-                "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                "args": [
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    format!(
-                        "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
-                        env!("CARGO_MANIFEST_DIR")
-                    ),
-                    mode,
-                    "1"
-                ]
-            })
+        crate::ai_runtime::mcp_stdio_test_support::contract_mcp_stdio_transport_config(mode, "1")
             .to_string()
-        } else {
-            serde_json::json!({
-                "command": "/bin/sh",
-                "args": [
-                    format!(
-                        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-                        env!("CARGO_MANIFEST_DIR")
-                    ),
-                    mode,
-                    "1"
-                ]
-            })
-            .to_string()
-        }
     }
 
     #[tokio::test]

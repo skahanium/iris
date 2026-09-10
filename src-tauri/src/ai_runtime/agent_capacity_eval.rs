@@ -8516,31 +8516,8 @@ fn install_headless_eval_mcp(
     mode: &str,
 ) -> Result<(), EvalContractError> {
     crate::ai_runtime::circuit_breaker::reset_for_tests("agent-capacity-headless-mcp");
-    let (command, args) = if cfg!(windows) {
-        let fixture = format!(
-            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        (
-            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            vec![
-                "-NoProfile".to_string(),
-                "-NonInteractive".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                fixture,
-                mode.to_string(),
-                "2".to_string(),
-            ],
-        )
-    } else {
-        let fixture = format!(
-            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        ("/bin/sh", vec![fixture, mode.to_string(), "2".to_string()])
-    };
+    let (command, args) =
+        crate::ai_runtime::mcp_stdio_test_support::contract_mcp_stdio_command(mode, "2");
     crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
         &state.db,
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
@@ -10387,38 +10364,10 @@ fn install_boundary_mcp(
     result_count: u32,
 ) -> Result<(), EvalContractError> {
     crate::ai_runtime::circuit_breaker::reset_for_tests("agent-capacity-boundary-mcp");
-    let (command, args) = if cfg!(windows) {
-        let fixture = format!(
-            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        (
-            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            vec![
-                "-NoProfile".to_string(),
-                "-NonInteractive".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                fixture,
-                "search-fetch".to_string(),
-                result_count.to_string(),
-            ],
-        )
-    } else {
-        let fixture = format!(
-            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        (
-            "/bin/sh",
-            vec![
-                fixture,
-                "search-fetch".to_string(),
-                result_count.to_string(),
-            ],
-        )
-    };
+    let (command, args) = crate::ai_runtime::mcp_stdio_test_support::contract_mcp_stdio_command(
+        "search-fetch",
+        &result_count.to_string(),
+    );
     crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
         &state.db,
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {

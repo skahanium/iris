@@ -17,7 +17,9 @@ use crate::error::{AppError, AppResult};
 use crate::indexer::scan::{content_hash as index_content_hash, index_file_from_content};
 use crate::storage::note_title::title_from_path;
 use crate::storage::paths::is_classified_note_path;
+use crate::storage::paths::normalized_relative;
 use crate::storage::paths::resolve_vault_path;
+use crate::storage::paths::vault_relative_from_absolute;
 
 pub use kind::VersionKind;
 pub use policy::{SnapshotDecisionInput, SnapshotSkipReason, AUTO_IDLE_MAX_PER_FILE};
@@ -503,17 +505,13 @@ pub(crate) fn create_snapshot_under_move_lock(
 ) -> AppResult<VersionSaveOutcome> {
     let vault = state.vault_path()?;
     let absolute = resolve_vault_path(&vault, path)?;
-    let path = absolute
-        .strip_prefix(&vault)
-        .map_err(|_| AppError::msg("version_path_outside_vault"))?
-        .to_str()
-        .ok_or_else(|| AppError::msg("version_path_invalid_utf8"))?;
+    let path = vault_relative_from_absolute(&vault, &absolute)?;
     let hash = crate::cas::hash::content_hash_str(content);
-    let file_id = ensure_snapshot_file_id(state, &vault, path, &hash, content).unwrap_or(0);
+    let file_id = ensure_snapshot_file_id(state, &vault, &path, &hash, content).unwrap_or(0);
 
     let now = Utc::now();
     let decision = state.db.with_conn(|conn| {
-        let (latest, last_auto_idle_at) = load_snapshot_context(conn, &vault, path)?;
+        let (latest, last_auto_idle_at) = load_snapshot_context(conn, &vault, &path)?;
         Ok(policy::decide_snapshot(&SnapshotDecisionInput {
             kind: params.kind,
             content_hash: &hash,
@@ -577,7 +575,7 @@ pub(crate) fn create_snapshot_under_move_lock(
     })?;
 
     if params.kind == VersionKind::AutoIdle {
-        let _ = enforce_auto_idle_cap_scoped(state, &vault, path, AUTO_IDLE_MAX_PER_FILE)?;
+        let _ = enforce_auto_idle_cap_scoped(state, &vault, &path, AUTO_IDLE_MAX_PER_FILE)?;
     }
 
     info!(
@@ -615,6 +613,7 @@ pub(crate) fn version_list_including_unassigned(
     include_legacy_unassigned: bool,
 ) -> AppResult<Vec<VersionEntry>> {
     let vault = state.vault_path()?;
+    let path = normalized_relative(path);
     state.db.with_conn(|conn| {
         let sql = format!(
             "{VERSION_SELECT}
@@ -891,6 +890,30 @@ mod tests {
             .expect("manual snapshot");
 
         assert_eq!(entry.kind, VersionKind::Manual);
+    }
+
+    #[test]
+    fn version_snapshot_stores_nested_note_path_with_forward_slashes() {
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        fs::create_dir_all(vault.join("nested").join("dir")).unwrap();
+        fs::write(vault.join("nested").join("dir").join("note.md"), "body").unwrap();
+
+        let entry = version_save_manual(&state, "nested/dir/note.md", "snap")
+            .unwrap()
+            .expect("snapshot");
+        let stored: String = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT note_path FROM versions WHERE id = ?1",
+                    [entry.id],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(stored, "nested/dir/note.md");
+        assert_eq!(version_list(&state, "nested/dir/note.md").unwrap().len(), 1);
     }
 
     #[test]

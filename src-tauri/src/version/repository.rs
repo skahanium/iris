@@ -207,6 +207,7 @@ pub(crate) fn owned_hash(
     path: &str,
     id: i64,
 ) -> AppResult<String> {
+    let path = crate::storage::paths::normalized_relative(path);
     Ok(conn.query_row(
         "SELECT content_hash FROM versions WHERE id = ?1 AND vault_path = ?2 AND note_path = ?3 AND recycle_id IS NULL",
         params![id, vault.to_string_lossy(), path], |row| row.get(0),

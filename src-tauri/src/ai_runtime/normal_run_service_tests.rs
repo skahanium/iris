@@ -833,31 +833,8 @@ fn install_headless_contract_mcp(state: &AppState) {
 }
 
 fn install_headless_contract_mcp_with_mode(state: &AppState, mode: &str) {
-    let (command, args) = if cfg!(windows) {
-        let fixture = format!(
-            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        (
-            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            vec![
-                "-NoProfile".to_string(),
-                "-NonInteractive".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                fixture,
-                mode.to_string(),
-                "2".to_string(),
-            ],
-        )
-    } else {
-        let fixture = format!(
-            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        ("/bin/sh", vec![fixture, mode.to_string(), "2".to_string()])
-    };
+    let (command, args) =
+        crate::ai_runtime::mcp_stdio_test_support::contract_mcp_stdio_command(mode, "2");
     upsert_web_evidence_provider(
         &state.db,
         &WebEvidenceProviderInput {

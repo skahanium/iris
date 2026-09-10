@@ -466,6 +466,9 @@ describe("FeedWorkspace", () => {
       fulltextStatus: "failed",
     });
     await renderWorkspace();
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-item-i1")).toBeTruthy(),
+    );
     act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
 
     expect(
@@ -473,7 +476,7 @@ describe("FeedWorkspace", () => {
     ).toBeTruthy();
     expect(screen.getByTestId("feed-reader-body")).toHaveTextContent("excerpt");
     expect(screen.queryByText("feed_fulltext_failed")).toBeNull();
-    fireEvent.click(screen.getByTestId("feed-retry-fulltext"));
+    fireEvent.click(await screen.findByTestId("feed-retry-fulltext"));
     await waitFor(() =>
       expect(feedFulltextEnqueueItem).toHaveBeenCalledWith("i1"),
     );
@@ -653,7 +656,9 @@ describe("FeedWorkspace", () => {
       fireEvent.keyDown(screen.getByTestId("feed-workspace"), { key: "r" }),
     );
     await waitFor(() => expect(feedSyncAll).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("status").textContent).toContain("同步完成");
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("同步完成"),
+    );
 
     // 输入框聚焦时不触发。
     const input = document.createElement("input");
@@ -983,11 +988,14 @@ describe("FeedWorkspace", () => {
       },
     });
     await renderWorkspace();
-    fireEvent.click(screen.getByTestId("feed-item-i1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-item-i1")).toBeTruthy(),
+    );
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
     await screen.findByTestId("feed-preview-pdf");
     expect(feedDocumentPrepare).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByTestId("feed-preview-pdf"));
+    act(() => fireEvent.click(screen.getByTestId("feed-preview-pdf")));
     await waitFor(() => expect(feedDocumentPrepare).toHaveBeenCalledWith("i1"));
     expect(await screen.findByTestId("feed-document-viewer")).toHaveAttribute(
       "data",
@@ -1011,7 +1019,10 @@ describe("FeedWorkspace", () => {
     });
     feedDocumentPrepare.mockImplementationOnce(() => new Promise(() => {}));
     await renderWorkspace();
-    fireEvent.click(screen.getByTestId("feed-item-i1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-item-i1")).toBeTruthy(),
+    );
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
     fireEvent.click(await screen.findByTestId("feed-preview-pdf"));
     await waitFor(() => expect(feedDocumentPrepare).toHaveBeenCalledWith("i1"));
     fireEvent.click(await screen.findByTestId("feed-document-cancel"));

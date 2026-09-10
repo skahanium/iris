@@ -99,9 +99,23 @@ pub(crate) fn ensure_safe_file_parent(vault: &Path, path: &str) -> AppResult<()>
     Ok(())
 }
 
-/// 用户笔记（非 `.iris` 元数据目录下的版本快照、模板等）。
-fn normalized_relative(relative: &str) -> String {
+/// Vault-relative path using `/` separators regardless of OS.
+pub(crate) fn normalized_relative(relative: &str) -> String {
     relative.replace('\\', "/")
+}
+
+/// Relative path from an already-resolved vault absolute path.
+///
+/// Unlike [`relative_path`], this does not canonicalize, so a snapshot can be
+/// recorded before the Markdown file exists on disk.
+pub(crate) fn vault_relative_from_absolute(vault: &Path, absolute: &Path) -> AppResult<String> {
+    let rel = absolute
+        .strip_prefix(vault)
+        .map_err(|_| AppError::msg("Path is outside the vault"))?;
+    let relative = rel
+        .to_str()
+        .ok_or_else(|| AppError::msg("version_path_invalid_utf8"))?;
+    Ok(normalized_relative(relative))
 }
 
 fn first_path_segment(relative: &str) -> &str {
@@ -409,5 +423,30 @@ mod tests {
         fs::write(&note, "").unwrap();
         let rel = relative_path(&vault, &note).unwrap();
         assert_eq!(rel, "notes/readme.md");
+    }
+
+    #[test]
+    fn normalized_relative_converts_windows_separators() {
+        assert_eq!(
+            normalized_relative(r"nested\dir\note.md"),
+            "nested/dir/note.md"
+        );
+        assert_eq!(
+            normalized_relative("nested/dir/note.md"),
+            "nested/dir/note.md"
+        );
+    }
+
+    #[test]
+    fn vault_relative_from_absolute_uses_forward_slashes() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("nested").join("dir")).unwrap();
+        let absolute = vault.join("nested").join("dir").join("note.md");
+        fs::write(&absolute, "x").unwrap();
+        assert_eq!(
+            vault_relative_from_absolute(&vault, &absolute).unwrap(),
+            "nested/dir/note.md"
+        );
     }
 }

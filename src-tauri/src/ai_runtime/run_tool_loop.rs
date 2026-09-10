@@ -4124,36 +4124,10 @@ mod tests {
     }
 
     fn external_stdio_transport_config() -> serde_json::Value {
-        if cfg!(windows) {
-            serde_json::json!({
-                "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                "args": [
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    format!(
-                        "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
-                        env!("CARGO_MANIFEST_DIR")
-                    ),
-                    "search-only",
-                    "1"
-                ]
-            })
-        } else {
-            serde_json::json!({
-                "command": "/bin/sh",
-                "args": [
-                    format!(
-                        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-                        env!("CARGO_MANIFEST_DIR")
-                    ),
-                    "search-only",
-                    "1"
-                ]
-            })
-        }
+        crate::ai_runtime::mcp_stdio_test_support::contract_mcp_stdio_transport_config(
+            "search-only",
+            "1",
+        )
     }
 
     fn web_failure() -> super::WebFailure {
