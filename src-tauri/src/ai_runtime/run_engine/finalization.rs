@@ -381,6 +381,7 @@ pub(super) fn emit_run_terminal(
                 .as_ref()
                 .map(crate::ai_runtime::provenance::SourceSummary::entries)
                 .unwrap_or_default(),
+            publish_content_deltas: true,
         },
     ) {
         Ok(events) => events,

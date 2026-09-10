@@ -1613,7 +1613,7 @@ mod normal_run_desktop_adapter_tests {
                 );
         assert!(ungranted_tools
             .iter()
-            .all(|tool| tool.name != binding.exposed_name));
+            .any(|tool| tool.name == binding.exposed_name));
 
         let bypass_llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"未经工具核实的事实。\"}}]}\n\ndata: [DONE]\n\n",

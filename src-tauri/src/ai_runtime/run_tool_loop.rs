@@ -679,7 +679,16 @@ impl<'a> NormalRunToolExecutor<'a> {
                 .filter_map(|item| item.get("canonicalUrl").and_then(serde_json::Value::as_str))
                 .map(str::to_string)
                 .collect::<Vec<_>>();
-            self.set_web_failure(None)?;
+            if observations.is_empty()
+                && (self.requires_web_evidence() || self.requires_web_observation())
+            {
+                self.set_web_failure(Some(WebFailure::new(
+                    SafeRunErrorCode::WebEvidenceInvalid,
+                    true,
+                )))?;
+            } else {
+                self.set_web_failure(None)?;
+            }
             return Ok(ToolCallResult {
                 tool_name: tool_name.to_string(),
                 success: true,

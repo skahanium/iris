@@ -247,7 +247,8 @@ async fn second_commit_cannot_replace_the_published_answer() {
             content: "不同的第二份正文".into(),
             evidence_ids: vec![],
             citation_map: serde_json::json!({}),
-            source_summary: vec![]
+            source_summary: vec![],
+            publish_content_deltas: true,
         }
     )
     .is_err());

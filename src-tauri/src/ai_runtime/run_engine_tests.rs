@@ -3861,7 +3861,7 @@ async fn strict_web_answer_without_current_run_marker_withholds_unsupported_draf
     )
     .await
     .expect(
-        "missing current-run marker produces a completed limitation, not a false source binding",
+        "missing current-run marker keeps the natural draft without a false source-group binding",
     );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
@@ -3878,7 +3878,7 @@ async fn strict_web_answer_without_current_run_marker_withholds_unsupported_draf
             )
             .map_err(Into::into)
         })
-        .expect("persisted limitation answer");
+        .expect("persisted natural unmarked answer");
     assert!(!citation_map.contains("source_group_fallback"));
     assert!(!citation_map.contains("claim_support"));
     let content: String = db
@@ -3890,10 +3890,10 @@ async fn strict_web_answer_without_current_run_marker_withholds_unsupported_draf
             )
             .map_err(Into::into)
         })
-        .expect("persisted limitation body");
-    assert_eq!(
-        content,
-        crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+        .expect("persisted natural unmarked body");
+    assert!(
+        content.contains("缺少本轮引用的答复"),
+        "usable current-run evidence keeps the unmarked factual draft"
     );
 }
 
@@ -4049,7 +4049,7 @@ async fn strict_web_missing_marker_withholds_unsupported_draft() {
         &sink,
     )
     .await
-    .expect("unsupported draft is safely withheld");
+    .expect("unmarked natural draft completes after current-run evidence is admitted");
 
     let (content, citation_map): (String, String) = db
         .with_read_conn(|conn| {
@@ -4060,10 +4060,10 @@ async fn strict_web_missing_marker_withholds_unsupported_draft() {
             )
             .map_err(Into::into)
     })
-        .expect("limitation answer persisted");
-    assert_eq!(
-        content,
-        crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE
+        .expect("natural unmarked answer persisted");
+    assert!(
+        content.contains("结论来自当前轮证据"),
+        "usable current-run evidence keeps the unmarked factual draft"
     );
     assert!(!citation_map.contains("source_group_fallback"));
 }

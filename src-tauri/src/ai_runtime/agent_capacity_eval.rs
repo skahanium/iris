@@ -7564,6 +7564,10 @@ async fn execute_headless_core_case_with_local_body(
                 r#"{"query":"synthetic evaluation evidence"}"#,
             ),
             sse_content(&final_content),
+            // Empty search still consumes the ToolLoop's one research-repair
+            // turn before Host limitation. Without this script the third
+            // request hits a closed peer and the shared LLM circuit opens.
+            sse_content(&final_content),
         ]
     } else if requires_online_web {
         vec![
@@ -7599,6 +7603,12 @@ async fn execute_headless_core_case_with_local_body(
         provider_id: "custom".to_string(),
         model_id: "iris-test-verified-tools-agent-capacity".to_string(),
     });
+    crate::ai_runtime::circuit_breaker::reset_for_tests(
+        &crate::ai_runtime::circuit_breaker::llm_circuit_key(
+            "custom",
+            "iris-test-verified-tools-agent-capacity",
+        ),
+    );
     crate::llm::config::save(&state.db, &routing)
         .map_err(|_| EvalContractError::new("eval_route_setup_failed"))?;
     state.set_test_streaming_client(direct_loopback_test_client());
@@ -13173,7 +13183,7 @@ pub(crate) async fn spawn_llm_protocol_double(
         base_url: format!("http://{address}"),
         captures,
         task: Some(task),
-        abort_task_on_drop: true,
+        abort_task_on_drop: false,
     })
 }
 

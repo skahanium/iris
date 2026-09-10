@@ -279,6 +279,9 @@ pub(crate) struct FinalizeRunInput {
     pub(crate) evidence_ids: Vec<i64>,
     pub(crate) citation_map: Value,
     pub(crate) source_summary: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
+    /// Host-authored fallback reports persist the assistant message without
+    /// replaying it as model `ContentDelta` streaming.
+    pub(crate) publish_content_deltas: bool,
 }
 
 /// Safe process-event history for one latest Run belonging to a logical turn.
@@ -1032,15 +1035,17 @@ impl AgentRunRepository {
                 )?;
                 let mut events = Vec::new();
                 let mut event_seq = event_seq;
-                let mut remaining = input.content.clone();
-                while !remaining.is_empty() {
-                    let delta = take_safe_content_delta_chunk(&mut remaining)?;
-                    let payload = RunEventPayload::ContentDelta { delta };
-                    validate_safe_event_payload(&payload)?;
-                    let event = AssistantRunEvent::new(&input.run_id, event_seq, stored_version, RunEventType::ContentDelta, &now, payload).map_err(AppError::msg)?;
-                    insert_event(conn, &event)?;
-                    events.push(event);
-                    event_seq += 1;
+                if input.publish_content_deltas {
+                    let mut remaining = input.content.clone();
+                    while !remaining.is_empty() {
+                        let delta = take_safe_content_delta_chunk(&mut remaining)?;
+                        let payload = RunEventPayload::ContentDelta { delta };
+                        validate_safe_event_payload(&payload)?;
+                        let event = AssistantRunEvent::new(&input.run_id, event_seq, stored_version, RunEventType::ContentDelta, &now, payload).map_err(AppError::msg)?;
+                        insert_event(conn, &event)?;
+                        events.push(event);
+                        event_seq += 1;
+                    }
                 }
                 conn.execute("UPDATE agent_runs SET provider_route_summary_json = json_set(provider_route_summary_json, '$.publication', json_object('version', 1, 'publishedTargets', 1, 'publishedChars', ?1, 'readyElapsedMs', MAX(0, CAST((julianday(?2) - julianday(created_at)) * 86400000 AS INTEGER)))) WHERE run_id = ?3", rusqlite::params![input.content.chars().count(), now, input.run_id])?;
                 let event = AssistantRunEvent::new(
@@ -1445,7 +1450,12 @@ impl AgentRunRepository {
                 if parse_wire::<RunState>(&status)? != RunState::AwaitingConfirmation {
                     return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
                 }
-                let _ = materialize_budget_policy(&stored_budget_policy_json, &envelope_json)?;
+                persist_materialized_budget_if_changed(
+                    conn,
+                    run_id,
+                    &stored_budget_policy_json,
+                    &envelope_json,
+                )?;
                 let now = chrono::Utc::now().to_rfc3339();
                 let consumed = conn.execute(
                     "UPDATE agent_run_confirmations
@@ -2107,10 +2117,12 @@ impl AgentRunRepository {
         })
     }
 
+    /// Return the frozen budget policy for one session-scoped Run.
     ///
     /// Legacy `{}` rows are deterministically projected from the persisted
     /// execution envelope before the policy is returned, without rewriting an
-    /// already accepted Run.
+    /// already accepted Run. Confirmation resume and startup recovery persist
+    /// the materialized policy at those mutation points.
     pub(crate) fn budget_policy_for_session(
         db: &Database,
         session_key: &str,
@@ -2132,6 +2144,31 @@ impl AgentRunRepository {
             };
             let (policy, _) = materialize_budget_policy(&stored_policy, &envelope_json)?;
             Ok(Some(policy))
+        })
+    }
+
+    /// Persist a materialized canonical budget when recovery or resume is
+    /// about to continue an already accepted Run.
+    pub(crate) fn persist_materialized_budget_for_session(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+    ) -> AppResult<()> {
+        db.with_conn(|conn| {
+            let stored = conn
+                .query_row(
+                    "SELECT r.budget_policy_json, r.envelope_json
+                     FROM agent_runs r
+                     JOIN sessions s ON s.id = r.session_id
+                     WHERE r.run_id = ?1 AND s.session_key = ?2",
+                    rusqlite::params![run_id, session_key],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            let Some((stored_policy, envelope_json)) = stored else {
+                return Ok(());
+            };
+            persist_materialized_budget_if_changed(conn, run_id, &stored_policy, &envelope_json)
         })
     }
 
@@ -2169,6 +2206,29 @@ fn checkpoint_cursor_follows(
         }
         _ => false,
     }
+}
+
+fn persist_materialized_budget_if_changed(
+    conn: &Connection,
+    run_id: &str,
+    stored_budget_policy_json: &str,
+    envelope_json: &str,
+) -> AppResult<()> {
+    let (_, normalized_budget_policy_json) =
+        materialize_budget_policy(stored_budget_policy_json, envelope_json)?;
+    if normalized_budget_policy_json != stored_budget_policy_json {
+        conn.execute(
+            "UPDATE agent_runs
+             SET budget_policy_json = ?1
+             WHERE run_id = ?2 AND budget_policy_json = ?3",
+            rusqlite::params![
+                normalized_budget_policy_json,
+                run_id,
+                stored_budget_policy_json
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 fn materialize_budget_policy(

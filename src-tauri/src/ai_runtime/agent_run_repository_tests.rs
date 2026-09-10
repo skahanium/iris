@@ -1371,6 +1371,7 @@ fn finalization_writes_assistant_message_run_terminal_state_and_event_atomically
             evidence_ids: vec![],
             citation_map: serde_json::json!({}),
             source_summary: Vec::new(),
+            publish_content_deltas: true,
         },
     )
     .expect("finalize run");

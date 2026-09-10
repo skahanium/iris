@@ -280,6 +280,7 @@ impl RunEngine {
                 evidence_ids: Vec::new(),
                 citation_map: serde_json::json!({}),
                 source_summary: Vec::new(),
+                publish_content_deltas: false,
             },
         )?;
         for event in &events {

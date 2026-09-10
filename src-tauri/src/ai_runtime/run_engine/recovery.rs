@@ -85,6 +85,13 @@ impl RunEngine {
             let budget_is_valid =
                 AgentRunRepository::budget_policy_for_session(db, &session_key, &run_id)
                     .is_ok_and(|policy| policy.is_some());
+            if budget_is_valid {
+                AgentRunRepository::persist_materialized_budget_for_session(
+                    db,
+                    &session_key,
+                    &run_id,
+                )?;
+            }
             let plan =
                 crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
                     &consumed.plan_json,
@@ -133,6 +140,7 @@ impl RunEngine {
                             evidence_ids: Vec::new(),
                             citation_map: serde_json::json!({}),
                             source_summary: Vec::new(),
+                            publish_content_deltas: true,
                         },
                     )?;
                 }

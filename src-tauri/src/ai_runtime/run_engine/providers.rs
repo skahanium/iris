@@ -98,11 +98,9 @@ fn may_failover_after_model_attempt(
     failure: crate::ai_runtime::provider_router::ProviderFailure,
     has_visible_output: bool,
     provider_bound_continuation_or_tool: bool,
-    fallback_model_used: bool,
 ) -> bool {
     !has_visible_output
         && !provider_bound_continuation_or_tool
-        && !fallback_model_used
         && failure.permits_cross_provider_failover()
 }
 
@@ -216,7 +214,6 @@ mod llm_failover_guard_tests {
             ProviderFailure::Timeout,
             true,
             false,
-            false,
         ));
     }
 
@@ -224,17 +221,6 @@ mod llm_failover_guard_tests {
     fn responses_continuation_never_crosses_provider_boundaries() {
         assert!(!may_failover_after_model_attempt(
             ProviderFailure::TemporarilyUnavailable,
-            false,
-            true,
-            false,
-        ));
-    }
-
-    #[test]
-    fn a_run_can_cross_to_only_one_backup_model() {
-        assert!(!may_failover_after_model_attempt(
-            ProviderFailure::TemporarilyUnavailable,
-            false,
             false,
             true,
         ));
@@ -651,11 +637,8 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                 .unwrap_or(0);
             let continuation = stored_continuation.map(|state| state.continuation);
             let mut original_route_retry_used = false;
-            // A Run gets one same-route retry and at most one cross-provider
-            // continuation. Repeated model hopping makes a simple failed
-            // request look like a long research workflow without improving
-            // the available observations.
-            let mut fallback_model_used = false;
+            // A Run gets one same-route retry, then advances through remaining
+            // failover candidates without retrying each fallback.
             let mut dispatch_attempt = 0_u32;
             loop {
                 dispatch_attempt = dispatch_attempt.saturating_add(1);
@@ -797,7 +780,6 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                             failure,
                             observer.has_visible_content(),
                             provider_bound,
-                            fallback_model_used,
                         ) {
                             record_model_route_diagnostic(
                                 self.db,
@@ -811,11 +793,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                                     == crate::ai_runtime::provider_router::ProviderFailure::InvalidResponse,
                                 observer.has_visible_content(),
                                 provider_bound,
-                                if fallback_model_used {
-                                    "terminal_fallback_exhausted"
-                                } else {
-                                    "terminal"
-                                },
+                                "terminal",
                             );
                             return Err(error);
                         }
@@ -884,7 +862,6 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                         )?;
                         self.sink.emit(&switched)?;
                         observer.reset_visible_answer_for_new_attempt();
-                        fallback_model_used = true;
                         selected_index = next_index;
                     }
                 }

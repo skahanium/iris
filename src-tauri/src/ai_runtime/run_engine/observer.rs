@@ -370,6 +370,7 @@ impl AgentRunStreamObserver<'_> {
                 evidence_ids: Vec::new(),
                 citation_map: serde_json::json!({}),
                 source_summary: Vec::new(),
+                publish_content_deltas: true,
             },
         )?;
         for event in &events {

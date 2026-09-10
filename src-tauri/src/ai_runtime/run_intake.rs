@@ -36,8 +36,16 @@ pub(crate) struct RunIntake;
 
 impl RunIntake {
     /// Resolve the immutable execution envelope from request facts only.
+    #[cfg(test)]
     pub(crate) fn resolve_envelope(
         request: &AssistantRunStartRequest,
+    ) -> AppResult<ExecutionEnvelope> {
+        Self::resolve_envelope_with_grant_origin(request, !request.external_tool_grants.is_empty())
+    }
+
+    fn resolve_envelope_with_grant_origin(
+        request: &AssistantRunStartRequest,
+        user_attached_external_grants: bool,
     ) -> AppResult<ExecutionEnvelope> {
         validate_start_request(request)?;
         let message = request.turn.message.to_ascii_lowercase();
@@ -61,8 +69,13 @@ impl RunIntake {
         // remains in the envelope solely so historical Runs can be resumed
         // without migration; task/risk signals below are the new authority.
         let fresh_fact = FreshFactPolicy::default();
-        let web_decision =
-            ExclusionClassifier::resolve(request, &message, &directive_text, local_only);
+        let web_decision = ExclusionClassifier::resolve(
+            request,
+            &message,
+            &directive_text,
+            local_only,
+            user_attached_external_grants,
+        );
         let effect = if do_not_modify {
             Effect::Answer
         } else {
@@ -258,7 +271,8 @@ impl RunIntake {
         // Existing trusted read-only bindings are ordinary task capability,
         // not an extra prompt-level authorization ritual. Local-only and
         // classified requests deliberately keep their existing boundaries.
-        if request.external_tool_grants.is_empty()
+        let user_attached_external_grants = !request.external_tool_grants.is_empty();
+        if !user_attached_external_grants
             && request.security_domain == SecurityDomain::Normal
             && !has_local_only_instruction(&strip_quoted_segments(
                 &request.turn.message.to_ascii_lowercase(),
@@ -267,7 +281,8 @@ impl RunIntake {
             request.external_tool_grants =
                 crate::ai_runtime::mcp_external_tools::trusted_read_grants(db)?;
         }
-        let envelope = Self::resolve_envelope(&request)?;
+        let envelope =
+            Self::resolve_envelope_with_grant_origin(&request, user_attached_external_grants)?;
         if envelope.security_domain != SecurityDomain::Normal {
             return Err(AppError::run(
                 SafeRunErrorCode::ClassifiedDomainNotSupported,
@@ -911,6 +926,7 @@ impl ExclusionClassifier {
         _message: &str,
         directive_text: &str,
         local_only: bool,
+        user_attached_external_grants: bool,
     ) -> WebIntentDecision {
         // Hard exclusions — never overridden by an explicit web instruction.
         if request.security_domain == SecurityDomain::Classified {
@@ -933,6 +949,17 @@ impl ExclusionClassifier {
             })
             .map_or(directive_text, |(instruction, _)| instruction);
         let explicit_web = has_explicit_web_instruction(directive_text);
+
+        // An explicit external grant is the user's selected evidence source.
+        // Auto-attached trusted bindings stay ordinary capability and must
+        // not silently expand into Web access, while finalization still
+        // requires evidence from this exact Run.
+        if user_attached_external_grants
+            && !explicit_web
+            && !contains_any(directive_text, &["http://", "https://"])
+        {
+            return offline_requires_external(WebDecisionReason::DefaultOnline);
+        }
 
         // Only trusted runtime facts bypass the Web surface.  Conversation
         // follow-ups, creative requests and local-material work are semantic
@@ -1047,6 +1074,14 @@ fn offline_requires_web(reason: WebDecisionReason) -> WebIntentDecision {
         freshness: Freshness::Offline,
         reason,
         verification_requirement: VerificationRequirement::CurrentRunWeb,
+    }
+}
+
+fn offline_requires_external(reason: WebDecisionReason) -> WebIntentDecision {
+    WebIntentDecision {
+        freshness: Freshness::Offline,
+        reason,
+        verification_requirement: VerificationRequirement::CurrentRunExternal,
     }
 }
 

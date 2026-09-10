@@ -212,7 +212,7 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(
         envelope.verification_requirement,
-        VerificationRequirement::None
+        VerificationRequirement::CurrentRunExternal
     );
     assert!(envelope
         .required_capabilities
