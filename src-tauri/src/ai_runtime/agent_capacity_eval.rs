@@ -13173,7 +13173,7 @@ pub(crate) async fn spawn_llm_protocol_double(
         base_url: format!("http://{address}"),
         captures,
         task: Some(task),
-        abort_task_on_drop: false,
+        abort_task_on_drop: true,
     })
 }
 

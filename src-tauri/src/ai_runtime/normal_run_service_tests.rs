@@ -895,6 +895,9 @@ fn install_test_routing(state: &AppState, base_url: &str, model_name: &str) {
         provider_id: "custom".into(),
         model_id: model_name.to_string(),
     });
+    crate::ai_runtime::circuit_breaker::reset_for_tests(
+        &crate::ai_runtime::circuit_breaker::llm_circuit_key("custom", model_name),
+    );
     crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
     state.set_test_streaming_client(reqwest::Client::new());
 }
@@ -1794,9 +1797,6 @@ async fn ordinary_research_reply_repairs_missing_run_local_citation_before_compl
             }),
         )),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。\"}}]}\n\ndata: [DONE]\n\n",
-        ),
-        HttpResponseScript::sse(
             "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。[W1]\"}}]}\n\ndata: [DONE]\n\n",
         ),
     ])
@@ -1844,8 +1844,8 @@ async fn ordinary_research_reply_repairs_missing_run_local_citation_before_compl
     let calls = llm.finish().await.expect("LLM completion");
     assert_eq!(
         calls.len(),
-        4,
-        "the real loop searches, fetches, and repairs the source binding once"
+        3,
+        "the real loop searches, fetches, then Host-binds W1 without a rewrite turn"
     );
     let tool_names = calls[0].body["tools"]
         .as_array()

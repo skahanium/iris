@@ -47,9 +47,12 @@ fn requirements() -> crate::ai_runtime::provider_router::ProviderRequirements {
     }
 }
 
-fn route(url: &str) -> DirectProviderRoute {
+fn route(url: &str, provider_id: &str) -> DirectProviderRoute {
+    crate::ai_runtime::circuit_breaker::reset_for_tests(
+        &crate::ai_runtime::circuit_breaker::llm_circuit_key(provider_id, "test-model"),
+    );
     let resolved = ResolvedLlmConfig {
-        provider_id: "custom-continuation-regression".into(),
+        provider_id: provider_id.into(),
         model: "test-model".into(),
         base_url: url.into(),
         thinking: false,
@@ -124,7 +127,7 @@ async fn tool_bound_turn_retries_same_model_once_without_replaying_tools() {
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, request()).unwrap();
     let provider = FailoverStreamingProvider::new(
-        route(&server.base_url),
+        route(&server.base_url, "custom-continuation-retry-same-model"),
         requirements(),
         &db,
         &accepted.session,
@@ -174,7 +177,7 @@ async fn request_rejection_records_status_without_provider_body_or_retry() {
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, request()).unwrap();
     let provider = FailoverStreamingProvider::new(
-        route(&server.base_url),
+        route(&server.base_url, "custom-continuation-request-rejected"),
         requirements(),
         &db,
         &accepted.session,
@@ -210,7 +213,7 @@ async fn tool_bound_retry_exhaustion_stops_after_two_requests() {
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, request()).unwrap();
     let provider = FailoverStreamingProvider::new(
-        route(&server.base_url),
+        route(&server.base_url, "custom-continuation-retry-exhaustion"),
         requirements(),
         &db,
         &accepted.session,
@@ -251,7 +254,7 @@ async fn tool_bound_visible_output_is_not_retried() {
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, request()).unwrap();
     let provider = FailoverStreamingProvider::new(
-        route(&server.base_url),
+        route(&server.base_url, "custom-continuation-visible-output"),
         requirements(),
         &db,
         &accepted.session,
