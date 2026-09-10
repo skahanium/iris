@@ -10233,6 +10233,19 @@ async fn probe_web_evidence_limit() -> Result<bool, EvalContractError> {
 }
 
 #[cfg(test)]
+#[tokio::test]
+async fn web_evidence_capacity_probe_completes_the_production_tool_loop() {
+    let within_capacity = probe_web_evidence_level(1)
+        .await
+        .expect("in-capacity web evidence probe must finish the protocol double");
+    assert!(within_capacity);
+    let over_capacity = probe_web_evidence_level(13)
+        .await
+        .expect("over-capacity web evidence probe must finish the protocol double");
+    assert!(!over_capacity);
+}
+
+#[cfg(test)]
 async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContractError> {
     use crate::ai_runtime::normal_run_service::execute_normal_run_with_eval_telemetry;
     use crate::ai_runtime::run_intake::RunIntake;
@@ -10240,16 +10253,9 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
 
     let directory =
         tempfile::tempdir().map_err(|_| EvalContractError::new("boundary_temp_failed"))?;
-    let script = directory.path().join(if cfg!(windows) {
-        "boundary-mcp.ps1"
-    } else {
-        "boundary-mcp.sh"
-    });
-    std::fs::write(&script, boundary_mcp_script(result_count))
-        .map_err(|_| EvalContractError::new("boundary_mcp_setup_failed"))?;
     let state = crate::app::AppState::new(directory.path().join("data"))
         .map_err(|_| EvalContractError::new("boundary_state_failed"))?;
-    install_boundary_mcp(&state, &script, result_count)?;
+    install_boundary_mcp(&state, result_count)?;
     // This boundary uses the same ToolLoop semantics as production: request a
     // bounded search, then answer from the registered Run-local evidence.
     let scripts = vec![
@@ -10332,13 +10338,14 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
         .map_err(|_| EvalContractError::new("boundary_sink_lock_failed"))?;
     Ok(
         snapshot.run.state == crate::ai_runtime::run_contract::RunState::Completed
-            // A current Run now follows the production ToolLoop contract:
-            // model tool call first, then a second model turn after the
-            // Run-local Web result has been returned.  The old one-request
-            // assertion belonged to retired Host prefetch and made every
-            // evidence-capacity level appear unavailable.
+            // Production still Host-bootstraps web_search then web_fetch before
+            // the model turn, then makes a second model request after the
+            // Run-local evidence is admitted.  Counting a single ToolStarted
+            // belonged to the retired search-only double and hid fetch setup
+            // failures as a false capacity miss.
             && captures.len() == 2
-            && calls.len() == 1
+            && calls.iter().any(|capability| capability == "web_search")
+            && calls.iter().any(|capability| capability == "web_fetch")
             && evidence_count == result_count.min(12)
             && result_count <= 12,
     )
@@ -10367,10 +10374,41 @@ fn sse_tool_call(id: &str, name: &str, arguments: &str) -> HttpResponseScript {
 #[cfg(test)]
 fn install_boundary_mcp(
     state: &crate::app::AppState,
-    script: &std::path::Path,
     result_count: u32,
 ) -> Result<(), EvalContractError> {
     crate::ai_runtime::circuit_breaker::reset_for_tests("agent-capacity-boundary-mcp");
+    let (command, args) = if cfg!(windows) {
+        let fixture = format!(
+            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        (
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                fixture,
+                "search-fetch".to_string(),
+                result_count.to_string(),
+            ],
+        )
+    } else {
+        let fixture = format!(
+            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        (
+            "/bin/sh",
+            vec![
+                fixture,
+                "search-fetch".to_string(),
+                result_count.to_string(),
+            ],
+        )
+    };
     crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
         &state.db,
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
@@ -10380,33 +10418,13 @@ fn install_boundary_mcp(
             enabled: true,
             transport_kind: "stdio".to_string(),
             transport_config_json: serde_json::json!({
-                "command": if cfg!(windows) {
-                    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-                } else {
-                    "/bin/sh"
-                },
-                "args": if cfg!(windows) {
-                    vec![
-                        "-NoProfile".to_string(),
-                        "-NonInteractive".to_string(),
-                        "-ExecutionPolicy".to_string(),
-                        "Bypass".to_string(),
-                        "-File".to_string(),
-                        format!(
-                            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
-                            env!("CARGO_MANIFEST_DIR")
-                        ),
-                        "search-only".to_string(),
-                        result_count.to_string(),
-                    ]
-                } else {
-                    vec![script.to_string_lossy().into_owned()]
-                },
+                "command": command,
+                "args": args,
             })
             .to_string(),
             credential_refs_json: "{}".to_string(),
             web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.to_string()),
-            web_fetch_mapping_json: None,
+            web_fetch_mapping_json: Some(r#"{"tool":"fetch","urlArg":"url"}"#.to_string()),
         },
     )
     .map_err(|_| EvalContractError::new("boundary_mcp_setup_failed"))?;
@@ -10414,103 +10432,14 @@ fn install_boundary_mcp(
         &state.db,
         Some("agent-capacity-boundary-mcp"),
     )
-    .map_err(|_| EvalContractError::new("boundary_mcp_setup_failed"))
-}
-
-#[cfg(test)]
-fn boundary_mcp_script(result_count: u32) -> String {
-    let render_results = |start: u32, end: u32| {
-        (start..=end)
-        .map(|index| {
-            format!(
-                "[{index}] title: Result {index}\\nurl: https://source.invalid/{index}\\nsnippet: bounded-{index}"
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\\n")
-    };
-    let primary_results = render_results(1, result_count.min(8));
-    let supplementary_results = if result_count >= 12 {
-        render_results(9, 12)
-    } else {
-        String::new()
-    };
-    if cfg!(windows) {
-        let primary_results = primary_results.replace("\\n", "\n");
-        let supplementary_results = supplementary_results.replace("\\n", "\n");
-        return format!(
-            r#"function Write-McpResponse([object]$Id, [object]$Result) {{
-    [Console]::Out.WriteLine((@{{
-        jsonrpc = "2.0"
-        id = $Id
-        result = $Result
-    }} | ConvertTo-Json -Depth 8 -Compress))
-}}
-
-$primaryResults = @'
-{primary_results}
-'@
-
-$supplementaryResults = @'
-{supplementary_results}
-'@
-
-while (($line = [Console]::In.ReadLine()) -ne $null) {{
-    $idMatch = [regex]::Match($line, '"id"\\s*:\\s*(?:"([^"]+)"|([0-9]+))')
-    if (-not $idMatch.Success) {{ continue }}
-    $id = if ($idMatch.Groups[1].Success) {{ $idMatch.Groups[1].Value }} else {{ [int]$idMatch.Groups[2].Value }}
-    if ($line.Contains('"method":"initialize"')) {{
-        Write-McpResponse $id @{{
-            protocolVersion = "2025-06-18"
-            capabilities = @{{ tools = @{{}} }}
-            serverInfo = @{{ name = "boundary-mcp"; version = "1" }}
-        }}
-        continue
-    }}
-    if ($line.Contains('"method":"tools/list"')) {{
-        Write-McpResponse $id @{{ tools = @(@{{ name = "search"; inputSchema = @{{ type = "object" }} }}) }}
-        continue
-    }}
-    if ($line.Contains('"method":"tools/call"')) {{
-        Start-Sleep -Milliseconds 10
-        $results = if ($line.Contains('Find an independent authoritative')) {{ $supplementaryResults }} else {{ $primaryResults }}
-        Write-McpResponse $id @{{ content = @(@{{ type = "text"; text = $results }}); isError = $false }}
-    }}
-}}
-"#
-        );
+    .map_err(|_| EvalContractError::new("boundary_mcp_setup_failed"))?;
+    let selected =
+        crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(&state.db)
+            .map_err(|_| EvalContractError::new("boundary_mcp_selection_failed"))?;
+    if selected.id != "agent-capacity-boundary-mcp" {
+        return Err(EvalContractError::new("boundary_mcp_selection_failed"));
     }
-    r#"#!/bin/sh
-json_id() {
-  value=${1#*\"id\":}
-  value=${value%%,*}
-  value=${value%%\}*}
-  printf '%s' "$value"
-}
-while IFS= read -r line; do
-  case "$line" in
-    *'"method":"initialize"'*)
-      id=$(json_id "$line")
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"boundary-mcp","version":"1"}}}\n' "$id"
-      ;;
-    *'"method":"tools/list"'*)
-      id=$(json_id "$line")
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","inputSchema":{"type":"object"}}]}}\n' "$id"
-      ;;
-    *'"method":"tools/call"'*)
-      id=$(json_id "$line")
-      /bin/sleep 0.01
-      case "$line" in
-        *'Find an independent authoritative'*) results='__SUPPLEMENTARY_RESULTS__' ;;
-        *) results='__PRIMARY_RESULTS__' ;;
-      esac
-      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"$results\"}],\"isError\":false}}"
-      ;;
-  esac
-done
-"#
-    .replace("__PRIMARY_RESULTS__", &primary_results)
-    .replace("__SUPPLEMENTARY_RESULTS__", &supplementary_results)
+    Ok(())
 }
 
 #[cfg(test)]
