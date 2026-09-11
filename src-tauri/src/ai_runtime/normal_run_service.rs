@@ -48,11 +48,22 @@ fn plan_tool_surface(
 /// current facts and explicitly granted external evidence use the reserved
 /// terminal submission so the final source set can be mechanically reduced to
 /// references the model actually used.
-fn requires_structured_finalization(context: &crate::ai_runtime::run_context::RunContext) -> bool {
+/// Which Runs reserve the structured terminal submission.
+///
+/// Exposed so the deterministic evaluation double can script the protocol a
+/// Run actually requires. Resolving it from the frozen envelope keeps one
+/// predicate instead of a second copy inside the eval harness.
+pub(crate) fn requires_structured_finalization_for_envelope(
+    envelope: &crate::ai_runtime::run_contract::ExecutionEnvelope,
+) -> bool {
     matches!(
-        context.envelope.web_reason,
+        envelope.web_reason,
         WebDecisionReason::HighStakesCurrentFact
-    ) || context.envelope.verification_requirement == VerificationRequirement::CurrentRunExternal
+    ) || envelope.verification_requirement == VerificationRequirement::CurrentRunExternal
+}
+
+fn requires_structured_finalization(context: &crate::ai_runtime::run_context::RunContext) -> bool {
+    requires_structured_finalization_for_envelope(&context.envelope)
 }
 
 /// Execute one already-accepted normal-domain Run through the production

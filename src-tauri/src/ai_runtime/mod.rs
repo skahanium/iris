@@ -24,6 +24,8 @@ mod agent_run_repository_tests;
 pub(crate) mod agent_tool_loop;
 #[cfg(test)]
 mod agent_tool_loop_tests;
+#[cfg(test)]
+mod agent_verification_tests;
 pub mod capability_resolver;
 pub mod circuit_breaker;
 pub(crate) mod citation_linkify;

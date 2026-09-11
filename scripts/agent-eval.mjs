@@ -101,14 +101,18 @@ export function assertStrictSmokeSummary(summary) {
   if (!summary || typeof summary !== "object") {
     throw new Error("agent_eval_smoke_summary_invalid");
   }
+  // The smoke slice is one online variant per declared base question, so it
+  // grows with the matrix. Pin the floor rather than the size: the slice may
+  // grow but must never shrink, and it must stay internally consistent.
+  const SMOKE_MIN_CASES = 24;
   if (
-    summary.caseCount !== 24 ||
-    summary.completedCaseCount !== 24 ||
+    !Number.isInteger(summary.caseCount) ||
+    summary.caseCount < SMOKE_MIN_CASES ||
     summary.completedCaseCount !== summary.caseCount
   ) {
     throw new Error("agent_eval_smoke_incomplete");
   }
-  if (summary.passed !== 24 || summary.failed !== 0) {
+  if (summary.passed !== summary.caseCount || summary.failed !== 0) {
     throw new Error("agent_eval_smoke_failed");
   }
 }
@@ -120,16 +124,26 @@ export function assertStrictContractSummary(summary) {
   if (summary.schemaVersion !== "agent-eval-summary-v2") {
     throw new Error("agent_eval_contract_summary_invalid");
   }
-  if (summary.caseCount !== 48 || summary.executedCaseCount !== 48) {
+  // The core matrix is the declared plan table crossed with Offline/Online, so
+  // its size grows whenever a coverage plan is added. Pin the floor rather than
+  // the exact size: coverage may grow, but it must never shrink, and every
+  // declared case must still be executed and fully accounted for.
+  const CORE_MATRIX_MIN_CASES = 48;
+  if (
+    !Number.isInteger(summary.caseCount) ||
+    summary.caseCount < CORE_MATRIX_MIN_CASES ||
+    summary.executedCaseCount !== summary.caseCount
+  ) {
     throw new Error("agent_eval_contract_incomplete");
   }
   if (
     summary.answeredCaseCount +
       summary.expectedRefusalCount +
       summary.unexpectedFailureCount !==
-      48 ||
+      summary.caseCount ||
     summary.completedCaseCount !== summary.answeredCaseCount ||
-    summary.passed !== 48 ||
+    summary.passed !==
+      summary.answeredCaseCount + summary.expectedRefusalCount ||
     summary.failed !== 0 ||
     summary.unexpectedFailureCount !== 0
   ) {

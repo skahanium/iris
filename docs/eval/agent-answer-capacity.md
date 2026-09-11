@@ -125,7 +125,7 @@ Run-local 来源、引用绑定、安全、连续性与预算后才标记 `live_
 
 ## 时效事实核验硬门槛
 
-保留核心 48 题的历史可比性，另增加 24 个确定性时效核验案例（12 个场景各联网/离线一次）。
+保留核心矩阵的历史可比性，另增加 24 个确定性时效核验案例（12 个场景各联网/离线一次）。
 联网案例必须调用 `web_search`、写入本 Run 的 Web 证据关联并生成可解析引用；离线、
 搜索失败、来源冲突、旧证据复用或伪造引用时必须拒绝事实结论。场景覆盖无时间关键词的
 赛事提问、赛果、新闻、职位、价格、中英混合、长对话中的错误前提、历史摘要和提示注入干扰。
@@ -167,14 +167,44 @@ DTO、Run event、tool audit、UI error 和版本化 eval report 均不包含这
 provider JSON 只经过白名单 output mapping 缩略为附录 D 字段，不会进入事件、审计、
 错误或评测报告。
 
-## 核心 48 题
+## 核心矩阵
 
-核心集由 24 个基础问题的 Offline/Online 成对变体组成，共 48 题：
+核心集由基础问题表的 Offline/Online 成对变体组成，当前为 **26 个基础问题、52 题**：
 
-- 四个证据组各 12 题；
-- 中文 34、英文 10、中英混合 4；
+- 四个证据组：无检索 12、仅本地 12、仅 Web 16、混合 12；
+- 中文 38、英文 10、中英混合 4（比例带 70/20/10 的 ±5 点内，且保持成对）；
 - Web 开关只改变能力可用性，不改变问题的证据分类；
 - 纯创作和改写不强制引用；事实型回答要求事实、来源和引用相互绑定。
+
+矩阵规模由 `BASE_QUESTION_PLANS` **派生**，不写死字面量；`CORE_MATRIX_MIN_CASES` 只设下限，
+覆盖只增不减。序列化校验的上限同样由矩阵规模派生，避免"第 49 题被一个陈旧上限拒绝"。
+
+### 覆盖维度（2026-09-11 增补）
+
+分类器可把 Run 冻结进不同的验证类，而**从未走到某个类的门无法对该类做出任何结论**。
+2026-09-11 实测发现原 48 题只落两类（`DefaultOnline` 25、`ExplicitWebRequest` 23），
+`VolatileExternalFact`（全部日常时效问题所属类）与 `HighStakesCurrentFact`（交叉印证严格分支）
+均为零覆盖，生产侧高速分支与日常分支因此长期无人测量。现增补两个 WebOnly 基础问题，
+使矩阵覆盖四类：
+
+| 类                                            | 覆盖 |
+| --------------------------------------------- | ---: |
+| `DefaultOnline` / `verification: none`        |   25 |
+| `ExplicitWebRequest` / `current_run_web`      |   23 |
+| `HighStakesCurrentFact` / `current_run_web`   |    2 |
+| `VolatileExternalFact` / `verification: none` |    2 |
+
+`CurrentRunExternal` 在确定性矩阵中**结构上不可表达**（请求构造冻结外部授权为空），
+由 `run_intake_tests` 的分类器契约门承担；这一归属在
+`agent_verification_tests::every_gate_covers_every_verification_class` 中以显式所有权表固定。
+
+同时新增 `core_case_identity_is_pinned`：用例序号由表内位置派生，而安全轨迹与 live pilot
+按序号寻址，因此在表中部插入会**静默换题**；该测试把序号↔题面映射钉死，使位移变成响亮失败。
+
+严格结构化终局（`submit_final_answer`）目前仍不可端到端驱动，其场景已声明、覆盖已强制，
+但由 `REPORT_GATE_DEFERRED_PROMPTS` 暂缓进入报告门，并由目标夹具
+`headless_strict_high_stakes_case_publishes_a_sourced_answer`（`HR-8-target`）挂账。
+落地该协议时须同时移除缓行条目与夹具属性。
 
 v1.2.15 确定性 full 结果为 48/48：
 

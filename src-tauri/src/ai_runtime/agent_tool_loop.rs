@@ -1158,9 +1158,15 @@ impl AgentToolLoop {
                     ToolCallDisposition::Deferred => "deferred_for_feedback",
                     ToolCallDisposition::Dispatched => "accepted",
                 };
-                let name = crate::ai_runtime::tool_catalog::catalog_find(&call.function.name)
-                    .map_or("unknown", |entry| entry.name);
-                executor.record_tool_loop_diagnostic(serde_json::json!({"event":"proposal", "tool":name, "reason":reason, "modelTurn":model_turns}));
+                let catalog_entry = crate::ai_runtime::tool_catalog::catalog_find(&call.function.name);
+                let name = catalog_entry.map_or("unknown", |entry| entry.name);
+                // Closed-vocabulary discriminator. Exposing the raw proposed
+                // name would risk echoing model-authored text into a persisted
+                // diagnostic; this boolean still separates "a real tool that is
+                // absent from this run's surface" from "a name that exists
+                // nowhere", which is the distinction an operator needs.
+                let catalog_known = catalog_entry.is_some();
+                executor.record_tool_loop_diagnostic(serde_json::json!({"event":"proposal", "tool":name, "catalogKnown":catalog_known, "reason":reason, "modelTurn":model_turns}));
             }
             if proposal_dispositions
                 .iter()

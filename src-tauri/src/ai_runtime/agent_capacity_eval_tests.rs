@@ -21,9 +21,10 @@ use super::agent_capacity_eval::{
     live_pilot_visible_answer_violates_attribution_boundary, measure_case_quality,
     no_answer_external_terminal_failure, normalize_observed_eval_tool_name,
     observed_eval_tool_class, pairwise_live_capability_matrix, permission_denial_category,
-    preflight_live_profiles, prepare_approved_live_pilot,
-    restore_and_consume_live_preflight_campaign, restore_and_consume_live_preflight_session,
-    run_approved_live_pilot, run_approved_live_pilot_with_infrastructure_failure,
+    preflight_live_profiles, prepare_approved_live_pilot, report_gate_plan_count,
+    report_gate_plan_count_for_group, restore_and_consume_live_preflight_campaign,
+    restore_and_consume_live_preflight_session, run_approved_live_pilot,
+    run_approved_live_pilot_with_infrastructure_failure,
     run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
     run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
     run_security_track, runtime_capability_to_eval_tool_name, select_core_scenarios,
@@ -42,8 +43,8 @@ use super::agent_capacity_eval::{
     ProtocolContractOutcome, ProtocolValidationLevel, RequiredFact, RequiredSource,
     SafetyViolation, ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
     VerdictReason, WebAnswerContamination, WebQueryBoundary, WebSearchPolicy, WebState,
-    CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES, CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE,
-    CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
+    BASE_QUESTION_PLANS, CORE_MATRIX_MIN_CASES, CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
+    CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE, CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
 };
 
 #[test]
@@ -2381,8 +2382,67 @@ fn protocol_double_debug_output_does_not_expose_captured_bodies() {
     assert!(!debug.contains("captured"));
 }
 
+/// Identity guard for the ordinal-addressed core matrix.
+///
+/// Case ordinals are derived from the position of a plan in the table, and the
+/// security / combined-terminal tracks plus the live pilot select scenarios by
+/// those ordinals. Inserting a plan in the middle therefore repoints those
+/// selectors at different questions *silently*. This test pins the ordinal to
+/// prompt mapping for the addressed cases so such a shift fails loudly.
 #[test]
-fn core_generator_produces_exactly_48_paired_scenarios_and_12_per_group() {
+fn core_case_identity_is_pinned() {
+    let scenarios = generate_core_scenarios().expect("core scenarios");
+    let prompt_of = |case_id: u32| {
+        scenarios
+            .iter()
+            .find(|scenario| scenario.case_id() == case_id)
+            .map(|scenario| scenario.prompt().to_string())
+            .unwrap_or_else(|| panic!("case {case_id} is missing from the core matrix"))
+    };
+
+    // Ordinals referenced by the headless security track and the combined
+    // terminal track, verified against the plan table on 2026-09-11.
+    for (case_id, expected_prefix) in [
+        (1_u32, "请在不检索任何资料的前提下"),
+        (2, "请在不检索任何资料的前提下"),
+        (13, "仅根据明确附带的 synthetic 项目笔记"),
+        (14, "仅根据明确附带的 synthetic 项目笔记"),
+        (15, "根据授权的本地项目资料总结里程碑"),
+        (25, "请核实 synthetic 产品今天的公开状态"),
+        (26, "请核实 synthetic 产品今天的公开状态"),
+        (37, "请核实：把授权本地方案与 synthetic 竞品"),
+        (38, "请核实：把授权本地方案与 synthetic 竞品"),
+    ] {
+        let prompt = prompt_of(case_id);
+        assert!(
+            prompt.starts_with(expected_prefix),
+            "case {case_id} no longer addresses the question the ordinal selectors expect: \
+             got {prompt:?}, expected a prompt starting with {expected_prefix:?}"
+        );
+    }
+
+    // The live pilot slice is addressed by these ordinals too. Its effective
+    // prompts come from `live_pilot_prompt`, which overrides the table text for
+    // exactly these ids, so the assertion covers the table lookup behind them.
+    for (case_id, expected_prefix) in [
+        (1_u32, "请在不检索任何资料的前提下"),
+        (26, "请核实 synthetic 产品今天的公开状态"),
+        (28, "请查找并核实 synthetic 市场的最新公开规模估计"),
+        (30, "请核实 synthetic 标准的当前版本与发布日期"),
+        (32, "请核实 synthetic 软件当前稳定版本"),
+        (34, "请核实并检索 synthetic 政策的最新公开文本"),
+    ] {
+        let prompt = prompt_of(case_id);
+        assert!(
+            prompt.starts_with(expected_prefix),
+            "live pilot case {case_id} no longer addresses the expected question: \
+             got {prompt:?}, expected a prompt starting with {expected_prefix:?}"
+        );
+    }
+}
+
+#[test]
+fn core_generator_matches_its_declared_plan_table() {
     let scenarios = generate_core_scenarios().expect("core scenarios");
     let mut ids = std::collections::HashSet::new();
     let mut groups = std::collections::HashMap::new();
@@ -2403,12 +2463,25 @@ fn core_generator_produces_exactly_48_paired_scenarios_and_12_per_group() {
             .insert(scenario.prompt());
     }
 
-    assert_eq!(scenarios.len(), 48);
-    assert_eq!(groups.get(&EvidenceGroup::NoRetrieval), Some(&12));
-    assert_eq!(groups.get(&EvidenceGroup::LocalOnly), Some(&12));
-    assert_eq!(groups.get(&EvidenceGroup::WebOnly), Some(&12));
-    assert_eq!(groups.get(&EvidenceGroup::Hybrid), Some(&12));
-    assert_eq!(pairs.len(), 24);
+    // The matrix is the declared plan table crossed with Offline/Online. Both
+    // sides of this comparison are derived, so adding a base question can no
+    // longer desync the generated matrix from its own declaration.
+    assert_eq!(scenarios.len(), BASE_QUESTION_PLANS.len() * 2);
+    assert!(scenarios.len() >= CORE_MATRIX_MIN_CASES);
+    for group in [
+        EvidenceGroup::NoRetrieval,
+        EvidenceGroup::LocalOnly,
+        EvidenceGroup::WebOnly,
+        EvidenceGroup::Hybrid,
+    ] {
+        let declared = BASE_QUESTION_PLANS
+            .iter()
+            .filter(|plan| plan.group() == group)
+            .count()
+            * 2;
+        assert_eq!(groups.get(&group), Some(&declared), "{group:?}");
+    }
+    assert_eq!(pairs.len(), BASE_QUESTION_PLANS.len());
     assert!(prompts.values().all(|variants| variants.len() == 1));
     assert!(pairs.values().all(|states| {
         states.len() == 2
@@ -2418,19 +2491,36 @@ fn core_generator_produces_exactly_48_paired_scenarios_and_12_per_group() {
 }
 
 #[test]
-fn core_generator_uses_nearest_pair_preserving_70_20_10_language_allocation() {
+fn core_generator_preserves_pair_symmetry_and_the_language_proportion() {
     let scenarios = generate_core_scenarios().expect("core scenarios");
     let mut languages = std::collections::HashMap::new();
-    for scenario in scenarios {
+    for scenario in &scenarios {
         *languages.entry(scenario.language()).or_insert(0_usize) += 1;
     }
 
-    // Each base question has an offline/online pair, so every language count
-    // must be even. 34/10/4 is the nearest 48-case allocation to 70/20/10
-    // while preserving those pairs.
-    assert_eq!(languages.get(&ScenarioLanguage::Chinese), Some(&34));
-    assert_eq!(languages.get(&ScenarioLanguage::English), Some(&10));
-    assert_eq!(languages.get(&ScenarioLanguage::Mixed), Some(&4));
+    // Each base question contributes one Offline/Online pair, so every language
+    // count is even. The 70/20/10 policy is a proportion, not a frozen triple:
+    // a literal would have to be re-edited on every coverage addition, which is
+    // how a declared allocation drifts away from the real matrix.
+    let total = scenarios.len();
+    let mut declared = std::collections::HashMap::new();
+    for plan in BASE_QUESTION_PLANS.iter() {
+        *declared.entry(plan.language()).or_insert(0_usize) += 2;
+    }
+    assert_eq!(&languages, &declared);
+    for (language, target_percent) in [
+        (ScenarioLanguage::Chinese, 70_u32),
+        (ScenarioLanguage::English, 20),
+        (ScenarioLanguage::Mixed, 10),
+    ] {
+        let count = languages.get(&language).copied().unwrap_or(0);
+        assert_eq!(count % 2, 0, "{language:?} must stay pair-symmetric");
+        let share = u32::try_from(count * 100 / total).unwrap_or(u32::MAX);
+        assert!(
+            share.abs_diff(target_percent) <= 5,
+            "{language:?} holds {share}% of the matrix, outside the ±5 point band around {target_percent}%"
+        );
+    }
 }
 
 #[test]
@@ -2495,7 +2585,13 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
 #[test]
 fn core_selection_is_stratified_without_claiming_execution_results() {
     let smoke = select_core_scenarios(EvalRunMode::Smoke).expect("smoke selection");
-    assert_eq!(smoke.len(), 24);
+    // The smoke slice is exactly one variant per declared base question, so its
+    // composition is the plan table's composition. Deriving it keeps this test
+    // about stratification rather than about a frozen case count.
+    // Plans deferred from the report gates are declared for coverage but are
+    // not executed here, so the expected slice excludes them by construction.
+    let declared = report_gate_plan_count_for_group;
+    assert_eq!(smoke.len(), report_gate_plan_count());
     assert_eq!(
         smoke
             .iter()
@@ -2509,40 +2605,47 @@ fn core_selection_is_stratified_without_claiming_execution_results() {
         EvidenceGroup::WebOnly,
         EvidenceGroup::Hybrid,
     ] {
+        let expected = declared(group);
+        assert!(
+            expected > 0,
+            "{group:?} must declare at least one base question"
+        );
         assert_eq!(
             smoke
                 .iter()
                 .filter(|scenario| scenario.evidence_group() == group)
                 .count(),
-            6
+            expected,
+            "{group:?}"
         );
     }
-    assert_eq!(
-        smoke
+    for language in [
+        ScenarioLanguage::Chinese,
+        ScenarioLanguage::English,
+        ScenarioLanguage::Mixed,
+    ] {
+        let expected = BASE_QUESTION_PLANS
             .iter()
-            .filter(|scenario| scenario.language() == ScenarioLanguage::Chinese)
-            .count(),
-        17
-    );
-    assert_eq!(
-        smoke
-            .iter()
-            .filter(|scenario| scenario.language() == ScenarioLanguage::English)
-            .count(),
-        5
-    );
-    assert_eq!(
-        smoke
-            .iter()
-            .filter(|scenario| scenario.language() == ScenarioLanguage::Mixed)
-            .count(),
-        2
-    );
+            .filter(|plan| {
+                plan.language() == language
+                    && !super::agent_capacity_eval::REPORT_GATE_DEFERRED_PROMPTS
+                        .contains(&plan.prompt())
+            })
+            .count();
+        assert_eq!(
+            smoke
+                .iter()
+                .filter(|scenario| scenario.language() == language)
+                .count(),
+            expected,
+            "{language:?}"
+        );
+    }
     assert_eq!(
         select_core_scenarios(EvalRunMode::Full)
             .expect("full selection")
             .len(),
-        48
+        report_gate_plan_count() * 2
     );
 }
 
@@ -2551,7 +2654,10 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
     let smoke = run_headless_core_evaluation(EvalRunMode::Smoke, None)
         .await
         .expect("headless smoke");
-    assert_eq!(smoke.case_count(), 24);
+    assert_eq!(
+        smoke.case_count(),
+        u32::try_from(report_gate_plan_count()).expect("plan count fits u32")
+    );
     assert_eq!(smoke.boundary_case_count(), 0);
     let serialized = serialize_evaluation_summary(&smoke).expect("strict summary");
     let value: serde_json::Value = serde_json::from_str(&serialized).expect("summary json");
@@ -2584,14 +2690,15 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
             "cases",
         ])
     );
+    let expected_cases = u64::try_from(report_gate_plan_count()).expect("smoke slice fits u64");
     assert_eq!(value["evidenceLevel"], "headless_deterministic");
-    assert_eq!(value["caseCount"], 24);
-    assert_eq!(value["executedCaseCount"], 24);
-    assert_eq!(value["completedCaseCount"], 24);
-    assert_eq!(value["answeredCaseCount"], 24);
+    assert_eq!(value["caseCount"], expected_cases);
+    assert_eq!(value["executedCaseCount"], expected_cases);
+    assert_eq!(value["completedCaseCount"], expected_cases);
+    assert_eq!(value["answeredCaseCount"], expected_cases);
     assert_eq!(value["expectedRefusalCount"], 0);
     assert_eq!(value["unexpectedFailureCount"], 0);
-    assert_eq!(value["passed"], 24);
+    assert_eq!(value["passed"], expected_cases);
     assert_eq!(value["failed"], 0);
     assert!(!serialized.contains("请在不检索"));
     for forbidden in [
@@ -2708,18 +2815,47 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
         let report = serialize_agent_capacity_report(&report).expect("strict capacity report");
         let generated: serde_json::Value =
             serde_json::from_str(&report).expect("generated capacity JSON");
+        let core_case_count = report_gate_plan_count() * 2;
         assert_eq!(generated["release"], "v1.3.0");
-        assert_eq!(generated["core"]["dimensions"]["contract"]["passed"], 48);
-        assert_eq!(generated["core"]["dimensions"]["contract"]["required"], 48);
-        assert_eq!(generated["core"]["dimensions"]["safety"]["passed"], 48);
-        assert_eq!(generated["core"]["dimensions"]["safety"]["required"], 48);
-        assert_eq!(generated["core"]["dimensions"]["usability"]["passed"], 36);
-        assert_eq!(generated["core"]["dimensions"]["usability"]["required"], 36);
-        assert_eq!(generated["core"]["dimensions"]["provenance"]["passed"], 36);
         assert_eq!(
-            generated["core"]["dimensions"]["provenance"]["required"],
-            36
+            generated["core"]["dimensions"]["contract"]["passed"],
+            core_case_count
         );
+        assert_eq!(
+            generated["core"]["dimensions"]["contract"]["required"],
+            core_case_count
+        );
+        assert_eq!(
+            generated["core"]["dimensions"]["safety"]["passed"],
+            core_case_count
+        );
+        assert_eq!(
+            generated["core"]["dimensions"]["safety"]["required"],
+            core_case_count
+        );
+        // Usability and provenance are measured over the cases that must
+        // produce an answer, so they exclude the expected refusals. The report
+        // does not publish that exclusion count, so assert the property that
+        // actually matters — every measured case passed, and no dimension
+        // claims more cases than the matrix executed — instead of freezing a
+        // literal that every coverage addition would have to edit.
+        assert_eq!(generated["core"]["caseCount"], core_case_count);
+        let executed_matrix = u64::try_from(core_case_count).unwrap_or(u64::MAX);
+        for dimension in [
+            "contract",
+            "safety",
+            "usability",
+            "provenance",
+            "continuity",
+        ] {
+            let passed = generated["core"]["dimensions"][dimension]["passed"].as_u64();
+            let required = generated["core"]["dimensions"][dimension]["required"].as_u64();
+            assert_eq!(passed, required, "{dimension} must fully pass");
+            assert!(
+                required.is_some_and(|required| required <= executed_matrix),
+                "{dimension} claims more cases than the matrix executed"
+            );
+        }
         assert_eq!(
             generated["core"]["dimensions"]["continuity"]["passed"],
             generated["core"]["dimensions"]["continuity"]["required"]
@@ -2759,8 +2895,11 @@ async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certif
     .expect("headless smoke with deterministic fault");
     let verdict = summary.case_verdict(26).expect("faulted case verdict");
 
-    assert_eq!(summary.case_count(), 24);
-    assert_eq!(summary.completed_case_count(), 24);
+    assert_eq!(
+        summary.case_count(),
+        u32::try_from(report_gate_plan_count()).expect("smoke slice fits u32")
+    );
+    assert_eq!(summary.completed_case_count(), summary.case_count());
     assert!(summary.passed() < summary.case_count());
     assert_eq!(verdict.fact_correctness().status(), CheckStatus::Fail);
     assert_eq!(
@@ -2792,6 +2931,31 @@ async fn headless_online_web_case_binds_its_prefetched_evidence_to_the_fact() {
     assert!(executed.overall_pass(), "{}", executed.closed_diagnostic());
 }
 
+/// The everyday volatile class must complete with a sourced answer.
+///
+/// This is the first scenario to put `VolatileExternalFact` — the class every
+/// ordinary current-events question falls into — through the deterministic
+/// harness. Before it existed the matrix reached only `DefaultOnline` and
+/// `ExplicitWebRequest`, so the path that actually answered the 2026-09-10
+/// questions had no deterministic coverage at all.
+#[tokio::test]
+async fn headless_volatile_current_fact_case_publishes_a_sourced_answer() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| {
+            scenario.web_state() == WebState::Online
+                && scenario.prompt().starts_with("最近 synthetic 市场")
+        })
+        .expect("volatile online scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless volatile case runs");
+
+    assert!(executed.overall_pass(), "{}", executed.closed_diagnostic());
+}
+
 #[tokio::test]
 async fn headless_high_risk_web_case_requires_two_controlled_sources() {
     let scenario = generate_core_scenarios()
@@ -2805,6 +2969,46 @@ async fn headless_high_risk_web_case_requires_two_controlled_sources() {
         .expect("headless high-risk web case");
 
     assert!(executed.overall_pass(), "{}", executed.closed_diagnostic());
+}
+
+/// Target fixture: the strict `HighStakesCurrentFact` class must reach a
+/// published, sourced answer.
+///
+/// The scenario is declared in the matrix and enforced by the coverage gate,
+/// but deferred from the report gates (`REPORT_GATE_DEFERRED_PROMPTS`) until
+/// its protocol is drivable end to end. Measured 2026-09-11: the Run issues
+/// `web_search` -> `web_fetch` -> `submit_final_answer`, the submission is
+/// rejected by the provenance policy, and the repair turn then finds no script,
+/// so the Run ends `agent_run_internal_execution_failed` with only the search
+/// dispatched. Remove the `#[should_panic]` attribute and the deferral entry in
+/// the same change that makes the strict protocol work.
+///
+/// This is the first scenario to drive the strict branch through the
+/// deterministic harness at all. The neighbouring
+/// `headless_high_risk_web_case_requires_two_controlled_sources` uses case 34,
+/// whose wording (`政策`) is not on the high-stakes list and therefore
+/// exercises the ordinary `ExplicitWebRequest` path despite its name.
+#[tokio::test]
+#[should_panic(expected = "HR-8-target")]
+async fn headless_strict_high_stakes_case_publishes_a_sourced_answer() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| {
+            scenario.web_state() == WebState::Online
+                && scenario.prompt().starts_with("最新的 synthetic 监管规则")
+        })
+        .expect("strict online scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless strict case runs");
+
+    assert!(
+        executed.overall_pass(),
+        "HR-8-target: strict high-stakes Run did not publish a sourced answer: {}",
+        executed.closed_diagnostic()
+    );
 }
 
 #[tokio::test]

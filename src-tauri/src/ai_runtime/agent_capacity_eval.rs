@@ -1649,7 +1649,7 @@ pub(crate) fn live_pilot_prompt(scenario: &CoreScenario) -> String {
 }
 
 #[derive(Clone, Copy)]
-struct BaseQuestionPlan {
+pub(crate) struct BaseQuestionPlan {
     group: EvidenceGroup,
     language: ScenarioLanguage,
     domain: &'static str,
@@ -1657,7 +1657,25 @@ struct BaseQuestionPlan {
     prompt: &'static str,
 }
 
-const BASE_QUESTION_PLANS: [BaseQuestionPlan; 24] = [
+impl BaseQuestionPlan {
+    /// The declared evidence group. Exposed so the matrix test can assert that
+    /// the generated scenarios match this table instead of a frozen count.
+    pub(crate) const fn group(&self) -> EvidenceGroup {
+        self.group
+    }
+
+    pub(crate) const fn language(&self) -> ScenarioLanguage {
+        self.language
+    }
+
+    /// The declared prompt. Exposed so tests can tell deferred plans apart from
+    /// executed ones without duplicating a second list of case ordinals.
+    pub(crate) const fn prompt(&self) -> &'static str {
+        self.prompt
+    }
+}
+
+pub(crate) const BASE_QUESTION_PLANS: [BaseQuestionPlan; 26] = [
     BaseQuestionPlan {
         group: EvidenceGroup::NoRetrieval,
         language: ScenarioLanguage::Chinese,
@@ -1826,9 +1844,66 @@ const BASE_QUESTION_PLANS: [BaseQuestionPlan; 24] = [
         answer_mode: AnswerMode::EvidenceGrounded,
         prompt: "请核实：依据本地 design note 与最新 Web status 做 gap analysis，并清楚区分两类来源。",
     },
+    // Coverage plans. The classifier can freeze a Run into more than one
+    // verification class, and a gate that never reaches a class cannot report
+    // anything about it. These two plans exist so the deterministic matrix
+    // exercises the everyday volatile path and the strict high-stakes path,
+    // not only the explicitly requested Web path.
+    //
+    // They are appended at the END of the table on purpose. Case ordinals are
+    // derived from position, and shared helpers select scenarios by ordinal, so
+    // inserting in the middle would silently repoint those selectors at other
+    // questions. `core_case_identity_is_pinned` guards that mapping.
+    //
+    // Both avoid the revision-date guard phrases (`发布日期`, `修订日期`, …) on
+    // purpose: those phrases deliberately downgrade a regulated-topic question
+    // to the ordinary current-fact path, and that downgrade needs its own test
+    // rather than being covered by accident here.
+    BaseQuestionPlan {
+        group: EvidenceGroup::WebOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "market",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "最近 synthetic 市场有哪些值得关注的公开变化？",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::WebOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "regulatory",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "最新的 synthetic 监管规则适用于哪些情形？请给出适用依据。",
+    },
 ];
 
-/// Generate the fixed 48-case core matrix from 24 base questions. Each base
+/// Plans the deterministic *report* gates cannot drive yet.
+///
+/// The matrix declares these plans so verification-class coverage stays visible
+/// and enforced, but the smoke/contract reports skip them: a Run that reserves
+/// the strict structured terminal submission needs a model double that scripts
+/// that protocol, and the headless double cannot yet produce a submission the
+/// provenance policy accepts. Running a known-open case in the product report
+/// would make the report red for a reason that is already tracked, so the gap is
+/// carried by a dedicated target fixture instead
+/// (`headless_strict_high_stakes_case_publishes_a_sourced_answer`).
+///
+/// Remove an entry here in the same change that lands its target fixture.
+pub(crate) const REPORT_GATE_DEFERRED_PROMPTS: [&str; 1] =
+    ["最新的 synthetic 监管规则适用于哪些情形？请给出适用依据。"];
+
+/// Number of base questions the deterministic report gates actually execute.
+pub(crate) fn report_gate_plan_count() -> usize {
+    BASE_QUESTION_PLANS.len() - REPORT_GATE_DEFERRED_PROMPTS.len()
+}
+
+/// Report-gate base-question count inside one evidence group.
+pub(crate) fn report_gate_plan_count_for_group(group: EvidenceGroup) -> usize {
+    BASE_QUESTION_PLANS
+        .iter()
+        .filter(|plan| plan.group == group && !REPORT_GATE_DEFERRED_PROMPTS.contains(&plan.prompt))
+        .count()
+}
+
+/// Generate the core matrix from the declared base questions. Each base
 /// question keeps its language and evidence class across one Offline and one
 /// Online variant; enabling Web therefore never changes the evidence contract.
 pub(crate) fn generate_core_scenarios() -> Result<Vec<CoreScenario>, EvalContractError> {
@@ -1973,8 +2048,15 @@ fn build_core_manifest(
     }
 }
 
+/// The smallest core matrix the gate accepts. Coverage may grow; it must not
+/// shrink, and it must not be rebalanced away from a verification class that a
+/// production Run can actually be frozen into.
+pub(crate) const CORE_MATRIX_MIN_CASES: usize = 48;
+
 fn validate_core_matrix(scenarios: &[CoreScenario]) -> Result<(), EvalContractError> {
-    if scenarios.len() != 48 {
+    // Derived from the declared plan table instead of a literal so that adding
+    // a base question cannot desync the matrix from its own declaration.
+    if scenarios.len() != BASE_QUESTION_PLANS.len() * 2 || scenarios.len() < CORE_MATRIX_MIN_CASES {
         return Err(EvalContractError::new("core_case_count_invalid"));
     }
     for group in [
@@ -1983,11 +2065,17 @@ fn validate_core_matrix(scenarios: &[CoreScenario]) -> Result<(), EvalContractEr
         EvidenceGroup::WebOnly,
         EvidenceGroup::Hybrid,
     ] {
-        if scenarios
+        let expected = BASE_QUESTION_PLANS
             .iter()
-            .filter(|scenario| scenario.evidence_group() == group)
+            .filter(|plan| plan.group == group)
             .count()
-            != 12
+            * 2;
+        if expected == 0
+            || scenarios
+                .iter()
+                .filter(|scenario| scenario.evidence_group() == group)
+                .count()
+                != expected
         {
             return Err(EvalContractError::new("core_group_distribution_invalid"));
         }
@@ -1998,14 +2086,24 @@ fn validate_core_matrix(scenarios: &[CoreScenario]) -> Result<(), EvalContractEr
             .filter(|scenario| scenario.language() == language)
             .count()
     };
-    // An Offline/Online pair shares one base question and language, hence all
-    // counts are even. 34/10/4 minimizes error against 70/20/10 for 48 cases
-    // while preserving those symmetric variants.
-    if language_count(ScenarioLanguage::Chinese) != 34
-        || language_count(ScenarioLanguage::English) != 10
-        || language_count(ScenarioLanguage::Mixed) != 4
-    {
-        return Err(EvalContractError::new("core_language_distribution_invalid"));
+    // An Offline/Online pair shares one base question and language, hence every
+    // count is even. The 70/20/10 language target is a proportion rather than a
+    // frozen triple: a literal would have to be re-edited on every addition,
+    // which is how a coverage table drifts out of date.
+    let total = scenarios.len();
+    for (language, target_percent) in [
+        (ScenarioLanguage::Chinese, 70_u32),
+        (ScenarioLanguage::English, 20),
+        (ScenarioLanguage::Mixed, 10),
+    ] {
+        let count = language_count(language);
+        if count % 2 != 0 {
+            return Err(EvalContractError::new("core_language_distribution_invalid"));
+        }
+        let share = u32::try_from(count * 100 / total).unwrap_or(u32::MAX);
+        if share.abs_diff(target_percent) > 5 {
+            return Err(EvalContractError::new("core_language_distribution_invalid"));
+        }
     }
     Ok(())
 }
@@ -7061,12 +7159,15 @@ impl EvaluationSummary {
 pub(crate) fn select_core_scenarios(
     mode: EvalRunMode,
 ) -> Result<Vec<CoreScenario>, EvalContractError> {
-    let scenarios = generate_core_scenarios()?;
+    let scenarios = generate_core_scenarios()?
+        .into_iter()
+        .filter(|scenario| !REPORT_GATE_DEFERRED_PROMPTS.contains(&scenario.prompt()))
+        .collect::<Vec<_>>();
     Ok(match mode {
         EvalRunMode::Full => scenarios,
-        // The release smoke is the complete 24-case online interaction
-        // matrix. It cannot turn an incomplete sample into a release signal;
-        // offline and hard-boundary coverage remains in the security track.
+        // The release smoke is the complete online interaction matrix. It
+        // cannot turn an incomplete sample into a release signal; offline and
+        // hard-boundary coverage remains in the security track.
         EvalRunMode::Smoke => scenarios
             .into_iter()
             .filter(|scenario| scenario.web_state() == WebState::Online)
@@ -7253,6 +7354,24 @@ impl ExecutedCoreCase {
 
     pub(crate) const fn tool_call_count(&self) -> u32 {
         self.summary.runtime_evidence.tool_call_count
+    }
+
+    /// The closed terminal vocabulary. The evaluation type cannot express a
+    /// non-terminal Run, so "there is always a terminal state" is enforced by
+    /// the type; what still needs a guard is that a terminal failure carries a
+    /// code the UI can render.
+    pub(crate) const fn terminal_state_label(&self) -> &'static str {
+        match self.summary.runtime_evidence.terminal_state {
+            EvaluationTerminalState::Completed => "completed",
+            EvaluationTerminalState::Failed => "failed",
+            EvaluationTerminalState::Cancelled => "cancelled",
+        }
+    }
+
+    /// A terminal failure must carry a code the UI can render. The defect this
+    /// exposes is the silence, not the failure.
+    pub(crate) const fn has_terminal_error_code(&self) -> bool {
+        self.summary.runtime_evidence.terminal_error_code.is_some()
     }
 
     pub(crate) fn observed_local_source(&self) -> bool {
@@ -7538,6 +7657,18 @@ async fn execute_headless_core_case_with_local_body(
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     };
+    // Ask production which terminal protocol this Run reserves instead of
+    // re-deriving it here; the double must script exactly that shape. Resolved
+    // before the request is moved into intake.
+    let strict_terminal_submission = crate::ai_runtime::run_intake::RunIntake::resolve_envelope(
+        &request,
+    )
+    .map(|envelope| {
+        crate::ai_runtime::normal_run_service::requires_structured_finalization_for_envelope(
+            &envelope,
+        )
+    })
+    .unwrap_or(false);
     let sink = HeadlessEvaluationSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
         .map_err(|_| EvalContractError::new("eval_run_intake_failed"))?;
@@ -7568,6 +7699,30 @@ async fn execute_headless_core_case_with_local_body(
             // turn before Host limitation. Without this script the third
             // request hits a closed peer and the shared LLM circuit opens.
             sse_content(&final_content),
+        ]
+    } else if requires_online_web && strict_terminal_submission {
+        vec![
+            sse_tool_call(
+                &format!("eval-web-call-{}", scenario.case_id()),
+                "web_search",
+                r#"{"query":"synthetic evaluation evidence"}"#,
+            ),
+            sse_tool_call(
+                &format!("eval-web-fetch-{}", scenario.case_id()),
+                "web_fetch",
+                r#"{"urls":["https://source.invalid/contract"]}"#,
+            ),
+            // A strict Run reserves the structured submission tool, so a prose
+            // answer can never complete it. The double must therefore script
+            // the submission protocol this Run actually requires.
+            sse_tool_call(
+                &format!("eval-web-final-{}", scenario.case_id()),
+                crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME,
+                &serde_json::json!({
+                    "blocks": [{ "markdown": final_content, "sources": ["W1"] }]
+                })
+                .to_string(),
+            ),
         ]
     } else if requires_online_web {
         vec![
@@ -11514,7 +11669,7 @@ pub(crate) fn build_agent_capacity_report(
     security: Vec<SecurityCaseResult>,
 ) -> Result<AgentCapacityReport, EvalContractError> {
     if core.run_mode != EvalRunMode::Full
-        || core.case_count != 48
+        || core.case_count != u32::try_from(report_gate_plan_count() * 2).unwrap_or(u32::MAX)
         || staircases.len() != 14
         || staircases.iter().any(|staircase| {
             staircase.levels.is_empty()
@@ -11979,14 +12134,16 @@ pub(crate) fn validate_serialized_evaluation_summary(
     exact_string(root.get("schemaVersion"), &["agent-eval-summary-v2"])?;
     exact_string(root.get("evidenceLevel"), &["headless_deterministic"])?;
     exact_string(root.get("runMode"), &["smoke", "full"])?;
-    let case_count = bounded_u64(root.get("caseCount"), 48)?;
-    let executed_case_count = bounded_u64(root.get("executedCaseCount"), 48)?;
-    let completed_case_count = bounded_u64(root.get("completedCaseCount"), 48)?;
-    let answered_case_count = bounded_u64(root.get("answeredCaseCount"), 48)?;
-    let expected_refusal_count = bounded_u64(root.get("expectedRefusalCount"), 48)?;
-    let unexpected_failure_count = bounded_u64(root.get("unexpectedFailureCount"), 48)?;
-    let passed = bounded_u64(root.get("passed"), 48)?;
-    let failed = bounded_u64(root.get("failed"), 48)?;
+    let case_count = bounded_u64(root.get("caseCount"), summary_count_bound())?;
+    let executed_case_count = bounded_u64(root.get("executedCaseCount"), summary_count_bound())?;
+    let completed_case_count = bounded_u64(root.get("completedCaseCount"), summary_count_bound())?;
+    let answered_case_count = bounded_u64(root.get("answeredCaseCount"), summary_count_bound())?;
+    let expected_refusal_count =
+        bounded_u64(root.get("expectedRefusalCount"), summary_count_bound())?;
+    let unexpected_failure_count =
+        bounded_u64(root.get("unexpectedFailureCount"), summary_count_bound())?;
+    let passed = bounded_u64(root.get("passed"), summary_count_bound())?;
+    let failed = bounded_u64(root.get("failed"), summary_count_bound())?;
     let boundary_case_count = bounded_u64(root.get("boundaryCaseCount"), 4)?;
     let run_mode = root
         .get("runMode")
@@ -12095,6 +12252,17 @@ fn exact_string(
     }
 }
 
+/// Upper bound for every per-case and per-summary count in the serialized
+/// summary.
+///
+/// Derived from the declared matrix instead of a literal: the bound exists to
+/// reject unbounded values, not to freeze the number of cases. A hard-coded 48
+/// silently rejected the 49th case, which reads as a contract violation rather
+/// than as the stale bound it is.
+fn summary_count_bound() -> u64 {
+    u64::try_from(BASE_QUESTION_PLANS.len() * 2).unwrap_or(u64::MAX)
+}
+
 fn bounded_u64(value: Option<&serde_json::Value>, maximum: u64) -> Result<u64, EvalContractError> {
     let value = value
         .and_then(serde_json::Value::as_u64)
@@ -12123,7 +12291,8 @@ fn validate_group_counts(
     let total = ["noRetrieval", "localOnly", "webOnly", "hybrid"]
         .into_iter()
         .try_fold(0_u64, |total, key| {
-            bounded_u64(object.get(key), 48).map(|count| total.saturating_add(count))
+            bounded_u64(object.get(key), summary_count_bound())
+                .map(|count| total.saturating_add(count))
         })?;
     if total != case_count {
         return Err(EvalContractError::new(
@@ -12144,7 +12313,8 @@ fn validate_language_counts(
     let total = ["chinese", "english", "mixed"]
         .into_iter()
         .try_fold(0_u64, |total, key| {
-            bounded_u64(object.get(key), 48).map(|count| total.saturating_add(count))
+            bounded_u64(object.get(key), summary_count_bound())
+                .map(|count| total.saturating_add(count))
         })?;
     if total != case_count {
         return Err(EvalContractError::new(
@@ -12238,7 +12408,7 @@ fn validate_case_summary(
             "overallPass",
         ],
     )?;
-    let case_id = bounded_u64(object.get("caseId"), 48)?;
+    let case_id = bounded_u64(object.get("caseId"), summary_count_bound())?;
     if case_id == 0 {
         return Err(EvalContractError::new("evaluation_summary_value_invalid"));
     }
@@ -12584,7 +12754,7 @@ fn validate_evaluation_verdict(
             "overallPass",
         ],
     )?;
-    if bounded_u64(object.get("caseId"), 48)? != expected_case_id {
+    if bounded_u64(object.get("caseId"), summary_count_bound())? != expected_case_id {
         return Err(EvalContractError::new(
             "evaluation_summary_verdict_inconsistent",
         ));

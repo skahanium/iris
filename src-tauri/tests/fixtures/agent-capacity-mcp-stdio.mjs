@@ -21,7 +21,7 @@ function writeResponse(id, result) {
 
 function claimText() {
   let claims = "";
-  for (let ordinal = 1; ordinal <= 48; ordinal += 1) {
+  for (let ordinal = 1; ordinal <= 128; ordinal += 1) {
     claims += ` fact-web-${ordinal}=value-${ordinal}`;
   }
   return `${claims} date: ${fixtureTimestamp}`;
