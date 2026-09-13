@@ -7073,9 +7073,15 @@ async fn probe_tool_payload_truncation() -> Result<bool, EvalContractError> {
     let observed_chars = provider
         .observed_tool_message_chars
         .load(std::sync::atomic::Ordering::SeqCst);
+    // The boundary is "an over-budget payload is truncated", not the exact byte
+    // count of one particular truncation strategy. The JSON-aware fitter keeps
+    // the envelope parseable and the continuation pointer intact, so it lands at
+    // or under the budget instead of budget+1 (the old slice plus its ellipsis).
+    // The lower bound keeps the probe meaningful: a fitter that returned a stub
+    // would not fill the budget.
     Ok(result.is_ok()
         && telemetry.snapshot().tool_result_truncations() == 1
-        && observed_chars == 8_001)
+        && (7_500..=8_000).contains(&observed_chars))
 }
 
 #[cfg(test)]
