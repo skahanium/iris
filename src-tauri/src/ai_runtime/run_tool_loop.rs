@@ -2391,7 +2391,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 
     fn evidence_limited_response(&self) -> String {
         if !self.evidence_ids().is_empty() {
-            return "本轮已取得可核验资料，但未能完成最终来源关联；已取得的正文不会被当作读取失败。请重试以完成答复。".to_string();
+            // Built from the shared constant so the finalisation layer
+            // recognises this Host-authored limitation as one.
+            return format!(
+                "{}，但未能完成最终来源关联；已取得的正文不会被当作读取失败。请重试以完成答复。",
+                crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_WITH_EVIDENCE_PREFIX
+            );
         }
         let leads = self
             .run_web_evidence

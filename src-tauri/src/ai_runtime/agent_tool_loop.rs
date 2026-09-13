@@ -359,6 +359,20 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
 }
 
 pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIX: &str = "本轮未取得足够的可核验来源正文";
+
+/// A bounded limitation published after the Run already holds verifiable
+/// material but could not finish attribution. It is Host-authored too, so the
+/// finalisation layer must recognise it exactly like the prefix above.
+pub(crate) const EVIDENCE_LIMITED_WITH_EVIDENCE_PREFIX: &str = "本轮已取得可核验资料";
+
+/// Every Host-authored bounded limitation starts with one of these. Producers
+/// must build their text from these constants (see `evidence_limited_response`
+/// in the Run tool loop) so the text and the recogniser cannot drift apart —
+/// the defect this list was introduced to close.
+pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIXES: [&str; 2] = [
+    EVIDENCE_LIMITED_RESPONSE_PREFIX,
+    EVIDENCE_LIMITED_WITH_EVIDENCE_PREFIX,
+];
 pub(crate) const EVIDENCE_LIMITED_RESPONSE: &str =
     "本轮未取得足够的可核验来源正文，无法确认问题涉及的当前情况。未核实的线索不能作为当前事实的依据。";
 
@@ -1593,7 +1607,7 @@ fn initial_loop_budget_instruction(
     }
 }
 
-fn safe_progress_identities(output: &serde_json::Value) -> Vec<String> {
+pub(crate) fn safe_progress_identities(output: &serde_json::Value) -> Vec<String> {
     const SAFE_IDENTITY_KEYS: &[&str] = &[
         "resourceId",
         "resource_id",
@@ -1610,6 +1624,19 @@ fn safe_progress_identities(output: &serde_json::Value) -> Vec<String> {
         "file_hash",
         "targetFileHash",
         "target_file_hash",
+        // Ranged reads: paging through one note keeps the same content hash, so
+        // the range itself must count as the new resource identity. Without
+        // these keys two consecutive pages looked like "no progress" and the
+        // business tools were closed mid-read.
+        "nextStartByte",
+        "next_start_byte",
+        "startByte",
+        "start_byte",
+        "endByte",
+        "end_byte",
+        "offset",
+        "rangeStart",
+        "range_start",
     ];
 
     fn collect_identity_values(value: &serde_json::Value, identities: &mut HashSet<String>) {
@@ -1706,9 +1733,10 @@ fn evidence_limited_outcome(
 }
 
 pub(crate) fn is_evidence_limited_response(content: &str) -> bool {
-    content
-        .trim_start()
-        .starts_with(EVIDENCE_LIMITED_RESPONSE_PREFIX)
+    let trimmed = content.trim_start();
+    EVIDENCE_LIMITED_RESPONSE_PREFIXES
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
 }
 
 /// Update the already-compiled system message after the bounded compaction
@@ -1938,7 +1966,7 @@ fn tool_result_message(
             false,
         );
     }
-    let content = truncate_chars(&serialized, budget);
+    let (content, _) = fit_tool_payload(&payload, budget, &serialized);
     (
         LlmMessage {
             role: MessageRole::Tool,
@@ -1949,6 +1977,128 @@ fn tool_result_message(
         },
         truncated,
     )
+}
+
+/// Prose fields a tool payload may give up to fit the character budget.
+const SHRINKABLE_TEXT_FIELDS: &[&str] = &["content", "excerpt", "text", "body"];
+
+/// Fit an over-budget tool payload into `budget` characters **without breaking
+/// its JSON envelope**.
+///
+/// Slicing the serialized string produced invalid JSON and dropped
+/// `nextStartByte`, so the model lost both the tail of the body and the pointer
+/// for continuing the read. This shortens a known prose field instead and, for a
+/// ranged read, recomputes the continuation pointer from the prefix that
+/// actually survived — so what the model can see and where the next read
+/// resumes agree.
+///
+/// The tool result envelope is `{success, output, error, loopObservation}`, so
+/// the shrinkable text is either `output` itself or one of `SHRINKABLE_TEXT_FIELDS`
+/// on the `output` object. A payload with no such field falls back to a plain
+/// slice; that is a last resort, not the normal path.
+pub(crate) fn fit_tool_payload(
+    payload: &serde_json::Value,
+    budget: usize,
+    serialized: &str,
+) -> (String, bool) {
+    if serialized.chars().count() <= budget {
+        return (serialized.to_string(), false);
+    }
+    let mut value = payload.clone();
+
+    // Decide the shrink plan with immutable borrows only; the mutable pass below
+    // must not overlap with the overhead measurement.
+    let output = value.get("output");
+    let field: Option<&'static str> = match output {
+        Some(serde_json::Value::Object(object)) => SHRINKABLE_TEXT_FIELDS
+            .iter()
+            .find(|field| {
+                object
+                    .get(**field)
+                    .is_some_and(serde_json::Value::is_string)
+            })
+            .copied(),
+        _ => None,
+    };
+    let shrinkable = matches!(output, Some(serde_json::Value::String(_))) || field.is_some();
+    if !shrinkable {
+        return (truncate_chars(serialized, budget), true);
+    }
+    let overhead = match field {
+        Some(field) => measure_without_output_field(&value, field),
+        None => measure_without_output(&value),
+    };
+    let allowed = budget.saturating_sub(overhead + 32);
+    if allowed < 256 {
+        return (truncate_chars(serialized, budget), true);
+    }
+
+    let Some(serde_json::Value::Object(object)) = value.get_mut("output") else {
+        // `output` is a plain string: shorten it in place.
+        if let Some(serde_json::Value::String(text)) = value.get_mut("output") {
+            if text.chars().count() <= allowed {
+                return (truncate_chars(serialized, budget), true);
+            }
+            let kept: String = text.chars().take(allowed).collect();
+            *text = kept;
+            return match serde_json::to_string(&value) {
+                Ok(fitted) if fitted.chars().count() <= budget => (fitted, true),
+                _ => (truncate_chars(serialized, budget), true),
+            };
+        }
+        return (truncate_chars(serialized, budget), true);
+    };
+
+    let Some(field) = field else {
+        return (truncate_chars(serialized, budget), true);
+    };
+    let Some(serde_json::Value::String(text)) = object.get_mut(field) else {
+        return (truncate_chars(serialized, budget), true);
+    };
+    if text.chars().count() <= allowed {
+        return (truncate_chars(serialized, budget), true);
+    }
+    let kept: String = text.chars().take(allowed).collect();
+    let kept_bytes = kept.len();
+    *text = kept;
+    object.insert("truncated".into(), serde_json::Value::Bool(true));
+    if field == "content" {
+        let start = object
+            .get("sourceSpan")
+            .and_then(|span| span.get("start"))
+            .and_then(serde_json::Value::as_u64);
+        if let Some(start) = start {
+            object.insert(
+                "nextStartByte".into(),
+                serde_json::Value::Number((start + kept_bytes as u64).into()),
+            );
+        }
+    }
+    match serde_json::to_string(&value) {
+        Ok(fitted) if fitted.chars().count() <= budget => (fitted, true),
+        _ => (truncate_chars(serialized, budget), true),
+    }
+}
+
+/// Serialized length once `output` is emptied.
+fn measure_without_output(value: &serde_json::Value) -> usize {
+    let mut probe = value.clone();
+    if let Some(object) = probe.as_object_mut() {
+        object.insert("output".into(), serde_json::Value::Null);
+    }
+    serde_json::to_string(&probe).map_or(0, |text| text.chars().count())
+}
+
+/// Serialized length once `output.<field>` is emptied.
+fn measure_without_output_field(value: &serde_json::Value, field: &str) -> usize {
+    let mut probe = value.clone();
+    if let Some(object) = probe
+        .get_mut("output")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        object.insert(field.into(), serde_json::Value::String(String::new()));
+    }
+    serde_json::to_string(&probe).map_or(0, |text| text.chars().count())
 }
 
 fn tool_result_char_budget(tool_name: &str) -> usize {
