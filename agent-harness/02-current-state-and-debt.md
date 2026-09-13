@@ -142,6 +142,18 @@
    有 267 处 item 级 `#[cfg(test)]`，误删会直接破坏结构（本轮已发生过一次，靠
    `git checkout -- <file>` 回退重来）。
 
+4. **子模块要显式导入「留在父文件里的类型」**：按簇首/簇尾定位时，簇前的定义（例如
+   `ScenarioLanguage`）不会被一起搬走，子模块必须 `use super::ScenarioLanguage;`。同理，父文件
+   自己要用的 `pub(super)` 辅助函数要写**显式** `use <child>::{a, b, c};`——`use <child>::*;`
+   在本仓库的实测里没有稳定带进这些项。
+5. **不要在 `#[path]`/`mod` 声明前留下游离的 `#[cfg(test)]`**：文件里 267 处 item 级
+   `#[cfg(test)]` 与空行交错，按行删属性极易把模块声明变成「仅测试构建存在」，表现为
+   `unresolved module`。删除属性必须成对匹配到具体的 item。
+
+（本轮 `case_matrix` 簇（819 行）就卡在第 4、5 条上，已回退到上一个全绿提交重来——**拆分期间
+每个子模块都必须停在 `cargo clippy --all-targets -- -D warnings` 全绿**，回退用
+`git checkout -- src-tauri/src/ai_runtime/agent_capacity_eval.rs`。）
+
 剩余 18 个候选：`verdict`(含 quality)、`case_matrix`、`pressure`、`headless`、`scoring`、
 `summary`、`boundary`、`live_capability`、`security`、`report`、`live_preflight`、`live_pilot`、
 `live_result_io`、`live_attestation`、`live_state`、`mcp_contract`、`doubles`。每拆一个都要跑
