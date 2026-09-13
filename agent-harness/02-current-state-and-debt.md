@@ -117,15 +117,35 @@
   2000 行，超限文件进入 `SPLIT_QUEUE` 并按当前规模钉住，只许变短；文件缩回默认以内却不删除
   条目会让门禁失败。`agent_capacity_eval.rs`（13.4k 行）排队拆分，方案见下。
 
-### `agent_capacity_eval.rs` 拆分计划（未开始）
+### `agent_capacity_eval.rs` 拆分计划（进行中：3/21）
 
 该文件 407 个顶层项里只有 147 项是生产代码（约 3.9k 行），其余 260 项、约 9.6k 行是
 `#[cfg(test)]` 支撑代码，真正的测试在 `agent_capacity_eval_tests.rs`。可机械拆成 21 个子模块
-（每个 < 1.6k 行），父文件只留模块文档、`mod` 声明与 `pub(crate) use <child>::*;` 门面，使
+（每个 < 1.6k 行），父文件只留模块文档、`mod` 声明与 `pub(crate) use <child>::{...};` 门面，使
 `crate::ai_runtime::agent_capacity_eval::X` 路径与 `provider_continuation_tests.rs` 的 glob
 导入保持不变。关键约束：约 20 个结构体的私有字段被兄弟模块构造或读取，需要逐个 `pub(super)`；
-生产/测试项在同文件内交错 25 次，必须保留每项自己的 `#[cfg(test)]`；`contract`、`telemetry`
-是零依赖叶子，应最先拆出。
+生产/测试项在同文件内交错 25 次，必须保留每项自己的 `#[cfg(test)]`。
+
+已完成（`75fc9323`）：`contract.rs`（567 行）、`telemetry.rs`（354 行）、`tool_class.rs`（121 行），
+父文件 13,453 → 12,431 行。机制与三条硬教训：
+
+1. **子模块声明用 `#[path = "agent_capacity_eval/<child>.rs"] mod <child>;`**（与 `skills_impl.rs`
+   同一写法），不要另建 `agent_capacity_eval/mod.rs`。子模块内用 `use super::contract::*;`
+   加上 `std`/`serde` 的显式导入，不要用 `use super::*;`（父文件的 glob 再导出会被判为未使用）。
+2. **可见性只升不降**：原本 `pub(crate)`、被 `agent_capacity_eval_tests.rs` 或其它模块导入的项
+   必须保持 `pub(crate)`，否则 `pub(crate) use` 会报 E0603/E0364；只有仅在同文件树内使用的项才改
+   `pub(super)`。用一个盲替换「先匹配空前缀再匹配 `pub(crate) `」的脚本会把 `pub(crate)` 降级成
+   `pub(super)` —— 必须按 `git show HEAD:<file>` 逐个核对原可见性。
+3. **父文件的再导出清单要由外部消费者反推**，不要整段 glob 或全量复制：只再导出
+   `agent_capacity_eval_tests.rs` 与生产模块真正 `use` 的名字，且仅被测试使用的名字要加
+   `#[cfg(test)]`，否则非测试构建会报未使用导入。**绝不要按行删除 `#[cfg(test)]` 行**——文件里
+   有 267 处 item 级 `#[cfg(test)]`，误删会直接破坏结构（本轮已发生过一次，靠
+   `git checkout -- <file>` 回退重来）。
+
+剩余 18 个候选：`verdict`(含 quality)、`case_matrix`、`pressure`、`headless`、`scoring`、
+`summary`、`boundary`、`live_capability`、`security`、`report`、`live_preflight`、`live_pilot`、
+`live_result_io`、`live_attestation`、`live_state`、`mcp_contract`、`doubles`。每拆一个都要跑
+`cargo clippy --all-targets -- -D warnings`，并在若干节点跑完整 `cargo test --lib`。
 
 自查确认无问题的两处：
 
