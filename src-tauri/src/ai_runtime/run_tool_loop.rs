@@ -58,6 +58,13 @@ const MAX_WEB_CANDIDATES_PER_DISCOVERY: usize = 4;
 /// from passing while the actual evidence request exceeds a provider's output budget.
 pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 8;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
+/// Upper bound on the distinct domains surfaced with one Web observation.
+const MAX_SOURCE_DOMAINS: usize = 8;
+/// Standing scope check attached to every Web observation. It states the fact
+/// and the required action without naming any market, so the model keeps
+/// ownership of the scope judgement.
+const WEB_SCOPE_CHECK_NOTE: &str =
+    "核对下列来源域名所属市场是否与本轮适用范围一致；不一致时继续换源，不要用其他市场的可得性代替本地事实。";
 /// One concrete Web dispatch has a bounded provider interaction window.
 const WEB_TOOL_CALL_DEADLINE: Duration = Duration::from_secs(20);
 /// Minimum remaining budget required before retrying a failed web search attempt.
@@ -660,9 +667,13 @@ impl<'a> NormalRunToolExecutor<'a> {
                     state.candidate_urls.clone(),
                 )
             };
-            let observations = candidates
+            let admitted = candidates
                 .iter()
                 .filter(|item| admitted_urls.contains(&item.canonical_url))
+                .collect::<Vec<_>>();
+            let source_domains = distinct_source_domains(admitted.iter().copied());
+            let observations = admitted
+                .iter()
                 .map(|item| {
                     serde_json::json!({
                         "title": item.title,
@@ -694,6 +705,8 @@ impl<'a> NormalRunToolExecutor<'a> {
                 success: true,
                 output: serde_json::json!({
                     "results": observations,
+                    "sourceDomains": source_domains,
+                    "scopeCheck": WEB_SCOPE_CHECK_NOTE,
                     "canonicalUrls": canonical_urls,
                     "evidenceIds": [],
                     "count": observations.len(),
@@ -802,6 +815,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             success: true,
             output: serde_json::json!({
                 "results": packets,
+                "sourceDomains": distinct_source_domains(packed_items.iter()),
+                "scopeCheck": WEB_SCOPE_CHECK_NOTE,
                 "resourceIds": resource_ids,
                 "evidenceIds": evidence_ids,
                 "count": evidence_ids.len(),
@@ -3484,11 +3499,16 @@ fn append_capability_degraded(
                 code: failure.code,
                 retryable: failure.retryable,
                 attempt_count,
+                // The Host deliberately does not constrain or wrap the model
+                // body on this path (`apply_required_web_degradation_notice` is
+                // an intentional no-op seam), so the notice must not claim it
+                // did. It states what actually happened: the answer continues
+                // without Web verification.
                 message: if failure.code == SafeRunErrorCode::WebProviderAuthFailed {
-                    "联网 API Key 无效，请重新输入原始 Key；已继续生成不依赖联网证据的受约束答复。"
+                    "联网 API Key 无效，请重新输入原始 Key；已继续生成未经联网核实的答复。"
                         .to_string()
                 } else {
-                    "联网核实暂不可用，已继续生成受约束答复。".to_string()
+                    "联网核实暂不可用，已继续生成未经联网核实的答复。".to_string()
                 },
             },
         },
@@ -3580,6 +3600,26 @@ fn pack_web_evidence_for_model(
         return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
     }
     Ok(packed)
+}
+
+/// Distinct source domains for one bounded Web observation, lowercased and
+/// sorted so the value is stable across batches.
+///
+/// The Host surfaces the fact; judging whether a market matches the Run's
+/// applicable scope stays with the model and the `## GeographicScope`
+/// contract. This deliberately carries **no** domain-to-market mapping and no
+/// region dictionary, so it can never act as a second scope authority.
+fn distinct_source_domains<'a>(
+    items: impl IntoIterator<Item = &'a crate::ai_runtime::web_evidence_broker::WebEvidenceItem>,
+) -> Vec<String> {
+    let mut domains = BTreeSet::new();
+    for item in items {
+        let domain = item.domain.trim().to_ascii_lowercase();
+        if !domain.is_empty() {
+            domains.insert(domain);
+        }
+    }
+    domains.into_iter().take(MAX_SOURCE_DOMAINS).collect()
 }
 
 fn pack_web_candidates_for_model(
@@ -3838,11 +3878,12 @@ mod tests {
     use super::{
         append_model_tool_completed_with_report, append_model_tool_started, bounded_page_evidence,
         corroborated_source_threshold_met, corroborated_web_evidence_required,
-        emit_deferred_web_degradation, expected_post_content_hashes, failed_fetch_urls,
-        normalize_fetch_url, pack_web_candidates_for_model, remember_candidate_urls,
-        validate_public_fetch_urls, web_output_has_usable_result, web_result_limit,
-        web_search_result_limit, DeferredWebDegradationInput, NormalRunToolExecutor,
-        RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
+        distinct_source_domains, emit_deferred_web_degradation, expected_post_content_hashes,
+        failed_fetch_urls, normalize_fetch_url, pack_web_candidates_for_model,
+        remember_candidate_urls, validate_public_fetch_urls, web_output_has_usable_result,
+        web_result_limit, web_search_result_limit, DeferredWebDegradationInput,
+        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR, MAX_SOURCE_DOMAINS,
+        WEB_SCOPE_CHECK_NOTE,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -6597,5 +6638,65 @@ mod tests {
                 Ok(())
             })
             .expect("no note text persistence");
+    }
+
+    /// The scope fact the model needs, stated without naming any market.
+    ///
+    /// The documented requirement is that region-mismatched evidence must send
+    /// the model back to a different source. The Host's part is to surface the
+    /// domains it actually returned; judging the market stays with the model and
+    /// the `## GeographicScope` contract, so this carries no region dictionary.
+    #[test]
+    fn web_observations_surface_distinct_source_domains_without_naming_a_market() {
+        let item = |domain: &str| super::super::web_evidence_broker::WebEvidenceItem {
+            title: "Title".into(),
+            url: "https://example.invalid/page".into(),
+            canonical_url: "https://example.invalid/page".into(),
+            domain: domain.into(),
+            snippet: "Snippet".into(),
+            fetched_excerpt: None,
+            provider_id: "mcp.test".into(),
+            provider_kind: "mcp".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        };
+
+        let items = [
+            item("WWW.Example.COM"),
+            item("www.example.com"),
+            item("  "),
+            item("news.example.cn"),
+        ];
+        assert_eq!(
+            distinct_source_domains(items.iter()),
+            vec!["news.example.cn".to_string(), "www.example.com".to_string()]
+        );
+
+        // The note names the action, never a market: no scope authority is
+        // created outside the prompt contract.
+        assert!(WEB_SCOPE_CHECK_NOTE.contains("继续换源"));
+        for market in ["中国", "美国", "台湾", "香港", "大陆"] {
+            assert!(
+                !WEB_SCOPE_CHECK_NOTE.contains(market),
+                "the scope check must not name a market, found {market}"
+            );
+        }
+
+        let many = (0..(MAX_SOURCE_DOMAINS + 4))
+            .map(|index| item(&format!("host-{index:02}.example")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            distinct_source_domains(many.iter()).len(),
+            MAX_SOURCE_DOMAINS
+        );
     }
 }

@@ -1156,6 +1156,29 @@ impl RunEngine {
             }
         } else {
             content = linkify_final_web_citations(db, run_id, &citation_evidence_ids, content);
+            if executor.web_observation_performed() == Some(true)
+                && !natural_clarification
+                && !is_evidence_limited_response(&content)
+            {
+                // This Run answered without the strict current-evidence
+                // contract, so an unregistered model-authored link cannot be
+                // rejected without trading a fabricated pointer for no answer
+                // at all. It is defused instead. Runs that never touched the
+                // Web are left alone, so a link the user supplied in their own
+                // question is never stripped.
+                //
+                // The two exclusions mirror the strict branch's own guard: a
+                // clarification makes no factual claim, and an evidence-limited
+                // response is Host-authored and deliberately discloses the
+                // unverified leads it did see. Removing those URLs would destroy
+                // the disclosure rather than a fabricated citation.
+                let allowed_urls =
+                    AgentEvidenceRepository::list_web_citation_links(db, &citation_evidence_ids)?
+                        .into_iter()
+                        .map(|citation| citation.url)
+                        .collect::<HashSet<_>>();
+                content = strip_unverified_web_urls(&content, &allowed_urls);
+            }
         }
         if executor.requires_web_evidence()
             && !natural_clarification

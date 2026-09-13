@@ -308,6 +308,17 @@ mod tests {
         assert!(compiled
             .system_prompt
             .contains("do not claim you have no search ability"));
+        // GeographicScope is the only section whose whole job is a default the
+        // Host cannot enforce deterministically, so its presence in the
+        // compiled prompt is the contract. A refactor that dropped it from the
+        // section list would otherwise fail nothing.
+        assert!(compiled.system_prompt.contains("## GeographicScope"));
+        assert!(compiled
+            .system_prompt
+            .contains("Apply this rule to the actual search query and source selection"));
+        assert!(compiled
+            .system_prompt
+            .contains("Sources covering another market do not establish mainland release dates"));
         assert!(compiled.system_prompt.contains("## ToolUseDecision"));
         assert!(compiled
             .system_prompt

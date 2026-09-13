@@ -103,6 +103,78 @@ pub(super) fn validate_web_urls_against_allowed(
     Ok(())
 }
 
+/// Remove model-authored Web links that this Run never registered.
+///
+/// Runs without the strict current-evidence contract may answer without
+/// citations, so rejecting the whole answer is not available here: that would
+/// trade a fabricated pointer for no answer at all, which this codebase
+/// explicitly refuses to do. The prose keeps its meaning and loses only the
+/// unverifiable pointer. Registered Run-local citation links survive untouched.
+pub(super) fn strip_unverified_web_urls(content: &str, allowed_urls: &HashSet<String>) -> String {
+    let mut output = String::with_capacity(content.len());
+    let mut remainder = content;
+    loop {
+        let next = match (remainder.find("http://"), remainder.find("https://")) {
+            (Some(http), Some(https)) => Some(http.min(https)),
+            (Some(http), None) => Some(http),
+            (None, Some(https)) => Some(https),
+            (None, None) => None,
+        };
+        let Some(offset) = next else {
+            output.push_str(remainder);
+            break;
+        };
+        let candidate = &remainder[offset..];
+        let end = candidate
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, ')' | ']' | '>' | '"')
+            })
+            .unwrap_or(candidate.len());
+        let raw = &candidate[..end];
+        // Sentence punctuation can look like part of the URL; it belongs to the
+        // prose and must survive either way.
+        let url = raw.trim_end_matches(['.', ',', ';', ':', '*', '。', '，', '、']);
+        let trailing = &raw[url.len()..];
+        output.push_str(&remainder[..offset]);
+        if allowed_urls.contains(url) {
+            output.push_str(raw);
+            remainder = &candidate[end..];
+        } else {
+            // `[label](url)` becomes `label`; a bare URL simply disappears.
+            let unwrapped = unwrap_markdown_link_prefix(&mut output);
+            let consumed = if unwrapped && candidate[end..].starts_with(')') {
+                end + 1
+            } else {
+                end
+            };
+            output.push_str(trailing);
+            remainder = &candidate[consumed..];
+        }
+    }
+    output
+}
+
+/// Turn an already-written `[label](` prefix into just `label`.
+///
+/// Returns `false` when the preceding text is not a simple Markdown link label,
+/// in which case the output is left alone.
+fn unwrap_markdown_link_prefix(output: &mut String) -> bool {
+    if !output.ends_with("](") {
+        return false;
+    }
+    let closing = output.len() - 2;
+    let Some(open) = output[..closing].rfind('[') else {
+        return false;
+    };
+    let label = output[open + 1..closing].to_string();
+    if label.is_empty() || label.contains('[') {
+        return false;
+    }
+    output.truncate(open);
+    output.push_str(&label);
+    true
+}
+
 #[cfg(test)]
 pub(super) fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessage {
     crate::ai_runtime::LlmMessage {
@@ -647,7 +719,7 @@ mod apply_notice_tests {
     use super::{
         apply_required_web_degradation_notice, classify_provider_failure,
         classify_tool_loop_failure, emit_run_terminal, safe_failure_message,
-        validate_web_urls_against_allowed, validated_final_model_answer,
+        strip_unverified_web_urls, validate_web_urls_against_allowed, validated_final_model_answer,
         validated_final_model_answer_with_telemetry,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
@@ -795,6 +867,43 @@ mod apply_notice_tests {
         )
         .expect_err("invented source must fail finalization");
         assert_eq!(error.to_string(), "agent_run_unverified_web_citation");
+    }
+
+    /// A Run that answered without the strict evidence contract must not
+    /// publish a pointer it never verified, and must not lose its answer either.
+    #[test]
+    fn non_strict_answer_keeps_its_prose_and_loses_only_unregistered_links() {
+        let allowed = HashSet::from(["https://official.example/result".to_string()]);
+
+        assert_eq!(
+            strip_unverified_web_urls(
+                "结论见 [官方来源](https://official.example/result) 与 [自造来源](https://invented.example/x)。",
+                &allowed,
+            ),
+            "结论见 [官方来源](https://official.example/result) 与 自造来源。"
+        );
+        assert_eq!(
+            strip_unverified_web_urls("裸链接 https://invented.example/x 已移除。", &allowed),
+            "裸链接  已移除。"
+        );
+        assert_eq!(
+            strip_unverified_web_urls("明文 http://invented.example/x 也应移除。", &allowed),
+            "明文  也应移除。"
+        );
+        assert_eq!(
+            strip_unverified_web_urls("没有任何链接的正文保持不变。", &allowed),
+            "没有任何链接的正文保持不变。"
+        );
+    }
+
+    /// No evidence at all means no pointer survives, but the prose does.
+    #[test]
+    fn answer_without_registered_sources_keeps_its_prose_verbatim() {
+        let allowed = HashSet::new();
+        assert_eq!(
+            strip_unverified_web_urls("参考 [别处](https://invented.example/x) 的说法。", &allowed),
+            "参考 别处 的说法。"
+        );
     }
 
     #[test]
