@@ -93,6 +93,8 @@ pub(crate) mod run_intake;
 #[cfg(test)]
 mod run_intake_tests;
 pub(crate) mod run_tool_loop;
+#[cfg(test)]
+mod run_tool_loop_payload_tests;
 pub mod runtime_context;
 pub mod sandbox_profile;
 pub mod skills;

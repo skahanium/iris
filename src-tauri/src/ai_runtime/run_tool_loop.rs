@@ -56,7 +56,7 @@ const MAX_WEB_CANDIDATES_PER_DISCOVERY: usize = 4;
 /// Required-run and diagnostic search limit. Keeping this shared prevents a one-row smoke probe
 /// from passing while the actual evidence request exceeds a provider's output budget.
 pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 8;
-const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
+pub(crate) const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
 /// Upper bound on the distinct domains surfaced with one Web observation.
 const MAX_SOURCE_DOMAINS: usize = 8;
 /// Per-domain character bound for the scope fact. A DNS name can technically
@@ -736,7 +736,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let packed_items =
+        let mut packed_items =
             match pack_web_evidence_for_model(&query, &selected_items, remaining, &output.usage) {
                 Ok(items) if !items.is_empty() => items,
                 Ok(_) | Err(_) => {
@@ -788,6 +788,15 @@ impl<'a> NormalRunToolExecutor<'a> {
         } else {
             serde_json::json!("one_fetched_body")
         };
+        // A fetched body is far longer than the excerpt the model sees, and the
+        // tool previously had no way to ask for the rest, so the second half of a
+        // page could never enter the context. `startChar` asks for a later
+        // window; `excerptWindow` below hands back the offset for the next one.
+        let start_char = args
+            .get("startChar")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        let excerpt_window = apply_excerpt_window(&mut packed_items, start_char);
         let mut packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
             &query,
             &packed_items,
@@ -825,6 +834,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "failedUrls": failed_urls,
                 "remainingEvidenceRequirement": remaining_evidence_requirement,
                 "observationDepth": "fetched_body",
+                "excerptWindow": excerpt_window,
                 "requiresFetchForCitation": false,
                 "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
                 "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
@@ -3686,6 +3696,14 @@ fn serialized_web_tool_payload_chars(
             "evidenceIds": evidence_ids,
             "count": evidence_ids.len(),
             "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
+            // The window block is part of the payload the model receives, so the
+            // size estimate must budget for its largest representation.
+            "excerptWindow": {
+                "startChar": u64::MAX,
+                "limitChars": MAX_WEB_EXCERPT_CHARS,
+                "nextStartChar": u64::MAX,
+                "truncated": true,
+            },
             // Reserve the largest possible decimal representation because the
             // remaining budget is produced after the packer has run.
             "remainingBudgetMs": u64::MAX,
@@ -3699,6 +3717,35 @@ fn serialized_web_tool_payload_chars(
 
 fn truncate_web_field(value: &str, limit: usize) -> String {
     value.chars().take(limit).collect()
+}
+
+/// Skip `start_char` characters of every fetched body and report the window.
+///
+/// The full body is already in `fetched_excerpt`, so skipping here pages through
+/// a long page without touching the Broker or re-fetching; the packer then bounds
+/// what the model sees. Units are characters, matching that limit. The reported
+/// `nextStartChar` is what the model passes back to continue reading.
+pub(crate) fn apply_excerpt_window(
+    items: &mut [crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    start_char: usize,
+) -> serde_json::Value {
+    let mut truncated = false;
+    for item in items.iter_mut() {
+        let Some(body) = item.fetched_excerpt.take() else {
+            continue;
+        };
+        if body.chars().count() > start_char + MAX_WEB_EXCERPT_CHARS {
+            truncated = true;
+        }
+        item.fetched_excerpt = Some(body.chars().skip(start_char).collect());
+    }
+    let next_start_char = truncated.then_some(start_char + MAX_WEB_EXCERPT_CHARS);
+    serde_json::json!({
+        "startChar": start_char,
+        "limitChars": MAX_WEB_EXCERPT_CHARS,
+        "nextStartChar": next_start_char,
+        "truncated": truncated,
+    })
 }
 
 fn bounded_page_evidence(
