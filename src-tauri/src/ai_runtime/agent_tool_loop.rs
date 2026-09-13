@@ -23,8 +23,12 @@ use crate::storage::db::Database;
 
 #[path = "agent_tool_loop/payload_fit.rs"]
 mod payload_fit;
+#[path = "agent_tool_loop/prompt_budget.rs"]
+mod prompt_budget;
 #[cfg(test)]
 pub(crate) use payload_fit::fit_tool_payload;
+#[cfg(test)]
+pub(crate) use prompt_budget::compact_tool_observations;
 
 const MAX_REPEAT_CALLS: u32 = 2;
 const MAX_DISCOVERY_CALLS_PER_MODEL_TURN: u32 = 2;
@@ -813,6 +817,7 @@ impl AgentToolLoop {
                         .map_or(allowed_output, |limit| limit.min(allowed_output)),
                 );
             }
+            prompt_budget::compact_tool_observations(&mut messages, active_tools, model_turn_budget);
             enforce_prompt_budget(&messages, active_tools, model_turn_budget)?;
             if model_turn_budget.max_completion_tokens == Some(0) {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
@@ -1770,7 +1775,7 @@ fn replace_conversation_memory_in_current_messages(
     }
 }
 
-fn enforce_prompt_budget(
+pub(crate) fn enforce_prompt_budget(
     messages: &[LlmMessage],
     tools: &[ToolSpec],
     budget: AgentModelTurnBudget,

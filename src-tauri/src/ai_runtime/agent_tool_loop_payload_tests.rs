@@ -173,3 +173,74 @@ fn over_budget_read_note_result_reaches_the_model_as_valid_json() {
         "the continuation pointer must describe what the model can actually see"
     );
 }
+
+/// ⑩: an over-budget tool trace is compacted instead of failing the turn, and
+/// the newest observation survives.
+#[test]
+fn an_over_budget_tool_trace_is_compacted_rather_than_failing_the_turn() {
+    use crate::ai_runtime::agent_tool_loop::{
+        compact_tool_observations, enforce_prompt_budget, AgentModelTurnBudget,
+    };
+    use crate::ai_types::{LlmMessage, MessageContent, MessageRole};
+
+    let budget = AgentModelTurnBudget {
+        max_prompt_tokens: Some(1_000),
+        ..Default::default()
+    };
+    let huge = "x".repeat(40_000);
+    let tool_message = |id: &str, body: &str| LlmMessage {
+        role: MessageRole::Tool,
+        content: MessageContent::Text(body.to_string()),
+        tool_call_id: Some(id.to_string()),
+        tool_calls: None,
+        reasoning_content: None,
+    };
+    let tool_specs: Vec<crate::ai_runtime::ToolSpec> = Vec::new();
+    let mut messages = vec![
+        LlmMessage {
+            role: MessageRole::System,
+            content: MessageContent::Text("system".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        },
+        tool_message("call-old", &huge),
+        tool_message("call-new", &huge),
+    ];
+
+    // Over budget before compaction.
+    assert!(enforce_prompt_budget(&messages, &tool_specs, budget).is_err());
+    let before = messages[1].content.text_content().chars().count();
+
+    compact_tool_observations(&mut messages, &tool_specs, budget);
+
+    assert!(
+        messages[1].content.text_content().chars().count() < before,
+        "the oldest tool observation must be compacted"
+    );
+    assert!(
+        messages[1].content.text_content().contains("compacted"),
+        "the marker must survive so the tool call stays answerable"
+    );
+    assert!(
+        messages[1].tool_call_id.as_deref() == Some("call-old"),
+        "compaction must not disturb tool_call identity"
+    );
+    assert_eq!(messages[0].content.text_content(), "system");
+}
+/// The compaction must be *wired in*: a behaviour test on the helper alone
+/// passes even when the loop never calls it (that mistake was made once here).
+#[test]
+fn the_loop_compacts_the_tool_trace_before_enforcing_the_prompt_budget() {
+    let source = include_str!("agent_tool_loop.rs");
+    let compaction = source
+        .find("compact_tool_observations(&mut messages")
+        .expect("the turn must compact the tool trace");
+    let enforce = source
+        .find("enforce_prompt_budget(&messages, active_tools")
+        .expect("the turn must still enforce the prompt budget");
+    assert!(
+        compaction < enforce,
+        "compaction must run before the budget check, otherwise the turn fails first"
+    );
+}
