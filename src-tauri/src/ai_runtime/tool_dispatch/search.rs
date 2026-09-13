@@ -37,7 +37,7 @@ pub(super) async fn hybrid_search(
             template: false,
         },
     };
-    let packets = state.db.with_read_conn(|conn| {
+    let (packets, status) = state.db.with_read_conn(|conn| {
         let request = RetrievalRequest {
             query: query.to_string(),
             max_results: limit,
@@ -48,7 +48,9 @@ pub(super) async fn hybrid_search(
             runtime_documents: ctx.runtime_documents.to_vec(),
             corpus_config: None,
         };
-        let mut packets = crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)?;
+        let outcome =
+            crate::ai_runtime::retrieval_broker::hybrid_retrieve_with_diagnostics(conn, &request)?;
+        let mut packets = outcome.packets;
         packets.retain(|packet| {
             packet.source_path.as_deref().is_none_or(|path| {
                 ctx.ensure_document_capability(
@@ -58,9 +60,40 @@ pub(super) async fn hybrid_search(
                 .is_ok()
             })
         });
-        Ok(packets)
+        Ok((packets, retrieval_status(&outcome.diagnostics)))
     })?;
-    Ok(serde_json::json!({ "results": packets, "count": packets.len() }))
+    Ok(serde_json::json!({
+        "results": packets,
+        "count": packets.len(),
+        "retrievalStatus": status,
+    }))
+}
+
+/// A bounded, provider-content-free summary of which retrieval layers ran.
+///
+/// Without this the model saw only "results + count" and could not tell an empty
+/// vault apart from a broken index, so it could not choose a different strategy.
+/// Only the layer name and its typed status are published — never the free-text
+/// diagnostic message, model identifiers, or any path.
+fn retrieval_status(
+    diagnostics: &[crate::ai_runtime::retrieval_broker::RetrievalLayerDiagnostic],
+) -> serde_json::Value {
+    const MAX_LAYERS: usize = 8;
+    let layers: Vec<serde_json::Value> = diagnostics
+        .iter()
+        .take(MAX_LAYERS)
+        .map(|diagnostic| {
+            serde_json::json!({
+                "layer": diagnostic.layer,
+                "status": diagnostic.status,
+            })
+        })
+        .collect();
+    let degraded = diagnostics.iter().any(|diagnostic| {
+        diagnostic.status != crate::ai_runtime::retrieval_broker::RetrievalLayerStatus::Ok
+            && diagnostic.status != crate::ai_runtime::retrieval_broker::RetrievalLayerStatus::Empty
+    });
+    serde_json::json!({ "degraded": degraded, "layers": layers })
 }
 
 pub(super) async fn regulation_lookup(
@@ -108,4 +141,71 @@ pub(super) async fn regulation_lookup(
         "regulation": packets.first(),
         "found": !packets.is_empty(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai_runtime::retrieval_broker::{RetrievalLayerDiagnostic, RetrievalLayerStatus};
+
+    fn diagnostic(
+        layer: &str,
+        status: RetrievalLayerStatus,
+        message: &str,
+    ) -> RetrievalLayerDiagnostic {
+        RetrievalLayerDiagnostic {
+            layer: layer.into(),
+            status,
+            message: Some(message.into()),
+            backend: Some("sqlite-vec".into()),
+            model_id: Some("internal-model-id".into()),
+            generation_id: Some("generation-7".into()),
+        }
+    }
+
+    #[test]
+    fn retrieval_status_publishes_layer_states_without_internal_detail() {
+        let status = retrieval_status(&[
+            diagnostic("fts", RetrievalLayerStatus::Ok, "12 hits"),
+            diagnostic(
+                "vector",
+                RetrievalLayerStatus::IndexNotReady,
+                "model missing at /Users/x",
+            ),
+        ]);
+        assert_eq!(status["degraded"], serde_json::json!(true));
+        let layers = status["layers"].as_array().expect("layers");
+        assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0]["layer"], serde_json::json!("fts"));
+        assert_eq!(layers[0]["status"], serde_json::json!("ok"));
+        assert_eq!(layers[1]["status"], serde_json::json!("index_not_ready"));
+        // No free-text diagnostics, identifiers, or paths reach the model.
+        let rendered = status.to_string();
+        for leaked in [
+            "/Users/x",
+            "internal-model-id",
+            "generation-7",
+            "model missing",
+        ] {
+            assert!(!rendered.contains(leaked), "leaked {leaked}: {rendered}");
+        }
+    }
+
+    #[test]
+    fn an_empty_layer_is_not_reported_as_degraded() {
+        let status = retrieval_status(&[
+            diagnostic("fts", RetrievalLayerStatus::Empty, "0 hits"),
+            diagnostic("vector", RetrievalLayerStatus::Ok, "3 hits"),
+        ]);
+        assert_eq!(status["degraded"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn the_status_block_is_bounded() {
+        let many: Vec<_> = (0..20)
+            .map(|index| diagnostic(&format!("layer-{index}"), RetrievalLayerStatus::Ok, "x"))
+            .collect();
+        let status = retrieval_status(&many);
+        assert_eq!(status["layers"].as_array().expect("layers").len(), 8);
+    }
 }
