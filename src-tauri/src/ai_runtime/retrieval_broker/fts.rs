@@ -106,6 +106,7 @@ pub(super) fn search_fts(
     conn: &Connection,
     query: &str,
     limit: usize,
+    scope: &crate::ai_runtime::retrieval_scope::RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
     let safe_query = escape_fts5_query(query);
     if safe_query.is_empty() {
@@ -115,17 +116,21 @@ pub(super) fn search_fts(
     // relevant note could be dropped before scope filtering ever saw it. FTS5's
     // `bm25()` is the layer's own relevance signal: lower (more negative) is a
     // better match.
-    let mut stmt = conn.prepare(
+    let (scope_sql, scope_values) = path_scope_predicate("f", scope);
+    let mut stmt = conn.prepare(&format!(
         "SELECT f.path, f.title, bm25(files_fts) AS rank
          FROM files_fts
          JOIN files f ON f.path = files_fts.path
-         WHERE files_fts MATCH ?1
-           AND f.path NOT LIKE '.classified/%'
+         WHERE files_fts MATCH ?
+           AND f.path NOT LIKE '.classified/%'{scope_sql}
          ORDER BY rank ASC
-         LIMIT ?2",
-    )?;
+         LIMIT ?"
+    ))?;
 
-    let rows = stmt.query_map(rusqlite::params![safe_query, limit as i64], |row| {
+    let mut bindings: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(safe_query)];
+    bindings.extend(scope_values);
+    bindings.push(rusqlite::types::Value::Integer(limit as i64));
+    let rows = stmt.query_map(rusqlite::params_from_iter(bindings), |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -203,6 +208,40 @@ fn bm25_to_score(rank: f64) -> f64 {
     1.0 / (1.0 + badness)
 }
 
+/// SQL predicate + bindings that constrain a query to the request's path scope.
+///
+/// The layers truncate their candidate pool with `LIMIT` **before** the broker
+/// filters by scope, so a file inside the requested folder could be pushed out
+/// by unrelated global candidates. Pushing the path part of the scope into the
+/// query itself removes that recall loss; it is a recall fix, never an
+/// authorisation change — `filter_packets_by_scope` still runs afterwards.
+pub(super) fn path_scope_predicate(
+    alias: &str,
+    scope: &crate::ai_runtime::retrieval_scope::RetrievalScope,
+) -> (String, Vec<rusqlite::types::Value>) {
+    if scope.is_path_unrestricted() {
+        return (String::new(), Vec::new());
+    }
+    let mut parts = Vec::new();
+    let mut values: Vec<rusqlite::types::Value> = Vec::new();
+    if !scope.paths.is_empty() {
+        let placeholders = vec!["?"; scope.paths.len()].join(", ");
+        parts.push(format!("{alias}.path IN ({placeholders})"));
+        values.extend(
+            scope
+                .paths
+                .iter()
+                .cloned()
+                .map(rusqlite::types::Value::Text),
+        );
+    }
+    for prefix in &scope.path_prefixes {
+        parts.push(format!("{alias}.path LIKE ?"));
+        values.push(rusqlite::types::Value::Text(format!("{prefix}%")));
+    }
+    (format!(" AND ({})", parts.join(" OR ")), values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,11 +309,11 @@ mod tests {
         )
         .expect("indexed row");
 
-        let hits = search_fts(&conn, "劳动", 5).expect("search");
+        let hits = search_fts(&conn, "劳动", 5, &unrestricted_scope()).expect("search");
         assert_eq!(hits.len(), 1, "single bigram query must hit");
-        let hits = search_fts(&conn, "劳动合同", 5).expect("search");
+        let hits = search_fts(&conn, "劳动合同", 5, &unrestricted_scope()).expect("search");
         assert_eq!(hits.len(), 1, "four-character query must hit");
-        let hits = search_fts(&conn, "合同", 5).expect("search");
+        let hits = search_fts(&conn, "合同", 5, &unrestricted_scope()).expect("search");
         assert_eq!(hits.len(), 1, "trailing bigram must hit");
     }
     /// The reported defect: the answering section must win over the first chunk.
@@ -340,5 +379,70 @@ mod tests {
         assert!(bm25_to_score(-2.0) < bm25_to_score(-0.5));
         assert!(bm25_to_score(0.0) <= 1.0);
         assert!(bm25_to_score(-100.0) > 0.0);
+    }
+
+    fn unrestricted_scope() -> crate::ai_runtime::retrieval_scope::RetrievalScope {
+        crate::ai_runtime::retrieval_scope::RetrievalScope {
+            path_prefixes: Vec::new(),
+            paths: Vec::new(),
+            required_tags: Vec::new(),
+        }
+    }
+
+    /// ⑦: a folder-scoped search must not lose its own file to unrelated global
+    /// candidates that fill the limited pool first.
+    #[test]
+    fn path_scope_is_applied_before_the_candidate_limit() {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT, title TEXT);
+             CREATE VIRTUAL TABLE files_fts USING fts5(path, title, content, tokenize='unicode61');
+             CREATE TABLE chunks (
+                 id INTEGER PRIMARY KEY, file_id INTEGER, chunk_index INTEGER, heading_path TEXT,
+                 content TEXT, char_count INTEGER, source_start INTEGER, source_end INTEGER, content_hash TEXT
+             );",
+        )
+        .expect("schema");
+        // Twenty unrelated notes that all match the query, then the scoped one.
+        for index in 0..20 {
+            let path = format!("outside/note-{index}.md");
+            conn.execute(
+                "INSERT INTO files (id, path, title) VALUES (?1, ?2, 'risk policy')",
+                rusqlite::params![index + 1, path],
+            )
+            .expect("file row");
+            conn.execute(
+                "INSERT INTO files_fts (path, title, content) VALUES (?1, 'risk policy', 'risk policy body')",
+                rusqlite::params![path],
+            )
+            .expect("fts row");
+        }
+        conn.execute(
+            "INSERT INTO files (id, path, title) VALUES (99, 'inside/target.md', 'risk policy')",
+            [],
+        )
+        .expect("scoped file");
+        conn.execute(
+            "INSERT INTO files_fts (path, title, content) VALUES ('inside/target.md', 'risk policy', 'risk policy body')",
+            [],
+        )
+        .expect("scoped fts row");
+        conn.execute(
+            "INSERT INTO chunks
+             (file_id, chunk_index, heading_path, content, char_count, source_start, source_end, content_hash)
+             VALUES (99, 0, NULL, 'risk policy body', 15, 0, 15, 'hash')",
+            [],
+        )
+        .expect("chunk row");
+
+        let scoped = crate::ai_runtime::retrieval_scope::RetrievalScope {
+            path_prefixes: vec!["inside/".into()],
+            paths: Vec::new(),
+            required_tags: Vec::new(),
+        };
+        // The pool is smaller than the number of global matches.
+        let hits = search_fts(&conn, "risk policy", 4, &scoped).expect("scoped search");
+        assert_eq!(hits.len(), 1, "the scoped file must survive the limit");
+        assert_eq!(hits[0].source_path.as_deref(), Some("inside/target.md"));
     }
 }

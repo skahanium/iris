@@ -13,21 +13,26 @@ pub(super) fn search_metadata(
     conn: &Connection,
     query: &str,
     limit: usize,
+    scope: &crate::ai_runtime::retrieval_scope::RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
     let safe_query = escape_fts5_query(query);
     if safe_query.is_empty() {
         return Ok(Vec::new());
     }
-    let mut statement = conn.prepare(
+    let (scope_sql, scope_values) = super::fts_impl::path_scope_predicate("f", scope);
+    let mut statement = conn.prepare(&format!(
         "SELECT f.path, f.title
          FROM files_metadata_fts AS m
          INNER JOIN files AS f ON f.path = m.path
-         WHERE files_metadata_fts MATCH ?1
+         WHERE files_metadata_fts MATCH ?
            AND f.path <> '.classified'
-           AND f.path NOT LIKE '.classified/%'
-         LIMIT ?2",
-    )?;
-    let rows = statement.query_map(rusqlite::params![safe_query, limit as i64], |row| {
+           AND f.path NOT LIKE '.classified/%'{scope_sql}
+         LIMIT ?"
+    ))?;
+    let mut bindings: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(safe_query)];
+    bindings.extend(scope_values);
+    bindings.push(rusqlite::types::Value::Integer(limit as i64));
+    let rows = statement.query_map(rusqlite::params_from_iter(bindings), |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
 
