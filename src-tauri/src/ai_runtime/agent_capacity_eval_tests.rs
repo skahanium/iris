@@ -2626,11 +2626,7 @@ fn core_selection_is_stratified_without_claiming_execution_results() {
     ] {
         let expected = BASE_QUESTION_PLANS
             .iter()
-            .filter(|plan| {
-                plan.language() == language
-                    && !super::agent_capacity_eval::REPORT_GATE_DEFERRED_PROMPTS
-                        .contains(&plan.prompt())
-            })
+            .filter(|plan| plan.language() == language)
             .count();
         assert_eq!(
             smoke
@@ -2971,25 +2967,20 @@ async fn headless_high_risk_web_case_requires_two_controlled_sources() {
     assert!(executed.overall_pass(), "{}", executed.closed_diagnostic());
 }
 
-/// Target fixture: the strict `HighStakesCurrentFact` class must reach a
-/// published, sourced answer.
+/// The strict `HighStakesCurrentFact` class must reach a published, sourced
+/// answer.
 ///
-/// The scenario is declared in the matrix and enforced by the coverage gate,
-/// but deferred from the report gates (`REPORT_GATE_DEFERRED_PROMPTS`) until
-/// its protocol is drivable end to end. Measured 2026-09-11: the Run issues
-/// `web_search` -> `web_fetch` -> `submit_final_answer`, the submission is
-/// rejected by the provenance policy, and the repair turn then finds no script,
-/// so the Run ends `agent_run_internal_execution_failed` with only the search
-/// dispatched. Remove the `#[should_panic]` attribute and the deferral entry in
-/// the same change that makes the strict protocol work.
+/// This was the HR-8 blocker. The Run issues `web_search` -> `web_fetch` ->
+/// `submit_final_answer`; the submission was rejected because the scripted
+/// markdown carried a `[W1]` marker, and `FinalAnswerSubmission::from_tool_call`
+/// rejects model-authored `[W...]` markers outright — the Run-bound validator
+/// adds them itself. With marker-free submission markdown the strict protocol
+/// completes, so this is a required pass rather than a target fixture.
 ///
-/// This is the first scenario to drive the strict branch through the
-/// deterministic harness at all. The neighbouring
-/// `headless_high_risk_web_case_requires_two_controlled_sources` uses case 34,
-/// whose wording (`政策`) is not on the high-stakes list and therefore
+/// `headless_high_risk_web_case_requires_two_controlled_sources` above uses
+/// case 34, whose wording (`政策`) is not on the high-stakes list and therefore
 /// exercises the ordinary `ExplicitWebRequest` path despite its name.
 #[tokio::test]
-#[should_panic(expected = "HR-8-target")]
 async fn headless_strict_high_stakes_case_publishes_a_sourced_answer() {
     let scenario = generate_core_scenarios()
         .expect("core scenarios")
@@ -3006,7 +2997,7 @@ async fn headless_strict_high_stakes_case_publishes_a_sourced_answer() {
 
     assert!(
         executed.overall_pass(),
-        "HR-8-target: strict high-stakes Run did not publish a sourced answer: {}",
+        "strict high-stakes Run did not publish a sourced answer: {}",
         executed.closed_diagnostic()
     );
 }

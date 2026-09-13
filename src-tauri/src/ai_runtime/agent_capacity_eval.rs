@@ -1875,31 +1875,19 @@ pub(crate) const BASE_QUESTION_PLANS: [BaseQuestionPlan; 26] = [
     },
 ];
 
-/// Plans the deterministic *report* gates cannot drive yet.
+/// Number of base questions the deterministic report gates execute.
 ///
-/// The matrix declares these plans so verification-class coverage stays visible
-/// and enforced, but the smoke/contract reports skip them: a Run that reserves
-/// the strict structured terminal submission needs a model double that scripts
-/// that protocol, and the headless double cannot yet produce a submission the
-/// provenance policy accepts. Running a known-open case in the product report
-/// would make the report red for a reason that is already tracked, so the gap is
-/// carried by a dedicated target fixture instead
-/// (`headless_strict_high_stakes_case_publishes_a_sourced_answer`).
-///
-/// Remove an entry here in the same change that lands its target fixture.
-pub(crate) const REPORT_GATE_DEFERRED_PROMPTS: [&str; 1] =
-    ["最新的 synthetic 监管规则适用于哪些情形？请给出适用依据。"];
-
-/// Number of base questions the deterministic report gates actually execute.
+/// Every declared plan is executed: a plan that cannot be driven end to end
+/// belongs in a target fixture, never silently parked outside the report.
 pub(crate) fn report_gate_plan_count() -> usize {
-    BASE_QUESTION_PLANS.len() - REPORT_GATE_DEFERRED_PROMPTS.len()
+    BASE_QUESTION_PLANS.len()
 }
 
 /// Report-gate base-question count inside one evidence group.
 pub(crate) fn report_gate_plan_count_for_group(group: EvidenceGroup) -> usize {
     BASE_QUESTION_PLANS
         .iter()
-        .filter(|plan| plan.group == group && !REPORT_GATE_DEFERRED_PROMPTS.contains(&plan.prompt))
+        .filter(|plan| plan.group == group)
         .count()
 }
 
@@ -7159,10 +7147,7 @@ impl EvaluationSummary {
 pub(crate) fn select_core_scenarios(
     mode: EvalRunMode,
 ) -> Result<Vec<CoreScenario>, EvalContractError> {
-    let scenarios = generate_core_scenarios()?
-        .into_iter()
-        .filter(|scenario| !REPORT_GATE_DEFERRED_PROMPTS.contains(&scenario.prompt()))
-        .collect::<Vec<_>>();
+    let scenarios = generate_core_scenarios()?;
     Ok(match mode {
         EvalRunMode::Full => scenarios,
         // The release smoke is the complete online interaction matrix. It
@@ -7682,10 +7667,14 @@ async fn execute_headless_core_case_with_local_body(
             .required_sources
             .iter()
             .any(|source| source.kind == SourceKind::Web);
+    // A prose answer may carry the display marker. A structured submission must
+    // not: the Run-bound validator adds source markers itself, and the
+    // submission parser rejects model-authored `[W...]` markers outright.
+    let submission_markdown = headless_final_content(scenario, fault);
     let final_content = if requires_online_web {
-        format!("{} [W1]", headless_final_content(scenario, fault))
+        format!("{submission_markdown} [W1]")
     } else {
-        headless_final_content(scenario, fault)
+        submission_markdown.clone()
     };
     let scripts = if requires_online_web && online_web_degradation_fault {
         vec![
@@ -7719,7 +7708,7 @@ async fn execute_headless_core_case_with_local_body(
                 &format!("eval-web-final-{}", scenario.case_id()),
                 crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME,
                 &serde_json::json!({
-                    "blocks": [{ "markdown": final_content, "sources": ["W1"] }]
+                    "blocks": [{ "markdown": submission_markdown, "sources": ["W1"] }]
                 })
                 .to_string(),
             ),

@@ -64,7 +64,7 @@ HR-6 的领域退役不新增 Provider、表、IPC 字段或领域 operation。�
 
 `agent:eval:smoke` 覆盖在线回答、20 轮连续性和关键 24/25 工具边界。`agent:eval:contract` 覆盖核心矩阵（26 个基础问题的成对变体，共 52 题）、1/20/50/100 轮连续性、查询改写、本地多跳、混合研究、来源隔离、取消/恢复及五次边界重复。矩阵规模由基础问题表派生，`CORE_MATRIX_MIN_CASES` 只设下限；覆盖只增不减。
 
-**覆盖义务（2026-09-11 增补，属 HR-7 退出条件）**：分类器可把 Run 冻结进多个验证类，而未走到某个类的门无法对该类做出结论。实测原 48 题只落 `DefaultOnline` 与 `ExplicitWebRequest` 两类，`VolatileExternalFact`（全部日常时效问题所属类）与 `HighStakesCurrentFact`（交叉印证严格分支）零覆盖，导致生产侧严格分支 4/4 失败而确定性门全程全绿。矩阵现覆盖四类，并由 `every_gate_covers_every_verification_class` 以显式所有权表强制：每个可达验证类必须有具名门负责，`CurrentRunExternal` 由 `run_intake_tests` 承担。严格结构化终局的场景已声明并纳入覆盖，但其端到端执行暂缓进入报告门（`REPORT_GATE_DEFERRED_PROMPTS`），由 `HR-8-target` 目标夹具挂账；落地该协议时须同时移除缓行条目与夹具属性。
+**覆盖义务（2026-09-11 增补，属 HR-7 退出条件）**：分类器可把 Run 冻结进多个验证类，而未走到某个类的门无法对该类做出结论。实测原 48 题只落 `DefaultOnline` 与 `ExplicitWebRequest` 两类，`VolatileExternalFact`（全部日常时效问题所属类）与 `HighStakesCurrentFact`（交叉印证严格分支）零覆盖，导致生产侧严格分支 4/4 失败而确定性门全程全绿。矩阵现覆盖四类，并由 `every_gate_covers_every_verification_class` 以显式所有权表强制：每个可达验证类必须有具名门负责，`CurrentRunExternal` 由 `run_intake_tests` 承担。严格结构化终局现已端到端可驱动并作为必过用例纳入矩阵：脚本化提交正文曾带 `[W1]` 标记，而来源标记由 Run 侧校验器事后添加、提交解析器拒绝模型自填的 `[W...]`，导致提交在提取阶段即被拒；改为无标记正文后 `web_search` → `web_fetch` → `submit_final_answer` 完整走通。确定性矩阵不再暂缓任何计划进入报告门。
 
 `agent:eval:live campaign` 在一次预检和一次成本确认后，交替执行两条独立连续会话的固定 6 Run。Campaign 的全局上限为 12 Run、96 模型轮次和 72 Web 逻辑动作；Canary 为 4 Run、32/24。最后一个额度允许执行，下一次派发必须留下 `campaign_budget_exhausted` 观察。`agent-live-pilot-v4` 仅验证终态、授权、search→fetch、Run-local 来源、引用绑定、安全、连续性和预算；每条路由生成匿名、哈希绑定的审阅包，再由人工按意图遵循、事实与来源、相关性与完整性、纠正与连续性四项逐场景评分（单项至少 4/5、总平均至少 4.2）。`agent:eval` 只有在 contract、同 Campaign 的两份 v4 轨迹和人工复核同时通过后才原子写入 `product-gate.json`；v2/v3 结果仅可诊断。
 

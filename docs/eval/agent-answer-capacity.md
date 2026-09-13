@@ -201,10 +201,11 @@ provider JSON 只经过白名单 output mapping 缩略为附录 D 字段，不�
 同时新增 `core_case_identity_is_pinned`：用例序号由表内位置派生，而安全轨迹与 live pilot
 按序号寻址，因此在表中部插入会**静默换题**；该测试把序号↔题面映射钉死，使位移变成响亮失败。
 
-严格结构化终局（`submit_final_answer`）目前仍不可端到端驱动，其场景已声明、覆盖已强制，
-但由 `REPORT_GATE_DEFERRED_PROMPTS` 暂缓进入报告门，并由目标夹具
-`headless_strict_high_stakes_case_publishes_a_sourced_answer`（`HR-8-target`）挂账。
-落地该协议时须同时移除缓行条目与夹具属性。
+严格结构化终局（`submit_final_answer`）已可端到端驱动，并作为必过用例纳入矩阵。
+此前的阻塞点是脚本化提交的正文带有 `[W1]` 标记：来源标记由 Run 侧校验器事后添加，
+`FinalAnswerSubmission::from_tool_call` 会直接拒绝模型自填的 `[W...]` 标记，因此提交
+连校验都未走到。改为无标记提交正文后，严格协议的请求序列
+`web_search` → `web_fetch` → `submit_final_answer` 在确定性双端下完整走通。
 
 v1.2.15 确定性 full 结果为 48/48：
 
