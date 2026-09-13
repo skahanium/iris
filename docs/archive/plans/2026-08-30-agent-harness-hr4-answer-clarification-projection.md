@@ -1,5 +1,8 @@
 # Agent Harness HR-4：回答、澄清、错误与投影实施计划
 
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前状态见 [Harness 实施路线](../../../agent-harness/05-implementation-roadmap.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `executing-plans` task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让普通 Agent Run 以自然正文、受控来源组和正常会话延续完成；只让高风险或历史严格合同使用现有结构化终局；让错误提示与同 Run 前端投影都以产品语义可靠收敛。

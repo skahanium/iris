@@ -301,9 +301,49 @@ function validateMarkdownLinks(filePath) {
   }
 }
 
+// Material whose links are allowed to dangle: the controlled pre-unification
+// archive describes a structure that no longer exists, the plan archive keeps
+// landed/retracted plans whose targets were deleted on purpose, and the rag-v2
+// fixtures are hashed test data rather than documentation.
+const docsArchiveRoot = path.join(root, "docs", "archive");
+const linkValidationExcludedPrefixes = [
+  path.join(harnessArchiveRoot, "2026-08-pre-unification"),
+  docsArchiveRoot,
+  path.join(root, "docs", "eval", "fixtures"),
+];
+
 function checkDocLinks() {
   validateMarkdownLinks(path.join(root, "docs", "README.md"));
   for (const filePath of activeHarnessFiles.filter(existsSync)) {
+    validateMarkdownLinks(filePath);
+  }
+  // Corpus-wide sweep. The scoped checks above only ever looked at the docs
+  // index and the active Harness files, so three dangling links lived in
+  // files they could not see: a CHANGELOG entry pointing at a deleted design
+  // document, a repo-root path written from inside docs/, and a module that had
+  // become a directory. Every other document is normative enough that a link to
+  // a missing path is a defect.
+  const excluded = (filePath) =>
+    linkValidationExcludedPrefixes.some((prefix) =>
+      filePath.startsWith(prefix),
+    );
+  const documents = [
+    ...readdirSync(root)
+      .filter((entry) => entry.endsWith(".md"))
+      .map((entry) => path.join(root, entry)),
+    ...walk(
+      path.join(root, "docs"),
+      (filePath) => filePath.endsWith(".md"),
+      (directory) => !excluded(directory),
+    ),
+    ...walk(
+      activeHarnessRoot,
+      (filePath) => filePath.endsWith(".md"),
+      (directory) => !excluded(directory),
+    ),
+  ];
+  for (const filePath of new Set(documents)) {
+    if (excluded(filePath)) continue;
     validateMarkdownLinks(filePath);
   }
 }
@@ -589,6 +629,70 @@ function checkIpcIndex() {
   }
 }
 
+// The plan archive is a controlled set, exactly like the Harness archive: every
+// archived plan must be registered in its MANIFEST, every MANIFEST row must
+// exist, and no current document except the docs index may treat the archive as
+// a reference. Otherwise an archived plan silently becomes a second source of
+// truth for capabilities that no longer exist.
+function checkDocsArchive() {
+  const plansRoot = path.join(docsArchiveRoot, "plans");
+  const manifestPath = path.join(plansRoot, "MANIFEST.md");
+  if (!existsSync(manifestPath)) {
+    fail("docs/archive/plans/MANIFEST.md is missing");
+    return;
+  }
+  const manifest = readFileSync(manifestPath, "utf8");
+  const archivedPlans = readdirSync(plansRoot).filter(
+    (entry) => entry.endsWith(".md") && entry !== "MANIFEST.md",
+  );
+  for (const entry of archivedPlans) {
+    if (!manifest.includes(`](./${entry})`)) {
+      fail(
+        `unregistered archived plan exists: ${path.relative(root, path.join(plansRoot, entry))}`,
+      );
+    }
+  }
+  for (const match of manifest.matchAll(/\]\(\.\/([^)]+\.md)\)/g)) {
+    if (!existsSync(path.join(plansRoot, match[1]))) {
+      fail(`docs/archive/plans/MANIFEST.md lists a missing plan: ${match[1]}`);
+    }
+  }
+
+  const docsIndexPath = path.join(root, "docs", "README.md");
+  const sweep = [
+    ...readdirSync(root)
+      .filter((entry) => entry.endsWith(".md"))
+      .map((entry) => path.join(root, entry)),
+    ...walk(
+      path.join(root, "docs"),
+      (filePath) => filePath.endsWith(".md"),
+      (directory) => !directory.startsWith(docsArchiveRoot),
+    ),
+    ...walk(
+      activeHarnessRoot,
+      (filePath) => filePath.endsWith(".md"),
+      (directory) => !directory.startsWith(harnessArchiveRoot),
+    ),
+  ];
+  for (const filePath of new Set(sweep)) {
+    if (filePath === docsIndexPath || !existsSync(filePath)) continue;
+    const content = readFileSync(filePath, "utf8");
+    for (const match of content.matchAll(/\]\(([^)]+)\)/g)) {
+      const rawTarget = match[1].trim().replace(/^<|>$/g, "").split("#", 1)[0];
+      if (!rawTarget || /^(?:https?:|mailto:|app:)/i.test(rawTarget)) continue;
+      const target = path.resolve(path.dirname(filePath), rawTarget);
+      if (
+        target === docsArchiveRoot ||
+        target.startsWith(`${docsArchiveRoot}/`)
+      ) {
+        fail(
+          `${path.relative(root, filePath)} treats docs/archive as an active reference`,
+        );
+      }
+    }
+  }
+}
+
 // ── Run ─────────────────────────────────────────────────────
 
 checkVersionConsistency();
@@ -596,6 +700,7 @@ checkReleaseDocumentationFacts();
 checkRagFixtureContract();
 checkMigrationCount();
 checkDocLinks();
+checkDocsArchive();
 checkAgentHarnessDocumentation();
 checkRetiredArchitectureReferences();
 checkForbiddenPhrases();

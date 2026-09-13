@@ -2,9 +2,11 @@
 
 本项目的重要变更记录于此，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+> **历史断档说明**：`v1.2.6` 至 `v1.2.22` 已打 Git tag，但未逐版本记录于本文件。这些版本的变更以对应 tag 的提交和 [ROADMAP.md](./ROADMAP.md) 为准；本文件不为它们补写条目，以免产生无法验证的发布记录。
+
 ## [1.3.0] — Current
 
-开发中，尚未发布。计划范围见 [ROADMAP.md](./ROADMAP.md) 与 [RAG 优化设计](./docs/specs/v1.2.6-rag-optimization.md)。本节只在功能完成并经验证后记录用户可见变更。
+开发中，尚未发布。计划范围见 [ROADMAP.md](./ROADMAP.md)（版本排期唯一来源）。本节只在功能完成并经验证后记录用户可见变更。
 
 ### Fixed
 

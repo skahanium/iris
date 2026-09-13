@@ -1,5 +1,8 @@
 # Iris Agent / RAG 可靠性修复 Implementation Plan
 
+> **状态归属**：本文件是在飞施工计划，只描述任务分解与当时的核验记录；当前优先级与发布阻断以
+> [ROADMAP.md](../../../ROADMAP.md) 的「Agent / RAG 可靠性修复优先级」一节为准。任务勾选不是进度指标，本文件不自行声明完成度。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不改变 Iris 本地优先、Markdown 权威、显式授权与确认写入边界的前提下，修复 Agent/RAG 已确认的正确性和可用性问题，并把检索与 Agent 评测升级为可发布的质量门禁。

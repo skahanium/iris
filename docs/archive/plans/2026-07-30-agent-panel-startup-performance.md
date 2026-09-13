@@ -1,5 +1,8 @@
 # Agent Panel Startup Performance Implementation Plan
 
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前事实见 [ARCHITECTURE.md](../../../ARCHITECTURE.md) 与 [ROADMAP.md](../../../ROADMAP.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **For agentic workers:** Execute each task with test-first verification in the current workspace; no worktree is created for this user-authorized fix.
 
 **Goal:** Make the default-visible Agent panel reach an interactive first frame without blocking application startup or long-history rendering.

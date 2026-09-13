@@ -1,5 +1,8 @@
 # Agent Harness HR-5 冻结变更集与确认后验证 Implementation Plan
 
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前状态见 [Harness 实施路线](../../../agent-harness/05-implementation-roadmap.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不新增数据库表、写入引擎或 Provider 的前提下，使现有 Durable Apply 能一次冻结并确认至多 6 个有序操作/6 个文件，安全地顺序执行、可恢复，并在成功后进行严格受限的本地只读验证。

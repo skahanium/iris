@@ -10,9 +10,7 @@ describe("persona avatar visual contract", () => {
   it("documents Iris geometric marks and the absence of a sidecar idle badge", () => {
     const design = read("docs/design-system.md");
     const roadmap = read("ROADMAP.md");
-    const checklist = read(
-      "docs/testing/iris-rail-refresh-manual-checklist.md",
-    );
+    const checklist = read("docs/testing/iris-ui-manual-checklist.md");
 
     expect(design).toContain("8 个内置灰阶几何印记");
     expect(design).toContain("不使用 emoji、插画、上传头像");

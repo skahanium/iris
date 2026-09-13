@@ -1,5 +1,8 @@
 # Task 2 Agent sqlite-vec Review Fixes Implementation Plan
 
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前事实见 [ARCHITECTURE.md](../../../ARCHITECTURE.md) 与 [ROADMAP.md](../../../ROADMAP.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让真实 Agent/RAG retrieval broker 只通过 sqlite-vec v3 KNN 执行三类语义检索，在候选产生前执行全部硬 scope，并让桌面发布无法绕过 sqlite-vec 加载烟测。

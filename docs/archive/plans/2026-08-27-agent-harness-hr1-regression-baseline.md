@@ -1,5 +1,8 @@
 # Agent Harness HR-1 Regression Baseline Implementation Plan
 
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前状态见 [Harness 实施路线](../../../agent-harness/05-implementation-roadmap.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 建立可独立重现现有生产事故和通用行为缺口的 HR-1 回归基线，同时不提前改变 HR-2 至 HR-5 的生产路由。

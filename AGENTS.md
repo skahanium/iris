@@ -212,6 +212,7 @@ Closes #42
 - **版本排期唯一来源**：[ROADMAP.md](./ROADMAP.md)
 - **界面 token 与组件规范**：[docs/design-system.md](./docs/design-system.md)
 - **文档索引**：[docs/README.md](./docs/README.md)
+- **归档约定**：`docs/archive/` 与 `agent-harness/archive/` 只作对照，现行文档不得把归档材料作为依据引用；新增归档文件必须在对应 `MANIFEST.md` 登记（`npm run docs:check` 强制校验登记完整性与引用方向）
 - 修改 UI：先 design-system + ROADMAP 对应节，再 `src/styles/globals.css` 与组件
 - 勿在 `ARCHITECTURE.md` 中新增与 ROADMAP 冲突的版本承诺
 
@@ -263,7 +264,7 @@ npm run version:check
 
 - 版本号使用显式 SemVer，不带 `v` 前缀。
 - 禁止手动全仓库替换版本号。
-- 脚本只更新应用发布事实：package、lock、Cargo、Tauri、About、README/ROADMAP/CHANGELOG 当前标签等受控位置。
+- 脚本只更新应用发布事实：package、lock、Cargo、Tauri、About、README/ROADMAP/CHANGELOG 当前标签、RAG fixture 元数据的 `currentEvaluationVersion` 等受控位置。
 - 历史版本、依赖版本、协议版本、数据库 schema/migration version 不得自动替换。
 - 发布前必须通过 `npm run version:check`。
 
@@ -291,4 +292,4 @@ npm run test:desktop:windows        # 真实 Windows 桌面持久化 E2E
 
 ---
 
-_最后更新: 2026 年 5 月（v1.0.0-alpha；文档体系与当前基线对齐）_
+_最后更新: 2026 年 9 月（v1.3.0；命令、脚本与文档索引已与当前基线核对）_

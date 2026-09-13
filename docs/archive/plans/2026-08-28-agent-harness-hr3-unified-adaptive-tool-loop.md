@@ -1,5 +1,8 @@
 # Agent Harness HR-3：统一自适应工具循环实施计划
 
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前状态见 [Harness 实施路线](../../../agent-harness/05-implementation-roadmap.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `executing-plans` task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 以单一冻结 `RunBudgetPolicy`、通用资源进展判定和一次保留的最终综合，统一 Web、本地、external read 与 runtime 的多轮工具循环。

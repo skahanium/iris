@@ -10,7 +10,7 @@
 
 ## Fixture 与标签
 
-`fixtures/rag-v2-vault/` 将包含 48 篇合成 Markdown 笔记，覆盖相近主题、长文、精确法规、tags/aliases、链接、多文档任务和干扰项。标签集共 60 条：
+`fixtures/rag-v2-vault/` 包含 48 篇合成 Markdown 笔记（已冻结，见下），覆盖相近主题、长文、精确法规、tags/aliases、链接、多文档任务和干扰项。标签集共 60 条：
 
 - 20 条语义硬负例；
 - 10 条关键词/精确命中；

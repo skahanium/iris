@@ -1,6 +1,8 @@
 # Agent Harness HR-2：渐进联网与去领域化 Intake 实施计划
 
-> 状态：已完成，待提交
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前状态见 [Harness 实施路线](../../../agent-harness/05-implementation-roadmap.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > 基线日期：2026-08-27
 > 依据：`agent-harness/03-target-architecture.md`、`agent-harness/05-implementation-roadmap.md`、`agent-harness/appendices/B-task-capability-and-risk-matrix.md`
 

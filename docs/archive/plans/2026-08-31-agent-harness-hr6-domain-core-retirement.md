@@ -1,6 +1,8 @@
 # HR-6：领域 current-fact 核心退役实施计划
 
-> **状态：已完成**
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前状态见 [Harness 实施路线](../../../agent-harness/05-implementation-roadmap.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **基线：2026-08-31，提交 `c414894b`**
 > **范围：`agent-harness/05-implementation-roadmap.md` 的 HR-6；不连接真实 Provider，不新建 worktree。**
 

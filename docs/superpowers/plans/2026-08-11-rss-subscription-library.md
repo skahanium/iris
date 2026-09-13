@@ -1,5 +1,8 @@
 # Iris RSS Subscription Library Implementation Plan
 
+> **状态归属**：本文件是在飞施工计划，只描述任务分解与当时的核验记录；当前发布阻断与交付判定以
+> [ROADMAP.md](../../../ROADMAP.md) 的 RSS 一节与 [RSS 人工清单](../../testing/rss-subscription-library-manual-checklist.md) 为准，本文件不自行声明完成度。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不接入 Agent/RAG/MCP、也不自动改写用户 Vault 的前提下，为 Iris 交付可离线、可迁移、可搜索的 RSS 订阅资料库。

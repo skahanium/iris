@@ -1,5 +1,8 @@
 # AH-2 自适应研究循环 Implementation Plan
 
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前状态见 [Harness 实施路线](../../../agent-harness/05-implementation-roadmap.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不增加第二网络工具、研究引擎、证据账本或持久化真相源的前提下，使当前事实研究按 Quick/Standard/Deep 档位执行可恢复、可取消且绝不越界的搜索与深抓取循环。

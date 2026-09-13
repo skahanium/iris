@@ -1,5 +1,8 @@
 # AI Conversation Rendering Stability Implementation Plan
 
+> **历史施工计划（已归档，2026-09-13）**：本文件不再维护；任务勾选、测试名与文件路径都是开工当时的快照，不构成当前能力或阶段状态声明。
+> 当前事实见 [ARCHITECTURE.md](../../../ARCHITECTURE.md) 与 [ROADMAP.md](../../../ROADMAP.md)，归档原因见 [MANIFEST.md](./MANIFEST.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make assistant conversations session-isolated, stream without rebuilding completed Markdown, and keep virtualized long answers readable and stable.

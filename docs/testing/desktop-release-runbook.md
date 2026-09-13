@@ -4,7 +4,7 @@
 
 ## 两段式门禁
 
-1. **有界 push CI**（`pull_request` / `main` push）：前端质量、macOS ARM64 Rust fmt/clippy/test/audit、Agent 24-case smoke。
+1. **有界 push CI**（`pull_request` / `main` push）：前端质量、macOS ARM64 Rust fmt/clippy/test/audit、Agent smoke（CI job 名 `Agent smoke gate`；`SMOKE_MIN_CASES=24` 只是下限，当前执行 26 条 Online 变体）。
 2. **同 SHA 手动发布就绪**（`ci.yml` 的 `workflow_dispatch`）：
    - `npm run agent:eval:contract`
    - `model:prepare` 后的 `embedding_model_smoke`
@@ -16,7 +16,7 @@
 
 ## 产品门（不阻断打包）
 
-`npm run agent:eval` 需要两份绝对路径的 live v4 报告与一份人工审阅文件。HR-7 在该门通过前保持「实测未通过」。
+`npm run agent:eval` 需要两份绝对路径的 live v4 报告与一份人工审阅文件。HR-7 在该门通过前保持「实测未通过」。HR-8（覆盖回正与终态可见性）的确定性层已实现、真实层未校准；其退出条件要求另行授权的 `agent:eval:live canary` 与人工四维评分，不得因确定性回归升级 HR-7。
 
 - 可以打 draft 安装包做内部验证。
 - **不得**在发行说明或 CHANGELOG 中把 Agent 写成已放行。
@@ -30,6 +30,6 @@
 
 1. 合并到 `main`，确认该 commit 的 push CI 全绿。
 2. 在同一 commit 上手动 Dispatch `CI` workflow，等待发布就绪与 Windows E2E 全绿。
-3. 打 `vX.Y.Z` tag（须先 `npm run version:set` / `version:check`），或手动 Dispatch `Package Desktop`。
+3. 打 `vX.Y.Z` tag（须先 `npm run version:set` / `version:check`；`version:set` 只改受控发布事实，含 RAG fixture 元数据的 `currentEvaluationVersion`，不得手工全仓库替换版本号），或手动 Dispatch `Package Desktop`。
 4. 检查 draft Release 资产、`latest.json` 与签名文件。
 5. 发布 Release 后由 `verify-release.yml` 校验 updater 指针。非 prerelease 才更新 GitHub `latest`。
