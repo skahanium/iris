@@ -195,6 +195,9 @@ const CHANGELOG_CURRENT_HEADING_RE = new RegExp(
 );
 const ABOUT_VERSION_LINE_RE = /^.*GNU Affero General Public License v3\.0.*$/m;
 const WEB_FETCH_USER_AGENT_RE = new RegExp(`(Iris/)${VERSION_PATTERN}`, "m");
+const RAG_FIXTURE_CURRENT_VERSION_RE = new RegExp(
+  `("currentEvaluationVersion"\\s*:\\s*"v)${VERSION_PATTERN}(")`,
+);
 
 function buildTextUpdaters(version) {
   return [
@@ -271,6 +274,18 @@ function buildTextUpdaters(version) {
           WEB_FETCH_USER_AGENT_RE,
           (_match, prefix) => `${prefix}${version}`,
           "fetch_web_page.rs Iris user agent version",
+        ),
+    },
+    {
+      // docs:check requires this field to equal the package version, so leaving
+      // it out of the updater list made the next version bump fail the gate.
+      path: "docs/eval/fixtures/rag-v2-vault/fixture-metadata.json",
+      update: (text) =>
+        replaceExactly(
+          text,
+          RAG_FIXTURE_CURRENT_VERSION_RE,
+          (_match, prefix, suffix) => `${prefix}${version}${suffix}`,
+          "rag-v2 fixture metadata currentEvaluationVersion",
         ),
     },
   ];
