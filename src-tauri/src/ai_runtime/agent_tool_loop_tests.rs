@@ -3972,3 +3972,69 @@ fn consecutive_pages_of_one_note_are_not_reported_as_no_progress() {
     assert_ne!(first, second, "a new page must not look like no progress");
     assert!(!first.is_empty());
 }
+
+/// The integration point, not just the helper: an over-budget `read_note` result
+/// must reach the model as valid JSON that still carries its continuation
+/// pointer. This is the test that fails when the loop slices the payload.
+#[test]
+fn over_budget_read_note_result_reaches_the_model_as_valid_json() {
+    use crate::ai_runtime::agent_tool_loop::tool_result_message;
+    use crate::ai_types::{FunctionCall, ToolCall, ToolCallResult};
+
+    let body: String = "中华人民共和国劳动合同法".repeat(1_000);
+    let call = ToolCall {
+        id: "call-1".into(),
+        call_type: "function".into(),
+        function: FunctionCall {
+            name: "read_note".into(),
+            arguments: "{}".into(),
+        },
+    };
+    let result = ToolCallResult {
+        tool_name: "read_note".into(),
+        success: true,
+        output: serde_json::json!({
+            "path": "notes/law.md",
+            "content": body,
+            "truncated": true,
+            "contentHash": "hash-1",
+            "sourceSpan": { "start": 4096, "end": 4096 + body.len() },
+            "nextStartByte": 4096 + body.len(),
+        }),
+        duration_ms: 3,
+        tokens_used: None,
+        error: None,
+    };
+    let (message, truncated) = tool_result_message(&call, &result, 3, 5, 2);
+    let content = match &message.content {
+        crate::ai_types::MessageContent::Text(text) => text.clone(),
+        other => panic!("expected text content, got {other:?}"),
+    };
+    assert!(truncated, "an over-budget payload must report truncation");
+    assert!(
+        content.chars().count() <= 8_000,
+        "payload still over budget"
+    );
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).expect("the model must receive valid JSON");
+    let output = parsed.get("output").expect("output survives");
+    let visible = output
+        .get("content")
+        .and_then(|value| value.as_str())
+        .expect("content survives");
+    let start = output
+        .get("sourceSpan")
+        .and_then(|span| span.get("start"))
+        .and_then(serde_json::Value::as_u64)
+        .expect("span start");
+    let next = output
+        .get("nextStartByte")
+        .and_then(serde_json::Value::as_u64)
+        .expect("continuation pointer survives");
+    assert_eq!(
+        next,
+        start + visible.len() as u64,
+        "the continuation pointer must describe what the model can actually see"
+    );
+}

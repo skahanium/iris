@@ -1919,7 +1919,7 @@ fn assistant_tool_message(response: &GatewayResponse) -> LlmMessage {
     }
 }
 
-fn tool_result_message(
+pub(crate) fn tool_result_message(
     call: &ToolCall,
     result: &ToolCallResult,
     remaining_model_turns: u32,
