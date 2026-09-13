@@ -33,7 +33,7 @@ const SCANNED_EXTENSIONS = [".rs", ".ts", ".tsx", ".mjs"];
  * split queue, not an allow-list: each entry is expected to disappear.
  */
 export const SPLIT_QUEUE = {
-  "src-tauri/src/ai_runtime/agent_capacity_eval.rs": 13500,
+  "src-tauri/src/ai_runtime/agent_capacity_eval/test_support.rs": 9600,
   "src-tauri/src/ai_runtime/run_tool_loop.rs": 6800,
   "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs": 5900,
   "src-tauri/src/ai_runtime/run_engine_tests.rs": 4700,
