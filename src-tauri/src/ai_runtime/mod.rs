@@ -5,9 +5,19 @@
 
 pub use crate::ai_types::*;
 
-#[allow(
-    dead_code,
-    reason = "Task 2 stages the evaluator contract for the Task 3 command-line runner"
+// The evaluator contract (case tables, observation types, report columns and
+// entry points) is consumed by the sibling `agent_capacity_eval_tests` harness
+// and by the deterministic/live command entrypoints the tests drive. A lib-only
+// compilation therefore sees those items as unused, while the test compilation
+// sees the real usage. Scoping the allow to `not(test)` keeps that noise out of
+// the production build and still lets `clippy --all-targets` fail on items that
+// nothing uses, including the tests.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "evaluator contract consumed by the sibling test harness, exercised through the command entrypoints"
+    )
 )]
 pub(crate) mod agent_capacity_eval;
 #[cfg(test)]

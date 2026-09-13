@@ -42,7 +42,6 @@ use crate::ai_runtime::tool_execution_pipeline::{
 };
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::{FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult};
-use crate::ai_types::WebSourceRank;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -126,7 +125,6 @@ struct RunWebEvidenceState {
     evidence_ids: Vec<i64>,
     candidate_urls: BTreeSet<String>,
     domains: BTreeSet<String>,
-    has_official_source: bool,
     slots_in_use: usize,
     max_evidence: usize,
     unverified_leads: Vec<UnverifiedWebLead>,
@@ -145,7 +143,6 @@ impl Default for RunWebEvidenceState {
             evidence_ids: Vec::new(),
             candidate_urls: BTreeSet::new(),
             domains: BTreeSet::new(),
-            has_official_source: false,
             slots_in_use: 0,
             max_evidence: MAX_WEB_EVIDENCE_PER_RUN,
             unverified_leads: Vec::new(),
@@ -787,7 +784,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         let remaining_evidence_requirement = if self.has_web_evidence() {
             serde_json::Value::Null
         } else if self.requires_corroborated_web_evidence() {
-            serde_json::json!("official_source_or_second_independent_domain")
+            serde_json::json!("second_independent_domain")
         } else {
             serde_json::json!("one_fetched_body")
         };
@@ -2317,12 +2314,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         if !self.requires_corroborated_web_evidence() {
             return true;
         }
-        let (has_official, independent_domains) = self
+        let independent_domains = self
             .run_web_evidence
             .lock()
-            .map(|state| (state.has_official_source, state.domains.len()))
-            .unwrap_or((false, 0));
-        corroborated_source_threshold_met(has_official, independent_domains)
+            .map(|state| state.domains.len())
+            .unwrap_or(0);
+        corroborated_source_threshold_met(independent_domains)
     }
 
     fn requires_web_evidence(&self) -> bool {
@@ -2516,11 +2513,9 @@ impl NormalRunToolExecutor<'_> {
                 && item.url.starts_with("https://")
                 && item.canonical_url.starts_with("https://")
                 && bounded_page_evidence(item).is_some()
+                && !item.domain.trim().is_empty()
             {
-                if !item.domain.trim().is_empty() {
-                    state.domains.insert(item.domain.to_ascii_lowercase());
-                }
-                state.has_official_source |= item.source_rank == WebSourceRank::Official;
+                state.domains.insert(item.domain.to_ascii_lowercase());
             }
         }
         Ok(())
@@ -3873,8 +3868,14 @@ fn web_output_has_usable_result(
     })
 }
 
-fn corroborated_source_threshold_met(has_official: bool, independent_domains: usize) -> bool {
-    has_official || independent_domains >= 2
+/// Cross-verification is satisfied by two independent domains.
+///
+/// The former `has_official` disjunct is gone: the domain-based source-rank
+/// classifier was retired with the pre-unification Web core, so every producer
+/// assigns `WebSourceRank::Unknown` and the disjunct was unreachable. The enum
+/// variants stay only so historical `WebEvidenceMeta` rows still deserialize.
+fn corroborated_source_threshold_met(independent_domains: usize) -> bool {
+    independent_domains >= 2
 }
 
 #[cfg(test)]
@@ -5493,10 +5494,14 @@ mod tests {
     }
 
     #[test]
-    fn high_risk_web_facts_require_official_or_two_independent_domains() {
-        assert!(corroborated_source_threshold_met(true, 1));
-        assert!(corroborated_source_threshold_met(false, 2));
-        assert!(!corroborated_source_threshold_met(false, 1));
+    fn high_risk_web_facts_require_two_independent_domains() {
+        // The retired "official source" disjunct used to make a single domain
+        // sufficient. No producer can assign an official rank any more, so the
+        // threshold is exactly the independent-domain count.
+        assert!(corroborated_source_threshold_met(2));
+        assert!(corroborated_source_threshold_met(3));
+        assert!(!corroborated_source_threshold_met(1));
+        assert!(!corroborated_source_threshold_met(0));
     }
 
     #[test]

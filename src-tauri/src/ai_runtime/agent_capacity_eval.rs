@@ -370,7 +370,6 @@ pub(crate) struct FactSupportObservation {
 pub(crate) enum WebAnswerContamination {
     ConfirmedAbsent,
     Detected,
-    Unknown,
 }
 
 /// Closed outcome for the local-material boundary immediately before an
@@ -1667,12 +1666,6 @@ impl BaseQuestionPlan {
     pub(crate) const fn language(&self) -> ScenarioLanguage {
         self.language
     }
-
-    /// The declared prompt. Exposed so tests can tell deferred plans apart from
-    /// executed ones without duplicating a second list of case ordinals.
-    pub(crate) const fn prompt(&self) -> &'static str {
-        self.prompt
-    }
 }
 
 pub(crate) const BASE_QUESTION_PLANS: [BaseQuestionPlan; 26] = [
@@ -2419,18 +2412,25 @@ pub(crate) enum FinishReasonClass {
     Other,
 }
 
+/// Truncation observed for one executed case.
+///
+/// Only the truncation that actually happens is recorded here. The "nothing was
+/// truncated" counter is written by `record_final_output_validation`, which
+/// already owns the accepted-versus-rejected decision, so there is no `None`
+/// variant to pass in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TruncationOutcome {
-    None,
     ToolResultTruncated,
-    FinalOutputRejected,
 }
 
+/// Budget outcome observed for one executed case.
+///
+/// As with [`TruncationOutcome`], the normal "stayed within budget" counter is
+/// written by `record_final_output_validation` rather than passed in here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BudgetOutcome {
-    WithinBudget,
     ModelTurnsExhausted,
     ToolCallsExhausted,
     OutputBudgetReached,
@@ -2593,14 +2593,8 @@ impl EvaluationTelemetryTap {
     pub(crate) fn record_truncation(&self, outcome: TruncationOutcome) {
         if let Ok(mut state) = self.state.lock() {
             match outcome {
-                TruncationOutcome::None => {
-                    state.truncation_none = state.truncation_none.saturating_add(1);
-                }
                 TruncationOutcome::ToolResultTruncated => {
                     state.truncation_tool_result = state.truncation_tool_result.saturating_add(1);
-                }
-                TruncationOutcome::FinalOutputRejected => {
-                    state.truncation_final_output = state.truncation_final_output.saturating_add(1);
                 }
             }
         }
@@ -2609,9 +2603,6 @@ impl EvaluationTelemetryTap {
     pub(crate) fn record_budget(&self, outcome: BudgetOutcome) {
         if let Ok(mut state) = self.state.lock() {
             match outcome {
-                BudgetOutcome::WithinBudget => {
-                    state.budget_within = state.budget_within.saturating_add(1);
-                }
                 BudgetOutcome::ModelTurnsExhausted => {
                     state.budget_model_turns = state.budget_model_turns.saturating_add(1);
                 }
@@ -3502,7 +3493,6 @@ pub(crate) struct PreparedLivePilot {
     profile_id: String,
     route_commitment: String,
     capabilities: LiveCapabilityFingerprint,
-    mcp_profile_id: String,
     candidate: LiveProfileCandidate,
     state: std::sync::Arc<crate::app::AppState>,
     vault: std::path::PathBuf,
@@ -3619,128 +3609,11 @@ fn prepare_live_pilot_candidate(
         profile_id: approved_profile_id.to_string(),
         route_commitment: candidate.anonymous_route_commitment(),
         capabilities: candidate.fingerprint(),
-        mcp_profile_id: candidate.mcp.id.clone(),
         candidate: candidate.clone(),
         state,
         vault,
         test_loopback_transport: candidate.test_loopback_credential_service.is_some(),
         _directory: directory,
-    })
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct LiveHydrationTransportProof {
-    llm_dispatched: bool,
-    mcp_dispatched: bool,
-}
-
-#[cfg(test)]
-impl LiveHydrationTransportProof {
-    pub(crate) const fn llm_dispatched(self) -> bool {
-        self.llm_dispatched
-    }
-
-    pub(crate) const fn mcp_dispatched(self) -> bool {
-        self.mcp_dispatched
-    }
-}
-
-#[cfg(test)]
-pub(crate) async fn exercise_approved_live_hydration_with_local_transports(
-    prepared: &PreparedLivePilot,
-    llm_transport_base_url: &str,
-) -> Result<LiveHydrationTransportProof, EvalContractError> {
-    use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
-    use crate::ai_runtime::mcp_host_runtime::{call_required_capability, McpHostRuntimeOptions};
-    use crate::ai_runtime::model_gateway::{GatewayRequest, LlmMessage, MessageRole, ModelGateway};
-    use crate::ai_runtime::provider_router::{ProviderRequirements, SecurityDomain};
-
-    let pool = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
-        &prepared.state.db,
-        crate::llm::config::ModelPoolRequirements {
-            context_tokens: 1,
-            has_images: false,
-            needs_tools: true,
-            needs_reasoning: false,
-        },
-    )
-    .map_err(|_| EvalContractError::new("live_hydration_route_failed"))?;
-    let route = DirectProviderRoute::from_secret_free_route(pool)
-        .map_err(|_| EvalContractError::new("live_hydration_route_failed"))?;
-    let mut dispatch = route
-        .hydrate_selected_streaming_dispatch(
-            ProviderRequirements {
-                endpoint_family: None,
-                streaming: true,
-                tools: true,
-                vision: false,
-                reasoning: false,
-                min_input_budget_tokens: 1,
-                min_output_budget_tokens: 1,
-                security_domain: SecurityDomain::External,
-            },
-            0,
-        )
-        .map_err(|_| EvalContractError::new("live_hydration_llm_failed"))?;
-    dispatch.provider.base_url = llm_transport_base_url.to_string();
-    ModelGateway::new(direct_loopback_test_client(), Vec::new())
-        .send_request(GatewayRequest {
-            provider: dispatch.provider,
-            messages: vec![LlmMessage {
-                role: MessageRole::User,
-                content: crate::ai_types::MessageContent::Text(
-                    "synthetic local hydration probe".to_string(),
-                ),
-                tool_call_id: None,
-                tool_calls: None,
-                ..Default::default()
-            }],
-            tools: Vec::new(),
-            max_tokens: Some(32),
-            input_token_budget: None,
-            temperature: Some(0.0),
-            stream: false,
-            thinking: dispatch.thinking,
-            reasoning: dispatch.reasoning,
-            continuation: None,
-            skip_stub_ids: Vec::new(),
-        })
-        .await
-        .map_err(|_| EvalContractError::new("live_hydration_llm_dispatch_failed"))?;
-
-    let mcp_hydrated = crate::ai_runtime::mcp_host_runtime::provider_http_auth_header_present(
-        &prepared.state.db,
-        &prepared.mcp_profile_id,
-    )
-    .map_err(|_| EvalContractError::new("live_hydration_mcp_failed"))?;
-    if !mcp_hydrated {
-        return Err(EvalContractError::new("live_hydration_mcp_failed"));
-    }
-    install_headless_eval_mcp(&prepared.state, "search-only")?;
-    crate::ai_runtime::mcp_runtime_registry::save_selected_web_search_provider_id(
-        &prepared.state.db,
-        Some("agent-capacity-headless-mcp"),
-    )
-    .map_err(|_| EvalContractError::new("live_hydration_mcp_dispatch_failed"))?;
-    let mcp = call_required_capability(
-        &prepared.state.db,
-        "web.search",
-        serde_json::json!({"query":"synthetic"}),
-        McpHostRuntimeOptions {
-            request_timeout: std::time::Duration::from_secs(2),
-            max_stdout_line_bytes: 32 * 1024,
-            max_stderr_bytes: 2 * 1024,
-            cwd: None,
-            stdio_session_pool: false,
-            stdio_session_idle_timeout: std::time::Duration::from_secs(1),
-        },
-    )
-    .await
-    .map_err(|_| EvalContractError::new("live_hydration_mcp_dispatch_failed"))?;
-    Ok(LiveHydrationTransportProof {
-        llm_dispatched: true,
-        mcp_dispatched: mcp.tool_name == "search",
     })
 }
 
@@ -7061,8 +6934,6 @@ enum BoundaryReason {
     TerminalStateMismatch,
     WebDispatchObservedOffline,
     LocalIsolationFailed,
-    DegradationMissing,
-    PartialEvidenceMissing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -7112,23 +6983,6 @@ impl EvaluationSummary {
 
     pub(crate) const fn boundary_case_count(&self) -> u32 {
         self.boundary_case_count
-    }
-
-    pub(crate) const fn group_count(&self, group: EvidenceGroup) -> u32 {
-        match group {
-            EvidenceGroup::NoRetrieval => self.groups.no_retrieval,
-            EvidenceGroup::LocalOnly => self.groups.local_only,
-            EvidenceGroup::WebOnly => self.groups.web_only,
-            EvidenceGroup::Hybrid => self.groups.hybrid,
-        }
-    }
-
-    pub(crate) const fn language_count(&self, language: ScenarioLanguage) -> u32 {
-        match language {
-            ScenarioLanguage::Chinese => self.languages.chinese,
-            ScenarioLanguage::English => self.languages.english,
-            ScenarioLanguage::Mixed => self.languages.mixed,
-        }
     }
 
     pub(crate) const fn telemetry(&self) -> &EvaluationTelemetrySummary {
@@ -7228,7 +7082,18 @@ pub(crate) fn selected_live_pilot_web_fact_claims() -> Result<Vec<String>, EvalC
 
 /// Test-only deterministic-provider fault used to prove that the headless
 /// runner reports a real failed answer instead of copying the manifest.
+/// Test-only deterministic-provider fault used to prove that the headless
+/// runner reports a real failed answer instead of copying the manifest.
+///
+/// Every variant has a handled branch in `execute_headless_core_case_*`, so the
+/// enum is a fault-injection surface rather than dead vocabulary: the current
+/// case table injects only some of the faults. The allow keeps `-D warnings`
+/// honest about that instead of deleting capabilities the branch code needs.
 #[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "fault-injection surface: every variant has a handled branch, but not every fault is injected by the current case table"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EvalFault {
     MissingFact { case_id: u32 },
