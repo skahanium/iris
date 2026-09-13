@@ -174,6 +174,7 @@ describe("GitHub Actions workflows", () => {
       "npm ci",
       "npm run version:check",
       "npm run docs:check",
+      "npm run size:check",
       "npm run format:check",
       "npm run lint",
       "npm run typecheck",

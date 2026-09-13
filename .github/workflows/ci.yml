@@ -38,6 +38,9 @@ jobs:
       - name: Check document facts
         run: npm run docs:check
 
+      - name: Check first-party file size budget
+        run: npm run size:check
+
       - name: Check formatting
         run: npm run format:check
 

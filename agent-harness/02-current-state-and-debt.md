@@ -87,6 +87,46 @@
   在解包时一并去掉，自动链接连尖括号整体删除。空白不做规范化——删除是忠实的，留下的两个
   空格是原文分隔符。
 
+### 技术债清算（2026-09-13，行为不变）
+
+清债的前提是先把「死」证死，结论与最初判断不同，记在这里以免下次重复误判：
+
+- **`WebSourceRank` 的五个变体不是死代码，是读取兼容契约**。`f997127f`/`d5fa17ba` 时期生产
+  代码确实按域名分类并写入过 `Official`/`Academic`/`Media`/`Community`；分类器随统一前 Web
+  核心退役后，现有全部生产构造点（`tool_dispatcher`、`web_evidence_broker` 六处）都只写
+  `Unknown`，但这些变体仍要能反序列化旧的 `WebEvidenceMeta` 行。**不得删除**。
+- **`RunEventType::WebVerificationFailed` 同理**：`0262ea28`（HR-6/HR-7）删除了它唯一的
+  生产写入点，因此新 Run 不会再产生该事件，但已在发布版本中运行过的实例可能留有该行，
+  仓储解码分支必须保留。仓库 tests 仍在做写入/回滚往返。**不得删除**。
+- **删掉的是真正冗余的部分**：`RunWebEvidenceState::has_official_source` 与其在交叉印证门槛
+  中的析取项不可达（无任何生产赋值点，唯一写入是 `|= item.source_rank == Official`），已随
+  `corroborated_source_threshold_met(independent_domains)` 一起删除；模型可见的
+  `remaining_evidence_requirement` 也据实从 `official_source_or_second_independent_domain`
+  改为 `second_independent_domain`，不再声明一个不存在的能力。
+- **遥测的「未发生」计数走另一条路径**：`TruncationOutcome::{None, FinalOutputRejected}` 与
+  `BudgetOutcome::WithinBudget` 从未被传入，但 `truncations.none` / `budgets.within` 两个报告
+  字段仍由 `record_final_output_validation` 正确累加，属重复 API 而非缺陷，已删除冗余变体。
+  `EvalFault` 则相反：五个变体没有测试注入，但 `execute_headless_core_case_*` 里都有对应处理
+  分支，属**故障注入面**，保留并加窄 `allow(dead_code, reason=...)` 说明。
+- **一个 `#[allow(dead_code)]` 掩盖了 147 条告警**，其理由字符串（"Task 2 stages the evaluator
+  contract for the Task 3 runner"）早已过时。经逐条核对，其中 146 条只被同文件的测试模块使用
+  （该文件 71% 行是 `#[cfg(test)]`），真死代码只有一处 `LiveHydrationTransportProof` 证明夹具。
+  现改为 `#[cfg_attr(not(test), allow(dead_code, reason=...))]`：生产构建仍安静，而
+  `clippy --all-targets -D warnings` 能重新发现「连测试都不用」的代码。
+- **文件长度预算进 CI**：新增 `npm run size:check`（`scripts/file-size-budget.mjs`），默认
+  2000 行，超限文件进入 `SPLIT_QUEUE` 并按当前规模钉住，只许变短；文件缩回默认以内却不删除
+  条目会让门禁失败。`agent_capacity_eval.rs`（13.4k 行）排队拆分，方案见下。
+
+### `agent_capacity_eval.rs` 拆分计划（未开始）
+
+该文件 407 个顶层项里只有 147 项是生产代码（约 3.9k 行），其余 260 项、约 9.6k 行是
+`#[cfg(test)]` 支撑代码，真正的测试在 `agent_capacity_eval_tests.rs`。可机械拆成 21 个子模块
+（每个 < 1.6k 行），父文件只留模块文档、`mod` 声明与 `pub(crate) use <child>::*;` 门面，使
+`crate::ai_runtime::agent_capacity_eval::X` 路径与 `provider_continuation_tests.rs` 的 glob
+导入保持不变。关键约束：约 20 个结构体的私有字段被兄弟模块构造或读取，需要逐个 `pub(super)`；
+生产/测试项在同文件内交错 25 次，必须保留每项自己的 `#[cfg(test)]`；`contract`、`telemetry`
+是零依赖叶子，应最先拆出。
+
 自查确认无问题的两处：
 
 - 引用映射（来源区）由**账本**构建（`finalization.rs:474`），不扫描正文，因此剥离正文链接
