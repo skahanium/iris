@@ -105,7 +105,7 @@ Agent Harness 的现行问题审计、目标合同与 `HR-0` 至 `HR-7` 重构�
 
 ### Harness Recovery 阶段（不构成额外版本承诺）
 
-具体依赖、删除项和退出条件见 [Harness Recovery 实施路线](./agent-harness/05-implementation-roadmap.md)。阶段顺序固定为：HR-0 文档事实重置、HR-1 回归基线、HR-2 Intake 去领域化、HR-3 通用自适应循环、HR-4 回答/澄清/投影、HR-5 冻结变更集、HR-6 领域核心退役、HR-7 通用质量与 Provider 校准。未授权工具面、Web 开关、classified 隔离、evidence Run 所有权和 Markdown 写入确认在所有阶段不可回退。
+具体依赖、删除项和退出条件见 [Harness Recovery 实施路线](./agent-harness/05-implementation-roadmap.md)。阶段顺序固定为：HR-0 文档事实重置、HR-1 回归基线、HR-2 Intake 去领域化、HR-3 通用自适应循环、HR-4 回答/澄清/投影、HR-5 冻结变更集、HR-6 领域核心退役、HR-7 通用质量与 Provider 校准、HR-8 覆盖回正与终态可见性（确定性层已实现，真实层未校准）。未授权工具面、Web 开关、classified 隔离、evidence Run 所有权和 Markdown 写入确认在所有阶段不可回退。
 
 ### 六阶段受控演进验收矩阵（不构成发布版本承诺）
 

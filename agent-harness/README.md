@@ -40,7 +40,7 @@
 2. [`02-current-state-and-debt.md`](02-current-state-and-debt.md)：代码当前具备什么、为什么仍然失败。
 3. [`03-target-architecture.md`](03-target-architecture.md)：统一后的职责和数据流。
 4. [`04-adaptive-agent-loop-and-tool-contracts.md`](04-adaptive-agent-loop-and-tool-contracts.md)：通用多轮工具与回答合同。
-5. [`05-implementation-roadmap.md`](05-implementation-roadmap.md)：`HR-0` 至 `HR-7` 的依赖、删除项和退出条件。
+5. [`05-implementation-roadmap.md`](05-implementation-roadmap.md)：`HR-0` 至 `HR-8` 的依赖、删除项和退出条件。
 6. [`06-evaluation-performance-and-acceptance.md`](06-evaluation-performance-and-acceptance.md)：如何证明管线正确、回答有用且没有越权。
 
 附录分别提供[状态与证据追踪](appendices/A-status-and-test-traceability.md)、[任务能力与风险矩阵](appendices/B-task-capability-and-risk-matrix.md)和[现行/撤回决策](appendices/C-decisions-and-deferred.md)。
