@@ -507,8 +507,14 @@ describe("useAssistantConversationProjection", () => {
       ),
     );
 
+    // The unsubmitted candidate body is never published …
     expect(messages).toHaveLength(1);
     expect(messages[0]?.role).toBe("user");
+    expect(messages[0]?.content).toBe("最近新闻");
+    // … and the failed turn stays visible: the marker the renderer draws its
+    // failure footer from now sits on the user line, so a failure can no longer
+    // look like a question that was never answered.
+    expect(messages[0]?.turnState).toBe("failed");
   });
 
   it("展示序号缺口不得把未提交候选写入正文", () => {
@@ -889,7 +895,7 @@ describe("useAssistantConversationProjection", () => {
     expect(messages[3]?.content).toBe("");
   });
 
-  it("removes only the empty assistant slot for the failed Run", () => {
+  it("marks only the failed Run's slot and leaves other Runs untouched", () => {
     messages = [
       { role: "user", content: "第一问", runId: "run-1", turnId: "turn-1" },
       { role: "assistant", content: "", runId: "run-1", turnId: "turn-1" },
@@ -956,11 +962,72 @@ describe("useAssistantConversationProjection", () => {
       ),
     );
 
+    // The failed Run keeps its question and drops only the empty answer slot.
     expect(messages.map((message) => message.runId)).toEqual([
       "run-1",
       "run-2",
       "run-2",
     ]);
+    const failed = messages.find((message) => message.runId === "run-1");
+    expect(failed?.role).toBe("user");
+    expect(failed?.turnState).toBe("failed");
+    // The untouched Run keeps no failure marker.
+    expect(
+      messages
+        .filter((message) => message.runId === "run-2")
+        .every((message) => message.turnState === undefined),
+    ).toBe(true);
+  });
+
+  it("失败标记在重复投影下保持幂等", () => {
+    messages = [
+      { role: "user", content: "第一问", runId: "run-1", turnId: "turn-1" },
+      { role: "assistant", content: "", runId: "run-1", turnId: "turn-1" },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const failedRun = () =>
+      replayAssistantRunEvents("run-1", [
+        {
+          runId: "run-1",
+          seq: 1,
+          stateVersion: 0,
+          timestamp: "2026-07-13T12:00:00.000Z",
+          type: "accepted",
+          payload: {
+            kind: "accepted",
+            turnId: "turn-1",
+            sessionKey: "session-1",
+          },
+        },
+        {
+          runId: "run-1",
+          seq: 2,
+          stateVersion: 1,
+          timestamp: "2026-07-13T12:00:01.000Z",
+          type: "failed",
+          payload: {
+            kind: "failed",
+            code: "agent_run_empty_output",
+            message: "未生成可用回答",
+          },
+        },
+      ] satisfies AssistantRunEvent[]);
+
+    act(() => root?.render(<Probe run={failedRun()} />));
+    const afterFirst = messages.map(
+      (message) => `${message.role}:${message.runId}`,
+    );
+    // A fresh object identity re-runs the projection while the Run stays failed.
+    act(() => root?.render(<Probe run={failedRun()} />));
+    act(() => root?.render(<Probe run={failedRun()} />));
+
+    expect(
+      messages.map((message) => `${message.role}:${message.runId}`),
+    ).toEqual(afterFirst);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.turnState).toBe("failed");
   });
 
   it("presentation 冻结 processItems 且 run 已 completed 时末项收敛为答复完毕", () => {

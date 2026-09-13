@@ -48,6 +48,17 @@
 
 回归：`strict_submission_exhaustion_publishes_a_bounded_limitation` 与 `model_turn_exhaustion_publishes_a_bounded_limitation` 先失败后通过；`from_policy_preserves_the_direct_one_model_zero_tool_budget`、`child_policy_executes_six_tools_and_rejects_the_seventh`、`partial_visible_stream_recovery_rejects_a_business_tool_call` 改为直接断言「工具未执行」这一真实不变量——它们此前以「返回 Err」作替身断言，调用计数断言本就存在且保持不变。
 
+前端侧另一半（同一缺陷族）：投影在 `failed` 时**删除**该 Run 的空助手槽，而失败脚注
+（`AiMessageList` 的「本次请求未完成，未纳入后续对话上下文。」）只在携带
+`turnState: "failed"` 的**用户行**下渲染——删掉的那一行正是唯一能承载标记的行，因此失败
+轮在转录区里彻底消失，与「从未提问」无法区分。现改为在用户行标记 `turnState: "failed"`，
+空助手槽仍然丢弃（停止态不发布未提交候选，且助手分支无条件渲染，保留只会多一个空气泡）；
+带 `contentRef` 的行不算空行，其已发布正文不会被丢弃。
+
+该处的既有测试只断言数据层，未断言渲染，因而无法发现「标记放错行」。新增
+`tests/assistant-failed-turn-visibility.test.tsx` 把投影与 `AiMessageList` 连起来渲染，
+直接断言脚注文本出现在转录区；该测试在修复前失败。
+
 **更正**：曾据本地库把 4 次失败归因于「`native.fetch` 证据不被 `has_web_evidence()` 承认」。代码不支持该机制——`bounded_page_evidence`（`run_tool_loop.rs:3653`）与 `record_web_evidence_quality`（`:2486`）只要求「非空正文 + HTTPS」，与 provider 无关，且当事运行实据为 2 条证据、2 个不同域名、正文各 2000 字。该相关为伪相关（失败运行恰好都是严格运行），不作为修复依据。
 
 ### 自然时效提问与调用恢复（2026-09-08）
