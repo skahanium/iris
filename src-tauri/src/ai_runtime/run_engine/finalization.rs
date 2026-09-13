@@ -142,11 +142,18 @@ pub(super) fn strip_unverified_web_urls(content: &str, allowed_urls: &HashSet<St
         } else {
             // `[label](url)` becomes `label`; a bare URL simply disappears.
             let unwrapped = unwrap_markdown_link_prefix(&mut output);
-            let consumed = if unwrapped && candidate[end..].starts_with(')') {
-                end + 1
-            } else {
-                end
-            };
+            let mut consumed = end;
+            if unwrapped {
+                // A Markdown link title belongs to the target being dropped.
+                consumed += markdown_link_title_len(&candidate[end..]);
+                if candidate[consumed..].starts_with(')') {
+                    consumed += 1;
+                }
+            } else if output.ends_with('<') && candidate[end..].starts_with('>') {
+                // An autolink `<url>` is dropped whole, brackets included.
+                output.pop();
+                consumed += 1;
+            }
             output.push_str(trailing);
             remainder = &candidate[consumed..];
         }
@@ -154,10 +161,34 @@ pub(super) fn strip_unverified_web_urls(content: &str, allowed_urls: &HashSet<St
     output
 }
 
+/// Length of a Markdown link title that follows a link target, if any.
+///
+/// Covers the three title forms CommonMark allows: `"..."`, `'...'` and
+/// `(...)`. Returns `0` when the following text is not a title, so ordinary
+/// prose after a dropped URL is never eaten.
+fn markdown_link_title_len(rest: &str) -> usize {
+    let trimmed = rest.trim_start();
+    let leading = rest.len() - trimmed.len();
+    let Some(opening) = trimmed.chars().next() else {
+        return 0;
+    };
+    let closing = match opening {
+        '"' => '"',
+        '\'' => '\'',
+        '(' => ')',
+        _ => return 0,
+    };
+    let Some(close_offset) = trimmed[opening.len_utf8()..].find(closing) else {
+        return 0;
+    };
+    leading + opening.len_utf8() + close_offset + closing.len_utf8()
+}
+
 /// Turn an already-written `[label](` prefix into just `label`.
 ///
-/// Returns `false` when the preceding text is not a simple Markdown link label,
-/// in which case the output is left alone.
+/// An `![alt](` image prefix keeps only `alt`: the marker belongs to the
+/// dropped target. Returns `false` when the preceding text is not a simple
+/// Markdown label, in which case the output is left alone.
 fn unwrap_markdown_link_prefix(output: &mut String) -> bool {
     if !output.ends_with("](") {
         return false;
@@ -170,7 +201,12 @@ fn unwrap_markdown_link_prefix(output: &mut String) -> bool {
     if label.is_empty() || label.contains('[') {
         return false;
     }
-    output.truncate(open);
+    let keep = if output[..open].ends_with('!') {
+        open - 1
+    } else {
+        open
+    };
+    output.truncate(keep);
     output.push_str(&label);
     true
 }
@@ -894,6 +930,34 @@ mod apply_notice_tests {
             strip_unverified_web_urls("没有任何链接的正文保持不变。", &allowed),
             "没有任何链接的正文保持不变。"
         );
+    }
+
+    /// Markdown shapes that carry a dropped target must not leave debris.
+    #[test]
+    fn dropping_a_target_leaves_no_markdown_debris() {
+        let allowed = HashSet::new();
+        for (input, expected) in [
+            // A link title belongs to the dropped target.
+            (
+                "见 [来源](https://invented.example/x \"标题\") 的说明。",
+                "见 来源 的说明。",
+            ),
+            // An image keeps nothing but is not left as a stray `!`.
+            (
+                "图 ![图注](https://invented.example/x) 结束。",
+                "图 图注 结束。",
+            ),
+            // An autolink is dropped whole, including its angle brackets. The
+            // removal is faithful: surrounding whitespace is never normalized,
+            // so the two spaces that remain are the original separators.
+            ("见 <https://invented.example/x> 结束。", "见  结束。"),
+        ] {
+            assert_eq!(
+                strip_unverified_web_urls(input, &allowed),
+                expected,
+                "input: {input}"
+            );
+        }
     }
 
     /// No evidence at all means no pointer survives, but the prose does.

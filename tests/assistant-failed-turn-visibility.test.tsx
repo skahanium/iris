@@ -105,7 +105,32 @@ function runningRun() {
   ] satisfies AssistantRunEvent[]);
 }
 
-describe("failed turn visibility", () => {
+function cancelledRun(timestamp: string) {
+  return replayAssistantRunEvents("run-1", [
+    {
+      runId: "run-1",
+      seq: 1,
+      stateVersion: 0,
+      timestamp: "2026-09-10T16:09:16.000Z",
+      type: "accepted",
+      payload: {
+        kind: "accepted",
+        turnId: "turn-1",
+        sessionKey: "session-1",
+      },
+    },
+    {
+      runId: "run-1",
+      seq: 2,
+      stateVersion: 1,
+      timestamp,
+      type: "cancelled",
+      payload: { kind: "cancelled", reason: "user" },
+    },
+  ] satisfies AssistantRunEvent[]);
+}
+
+describe("terminal turn visibility in the transcript", () => {
   let host: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -148,5 +173,30 @@ describe("failed turn visibility", () => {
 
     expect(surface.textContent).toContain("最近新闻");
     expect(surface.textContent).not.toContain("本次请求未完成");
+  });
+
+  it("取消后重新投影不会多出一个空的助手气泡", () => {
+    const surface = render(cancelledRun("2026-09-10T16:09:17.000Z"));
+    const afterFirst = surface.textContent ?? "";
+    // A fresh object identity re-runs the projection while the Run stays
+    // cancelled.
+    act(() =>
+      root?.render(
+        <TranscriptProbe run={cancelledRun("2026-09-10T16:09:18.000Z")} />,
+      ),
+    );
+    act(() =>
+      root?.render(
+        <TranscriptProbe run={cancelledRun("2026-09-10T16:09:19.000Z")} />,
+      ),
+    );
+
+    const afterRepeat = host?.textContent ?? "";
+    expect(afterRepeat).toContain("本次回答已取消");
+    // The cancelled turn must not accumulate assistant bubbles across
+    // re-projections.
+    expect(afterRepeat.split("本次回答已取消").length - 1).toBe(
+      afterFirst.split("本次回答已取消").length - 1,
+    );
   });
 });

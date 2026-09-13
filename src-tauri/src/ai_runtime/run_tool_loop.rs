@@ -60,6 +60,11 @@ pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 8;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
 /// Upper bound on the distinct domains surfaced with one Web observation.
 const MAX_SOURCE_DOMAINS: usize = 8;
+/// Per-domain character bound for the scope fact. A DNS name can technically
+/// reach 253 characters, but such hosts are pathological and the scope fact only
+/// needs the registrable name; bounding it keeps the scope block's contribution
+/// to the tool-result budget predictable.
+const MAX_SOURCE_DOMAIN_CHARS: usize = 80;
 /// Standing scope check attached to every Web observation. It states the fact
 /// and the required action without naming any market, so the model keeps
 /// ownership of the scope judgement.
@@ -3616,7 +3621,7 @@ fn distinct_source_domains<'a>(
     for item in items {
         let domain = item.domain.trim().to_ascii_lowercase();
         if !domain.is_empty() {
-            domains.insert(domain);
+            domains.insert(truncate_web_field(&domain, MAX_SOURCE_DOMAIN_CHARS));
         }
     }
     domains.into_iter().take(MAX_SOURCE_DOMAINS).collect()
@@ -3672,6 +3677,12 @@ fn serialized_web_tool_payload_chars(
         "success": true,
         "output": {
             "results": packets,
+            // Keep this in step with the assembled payload: the scope block is
+            // part of what the model receives, so the shrink loop must budget
+            // for it. `distinct_source_domains` is derived from `items`, so it
+            // is stable across the excerpt-shrinking iterations.
+            "sourceDomains": distinct_source_domains(items.iter()),
+            "scopeCheck": WEB_SCOPE_CHECK_NOTE,
             "evidenceIds": evidence_ids,
             "count": evidence_ids.len(),
             "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
