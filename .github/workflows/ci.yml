@@ -109,7 +109,7 @@ jobs:
         run: cargo deny --manifest-path src-tauri/Cargo.toml check licenses
 
   agent-smoke:
-    name: Agent 24-case smoke
+    name: Agent smoke gate
     runs-on: macos-15
     timeout-minutes: 15
 
@@ -133,7 +133,7 @@ jobs:
           workspaces: src-tauri -> ../.iris-dev/target
           shared-key: macos-agent-smoke
 
-      - name: Run Agent 24-case smoke gate
+      - name: Run Agent smoke gate
         run: npm run agent:eval:smoke
 
   release-readiness-macos-arm64:
