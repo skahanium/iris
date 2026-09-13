@@ -403,6 +403,40 @@ mod tests {
         }
     }
 
+    /// ⑦: the predicate must exist for a scoped request and stay out of the way
+    /// for an unrestricted one. This is the discriminating test for the
+    /// push-down: with it removed, the scoped case returns no predicate.
+    #[test]
+    fn path_scope_predicate_is_built_for_a_scoped_request() {
+        use crate::ai_runtime::retrieval_scope::RetrievalScope;
+
+        let unrestricted = RetrievalScope {
+            path_prefixes: Vec::new(),
+            paths: Vec::new(),
+            required_tags: Vec::new(),
+        };
+        let (sql, values) = path_scope_predicate("f", &unrestricted);
+        assert!(sql.is_empty(), "unrestricted scope must not constrain SQL");
+        assert!(values.is_empty());
+
+        let scoped = RetrievalScope {
+            path_prefixes: vec!["inside/".into()],
+            paths: vec!["exact/note.md".into()],
+            required_tags: Vec::new(),
+        };
+        let (sql, values) = path_scope_predicate("f", &scoped);
+        assert!(
+            sql.contains("f.path IN (?)"),
+            "exact paths must be bound: {sql}"
+        );
+        assert!(
+            sql.contains("f.path LIKE ?"),
+            "prefixes must be bound: {sql}"
+        );
+        assert_eq!(values.len(), 2, "one binding per path and prefix");
+        assert!(sql.starts_with(" AND ("));
+    }
+
     /// ⑦: a folder-scoped search must not lose its own file to unrelated global
     /// candidates that fill the limited pool first.
     #[test]
@@ -426,8 +460,8 @@ mod tests {
             )
             .expect("file row");
             conn.execute(
-                "INSERT INTO files_fts (path, title, content) VALUES (?1, 'risk policy', 'risk policy body')",
-                rusqlite::params![path],
+                "INSERT INTO files_fts (path, title, content) VALUES (?1, 'risk policy', ?2)",
+                rusqlite::params![path, "risk policy ".repeat(20)],
             )
             .expect("fts row");
             conn.execute(
