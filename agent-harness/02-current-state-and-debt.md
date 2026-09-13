@@ -135,7 +135,23 @@
 | ⑨   | Host 先搜后理解                 | **设计取舍，不按缺陷改**，见下                                                   |
 | ⑩   | 工具轨迹无压缩、超预算即失败    | 已修：最旧大结果替换为有界标记；接线测试反向验证通过                             |
 
-**⑧ 的实施方案（下一步直接照此做）**：`web_fetch` 现只接受 `urls`，正文经
+**⑧ 的实施方案（已定位到具体触点，可直接机械执行）**：本项唯一未完成，原因是它跨
+工具 schema 与两处正文切片，不能在会话尾声仓促改。触点如下——
+① schema：`tool_catalog/web.rs:35` 的 `urls` 项（现为 `{"type":"string","format":"uri"}`）
+增开可选同级整数 `startByte`（整次调用生效，避免改成对象数组而牵动
+`agent_permissions.rs:606` 的域名提取与 `run_tool_loop.rs:1649` 的 URL 校验——两者都只读
+字符串，保持 `urls` 为字符串数组即可不动）；
+② 切片点共两处，必须同时改，否则模型看到的上限仍不一致：`run_tool_loop.rs:3704`
+`bounded_page_evidence`（`excerpt.chars().take(MAX_WEB_EXCERPT_CHARS)`）与
+`web_evidence_broker.rs:230` `web_evidence_items_to_packets_with_excerpt_limit`
+（`WEB_PACKET_EXCERPT_MAX_CHARS` 路径）；
+③ 载荷回传 `excerptStart` / `nextStartByte` / `totalChars`，与 `note.rs` 的读取合同保持
+同一词汇，模型才知道还有后续、并能续读；
+④ 同步更新工具描述（`tool_catalog/web.rs:31`）、`tool_catalog/tests.rs` 的 schema 断言
+（`:67`、`:77`）与 `prompt_contract` 的工具面断言。
+**不要**只调大 `MAX_WEB_EXCERPT_CHARS`——那只是把同一个问题推远。
+
+（原方案记录）：`web_fetch` 现只接受 `urls`，正文经
 `MAX_WEB_EXCERPT_CHARS`（2,000）在 `run_tool_loop.rs` 的取证与载荷两处截断，页面
 后半段永远进不了上下文。要改三处并保持向后兼容：①工具 schema 接受可选的按 URL 起始
 偏移（`urls` 元素保持字符串，或接受 `{url, startByte}` 对象）；②Broker 侧对已缓存页面
