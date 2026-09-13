@@ -33,6 +33,8 @@ pub(crate) mod agent_run_repository;
 mod agent_run_repository_tests;
 pub(crate) mod agent_tool_loop;
 #[cfg(test)]
+mod agent_tool_loop_payload_tests;
+#[cfg(test)]
 mod agent_tool_loop_tests;
 #[cfg(test)]
 mod agent_verification_tests;

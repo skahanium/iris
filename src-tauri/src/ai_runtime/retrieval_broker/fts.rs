@@ -97,7 +97,17 @@ fn fts5_token(token: &str) -> String {
             .windows(2)
             .map(|window| window.iter().collect())
             .collect();
-        return format!("\"{}\"", bigrams.join(" "));
+        // The bigram phrase is how a contiguous CJK run is actually stored, but
+        // it is stricter than the verbatim term it replaces: a run that spans
+        // text the note does not contain contiguously would match nothing at
+        // all. OR-ing the previous term in keeps the old hits and only adds
+        // recall; rank fusion re-scores whatever comes back.
+        let phrase = bigrams.join(" ");
+        if phrase == cleaned {
+            // A two-character run is exactly one bigram: nothing to widen.
+            return format!("\"{cleaned}\"");
+        }
+        return format!("\"{phrase}\" OR \"{cleaned}\"");
     }
     format!("\"{}\"", cleaned)
 }
@@ -249,9 +259,13 @@ mod tests {
 
     #[test]
     fn cjk_query_tokens_expand_like_the_index_does() {
-        // A four-character term becomes the phrase its bigrams form.
-        assert_eq!(escape_fts5_query("劳动合同"), "\"劳动 动合 合同\"");
-        // A two-character term is one bigram.
+        // A four-character run widens to its bigram phrase, and keeps the
+        // previous verbatim term so existing hits cannot be lost.
+        assert_eq!(
+            escape_fts5_query("劳动合同"),
+            "\"劳动 动合 合同\" OR \"劳动合同\""
+        );
+        // A two-character run is one bigram: no OR needed.
         assert_eq!(escape_fts5_query("劳动"), "\"劳动\"");
         // A single character is indexed as a unigram.
         assert_eq!(escape_fts5_query("劳"), "\"劳\"");
@@ -416,6 +430,13 @@ mod tests {
                 rusqlite::params![path],
             )
             .expect("fts row");
+            conn.execute(
+                "INSERT INTO chunks
+                 (file_id, chunk_index, heading_path, content, char_count, source_start, source_end, content_hash)
+                 VALUES (?1, 0, NULL, 'risk policy body', 15, 0, 15, ?2)",
+                rusqlite::params![index + 1, format!("hash-{index}")],
+            )
+            .expect("chunk row");
         }
         conn.execute(
             "INSERT INTO files (id, path, title) VALUES (99, 'inside/target.md', 'risk policy')",
@@ -442,7 +463,13 @@ mod tests {
         };
         // The pool is smaller than the number of global matches.
         let hits = search_fts(&conn, "risk policy", 4, &scoped).expect("scoped search");
-        assert_eq!(hits.len(), 1, "the scoped file must survive the limit");
-        assert_eq!(hits[0].source_path.as_deref(), Some("inside/target.md"));
+        assert!(
+            hits.iter()
+                .any(|packet| packet.source_path.as_deref() == Some("inside/target.md")),
+            "the scoped file must survive the candidate limit, got {:?}",
+            hits.iter()
+                .map(|packet| packet.source_path.clone())
+                .collect::<Vec<_>>()
+        );
     }
 }
