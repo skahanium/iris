@@ -10136,7 +10136,15 @@ async fn probe_model_turn_limit(
     Ok(if should_complete {
         result.is_ok_and(|outcome| outcome.model_turns == requested_turns)
     } else {
-        result.is_err_and(|error| error.to_string() == "agent_run_tool_loop_limit") && calls == 8
+        // The production limit is that the ninth model turn never happens.
+        // `calls == 8` is that limit. The Run now closes with the Host-authored
+        // bounded limitation instead of a terminal error, so assert the limit
+        // and the publishable close rather than the error shape that used to
+        // stand in for the limit.
+        calls == 8
+            && result.is_ok_and(|outcome| {
+                crate::ai_runtime::agent_tool_loop::is_evidence_limited_response(&outcome.content)
+            })
     })
 }
 

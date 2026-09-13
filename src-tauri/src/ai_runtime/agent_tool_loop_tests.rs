@@ -1878,7 +1878,7 @@ async fn partial_visible_stream_recovery_rejects_a_business_tool_call() {
         content: String::new(),
     };
 
-    let error = standard_tool_loop()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &executor,
@@ -1896,9 +1896,11 @@ async fn partial_visible_stream_recovery_rejects_a_business_tool_call() {
             &mut observer,
         )
         .await
-        .expect_err("an append-only recovery may not reopen the tool surface");
+        .expect("an append-only recovery stays closed and the Run ends bounded");
 
-    assert_eq!(error.to_string(), "agent_run_incomplete_output");
+    // The tool surface stays shut: no business tool executed. The Run closes
+    // with the bounded limitation rather than a terminal error.
+    assert!(is_evidence_limited_response(&outcome.content));
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -3559,7 +3561,7 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
     };
     let mut observer = NoopObserver;
 
-    let error = AgentToolLoop::from_policy(&policy)
+    let outcome = AgentToolLoop::from_policy(&policy)
         .execute(
             &provider,
             &executor,
@@ -3577,9 +3579,12 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
             &mut observer,
         )
         .await
-        .expect_err("a direct policy must reject every tool call");
+        .expect("a direct policy closes with a bounded limitation rather than an error");
 
-    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    // The protected invariant is that no tool executed. The Run now ends with
+    // the Host-authored bounded limitation instead of a terminal error, because
+    // a terminal error reached the user as nothing at all.
+    assert!(is_evidence_limited_response(&outcome.content));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
@@ -3735,7 +3740,7 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
     };
     let mut observer = NoopObserver;
 
-    let error = AgentToolLoop::from_child_policy(&policy)
+    let outcome = AgentToolLoop::from_child_policy(&policy)
         .execute(
             &provider,
             &executor,
@@ -3753,9 +3758,114 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
             &mut observer,
         )
         .await
-        .expect_err("the seventh child tool call must exceed the frozen budget");
+        .expect("the seventh child tool call is rejected and the Run closes bounded");
 
-    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    // Six calls executed and the seventh did not: that is the frozen budget,
+    // and it is unchanged. Only the terminal shape moved from a hard error to a
+    // publishable limitation.
+    assert!(is_evidence_limited_response(&outcome.content));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 6);
+}
+
+/// A strict Run that answers in prose twice must not fail silently.
+///
+/// Before this regression the second prose answer returned a terminal
+/// `agent_run_final_submission_required`, which reached the user as nothing at
+/// all (2026-09-10, session 21). A Run with a strict current-evidence contract
+/// must not publish unsourced prose, so the correct close is the Host-authored
+/// bounded limitation.
+#[tokio::test]
+async fn strict_submission_exhaustion_publishes_a_bounded_limitation() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_final_response("prose answer without a structured submission"),
+            scripted_final_response("prose answer again without a submission"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: true,
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_model_turns = 4;
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-strict-submission-exhaustion",
+            Vec::new(),
+            vec![crate::ai_runtime::final_answer_submission::tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("strict submission exhaustion must publish a bounded limitation");
+
+    assert!(
+        is_evidence_limited_response(&outcome.content),
+        "expected the Host-authored bounded limitation, got {:?}",
+        outcome.content
+    );
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+/// Exhausting the model turns must not fail the Run either.
+///
+/// Before this regression the loop returned `agent_run_tool_loop_limit` after
+/// burning every turn on rejected proposals (2026-09-10, session 21: seven
+/// rejections over eight turns). The user saw nothing. The Run now closes with
+/// the bounded limitation, and the real cause stays in the diagnostics.
+#[tokio::test]
+async fn model_turn_exhaustion_publishes_a_bounded_limitation() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "outside-1",
+                "not_exposed",
+                serde_json::json!({}),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "outside-2",
+                "not_exposed",
+                serde_json::json!({}),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "outside-3",
+                "not_exposed",
+                serde_json::json!({}),
+            )),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: true,
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_model_turns = 3;
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-turn-exhaustion",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("model turn exhaustion must publish a bounded limitation");
+
+    assert!(
+        is_evidence_limited_response(&outcome.content),
+        "expected the Host-authored bounded limitation, got {:?}",
+        outcome.content
+    );
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }

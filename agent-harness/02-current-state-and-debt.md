@@ -34,6 +34,22 @@
 
 ## 当前施工事实
 
+### 零回复死胡同收敛（2026-09-13）
+
+2026-09-10 会话的 4 次终态失败全部以「用户什么也看不到」结束。复核代码后确认，这些失败落在**五处一次性硬错误出口**，且此前**没有任何测试覆盖**：
+
+- 严格运行连续两次以散文作答 → 硬错误，正文被丢弃；
+- 草稿连续两次不完整、续写契约被违反 → 硬错误，草稿被丢弃；
+- 模型轮次被连续拒绝的提议烧尽 → 硬错误，已有证据与观察全部作废。
+
+同族的第四条路径（来源绑定失败）返回的是 Host 撰写的**有界限制说明**，可正常发布。本轮把那五处统一为该形态：终态不再有「无可见输出」的形状，真实成因（`agent_run_incomplete_output`、`agent_run_tool_loop_limit`）保留在 `toolLoop` 诊断的 `exhausted` 事件中，供运维区分轮次耗尽与正常收束。
+
+分档语义：严格当前证据契约的运行**不发布无来源散文**，只发布中立的「本轮未能完成可核验回答」限制说明；普通运行的「未验证正文 + 显式标签」档在 `requires_natural_source_binding()` 恢复为真之前**没有可达触发点**（该谓词在生产中恒为 `false`，`run_tool_loop.rs:2355`），因此不新增空转机制。
+
+回归：`strict_submission_exhaustion_publishes_a_bounded_limitation` 与 `model_turn_exhaustion_publishes_a_bounded_limitation` 先失败后通过；`from_policy_preserves_the_direct_one_model_zero_tool_budget`、`child_policy_executes_six_tools_and_rejects_the_seventh`、`partial_visible_stream_recovery_rejects_a_business_tool_call` 改为直接断言「工具未执行」这一真实不变量——它们此前以「返回 Err」作替身断言，调用计数断言本就存在且保持不变。
+
+**更正**：曾据本地库把 4 次失败归因于「`native.fetch` 证据不被 `has_web_evidence()` 承认」。代码不支持该机制——`bounded_page_evidence`（`run_tool_loop.rs:3653`）与 `record_web_evidence_quality`（`:2486`）只要求「非空正文 + HTTPS」，与 provider 无关，且当事运行实据为 2 条证据、2 个不同域名、正文各 2000 字。该相关为伪相关（失败运行恰好都是严格运行），不作为修复依据。
+
 ### 自然时效提问与调用恢复（2026-09-08）
 
 事故 Run 冻结为 `WebPreferred / volatile_external_fact`，模型两次提出工具调用，但实际工具和网页证据均为零；旧记录没有保存具体拒绝原因，不能归因于某个模型或协议。

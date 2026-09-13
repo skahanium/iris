@@ -891,13 +891,38 @@ impl AgentToolLoop {
             }
 
             if incomplete_final_draft.is_some() && !response.tool_calls.is_empty() {
-                return Err(AppError::run(SafeRunErrorCode::IncompleteOutput));
+                // The continuation contract was broken. Publish the Host-authored
+                // bounded limitation instead of failing the Run: a terminal error
+                // reaches the user as nothing at all.
+                return Ok(evidence_limited_outcome(
+                    executor.evidence_limited_response(),
+                    model_turns,
+                    tool_calls,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                ));
             }
 
             if response.tool_calls.is_empty() {
                 let response_content = response.content.unwrap_or_default();
                 let content = match incomplete_final_draft.take() {
-                    Some(draft) => append_final_answer_continuation(draft, response_content)?,
+                    Some(draft) => match append_final_answer_continuation(draft, response_content) {
+                        Ok(content) => content,
+                        // A continuation that repeats or omits the draft cannot be
+                        // published as a finished answer. Fall back to the bounded
+                        // limitation rather than a terminal error.
+                        Err(_) => {
+                            return Ok(evidence_limited_outcome(
+                                executor.evidence_limited_response(),
+                                model_turns,
+                                tool_calls,
+                                prompt_tokens,
+                                completion_tokens,
+                                total_tokens,
+                            ))
+                        }
+                    },
                     None => response_content,
                 };
                 if content.trim().is_empty() {
@@ -964,7 +989,19 @@ impl AgentToolLoop {
                 }
                 if allowed_tools.contains(FINAL_ANSWER_TOOL_NAME) {
                     if final_submission_repair_used {
-                        return Err(AppError::msg("agent_run_final_submission_required"));
+                        // The strict submission protocol was offered twice and the
+                        // model answered in prose both times. A Run with a strict
+                        // current-evidence contract must not publish unsourced
+                        // prose, so close with the Host-authored limitation
+                        // instead of a terminal error that shows nothing.
+                        return Ok(evidence_limited_outcome(
+                            executor.evidence_limited_response(),
+                            model_turns,
+                            tool_calls,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        ));
                     }
                     final_submission_repair_used = true;
                     synthesis_required = true;
@@ -994,7 +1031,16 @@ impl AgentToolLoop {
                     requires_factual_completion,
                 ) {
                     if incomplete_final_answer_repair_used || model_turns >= self.max_model_turns {
-                        return Err(AppError::run(SafeRunErrorCode::IncompleteOutput));
+                        // An incomplete answer is not publishable as an answer, but
+                        // the Run must still end with something the user can read.
+                        return Ok(evidence_limited_outcome(
+                            executor.evidence_limited_response(),
+                            model_turns,
+                            tool_calls,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        ));
                     }
                     incomplete_final_answer_repair_used = true;
                     incomplete_final_draft = Some(content.clone());
@@ -1323,11 +1369,30 @@ impl AgentToolLoop {
                 crate::ai_runtime::agent_capacity_eval::BudgetOutcome::ModelTurnsExhausted,
             );
         }
-        Err(AppError::msg(if incomplete_final_draft.is_some() {
-            "agent_run_incomplete_output"
-        } else {
-            "agent_run_tool_loop_limit"
-        }))
+        // The Run exhausted its model turns without a publishable answer.
+        // Previously this was a terminal error and the user saw nothing at all.
+        // It now closes with the same Host-authored bounded limitation, while
+        // the real cause stays in the bounded diagnostics so an operator can
+        // still tell turn exhaustion from an ordinary answer.
+        executor.record_tool_loop_diagnostic(serde_json::json!({
+            "event": "exhausted",
+            "cause": if incomplete_final_draft.is_some() {
+                "agent_run_incomplete_output"
+            } else {
+                "agent_run_tool_loop_limit"
+            },
+            "modelTurns": model_turns,
+            "toolCalls": tool_calls,
+            "rejectedRounds": rejected_rounds,
+        }));
+        Ok(evidence_limited_outcome(
+            executor.evidence_limited_response(),
+            model_turns,
+            tool_calls,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        ))
         }.await;
         let exit_reason = match &outcome {
             Ok(result) if result.finish_reason == "evidence_limited" => "evidence_limited",
