@@ -149,6 +149,89 @@ fn scope_is_applied_before_top_k_selection() {
     );
 }
 
+/// A path prefix is a literal string boundary, and the production entry has to
+/// agree with it: `_` and `%` are ordinary characters, and case is significant.
+///
+/// The scoped note is the weakest match of the three, so a scoped pool that
+/// `LIKE` had widened with `Outside/outside.md` could return the wrong note.
+#[test]
+fn scoped_retrieval_treats_path_prefixes_as_literals() {
+    let conn = migrated_memory_connection();
+    for path in [
+        "Outside/outside.md",
+        "Notes/a_b/target.md",
+        "Notes/axb/other.md",
+    ] {
+        conn.execute(
+            "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
+             VALUES (?1, 'Note', ?2, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            rusqlite::params![path, format!("hash-{path}")],
+        )
+        .expect("insert file");
+        let body = if path.starts_with("Outside/") {
+            "alpha evidence ".repeat(20)
+        } else {
+            "alpha evidence".to_string()
+        };
+        conn.execute(
+            "INSERT INTO files_fts (path, title, content) VALUES (?1, 'Note', ?2)",
+            rusqlite::params![path, body],
+        )
+        .expect("insert fts row");
+        insert_chunk_for_path(&conn, path, &body);
+    }
+
+    let request_for_prefix = |prefix: &str, max_results: usize| RetrievalRequest {
+        query: "alpha".into(),
+        max_results,
+        layers: RetrievalLayers {
+            fts: true,
+            vector: false,
+            graph: false,
+            exact: false,
+            template: false,
+        },
+        note_context: None,
+        file_id_context: None,
+        scope: RetrievalScope {
+            paths: Vec::new(),
+            path_prefixes: vec![prefix.into()],
+            required_tags: Vec::new(),
+        },
+        runtime_documents: Vec::new(),
+        corpus_config: None,
+    };
+    let paths = |max_results: usize, prefix: &str| {
+        let mut paths =
+            hybrid_retrieve_with_diagnostics(&conn, &request_for_prefix(prefix, max_results))
+                .expect("scoped retrieval")
+                .packets
+                .into_iter()
+                .filter_map(|packet| packet.source_path)
+                .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    };
+
+    assert_eq!(
+        paths(5, "Notes/a_b/"),
+        vec!["Notes/a_b/target.md".to_string()],
+        "an underscore is a literal path character, not a wildcard"
+    );
+    assert_eq!(
+        paths(5, "Notes/"),
+        vec![
+            "Notes/a_b/target.md".to_string(),
+            "Notes/axb/other.md".to_string()
+        ],
+        "a scope prefix must not match a case-different sibling"
+    );
+    assert!(
+        paths(2, "Notes/").contains(&"Notes/a_b/target.md".to_string()),
+        "the scoped note must survive a pool that global candidates could fill"
+    );
+}
+
 #[test]
 fn v2_embedding_generation_starts_legacy_ready_without_overwriting_legacy_embeddings() {
     let conn = migrated_memory_connection();
