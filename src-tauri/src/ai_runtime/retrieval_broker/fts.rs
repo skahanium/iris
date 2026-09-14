@@ -66,13 +66,19 @@ pub(super) fn chunk_evidence_for_path(
     }))
 }
 
+/// Compile one user phrase into an FTS5 expression.
+///
+/// Every token is parenthesised and joined with an explicit `AND`. FTS5 binds a
+/// bare `OR` across everything around it, so a token that expands to
+/// alternatives used to widen the *whole* query instead of that one token:
+/// `劳动合同 风险` silently became `劳动合同 OR 风险` and stopped requiring both.
 pub fn escape_fts5_query(query: &str) -> String {
     let tokens: Vec<String> = query
         .split_whitespace()
         .map(fts5_token)
         .filter(|token| !token.is_empty())
         .collect();
-    tokens.join(" ")
+    tokens.join(" AND ")
 }
 
 /// One whitespace-delimited query token as an FTS5 expression.
@@ -105,11 +111,11 @@ fn fts5_token(token: &str) -> String {
         let phrase = bigrams.join(" ");
         if phrase == cleaned {
             // A two-character run is exactly one bigram: nothing to widen.
-            return format!("\"{cleaned}\"");
+            return format!("(\"{cleaned}\")");
         }
-        return format!("\"{phrase}\" OR \"{cleaned}\"");
+        return format!("(\"{phrase}\" OR \"{cleaned}\")");
     }
-    format!("\"{}\"", cleaned)
+    format!("(\"{cleaned}\")")
 }
 
 pub(super) fn search_fts(
@@ -209,13 +215,16 @@ fn coverage(content: &str, tokens: &[String]) -> usize {
 
 /// Project FTS5's `bm25()` into the packet score.
 ///
-/// `bm25()` is unbounded and negative-is-better; this is a monotone, bounded
-/// projection (best match approaches 1.0, no match reaches 0.0), **not** a
-/// calibrated probability. Fusion re-ranks by RRF, so the ordering it produces
-/// matters more than the absolute value.
+/// `bm25()` is unbounded and *more negative is better*, so the projection has to
+/// keep that direction: `strength = max(-rank, 0)` is how much better than "no
+/// signal" the match is, and `strength / (1 + strength)` maps it into `[0, 1)`.
+/// It is a monotone, bounded relevance projection, **not** a calibrated
+/// probability, and it preserves the layer's own ordering. Fusion re-ranks by
+/// RRF, but `weighted_rrf` sorts each layer by this score before assigning rank
+/// positions, so an inverted projection reorders the fusion itself.
 fn bm25_to_score(rank: f64) -> f64 {
-    let badness = (-rank).max(0.0);
-    1.0 / (1.0 + badness)
+    let strength = (-rank).max(0.0);
+    strength / (1.0 + strength)
 }
 
 /// SQL predicate + bindings that constrain a query to the request's path scope.
@@ -225,6 +234,14 @@ fn bm25_to_score(rank: f64) -> f64 {
 /// by unrelated global candidates. Pushing the path part of the scope into the
 /// query itself removes that recall loss; it is a recall fix, never an
 /// authorisation change — `filter_packets_by_scope` still runs afterwards.
+///
+/// Prefixes are compared as literal, case-sensitive strings
+/// (`substr(path, 1, length(?)) = ? COLLATE BINARY`), which is what
+/// `RetrievalScope::matches_path` does with `starts_with`. A `LIKE 'prefix%'`
+/// predicate reads `_` and `%` inside the prefix as wildcards and folds ASCII
+/// case, so it could select paths the scope itself rejects — and, with a small
+/// `LIMIT`, spend the candidate pool on them. Exact paths keep the
+/// parameterised `IN`.
 pub(super) fn path_scope_predicate(
     alias: &str,
     scope: &crate::ai_runtime::retrieval_scope::RetrievalScope,
@@ -245,9 +262,19 @@ pub(super) fn path_scope_predicate(
                 .map(rusqlite::types::Value::Text),
         );
     }
-    for prefix in &scope.path_prefixes {
-        parts.push(format!("{alias}.path LIKE ?"));
-        values.push(rusqlite::types::Value::Text(format!("{prefix}%")));
+    for prefix in scope
+        .path_prefixes
+        .iter()
+        .filter(|prefix| !prefix.is_empty())
+    {
+        parts.push(format!(
+            "substr({alias}.path, 1, length(?)) = ? COLLATE BINARY"
+        ));
+        values.push(rusqlite::types::Value::Text(prefix.clone()));
+        values.push(rusqlite::types::Value::Text(prefix.clone()));
+    }
+    if parts.is_empty() {
+        return (String::new(), Vec::new());
     }
     (format!(" AND ({})", parts.join(" OR ")), values)
 }
@@ -263,16 +290,67 @@ mod tests {
         // previous verbatim term so existing hits cannot be lost.
         assert_eq!(
             escape_fts5_query("劳动合同"),
-            "\"劳动 动合 合同\" OR \"劳动合同\""
+            "(\"劳动 动合 合同\" OR \"劳动合同\")"
         );
         // A two-character run is one bigram: no OR needed.
-        assert_eq!(escape_fts5_query("劳动"), "\"劳动\"");
+        assert_eq!(escape_fts5_query("劳动"), "(\"劳动\")");
         // A single character is indexed as a unigram.
-        assert_eq!(escape_fts5_query("劳"), "\"劳\"");
+        assert_eq!(escape_fts5_query("劳"), "(\"劳\")");
         // Non-CJK tokens keep the previous behaviour, and tokens still AND.
-        assert_eq!(escape_fts5_query("risk policy"), "\"risk\" \"policy\"");
+        assert_eq!(
+            escape_fts5_query("risk policy"),
+            "(\"risk\") AND (\"policy\")"
+        );
         // Quotes and control characters are still stripped.
-        assert_eq!(escape_fts5_query("\"劳动\""), "\"劳动\"");
+        assert_eq!(escape_fts5_query("\"劳动\""), "(\"劳动\")");
+    }
+
+    /// The reported defect: an unparenthesised `OR` widened the whole query
+    /// instead of one token, so `A AND B` silently became `A OR B`.
+    ///
+    /// FTS5 binds a bare `OR` across the terms around it, which is why the
+    /// expanded token has to be grouped before the next token joins it.
+    #[test]
+    fn one_tokens_or_cannot_widen_the_whole_query() {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE files_fts USING fts5(path, title, content, tokenize='unicode61');",
+        )
+        .expect("schema");
+        let index = |path: &str, body: &str| {
+            conn.execute(
+                "INSERT INTO files_fts (path, title, content) VALUES (?1, 'title', ?2)",
+                rusqlite::params![path, crate::indexer::fts::cjk_bigrams(body)],
+            )
+            .expect("indexed row");
+        };
+        index("notes/both.md", "劳动合同 风险");
+        index("notes/contract.md", "劳动合同");
+        index("notes/risk.md", "风险");
+
+        let only_both = |query: &str| {
+            let mut stmt = conn
+                .prepare("SELECT path FROM files_fts WHERE files_fts MATCH ?1 ORDER BY path")
+                .expect("prepare");
+            let paths = stmt
+                .query_map([escape_fts5_query(query)], |row| row.get::<_, String>(0))
+                .expect("query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("rows");
+            paths
+        };
+
+        // The unparenthesised form of this query matched the contract note too,
+        // because it parsed as `劳动… OR (劳动合同 AND 风险)`.
+        assert_eq!(
+            only_both("劳动合同 风险"),
+            vec!["notes/both.md".to_string()],
+            "both tokens are required, not either of them"
+        );
+        assert_eq!(
+            only_both("劳动合同"),
+            vec!["notes/both.md".to_string(), "notes/contract.md".to_string()]
+        );
     }
 
     /// The reported defect, end to end at the FTS layer: index a Chinese note
@@ -388,11 +466,82 @@ mod tests {
     }
 
     /// A layer that reports relevance must order by it.
+    ///
+    /// The reported defect was an inverted projection: FTS5's `bm25()` returns
+    /// a better match as a *more negative* number, and the old `1/(1+badness)`
+    /// sent the best match to the lowest score while every worse match scored
+    /// above it.
     #[test]
     fn fts_results_are_ordered_by_relevance_and_scored_monotonically() {
-        assert!(bm25_to_score(-2.0) < bm25_to_score(-0.5));
+        assert!(
+            bm25_to_score(-2.0) > bm25_to_score(-0.5),
+            "a better bm25 rank must project to a higher score"
+        );
+        assert!(bm25_to_score(-1.0) > bm25_to_score(-0.2));
         assert!(bm25_to_score(0.0) <= 1.0);
-        assert!(bm25_to_score(-100.0) > 0.0);
+        assert!((bm25_to_score(-1.0) - 0.5).abs() < f64::EPSILON);
+        assert!(bm25_to_score(-100.0) < 1.0);
+        assert_eq!(bm25_to_score(-4.0), 0.8);
+    }
+
+    /// The projection has to survive the layer's own ordering, not just the
+    /// formula: the best match must still come first when the packet list is
+    /// rebuilt from the SQL rows.
+    #[test]
+    fn stronger_matches_outrank_weaker_ones_in_the_packet_scores() {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT, title TEXT);
+             CREATE VIRTUAL TABLE files_fts USING fts5(path, title, content, tokenize='unicode61');
+             CREATE TABLE chunks (
+                 id INTEGER PRIMARY KEY, file_id INTEGER, chunk_index INTEGER, heading_path TEXT,
+                 content TEXT, char_count INTEGER, source_start INTEGER, source_end INTEGER, content_hash TEXT
+             );",
+        )
+        .expect("schema");
+        for (index, (path, body)) in [
+            ("notes/strong.md", "risk policy risk policy risk policy"),
+            (
+                "notes/weak.md",
+                "risk policy then a long tail of unrelated words about other things",
+            ),
+        ]
+        .iter()
+        .enumerate()
+        {
+            conn.execute(
+                "INSERT INTO files (id, path, title) VALUES (?1, ?2, 'risk policy')",
+                rusqlite::params![index + 1, path],
+            )
+            .expect("file row");
+            conn.execute(
+                "INSERT INTO files_fts (path, title, content) VALUES (?1, 'risk policy', ?2)",
+                rusqlite::params![path, body],
+            )
+            .expect("fts row");
+            conn.execute(
+                "INSERT INTO chunks
+                 (file_id, chunk_index, heading_path, content, char_count, source_start, source_end, content_hash)
+                 VALUES (?1, 0, NULL, ?2, 10, 0, 10, ?3)",
+                rusqlite::params![index + 1, body, format!("hash-{index}")],
+            )
+            .expect("chunk row");
+        }
+
+        let hits = search_fts(&conn, "risk policy", 5, &unrestricted_scope()).expect("search");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(
+            hits[0].source_path.as_deref(),
+            Some("notes/strong.md"),
+            "the denser match must be first"
+        );
+        assert!(
+            hits[0].score > hits[1].score,
+            "ordering must agree with the scores: {:?}",
+            hits.iter()
+                .map(|packet| (packet.source_path.clone(), packet.score))
+                .collect::<Vec<_>>()
+        );
     }
 
     fn unrestricted_scope() -> crate::ai_runtime::retrieval_scope::RetrievalScope {
@@ -430,15 +579,106 @@ mod tests {
             "exact paths must be bound: {sql}"
         );
         assert!(
-            sql.contains("f.path LIKE ?"),
-            "prefixes must be bound: {sql}"
+            sql.contains("substr(f.path, 1, length(?)) = ? COLLATE BINARY"),
+            "prefixes must be a parameterised binary comparison: {sql}"
         );
-        assert_eq!(values.len(), 2, "one binding per path and prefix");
+        assert!(
+            !sql.contains("LIKE"),
+            "a LIKE wildcard is not a literal path prefix: {sql}"
+        );
+        assert_eq!(
+            values.len(),
+            3,
+            "one binding for the exact path, two for the prefix comparison"
+        );
         assert!(sql.starts_with(" AND ("));
+    }
+
+    /// The prefix comparison has to be literal and case-sensitive, exactly like
+    /// `RetrievalScope::matches_path`.
+    ///
+    /// A `LIKE` predicate reads `_` and `%` inside the prefix as wildcards and
+    /// folds ASCII case, so it selects paths the scope itself rejects. The
+    /// assertion is deliberately made on the raw SQL rows: the broker's later
+    /// `filter_packets_by_scope` would hide the leak while still having spent
+    /// the candidate pool on those rows.
+    #[test]
+    fn path_scope_prefixes_are_literal_and_case_sensitive() {
+        use crate::ai_runtime::retrieval_scope::RetrievalScope;
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            "CREATE TABLE scoped (path TEXT);
+             INSERT INTO scoped VALUES ('notes/a_x/one.md'), ('notes/abx/two.md'),
+                                       ('notes/upper.md'), ('Notes/upper.md'), ('notes/a%x/three.md');",
+        )
+        .expect("schema");
+        let rows = |prefix: &str| {
+            let scope = RetrievalScope {
+                path_prefixes: vec![prefix.to_string()],
+                paths: Vec::new(),
+                required_tags: Vec::new(),
+            };
+            let (predicate, values) = path_scope_predicate("s", &scope);
+            let mut statement = conn
+                .prepare(&format!(
+                    "SELECT s.path FROM scoped AS s WHERE 1=1{predicate} ORDER BY s.path"
+                ))
+                .expect("prepare");
+            statement
+                .query_map(rusqlite::params_from_iter(values), |row| {
+                    row.get::<_, String>(0)
+                })
+                .expect("query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("rows")
+        };
+
+        assert_eq!(rows("notes/a_x/"), vec!["notes/a_x/one.md"]);
+        assert_eq!(
+            rows("notes/a%x/"),
+            vec!["notes/a%x/three.md"],
+            "a percent sign in a path is literal, not a wildcard"
+        );
+        assert_eq!(
+            rows("notes/"),
+            vec![
+                "notes/a%x/three.md",
+                "notes/a_x/one.md",
+                "notes/abx/two.md",
+                "notes/upper.md"
+            ],
+            "a path differing only in case is not inside the prefix"
+        );
+        assert_eq!(
+            rows("Notes/"),
+            vec!["Notes/upper.md"],
+            "the prefix itself stays case-sensitive"
+        );
+        assert_eq!(
+            rows("NOTES/"),
+            Vec::<String>::new(),
+            "a case-different prefix selects nothing"
+        );
+        assert_eq!(
+            rows("notes/upper.md"),
+            vec!["notes/upper.md"],
+            "an exact path still matches itself"
+        );
+        assert_eq!(
+            rows("notes/UPPER.md"),
+            Vec::<String>::new(),
+            "an exact path is not case-folded either"
+        );
     }
 
     /// ⑦: a folder-scoped search must not lose its own file to unrelated global
     /// candidates that fill the limited pool first.
+    ///
+    /// This is the end-to-end shape of the reported loss. The discriminating
+    /// evidence for the predicate itself lives in
+    /// `path_scope_prefixes_are_literal_and_case_sensitive` and in the
+    /// metadata layer; a fixture where only the scoped file matches the terms
+    /// cannot fail on the SQL predicate alone.
     #[test]
     fn path_scope_is_applied_before_the_candidate_limit() {
         let conn = Connection::open_in_memory().expect("in-memory database");
@@ -478,7 +718,7 @@ mod tests {
         )
         .expect("scoped file");
         conn.execute(
-            "INSERT INTO files_fts (path, title, content) VALUES ('inside/target.md', 'risk policy', 'risk policy body')",
+            "INSERT INTO files_fts (path, title, content) VALUES ('inside/target.md', 'risk policy', 'risk policy')",
             [],
         )
         .expect("scoped fts row");
@@ -495,7 +735,9 @@ mod tests {
             paths: Vec::new(),
             required_tags: Vec::new(),
         };
-        // The pool is smaller than the number of global matches.
+        // The pool is smaller than the number of global matches, and the
+        // scoped file is the weakest match of all of them: without the
+        // push-down the twenty `outside/` notes fill `LIMIT` first.
         let hits = search_fts(&conn, "risk policy", 4, &scoped).expect("scoped search");
         assert!(
             hits.iter()

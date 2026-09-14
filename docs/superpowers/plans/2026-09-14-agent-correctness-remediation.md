@@ -166,3 +166,18 @@ B 按第 2 节 B 落地，未新增依赖、数据库表、IPC、预算或第二
 命名回归与生产入口见 [Harness 附录 A](../../../agent-harness/appendices/A-status-and-test-traceability.md) 的「方案 B」小节。这些是确定性合同，不证明真实模型不再复述内部预算；真实回答质量仍属 D 与 HR-7，状态不因 B 升级。
 
 B 的本地验证：Rust 库测试 1,999 通过、5 忽略（含 5 项 B 命名回归），全部集成与文档测试成功，其中确定性 RAG 14 通过、2 忽略；前端 362 个文件、2,629 项通过。`agent:eval:smoke` 脚本测试 16/16，确定性与 smoke 通过；`agent:eval:contract` 52/52（39 项回答、13 项预期安全拒绝，非预期失败为零）。lint、typecheck、format、Rust fmt/clippy（all-targets，warnings as errors）、docs/size/version 与 `test:e2e` 通过。未运行远程 CI、macOS/发布矩阵、真实桌面 E2E 和付费 Campaign；许可证工具与忽略项按 A 节保留。
+
+### C 的实施记录（已提交）
+
+C 按第 2 节 C 落地，未新增依赖、数据库表、索引、IPC 或查询 DSL，也未要求重建索引；融合权重、来源去重、top-10 单源上限、事后授权过滤与 SQLite 连接 PRAGMA 均未改动。
+
+- 查询编译：`escape_fts5_query` 先把每个用户词组编译成独立表达式（CJK 词组的「bigram 短语 OR 原样词」整体加括号），再用显式 `AND` 连接。旧实现用空格拼接，FTS5 的裸 `OR` 会跨界结合，`劳动合同 风险` 被解析为 `劳动… OR (劳动合同 AND 风险)`，丢失 `AND` 约束；现有索引兼容与输入清理保持不变。
+- 分数方向：`bm25_to_score` 由 `1/(1+badness)` 改为 `strength = max(-rank, 0)`、`score = strength/(1+strength)`。更负的 rank 现在对应更高分数，层内顺序与 SQL 的 `ORDER BY rank ASC` 一致；旧实现把最佳匹配压到最低分，并让 `weighted_rrf` 的层内排序反转。
+- 范围谓词：路径前缀改为参数化二进制比较 `substr(path, 1, length(?)) = ? COLLATE BINARY`，精确路径继续用参数化 `IN`；FTS 与 metadata 复用同一谓词。旧 `LIKE 'prefix%'` 把前缀里的 `_`、`%` 当通配符并折叠 ASCII 大小写，会选出范围本身拒绝的路径、用候选池换这些行。事后 `filter_packets_by_scope` 保留，下推只修召回。
+- metadata 候选改为按 `path` 排序后再 `LIMIT`：该层没有自身相关性信号，无序时 `LIMIT` 返回扫描顺序。
+
+**必须删除**已全部删除：反向分数断言（改为断言正确方向与界）、未分组 OR 拼接、未转义 LIKE 路径谓词。未增加「结果不足则全库重搜」的补救分支。
+
+命名回归与生产入口见 [Harness 附录 A](../../../agent-harness/appendices/A-status-and-test-traceability.md) 的「方案 C」小节；合同文本见 [Harness 04](../../../agent-harness/04-adaptive-agent-loop-and-tool-contracts.md) 的 5.2 节。
+
+C 的本地验证：Rust 库测试 2,013 通过、5 忽略（总数 2,018；新增 6 项 C 命名回归、改写 2 项既有断言）；`rag_retrieval_contract` 7 通过（含 1 项生产入口组合回归），全部集成与文档测试成功，其中确定性 RAG 14 通过、2 忽略；前端 362 个文件、2,629 项通过，`test:e2e` 7 项通过；lint、typecheck、Prettier、Rust fmt/clippy（all-targets，warnings as errors）、docs/size/version 同批通过。分数方向的评测对照按原样记录在附录 A：同一确定性夹具对反向投影不敏感，该项证据只有命名单测。未运行远程 CI、macOS/发布矩阵、真实桌面 E2E 和付费 Campaign；D 与 HR-7 状态不因 C 升级。
