@@ -259,3 +259,97 @@ async fn plan_a_projection_overflow_closes_the_loop_with_a_visible_outcome() {
         .iter()
         .any(|item| item["event"] == "projection_limit"));
 }
+
+#[derive(Default)]
+struct ChunkSearch {
+    turns: AtomicU32,
+    calls: AtomicU32,
+}
+
+impl ToolLoopProvider for ChunkSearch {
+    fn answer_turn<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a [LlmMessage],
+        tools: &'a [ToolSpec],
+        _: AgentModelTurnBudget,
+        _: &'a mut dyn StreamEventObserver,
+    ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            let turn = self.turns.fetch_add(1, Ordering::SeqCst);
+            if turn < 4 {
+                assert!(
+                    tools.iter().any(|tool| tool.name == "search_keyword"),
+                    "fresh chunks must not close the tool surface at turn {turn}"
+                );
+            }
+            Ok(GatewayResponse {
+                content: (turn == 4).then(|| "all four chunks inspected".into()),
+                tool_calls: if turn < 4 {
+                    vec![ToolCall::new(
+                        format!("chunk-{turn}"),
+                        "search_keyword",
+                        json!({"query":format!("section {turn}")}).to_string(),
+                    )]
+                } else {
+                    Vec::new()
+                },
+                usage: Default::default(),
+                finish_reason: if turn < 4 { "tool_calls" } else { "stop" }.into(),
+                reasoning_content: None,
+                continuation: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopExecutor for ChunkSearch {
+    fn execute<'a>(
+        &'a self,
+        _: &'a str,
+        call: &'a ToolCall,
+        _: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async move {
+            let chunk = self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ToolCallResult {
+                tool_name: call.function.name.clone(),
+                success: true,
+                output: json!({"results":[{"source_path":"notes/long.md",
+                    "content_hash":"same-revision","source_span":{"start":chunk*3,"end":(chunk+1)*3},
+                    "excerpt":"中"}]}),
+                duration_ms: 0,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn plan_a_review_loop_keeps_tools_open_for_new_chunks_of_one_note() {
+    let search = ChunkSearch::default();
+    let tools = vec![ToolSpec {
+        name: "search_keyword".into(),
+        description: "Search note chunks".into(),
+        input_schema: json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
+        access_level: ToolAccessLevel::ReadProfile,
+        requires_confirmation: false,
+        max_results: None,
+        capability_affinity: Vec::new(),
+    }];
+    let result =
+        AgentToolLoop::from_policy(&crate::ai_runtime::run_contract::RunBudgetPolicy::standard())
+            .execute(
+                &search,
+                &search,
+                "plan-a-review-chunks",
+                Vec::new(),
+                tools,
+                &mut Observer,
+            )
+            .await
+            .unwrap();
+    assert_eq!(result.content, "all four chunks inspected");
+    assert_eq!(search.calls.load(Ordering::SeqCst), 4);
+}

@@ -23,19 +23,45 @@ pub(crate) fn safe_progress_identities(output: &serde_json::Value) -> Vec<String
                 }
             }
             serde_json::Value::Object(object) => {
-                let span = object
-                    .get("sourceSpan")
-                    .or_else(|| object.get("excerptWindow"));
+                // Failed members of a partially successful web batch have a
+                // URL for recovery, but no newly observed resource content.
+                if object.get("canonicalUrl").is_some()
+                    && object
+                        .get("status")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|status| {
+                            matches!(
+                                status,
+                                "snapshot_unavailable"
+                                    | "evidence_budget_exhausted"
+                                    | "range_out_of_bounds"
+                            )
+                        })
+                {
+                    return;
+                }
+                // ContextPacket uses snake_case; read_note uses camelCase.
+                // Web packets carry a null local source_span plus their own
+                // excerptWindow, so only an actual object selects the range.
+                let span = ["sourceSpan", "source_span", "excerptWindow"]
+                    .iter()
+                    .filter_map(|key| object.get(*key))
+                    .find(|value| value.is_object());
                 if let Some(span) = span {
-                    let resource = object
-                        .get("path")
-                        .or_else(|| object.get("canonicalUrl"))
-                        .or_else(|| object.get("sourcePath"))
-                        .or_else(|| object.get("resourceId"));
-                    let revision = object
-                        .get("contentHash")
-                        .or_else(|| object.get("content_hash"))
-                        .or_else(|| object.get("snapshotHash"));
+                    let resource = [
+                        "path",
+                        "canonicalUrl",
+                        "sourcePath",
+                        "source_path",
+                        "resourceId",
+                    ]
+                    .iter()
+                    .filter_map(|key| object.get(*key).and_then(serde_json::Value::as_str))
+                    .find(|value| !value.is_empty());
+                    let revision = ["contentHash", "content_hash", "snapshotHash"]
+                        .iter()
+                        .filter_map(|key| object.get(*key).and_then(serde_json::Value::as_str))
+                        .find(|value| !value.is_empty());
                     let start = span
                         .get("start")
                         .or_else(|| span.get("startChar"))
@@ -107,4 +133,84 @@ pub(crate) fn safe_progress_identities(output: &serde_json::Value) -> Vec<String
     let mut identities: Vec<_> = identities.into_iter().collect();
     identities.sort();
     identities
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai_runtime::{ContextPacket, SourceSpan, SourceType, TrustLevel};
+    use serde_json::json;
+
+    #[test]
+    fn plan_a_review_context_packets_bind_progress_to_path_hash_and_byte_range() {
+        let packet = ContextPacket {
+            id: "chunk-1".into(),
+            source_type: SourceType::Note,
+            source_path: Some("notes/a.md".into()),
+            title: "A".into(),
+            heading_path: None,
+            source_span: Some(SourceSpan { start: 0, end: 3 }),
+            content_hash: "same-revision".into(),
+            excerpt: "中".into(),
+            retrieval_reason: "keyword".into(),
+            score: 1.0,
+            trust_level: TrustLevel::UserNote,
+            citation_label: "[L1]".into(),
+            stale: false,
+            web: None,
+            corpus: None,
+        };
+        let identity =
+            |packet: &ContextPacket| safe_progress_identities(&json!({"results":[packet]}));
+        let first = identity(&packet);
+        assert_eq!(first.len(), 1);
+        let mut next = packet.clone();
+        next.source_span = Some(SourceSpan { start: 3, end: 6 });
+        assert_ne!(first, identity(&next), "another chunk is new information");
+        next = packet.clone();
+        next.source_path = Some("notes/b.md".into());
+        assert_ne!(first, identity(&next), "identical bytes do not merge files");
+        next = packet.clone();
+        next.content_hash = "updated-revision".into();
+        assert_ne!(first, identity(&next));
+        next = packet.clone();
+        next.id = "different-search-row".into();
+        next.score = 0.5;
+        assert_eq!(first, identity(&next), "reranking is not new reading");
+        next.source_span = Some(SourceSpan { start: 3, end: 3 });
+        assert!(identity(&next).is_empty(), "an empty range is not progress");
+    }
+
+    #[test]
+    fn plan_a_review_web_packet_uses_window_despite_null_local_span() {
+        let packet = |start| {
+            json!({"source_span":null,"source_path":null,
+            "canonicalUrl":"https://example.com/page","content_hash":"snapshot",
+            "excerptWindow":{"startChar":start,"endChar":start+3}})
+        };
+        assert_ne!(
+            safe_progress_identities(&packet(0)),
+            safe_progress_identities(&packet(3))
+        );
+        assert_eq!(safe_progress_identities(&packet(0)).len(), 1);
+    }
+
+    #[test]
+    fn plan_a_review_unavailable_web_results_do_not_add_progress_to_a_partial_batch() {
+        let page = json!({"canonicalUrl":"https://example.com/page","content_hash":"snapshot",
+            "excerptWindow":{"startChar":0,"endChar":3}});
+        let expected = safe_progress_identities(&json!({"results":[page]}));
+        for status in [
+            "snapshot_unavailable",
+            "evidence_budget_exhausted",
+            "range_out_of_bounds",
+        ] {
+            let partial = json!({"results":[page, {"canonicalUrl":"https://example.com/missing","status":status}]});
+            assert_eq!(
+                safe_progress_identities(&partial),
+                expected,
+                "{status} is not a read"
+            );
+        }
+    }
 }

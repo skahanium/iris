@@ -68,7 +68,7 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 - 工具 fingerprint 由 tool name 和规范化参数组成；成功且仍可见的观察不再执行。既有 fingerprint 状态保存本 Run 的有界执行结果和压缩标记，不另建结果账本。
 - 相同失败 fingerprint 最多执行两次，且必须受总预算约束。
-- 阅读进展使用组合身份 `(resource, revision/hash, start, actualEnd, unit)`，本地单位为 UTF-8 字节，网页为 Unicode scalar；空窗口与同页重放不是新进展。非阅读工具保留既有安全资源身份。
+- 阅读进展使用组合身份 `(resource, revision/hash, start, actualEnd, unit)`，本地单位为 UTF-8 字节，网页为 Unicode scalar。直接读取与检索 `ContextPacket` 按各自现行字段合同提取相同身份；同一笔记的新片段是进展，重新排序不是。空窗口、同页重放和部分成功批次中的失败 URL 不是新进展。非阅读工具保留既有安全资源身份。
 - 不同查询返回相同资源和内容不算新进展。
 - 连续两个完整模型—工具回合没有新进展时，Host 关闭工具面并发出一次通用综合指令。
 - 探索预算即将耗尽时同样关闭工具，保留最后一次模型轮次；不得先把全部轮次消耗完再返回 `ToolLoopLimit`。
@@ -97,6 +97,7 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 - native 与 MCP 的受控正文进入同一 Run 内存快照，保留规范 URL、内容 hash 和来源；每页最多 12,000 字，快照数受原 Run 证据容量约束。首读复用快照；`startChar > 0` 只能读取已有快照，缺失时返回 `snapshot_unavailable`，不能重新抓取后拼接旧偏移。Run 结束后不沿用快照身份。
 - 每个窗口最多 2,000 个 Unicode scalar 字符；先取窗口，再按实际 JSON 大小收缩，最后将同一摘录登记进 ledger。`endChar` 和 `nextStartChar` 按实际可见字符数计算，每个结果独立携带窗口；仅单页兼容顶层 `excerptWindow`。引用按返回的 evidence ID 取 Run 内标签；同 URL 的后页不借用首页引用，也不增加独立来源数。
 - `startChar == snapshotChars` 返回 EOF，大于该值返回范围错误，两者不登记空证据。`nextStartChar: null` 仅表示快照结束；`upstreamCompleteness` 的 `complete`、`bounded`、`unknown` 分别表示上游提取正文已完整返回、明确受限和未提供完整性证明，不等于整张网页或其中全部报道已核实。
+- MCP 正文与完整性由同一次解析选取，完整性只读取实际选中正文所属对象的布尔声明；其他结果、旁支元数据或正文中的同名文字不能提供完整性证明。未声明或声明类型不符时保持 `unknown`。
 - `web_search` 每次最多返回 4 个去重候选，每 Run 最多保留 8 个。候选只提供标题、来源、时间和有界片段，`evidenceIds` 为空；它不再接受 `urls` 重载。
 - `web_fetch` 接受公开 HTTPS URL。只有抓取到 URL 匹配的实质正文才登记 evidence 并获得 `Wn`；搜索片段绝不能在 `run_tool_loop` 中被升级为证据。
 - 一批 URL 部分成功时，观察同时返回成功正文、失败 URL、剩余证据要求和预算，让模型选择换源、补充抓取或基于已取得正文完成；单个抓取失败不直接把整轮降级为限制回答。

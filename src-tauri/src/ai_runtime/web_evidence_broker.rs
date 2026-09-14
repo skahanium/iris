@@ -2003,14 +2003,14 @@ fn mcp_page_fetch_result(
     if let Some(failure) = mcp_fetch_application_failure(payload) {
         return Err(AppError::msg(failure.failure_code()));
     }
-    let (title, text, extraction_method) = decode_mcp_fetch_body(url, payload)?;
+    let body = decode_mcp_fetch_body(url, payload)?;
     Ok(PageProviderFetch {
-        completeness: completeness::mcp_completeness(payload, &text, url),
-        title,
-        text,
+        completeness: body.completeness,
+        title: body.title,
+        text: body.text,
         provider_id: provider_id.into(),
         provider_kind: "mcp".into(),
-        extraction_method,
+        extraction_method: body.extraction_method,
     })
 }
 
@@ -2081,10 +2081,18 @@ fn mcp_fetch_failure_in_value(payload: &serde_json::Value) -> Option<McpApplicat
     })
 }
 
+/// Text and its completeness are selected together from the same MCP result.
+struct DecodedFetchBody {
+    title: String,
+    text: String,
+    extraction_method: String,
+    completeness: crate::llm::fetch_web_page::PageContentCompleteness,
+}
+
 fn decode_mcp_fetch_body(
     requested_url: &str,
     result: &serde_json::Value,
-) -> AppResult<(String, String, String)> {
+) -> AppResult<DecodedFetchBody> {
     if let Some(decoded) = decode_fetch_body_from_value(requested_url, result)? {
         return Ok(decoded);
     }
@@ -2113,11 +2121,14 @@ fn decode_mcp_fetch_body(
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or(requested_url);
                     if usable_fetch_body(trimmed, title, requested_url) {
-                        return Ok((
-                            title.trim().to_string(),
-                            trimmed.to_string(),
-                            "mcp_fetch_text".into(),
-                        ));
+                        return Ok(DecodedFetchBody {
+                            title: title.trim().to_string(),
+                            text: trimmed.to_string(),
+                            extraction_method: "mcp_fetch_text".into(),
+                            completeness: completeness::declared_completeness(
+                                item.get("truncated"),
+                            ),
+                        });
                     }
                 }
             }
@@ -2130,7 +2141,7 @@ fn decode_mcp_fetch_body(
 fn decode_fetch_body_from_value(
     requested_url: &str,
     value: &serde_json::Value,
-) -> AppResult<Option<(String, String, String)>> {
+) -> AppResult<Option<DecodedFetchBody>> {
     if let Some(failure) = mcp_fetch_failure_in_value(value) {
         return Err(AppError::msg(failure.failure_code()));
     }
@@ -2188,7 +2199,7 @@ fn decode_fetch_body_object(
     requested_url: &str,
     object: &serde_json::Map<String, serde_json::Value>,
     allow_content: bool,
-) -> Option<(String, String, String)> {
+) -> Option<DecodedFetchBody> {
     let response_url = object
         .get("url")
         .or_else(|| object.get("source_url"))
@@ -2224,7 +2235,12 @@ fn decode_fetch_body_object(
             continue;
         };
         if usable_fetch_body(text, title, requested_url) {
-            return Some((title.to_string(), text.to_string(), method.into()));
+            return Some(DecodedFetchBody {
+                title: title.to_string(),
+                text: text.to_string(),
+                extraction_method: method.into(),
+                completeness: completeness::declared_completeness(object.get("truncated")),
+            });
         }
     }
     None

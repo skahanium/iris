@@ -38,9 +38,9 @@
 
 ## 2. 生产事故与审计发现
 
-### 方案 A：读取、投影和压缩（2026-09-14 工作树）
+### 方案 A：读取、投影和压缩（2026-09-14）
 
-实现入口为 [`web_reading.rs`](../../src-tauri/src/ai_runtime/run_tool_loop/web_reading.rs)、[`payload_fit.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop/payload_fit.rs)、[`prompt_budget.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop/prompt_budget.rs) 及现有 `AgentToolLoop`。本轮尚未生成提交 ID，不把工作树状态写成部署事实。
+实现入口为 [`web_reading.rs`](../../src-tauri/src/ai_runtime/run_tool_loop/web_reading.rs)、[`payload_fit.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop/payload_fit.rs)、[`prompt_budget.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop/prompt_budget.rs) 及现有 `AgentToolLoop`。首次实现已纳入 `740f6d61`；本轮自查修正基于该提交，仍在工作树，不把提交或工作树状态写成部署事实。
 
 - `plan_a_executor_reads_tail_without_refetch_and_binds_exact_excerpt`：真实 executor → 模型 JSON → ledger，验证中文/emoji/转义正文末段、同 URL 多页的独立引用、EOF/越界、重复读取和新 executor 无快照时拒绝续读；覆盖原先首段截断后误报结束的反例。既有服务回归 `timeliness_later_fetch_uses_run_labels_instead_of_restarting_at_w1` 保持原断言，验证真实入口使用当前 Run 的引用序号与既有 `citation_label` 字段。
 - `plan_a_multi_url_windows_fit_escaped_json_and_preserve_upstream_bounds`、`plan_a_mcp_snapshot_continuation_preserves_unknown_completeness`：真实多 URL 载荷、逐页实际指针、部分成功、12,000 字快照上限和 MCP 未声明完整性的续读；不把同页后文计为第二来源。
@@ -48,6 +48,8 @@
 - `plan_a_known_prose_slots_shrink_without_inventing_read_ranges` 保留既有正文槽位兼容，`six_combined_terminal_cases_execute_real_component_combinations` 保持原断言并验证 8 轮/24 调用组合边界；`plan_a_external_observation_is_sized_before_its_evidence_prefix` 验证外部只读工具的摘录前置收缩，`plan_a_projection_overflow_closes_the_loop_with_a_visible_outcome` 验证最小投影超限时可见收束。
 - `plan_a_read_progress_binds_resource_revision_and_range`、`plan_a_compaction_preserves_failure_and_the_latest_tool_batch`、`plan_a_compaction_preserves_write_receipt_and_latest_user_constraint`：组合阅读身份、原失败状态、最近整批观察、写入回执与用户约束。
 - `plan_a_loop_replays_compacted_read_without_redispatch`：真实循环触发压缩后重放，覆盖允许/拒绝权限与失败观察；逻辑调用仍计数，真实读取仅两次，Provider 不再执行第三次读取。
+- 自查先复现 `ContextPacket` 新片段被误判无进展和部分失败 URL 被误算进展，再修正同一身份提取函数。`plan_a_review_context_packets_bind_progress_to_path_hash_and_byte_range` 覆盖真实类型序列化、同文不同路径、范围、版本和重排；`plan_a_review_loop_keeps_tools_open_for_new_chunks_of_one_note` 覆盖真实循环不会在第三次新片段后提前关闭工具面。`plan_a_review_web_packet_uses_window_despite_null_local_span` 与 `plan_a_review_unavailable_web_results_do_not_add_progress_to_a_partial_batch` 分别保护网页空本地范围与部分失败边界。
+- `plan_a_review_completeness_comes_from_the_decoded_body_not_matching_metadata`：经实际 MCP 正文解析入口复现无关 metadata 中的同文 `truncated: false` 冒充完整性，修正为选取正文时一并返回所属声明，删除独立递归匹配；原跨 URL 同文与嵌套文本回归也改经实际解析入口验证。
 - `oversized_web_tool_results_stop_at_projection_boundary_without_fabricated_failure`、`oversized_web_fetch_results_stop_at_projection_boundary_without_fabricated_failure` 替代原先强制把成功观察改为 `web_evidence_pack_overflow` 失败的旧断言：保持真实成功结果，检查只有一次执行、可见 Host 终态和未向下一模型回合发送超限载荷。
 
 这些证据属于 HR-3/HR-4/HR-8 的确定性合同。旧测试只调用已删除分页/打包辅助函数的路径随实现退役，由上述生产入口回归替代。B/C/D 与真实新闻质量仍未验收，INC-HR-009/010 和 HR-7 状态不因此升级。
