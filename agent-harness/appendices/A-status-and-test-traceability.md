@@ -68,6 +68,24 @@
 
 同一批本地验证：Rust 库测试 1,999 通过、5 忽略，全部集成与文档测试成功；确定性 RAG 14 通过、2 忽略；前端 362 个文件、2,629 项通过，`test:e2e` 7 项通过；`agent:eval:smoke` 脚本 16/16，`agent:eval:contract` 52/52（39 项回答、13 项预期拒绝，非预期失败为零）。未运行远程 CI、macOS/发布矩阵、真实桌面 E2E 与付费 Campaign。
 
+### 方案 C：检索语义在现有 FTS 链路内收敛（2026-09-14）
+
+实现入口为 [`retrieval_broker/fts.rs`](../../src-tauri/src/ai_runtime/retrieval_broker/fts.rs) 的查询编译、分数转换与范围谓词，[`retrieval_broker/metadata.rs`](../../src-tauri/src/ai_runtime/retrieval_broker/metadata.rs) 的候选排序，以及既有加权 RRF/MMR。未新增依赖、表、索引或查询 DSL，也不需要重建索引；融合权重、来源去重、top-10 单源上限与事后授权过滤均未改动。
+
+- `one_tokens_or_cannot_widen_the_whole_query`：按索引侧的 `cjk_bigrams` 真实建表，直接经 `escape_fts5_query` 查询。旧实现下 `劳动合同 风险` 解析为 `劳动… OR (劳动合同 AND 风险)`，只含单一词组的笔记也被召回；分组后只返回同时含两个词组的笔记。
+- `cjk_query_tokens_expand_like_the_index_does`：词组展开的现行字符串合同（每个词组一层括号、词组之间显式 `AND`），含单字、双字与中英混排保留项。
+- `fts_results_are_ordered_by_relevance_and_scored_monotonically`、`stronger_matches_outrank_weaker_ones_in_the_packet_scores`：前者断言方向与界，后者断言「更相关的笔记既排在前，也得到更高分数」。两者在旧的反向投影下都失败。
+- `path_scope_prefixes_are_literal_and_case_sensitive`：断言**下推 SQL 自身的行集**，而不是经过事后过滤的结果。旧的 `LIKE 'notes/a_x/%'` 会返回 `notes/abx/two.md` 等范围外路径，`%` 同样被当成通配符，`Notes/` 与 `notes/` 互不区分；参数化二进制前缀比较只返回字面前缀内的路径。
+- `path_scope_is_applied_before_the_candidate_limit`：范围文件是全部候选中相关性最低的一个、候选池只取 4 条时的端到端形状。该夹具只证明「范围文件没有被全局候选挤掉」，不单独区分谓词实现；区分证据在前一项与 `scoped_metadata_candidates_cannot_be_filled_by_unrelated_notes`。
+- `scoped_metadata_candidates_cannot_be_filled_by_unrelated_notes`：20 个范围外笔记先插入、范围内笔记最后插入，metadata 层若不过滤范围就只会返回范围外行，事后过滤后为空。
+- `unscoped_metadata_candidates_come_from_the_whole_match_set`：旧实现没有 `ORDER BY`，`LIMIT` 取扫描顺序，最后插入的匹配笔记永远进不了候选池；排序后 4 条候选池能覆盖到它。
+- `scoped_retrieval_treats_path_prefixes_as_literals`：生产入口 `hybrid_retrieve_with_diagnostics` 的组合断言。范围内笔记相关性最弱、范围外同名词组笔记相关性最强，`Notes/a_b/` 与 `Notes/` 都只返回范围内路径。
+- `rag_v2_hybrid_broker_meets_deterministic_fixture_gates`：既有确定性 RAG 门。60 条查询中 50 条是多词组，其中多数为 CJK 词组；改动后 any_source_recall@5=0.960、all_required_source_recall@5=0.900、MRR@10=0.950、nDCG@10=0.953、scope_leaks=0、warm_p95_ms=0.4，满足既有门与基线改进要求（基线 MRR 0.88/nDCG 0.89）。
+
+分数方向的定向对照记录：把 `bm25_to_score` 临时改回 `1/(1+badness)` 后，同一确定性夹具的四项指标与 scope_leaks 完全不变。原因是该夹具只开 FTS 与 metadata 两层，`weighted_rrf` 的贡献由位置决定，反转投影主要改变层内重排与跨层代表挑选，而该夹具没有这种重叠。因此这些评测指标不构成分数方向的证据；该项证据是两条命名单测。此类「夹具对缺陷不敏感」的结论按原样记录，不用它推断生产影响。
+
+这些证据属于 HR-3/HR-8 的确定性检索合同，不证明真实新闻回答质量；D 与 HR-7 状态不因本轮升级。
+
 ### 笔记集成检查点（2026-09-06，尚未完整验收）
 
 已增加 `rejected_patch_is_not_a_successful_dispatch_and_creates_no_version`、`move_preserves_backlink_bytes_and_creates_recovery_snapshot`、`interrupted_trash_metadata_is_recovered_from_the_prepared_manifest`、`rejected_symlink_parent_creates_no_outside_directories`、`vault_switch_waits_for_the_current_note_operation`。这些覆盖各自的派发、保存和恢复边界，不证明整套 CRUD 或 Agent 撤销已可用。
