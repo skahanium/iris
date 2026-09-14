@@ -157,6 +157,23 @@ pub(crate) struct RequiredWebBootstrapObservation {
     pub(crate) observation: String,
 }
 
+/// What one Host bootstrap added to the Run's own accounting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HostWebBootstrapAccounting {
+    tool_calls: u32,
+    network_tool_calls: u32,
+}
+
+/// Result of the single Host bootstrap handshake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HostWebBootstrapOutcome {
+    /// The executor's own observation state after the handshake.
+    observation_performed: bool,
+    /// Present only when a dispatch really happened; the single bootstrap is
+    /// consumed exactly then.
+    applied: Option<HostWebBootstrapAccounting>,
+}
+
 /// Per-model-turn limits that the provider must forward into `GatewayRequest`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AgentModelTurnBudget {
@@ -562,6 +579,77 @@ impl AgentToolLoop {
         .await
     }
 
+    /// Dispatch the Host's one bounded Web observation, if the frozen
+    /// contract still owes one.
+    ///
+    /// Returns the executor's observation state plus, when a dispatch really
+    /// happened, the counters the caller must add to its own Host accounting. A
+    /// model that answers without observing and a model that proposes tools
+    /// before observing reach the same handshake, so neither can publish an
+    /// unsupported answer and neither can trigger a second bootstrap.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_host_web_bootstrap(
+        &self,
+        executor: &impl ToolLoopExecutor,
+        run_id: &str,
+        tool_calls: u32,
+        tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
+        telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+        observer: &mut dyn StreamEventObserver,
+        messages: &mut Vec<LlmMessage>,
+        observation_position: usize,
+    ) -> AppResult<HostWebBootstrapOutcome> {
+        let remaining = self.max_tool_calls.saturating_sub(tool_calls);
+        observer.on_tools_starting()?;
+        let dispatched = executor
+            .bootstrap_required_web_observation(run_id, remaining)
+            .await?;
+        let Some(bootstrap) = dispatched else {
+            // An executor that owns no bootstrap returns nothing at all. The
+            // model keeps its own tool-enabled repair instead.
+            observer.on_tools_finished()?;
+            return Ok(HostWebBootstrapOutcome {
+                observation_performed: executor.web_observation_performed().unwrap_or(false),
+                applied: None,
+            });
+        };
+        let network_used = tool_calls_by_class
+            .get(&ToolBudgetClass::Network)
+            .copied()
+            .unwrap_or_default();
+        if bootstrap.tool_calls > remaining
+            || bootstrap.network_tool_calls > bootstrap.tool_calls
+            || network_used.saturating_add(bootstrap.network_tool_calls)
+                > self.tool_call_limit(ToolBudgetClass::Network)
+        {
+            return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+        }
+        if let Some(telemetry) = telemetry {
+            telemetry.record_bootstrap_web_tool_calls(bootstrap.tool_calls);
+        }
+        let observation_performed = executor
+            .web_observation_performed()
+            .unwrap_or(bootstrap.tool_calls > 0);
+        messages.insert(
+            observation_position,
+            LlmMessage {
+                role: MessageRole::System,
+                content: bootstrap.observation.into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        );
+        observer.on_tools_finished()?;
+        Ok(HostWebBootstrapOutcome {
+            observation_performed,
+            applied: Some(HostWebBootstrapAccounting {
+                tool_calls: tool_calls.saturating_add(bootstrap.tool_calls),
+                network_tool_calls: network_used.saturating_add(bootstrap.network_tool_calls),
+            }),
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn execute_internal(
         &self,
@@ -611,6 +699,10 @@ impl AgentToolLoop {
         let mut web_observation_performed = executor
             .web_observation_performed()
             .unwrap_or_else(|| executor.has_web_evidence());
+        // The Host bootstrap is a single bounded action: it is dispatched at
+        // most once per Run, from the first boundary that lacks the observation
+        // the frozen contract requires.
+        let mut host_web_bootstrap_dispatched = false;
         let mut no_progress_rounds = 0_u8;
         let mut rejected_rounds = 0_u8;
         let mut failed_service_rounds = 0_u8;
@@ -716,64 +808,35 @@ impl AgentToolLoop {
         }
 
         ensure_run_not_cancelled(run_id)?;
+        // A required-Web Run has a deterministic minimum observation: one
+        // search and one bounded fetch batch. The frozen contract must be able
+        // to afford it before the Run starts any model or network side effect.
+        // The dispatch itself happens later, at the first boundary that lacks
+        // the observation, so the model reads the question and chooses its own
+        // queries first.
         if executor.requires_web_observation() {
             let bootstrap_actions = executor.required_web_bootstrap_action_count();
             let remaining = self.max_tool_calls.saturating_sub(tool_calls);
-            let network_used = tool_calls_by_class
-                .get(&ToolBudgetClass::Network)
-                .copied()
-                .unwrap_or_default();
             let remaining_network = self
                 .tool_call_limit(ToolBudgetClass::Network)
-                .saturating_sub(network_used);
-            // A required-Web Run has a deterministic minimum observation:
-            // one search and one bounded fetch batch. Reject before invoking
-            // the executor when the frozen contract cannot afford both; doing
-            // so after a network side effect used to leave an unauditable
-            // half-bootstrap behind.
+                .saturating_sub(
+                    tool_calls_by_class
+                        .get(&ToolBudgetClass::Network)
+                        .copied()
+                        .unwrap_or_default(),
+                );
             if remaining < bootstrap_actions || remaining_network < bootstrap_actions {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
-            if let Some(bootstrap) = executor
-                .bootstrap_required_web_observation(run_id, remaining)
-                .await?
-            {
-                if bootstrap.tool_calls > remaining
-                    || bootstrap.network_tool_calls > bootstrap.tool_calls
-                    || network_used.saturating_add(bootstrap.network_tool_calls)
-                        > self.tool_call_limit(ToolBudgetClass::Network)
-                {
-                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
-                }
-                tool_calls = tool_calls.saturating_add(bootstrap.tool_calls);
-                *tool_calls_by_class
-                    .entry(ToolBudgetClass::Network)
-                    .or_default() = network_used.saturating_add(bootstrap.network_tool_calls);
-                if let Some(usage) = usage.as_deref_mut() {
-                    usage.tool_calls = tool_calls;
-                }
-                if let Some(telemetry) = telemetry {
-                    telemetry.record_bootstrap_web_tool_calls(bootstrap.tool_calls);
-                }
-                web_observation_performed = executor.web_observation_performed().unwrap_or(bootstrap.tool_calls > 0);
-                let position = messages
-                    .iter()
-                    .rposition(|message| matches!(message.role, MessageRole::User))
-                    .unwrap_or(messages.len());
-                messages.insert(
-                    position,
-                    LlmMessage {
-                        role: MessageRole::System,
-                        content: bootstrap.observation.into(),
-                        tool_call_id: None,
-                        tool_calls: None,
-                        reasoning_content: None,
-                    },
-                );
-                if web_observation_performed { observer.on_tools_finished()?; }
-            }
         }
 
+        // Where a Host observation belongs in the transcript: directly before
+        // the current user message, so it is context for the turn about to run
+        // rather than a new instruction.
+        let observation_position = messages
+            .iter()
+            .rposition(|message| matches!(message.role, MessageRole::User))
+            .unwrap_or(messages.len());
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
             let is_final_model_turn = model_turns.saturating_add(1) >= self.max_model_turns;
@@ -982,8 +1045,42 @@ impl AgentToolLoop {
                 // constraint was available, and must not turn a question into
                 // a misleading evidence-limited refusal.
                 let natural_clarification = is_natural_clarification(&content);
+                // The model reached a publishable body without the observation
+                // the frozen contract requires, and no Web attempt has happened
+                // yet to blame. That is where the single Host bootstrap runs:
+                // the draft stays unpublished, the Host dispatches the minimum
+                // observation, and the same loop continues with it in context.
+                if executor.requires_web_observation()
+                    && !web_observation_performed
+                    && !host_web_bootstrap_dispatched
+                {
+                    let bootstrap = self
+                        .dispatch_host_web_bootstrap(
+                            executor,
+                            run_id,
+                            tool_calls,
+                            &tool_calls_by_class,
+                            telemetry,
+                            observer,
+                            &mut messages,
+                            observation_position,
+                        )
+                        .await?;
+                    web_observation_performed = bootstrap.observation_performed;
+                    if let Some(applied) = bootstrap.applied {
+                        host_web_bootstrap_dispatched = true;
+                        tool_calls = applied.tool_calls;
+                        tool_calls_by_class
+                            .insert(ToolBudgetClass::Network, applied.network_tool_calls);
+                        if let Some(usage) = usage.as_deref_mut() {
+                            usage.tool_calls = tool_calls;
+                        }
+                    }
+                }
                 if (executor.requires_web_evidence() && !executor.has_web_evidence()
-                    || executor.requires_web_observation() && !web_observation_performed && !executor.web_capability_blocked())
+                    || executor.requires_web_observation()
+                        && !web_observation_performed
+                        && !executor.web_capability_blocked())
                     && !natural_clarification
                 {
                     if synthesis_required
@@ -1106,9 +1203,11 @@ impl AgentToolLoop {
                     messages.push(incomplete_answer_continuation_instruction());
                     continue;
                 }
-                if executor.requires_natural_source_binding()
+                let needs_binding = executor.requires_natural_source_binding();
+                let binding_valid = !needs_binding || executor.natural_source_binding_is_valid(&content);
+                if needs_binding
                     && !natural_clarification
-                    && !executor.natural_source_binding_is_valid(&content)
+                    && !binding_valid
                 {
                     if source_binding_repair_used || model_turns >= self.max_model_turns {
                         return Ok(evidence_limited_outcome(
@@ -1230,6 +1329,38 @@ impl AgentToolLoop {
                     .request_change_set(run_id, &response.tool_calls, tool_calls.saturating_add(1))
                     .await?;
                 return Err(AppError::msg(CONFIRMATION_PENDING_ERROR));
+            }
+
+            // A model that proposes tools instead of answering still owes the
+            // Run its minimum observation. The same single bootstrap runs
+            // before the first dispatch round, so the model chooses its queries
+            // with the Host's preliminary result already in context.
+            if executor.requires_web_observation()
+                && !web_observation_performed
+                && !host_web_bootstrap_dispatched
+            {
+                let bootstrap = self
+                    .dispatch_host_web_bootstrap(
+                        executor,
+                        run_id,
+                        tool_calls,
+                        &tool_calls_by_class,
+                        telemetry,
+                        observer,
+                        &mut messages,
+                        observation_position,
+                    )
+                    .await?;
+                web_observation_performed = bootstrap.observation_performed;
+                if let Some(applied) = bootstrap.applied {
+                    host_web_bootstrap_dispatched = true;
+                    tool_calls = applied.tool_calls;
+                    tool_calls_by_class
+                        .insert(ToolBudgetClass::Network, applied.network_tool_calls);
+                    if let Some(usage) = usage.as_deref_mut() {
+                        usage.tool_calls = tool_calls;
+                    }
+                }
             }
 
             let mut discovery_calls_this_turn = 0_u32;

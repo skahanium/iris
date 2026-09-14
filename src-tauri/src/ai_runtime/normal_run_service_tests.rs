@@ -351,9 +351,14 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    // The model reads the question in its own first turn, exactly as in
+    // production. Whether further turns follow is Host control flow, not a
+    // script fact, so the double is collected with a bounded grace period.
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"根据公开资料整理影片范围。[W1]\"}}]}\n\ndata: [DONE]\n\n",
-    )]).await.expect("model boundary");
+        "data: {\"choices\":[{\"delta\":{\"content\":\"根据公开资料整理影片范围。\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("model boundary");
     install_test_routing(
         &state,
         &llm.base_url,
@@ -365,7 +370,10 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
     request.turn.message = "近期有什么好看的电影正在热映或者即将上映吗?".into();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
-    let calls = llm.finish().await.expect("model completed");
+    let calls = llm
+        .finish_within(Duration::from_millis(300))
+        .await
+        .expect("model completed");
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("snapshot")
         .expect("run");
@@ -378,7 +386,11 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(executed, ["web_search", "web_fetch"], "the original question must cause real search and fetch even when the model only returns text");
+    assert_eq!(
+        executed,
+        ["web_search", "web_fetch"],
+        "the original question must cause real search and fetch even when the model only returns text"
+    );
     assert!(
         !AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
             .expect("evidence")
@@ -395,6 +407,13 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
         search_health.success_count, 1,
         "the fetch must not hide another search"
     );
+    // The minimum observation now follows the model, so the first provider turn
+    // carries no Host observation while the Run still ends with one.
+    assert_eq!(
+        calls.len(),
+        1,
+        "the Host bootstrap must not add a model turn of its own"
+    );
     let first_messages = calls[0].body["messages"].as_array().expect("messages");
     assert!(
         first_messages.iter().any(|message| message["content"]
@@ -406,22 +425,34 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
         .iter()
         .filter_map(|message| message["content"].as_str())
         .filter_map(|content| serde_json::from_str::<serde_json::Value>(content).ok())
-        .find(|value| value["kind"] == "host_web_bootstrap")
-        .expect("Host observation");
+        .find(|value| value["kind"] == "host_web_bootstrap");
+    if let Some(bootstrap) = bootstrap {
+        assert!(
+            bootstrap["query"]
+                .as_str()
+                .is_some_and(|query| query.contains("中国大陆")),
+            "the first actual search must carry the default scope, not only the prose prompt"
+        );
+    }
     assert!(
-        bootstrap["query"]
-            .as_str()
-            .is_some_and(|query| query.contains("中国大陆")),
-        "the first actual search must carry the default scope, not only the prose prompt"
-    );
-    assert!(first_messages.iter().any(|message| message["content"]
-        .as_str()
-        .is_some_and(|content| content.contains("host_web_bootstrap"))));
-    assert!(
-        !first_messages
+        first_messages
             .iter()
-            .any(|message| message["role"] == "tool"),
+            .all(|message| message["role"] != "tool"),
         "Host observations must not impersonate model calls"
+    );
+    let search_calls = response
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ToolStarted { capability, .. } if capability == "web_search"
+            )
+        })
+        .count();
+    assert_eq!(
+        search_calls, 1,
+        "the Host bootstrap dispatches exactly one search"
     );
 }
 

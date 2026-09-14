@@ -181,3 +181,20 @@ C 按第 2 节 C 落地，未新增依赖、数据库表、索引、IPC 或查�
 命名回归与生产入口见 [Harness 附录 A](../../../agent-harness/appendices/A-status-and-test-traceability.md) 的「方案 C」小节；合同文本见 [Harness 04](../../../agent-harness/04-adaptive-agent-loop-and-tool-contracts.md) 的 5.2 节。
 
 C 的本地验证：Rust 库测试 2,013 通过、5 忽略（总数 2,018；新增 6 项 C 命名回归、改写 2 项既有断言）；`rag_retrieval_contract` 7 通过（含 1 项生产入口组合回归），全部集成与文档测试成功，其中确定性 RAG 14 通过、2 忽略；前端 362 个文件、2,629 项通过，`test:e2e` 7 项通过；lint、typecheck、Prettier、Rust fmt/clippy（all-targets，warnings as errors）、docs/size/version 同批通过。分数方向的评测对照按原样记录在附录 A：同一确定性夹具对反向投影不敏感，该项证据只有命名单测。未运行远程 CI、macOS/发布矩阵、真实桌面 E2E 和付费 Campaign；D 与 HR-7 状态不因 C 升级。
+
+### D 第 1 条的施工记录（Host 保底延后到终局校验点）
+
+D 的第 1 条已落地，未新增依赖、预算、数据库表、IPC 或第二套恢复路径。
+
+- 保底派发点：`bootstrap_required_web_observation` 不再在模型首轮之前无条件执行。循环前只保留「冻结合同是否负担得起最低观察」的前置检查；实际派发改在**第一个缺少观察的边界**：模型直接给正文的发布边界，以及模型先提出工具的派发回合。两处共用同一 handshake `dispatch_host_web_bootstrap`。
+- 最多一次：`host_web_bootstrap_dispatched` 只在真实派发后置位（executor 返回 `None` 表示它本就不拥有保底，模型保留自己的工具修复回合）。因此真实服务失败也只计一次，不会因为「失败」再次保底。
+- 身份与预算：保底派发现在会走 `record_web_attempt`，因此失败保底与「完全未尝试」在既有 capability 判定中可区分；派发计数、网络分类计数与 telemetry 仍在同一处结算，`usage.tool_calls` 同步。
+- 行为对照：模型首轮看到的是问题本身与历史（首轮请求不含 Host observation 之前的附加轮次），保底随后把观察作为 system data 注入同一循环；草稿不发布这一既有保证未改动（它由 B 的终态类型与既有 repair 路径承担）。
+
+**必须删除**未新增：没有保留「模型理解之前先搜并抓前两个结果」的分支，也没有把最低观察保证提前移除。
+
+验证：库测试 2,013 通过、5 忽略（`--lib -- --test-threads=4`）；`agent_tool_loop_tests` 55 通过、`normal_run_service_tests` 34 通过（1 忽略）。其中
+`timeliness_observation_original_movie_question_executes_before_a_model_can_skip_search`
+按新契约改写：断言模型恰好一次请求、保底恰好一次 search、观察确实进入模型上下文且查询带默认地域、且模型回合数不因保底增加。
+
+**本轮定位记录（工具链缺陷，非产品缺陷）**：延后保底会让这类 Run 的模型回合数由 Host 控制流决定，而 `spawn_llm_protocol_double` 的 `finish()` 会 join 监听任务、因此要求脚本响应数等于请求数；多余脚本会让测试永久等待。已补 `finish_within(grace)` 供「回合数不由脚本决定」的测试使用，并保留 `finish()` 的严格语义。定位过程确认为测试夹具等待，而非引擎死锁：`emit_run_terminal`、服务层与引擎均正常返回，卡住的是收尾的 `finish()`。

@@ -9135,6 +9135,34 @@ impl LlmProtocolDouble {
                 })??;
             }
         }
+        self.collect_captures()
+    }
+
+    /// Collect the captured requests without requiring every scripted response
+    /// to have been consumed.
+    ///
+    /// `finish` joins the listener task, so it only returns once the double has
+    /// served one request per script. A Run whose number of model turns comes
+    /// from Host control flow rather than from the script would otherwise wait
+    /// forever on the unused tail. This variant waits a bounded grace period
+    /// for trailing requests and then reports what actually arrived; the
+    /// caller asserts the real turn shape itself.
+    pub(crate) async fn finish_within(
+        mut self,
+        grace: std::time::Duration,
+    ) -> crate::error::AppResult<Vec<CapturedHttpRequest>> {
+        if let Some(task) = self.task.take() {
+            if self.abort_task_on_drop {
+                task.abort();
+                let _ = task.await;
+            } else {
+                let _ = tokio::time::timeout(grace, task).await;
+            }
+        }
+        self.collect_captures()
+    }
+
+    fn collect_captures(mut self) -> crate::error::AppResult<Vec<CapturedHttpRequest>> {
         let captures = std::mem::replace(&mut self.captures, Arc::new(Mutex::new(Vec::new())));
         Arc::try_unwrap(captures)
             .map_err(|_| crate::error::AppError::msg("eval_protocol_double_still_shared"))?
