@@ -1,6 +1,6 @@
 //! Run-owned snapshots and exact, citation-bearing model reading windows.
 use super::*;
-use crate::ai_runtime::web_evidence_broker::{WebEvidenceItem, WebEvidenceUsage};
+use crate::ai_runtime::web_evidence_broker::WebEvidenceItem;
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
@@ -73,7 +73,6 @@ impl NormalRunToolExecutor<'_> {
         urls: &[String],
         start: usize,
         items: Vec<WebEvidenceItem>,
-        usage: &WebEvidenceUsage,
         state_version: u64,
         elapsed: Duration,
     ) -> AppResult<ToolCallResult> {
@@ -151,13 +150,18 @@ impl NormalRunToolExecutor<'_> {
             let output = reading_output(
                 &pages,
                 &statuses,
-                usage,
                 &placeholders,
                 elapsed,
                 &missing_requirement,
             )?;
-            let envelope = json!({"success":false,"output":output,"error":"web_read_unavailable",
-                "loopObservation":{"remainingModelTurns":u32::MAX,"remainingToolCalls":u32::MAX,"remainingCategoryCalls":u32::MAX,"historicalObservation":false}});
+            // Reserve the widest legal loop projection so the model-facing
+            // message cannot re-truncate an excerpt this sizing pass accepted.
+            let envelope = json!({
+                "success": false,
+                "output": output,
+                "error": "web_read_unavailable",
+                "loopObservation": crate::ai_runtime::agent_tool_loop::LoopProjection::widest().to_json(),
+            });
             if envelope.to_string().chars().count() <= MAX_WEB_TOOL_RESULT_CHARS {
                 break;
             }
@@ -228,7 +232,6 @@ impl NormalRunToolExecutor<'_> {
             output: reading_output(
                 &pages,
                 &statuses,
-                usage,
                 &bindings,
                 elapsed,
                 &if self.has_web_evidence() {
@@ -247,7 +250,6 @@ impl NormalRunToolExecutor<'_> {
 fn reading_output(
     pages: &[ReadingPage],
     statuses: &[Value],
-    usage: &WebEvidenceUsage,
     bindings: &[(i64, i64)],
     elapsed: Duration,
     remaining_requirement: &Value,
@@ -286,7 +288,7 @@ fn reading_output(
         "observationDepth":if pages.is_empty() {"snapshot_status"} else {"fetched_body"},"requiresFetchForCitation":false,
         "remainingEvidenceRequirement":remaining_requirement,
         "resultBudget":{"format":"context_packets_only","rawEvidenceOmitted":true},
-        "remainingBudgetMs":remaining_web_tool_budget_ms(elapsed),"webUsage":usage});
+        "budgetRemaining":remaining_web_tool_budget_ms(elapsed) > 0});
     if let Some(window) = single_window {
         output["excerptWindow"] = window;
     }

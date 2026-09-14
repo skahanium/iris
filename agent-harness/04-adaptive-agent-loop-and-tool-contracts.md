@@ -74,6 +74,16 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 - 探索预算即将耗尽时同样关闭工具，保留最后一次模型轮次；不得先把全部轮次消耗完再返回 `ToolLoopLimit`。
 - 强制综合后仍没有可见正文、发生权限越界或严格证据要求未满足，才进入失败终态。
 
+### 5.1 终态类型与两个循环状态投影
+
+`AgentToolLoopOutcome` 携带显式 `AgentTerminalType`：`ModelAnswer`、`RepairedModelAnswer`（Host 先扣下一次草稿，最终仍由 Provider 发布）或 `HostEvidenceLimited`。正常回答、证据补修、强制综合和 Host 兜底四个构造点全部显式赋值；校验、引用绑定、来源与证据提交消费同一字段。
+
+- Provider `finish_reason` 只表达 Provider 停止原因，不再兼任 Host 身份；Host 兜底终态的 `finish_reason` 为 `stop`，不再写入合成值 `evidence_limited`。
+- 只有 `HostEvidenceLimited` 可以跳过 Provider 输出的完整性/停止原因校验，并且它不登记 citation map、source summary 或来源卡片。该判定来自循环控制流，永不来自正文内容。
+- 旧 Run 的持久化正文没有终态类型，只有开头文字可查。该识别隔离在 [`legacy_terminal_records.rs`](../src-tauri/src/ai_runtime/run_engine/legacy_terminal_records.rs)，并要求完整旧披露形状（开头词加验证声明），因此以相同开头词写出的模型回答仍是模型输出，照常受校验。
+- 循环状态分为两个投影，不复制两份预算。Host 保留精确计数、超时阶段与 Provider 尝试；模型只取得 `canContinue`、`mustSynthesize`、`failureType` 与 `nextAction`。模型观察与工具提议反馈不再出现 `remainingModelTurns`、`remainingToolCalls`、`remainingCategoryCalls`、`remainingBudgetMs`、`webUsage` 或开启时的预算清单。
+- 执行器的预尺寸必须预留 `LoopProjection::widest()`；真实投影永不比它更宽，因此已登记的 Web 摘录不会被模型侧二次缩短。
+
 工具观察压缩仅省略旧正文，保留原始 success/error、身份、范围、指针和完整写入回执；最近一批完整 assistant/tool 交互与用户约束保持原样。模型以相同参数请求已压缩观察时，Host 重检当前权限并重放已保存的有界结果，标记 `historicalObservation`，不表示重新读取最新资源。重放消耗逻辑调用和类别预算，但不访问 Provider、不重登记证据、不增加进展；写入回执保持可见，绝不因恢复正文而重执行写入。记录容量受原 Run 调用和工具载荷上限约束。
 
 观察只按合法 JSON 值收缩，并核算实际序列化后的转义开销。列表省略完整尾项，读取适配层更新实际范围与续读指针，再登记最终摘录；通用循环不得再缩短已登记的 Web 摘录。最小合法信封或受保护的最新批次仍超限时，走既有预算终态，不制造工具失败、删除最新观察或发送 JSON 片段。
@@ -121,7 +131,8 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 - 普通回答：自然正文，可附 Host 绑定的受控来源区；不要求模型复述内部 `Wn` 标记或调用 `submit_final_answer`。
 - WebPreferred：有证据时展示当前 Run 来源；日常 `VolatileExternalFact` 必须实际搜索，有适合候选时读取正文。缺少正文可基于实际观察说明缺口，不能把训练知识冒充当前事实，也不因无摘录整轮失败。最低观察只负责启动，不得因首次搜索或抓取无结果就跳过仍有预算的调整机会。
 - `HighStakesCurrentFact`、用户明示核实、显式 URL、`CitationCheck` 或交叉核实：必须取得合格正文。只有搜索片段、来源冲突或跨 Run evidence 均不得通过；无摘录时 Host 有内容降级，不得下适用结论。
-- 普通直答、联网、笔记问答统一在现有检查及终态提交后一次发布；证据不足时限制说明不得携带 citation map、source summary 或来源卡片。
+- 普通直答、联网、笔记问答统一在现有检查及终态提交后一次发布；证据不足时限制说明不得携带 citation map、source summary 或来源卡片。该限制说明由 Host 撰写并带 `HostEvidenceLimited` 终态类型；它不经过模型输出的停止原因/完整性恢复，也不参与引用绑定。
+- 回答正文围绕问题组织事件、结论和必要的不确定性。候选摘要、已读摘录、来源绑定与独立印证必须语义区分：搜索结果只是候选，citation 标记只说明哪份来源支持哪项主张，`[Wn]` 存在不代表该来源内部每条报道都已被核对，同一来源的多页不构成独立印证。运行正常时不显示工具名、轮次和预算；用户主动询问运行诊断时由诊断入口说明真实执行状态。
 - `ProvenancePolicy` 统一解析 `Wn`、`E{id}`、`L{id}`、`Mn`；`[Cn]` 和数据库裸 ID 只用于内部或展示。
 - Harness 校验来源存在、归属、时效和声明的覆盖关系，不宣称完成自由文本 NLI。
 

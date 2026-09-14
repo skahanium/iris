@@ -54,6 +54,20 @@
 
 这些证据属于 HR-3/HR-4/HR-8 的确定性合同。旧测试只调用已删除分页/打包辅助函数的路径随实现退役，由上述生产入口回归替代。B/C/D 与真实新闻质量仍未验收，INC-HR-009/010 和 HR-7 状态不因此升级。
 
+### 方案 B：终态类型与用户输出边界（2026-09-14）
+
+实现入口为 [`agent_tool_loop/terminal.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop/terminal.rs)、[`agent_tool_loop/loop_projection.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop/loop_projection.rs)、[`run_engine/mod.rs`](../../src-tauri/src/ai_runtime/run_engine/mod.rs) 的校验/来源/提交、隔离的 [`legacy_terminal_records.rs`](../../src-tauri/src/ai_runtime/run_engine/legacy_terminal_records.rs)，以及 [`prompt_contract.rs`](../../src-tauri/src/ai_runtime/prompt_contract.rs) 的回答风格合同。未新增依赖、数据库表、IPC 或预算。
+
+- `model_prose_cannot_impersonate_a_host_authored_limitation`：同一段文字在 `ModelAnswer` 与 `HostEvidenceLimited` 下必须得到相反的 Host 身份判定，证明终态身份来自循环控制流而非正文；同一回归还断言旧记录适配器要求完整披露形状，裸开头词不构成 Host 豁免。
+- `host_limitation_reports_no_synthetic_provider_stop_reason`：Host 兜底终态的 `finish_reason` 为 `stop`，不再用合成值表达 Host 身份；Host 兜底仍是一次、无 `final_submission`。
+- `every_host_authored_bounded_limitation_stays_recognisable_in_records`：三种旧限制文案（无正文、已取得正文、未核实线索）在隔离适配器中仍可识别，普通散文不被误判。
+- `loop_projection_reports_a_decision_not_host_accounting`：真实 `tool_result_message` 出口断言成功/失败观察携带 `canContinue`、`mustSynthesize`、`failureType`、`nextAction`，且在任一投影下都不出现 `remainingModelTurns`、`remainingToolCalls`、`remainingCategoryCalls`、`remainingBudgetMs`、`webUsage`。
+- `style_contract_separates_candidate_material_from_independent_confirmation`：回答风格合同要求区分候选、来源绑定与独立印证，明确同一来源多页不构成独立印证，并规定 Host 限制文案按最终稿对待；旧「已读聚合页等于核实每条报道」的表述与断言在仓库中已不存在。
+
+`AgentToolLoop` 现有回归（`assert_host_evidence_limited`）改为断言类型化终态，不再依赖正文前缀。这些证据只证明模型观察投影、终态身份与回答风格合同的确定性边界，不证明真实模型不再复述内部预算，也不证明真实回答质量；HR-7 保持实测未通过。
+
+同一批本地验证：Rust 库测试 1,999 通过、5 忽略，全部集成与文档测试成功；确定性 RAG 14 通过、2 忽略；前端 362 个文件、2,629 项通过，`test:e2e` 7 项通过；`agent:eval:smoke` 脚本 16/16，`agent:eval:contract` 52/52（39 项回答、13 项预期拒绝，非预期失败为零）。未运行远程 CI、macOS/发布矩阵、真实桌面 E2E 与付费 Campaign。
+
 ### 笔记集成检查点（2026-09-06，尚未完整验收）
 
 已增加 `rejected_patch_is_not_a_successful_dispatch_and_creates_no_version`、`move_preserves_backlink_bytes_and_creates_recovery_snapshot`、`interrupted_trash_metadata_is_recovered_from_the_prepared_manifest`、`rejected_symlink_parent_creates_no_outside_directories`、`vault_switch_waits_for_the_current_note_operation`。这些覆盖各自的派发、保存和恢复边界，不证明整套 CRUD 或 Agent 撤销已可用。

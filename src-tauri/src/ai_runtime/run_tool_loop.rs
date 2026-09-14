@@ -726,8 +726,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     "duplicateResourceCount": duplicate_resource_count,
                     "observationDepth": "search_snippet",
                     "requiresFetchForCitation": true,
-                    "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
-                    "webUsage": output.usage,
+                    "budgetRemaining": remaining_web_tool_budget_ms(call_started.elapsed()) > 0,
                 }),
                 duration_ms: bounded_duration_ms(call_started.elapsed()),
                 tokens_used: None,
@@ -738,7 +737,6 @@ impl<'a> NormalRunToolExecutor<'a> {
             &urls,
             start_char,
             output.items,
-            &output.usage,
             state_version,
             call_started.elapsed(),
         )
@@ -2344,11 +2342,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 
     fn evidence_limited_response(&self) -> String {
         if !self.evidence_ids().is_empty() {
-            // Built from the shared constant so the finalisation layer
-            // recognises this Host-authored limitation as one.
+            // Built from the shared legacy constant so a persisted record of
+            // this Host-authored limitation stays recognisable.
             return format!(
                 "{}，但未能完成最终来源关联；已取得的正文不会被当作读取失败。请重试以完成答复。",
-                crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_WITH_EVIDENCE_PREFIX
+                crate::ai_runtime::run_engine::legacy_terminal_records::
+                    EVIDENCE_LIMITED_WITH_EVIDENCE_PREFIX
             );
         }
         let leads = self
@@ -2373,7 +2372,8 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             };
             return format!(
                 "{}。{reason}",
-                crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE_PREFIX
+                crate::ai_runtime::run_engine::legacy_terminal_records::
+                    EVIDENCE_LIMITED_RESPONSE_PREFIX
             );
         }
         let items = leads
@@ -2383,7 +2383,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "本轮未取得足够的可核验来源正文。搜索取得了以下未核实线索，但正文读取或核验未成功，无法据此确认当前情况：\n\n{items}"
+            "{}。搜索取得了以下未核实线索，但正文读取或核验未成功，无法据此确认当前情况：\n\n{items}",
+            crate::ai_runtime::run_engine::legacy_terminal_records::
+                EVIDENCE_LIMITED_RESPONSE_PREFIX
         )
     }
 
@@ -3196,7 +3198,6 @@ fn failed_web_tool_call(
             "retryable": failure.retryable,
             "attemptCount": attempt_count,
             "budgetExhausted": remaining_budget_ms == 0,
-            "remainingBudgetMs": remaining_budget_ms,
         }),
         duration_ms: bounded_duration_ms(duration),
         tokens_used: None,

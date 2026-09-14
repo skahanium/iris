@@ -96,23 +96,18 @@ fn projection_limit() -> AppError {
     AppError::run(SafeRunErrorCode::ToolLoopLimit)
 }
 
+use super::loop_projection::LoopProjection;
 use super::{
     LlmMessage, MessageRole, ToolCall, ToolCallResult, MAX_TOOL_RESULT_CHARS,
     MAX_WEB_TOOL_RESULT_CHARS,
 };
+
 pub(crate) fn tool_result_message(
     call: &ToolCall,
     result: &ToolCallResult,
-    remaining_model_turns: u32,
-    remaining_tool_calls: u32,
-    remaining_category_calls: u32,
+    projection: LoopProjection,
 ) -> AppResult<(LlmMessage, bool)> {
-    let payload = tool_result_payload(
-        result,
-        remaining_model_turns,
-        remaining_tool_calls,
-        remaining_category_calls,
-    );
+    let payload = tool_result_payload(result, projection);
     let serialized = serde_json::to_string(&payload)?;
     let budget = tool_result_char_budget(&call.function.name);
     // Web excerpts have already been sized and registered by the executor.
@@ -135,25 +130,17 @@ pub(crate) fn tool_result_message(
     ))
 }
 
-fn tool_result_payload(
-    result: &ToolCallResult,
-    models: u32,
-    calls: u32,
-    category: u32,
-) -> serde_json::Value {
+fn tool_result_payload(result: &ToolCallResult, projection: LoopProjection) -> serde_json::Value {
     serde_json::json!({
         "success": result.success, "output": result.output, "error": result.error,
-        "loopObservation": {
-            "remainingModelTurns": models, "remainingToolCalls": calls,
-            "remainingCategoryCalls": category, "historicalObservation": false
-        }
+        "loopObservation": projection.to_json()
     })
 }
 
-/// Size the output before the executor registers evidence. Reserve the maximum
-/// counter width so the model projection cannot shorten it a second time.
+/// Size the output before the executor registers evidence. Reserve the widest
+/// legal projection so the model-facing message cannot shorten it a second time.
 pub(crate) fn prepare_tool_result(result: &mut ToolCallResult) -> AppResult<()> {
-    let payload = tool_result_payload(result, u32::MAX, u32::MAX, u32::MAX);
+    let payload = tool_result_payload(result, LoopProjection::widest());
     let serialized = serde_json::to_string(&payload)?;
     let (fitted, _) = fit_tool_payload(
         &payload,

@@ -43,7 +43,7 @@ INC-HR-009 重新打开 HR-3 的“提议—派发”边界和 HR-4 的长对话
 
 INC-HR-010 是 HR-3/HR-4 的收敛施工，不创建第二个循环或研究架构。它要求预算只由冻结 Run 合同产生并在 executor、ToolLoop、Direct Gateway 和评测之间使用同一有效值；所有退出路径都保留最终综合；候选工具响应与已接纳 continuation 分离；历史、观察、最终消息与评测均消费当前 Run 的持久化事实。其退出条件是组合回归与完整链路验收，而不是局部测试数量；真实校准和人工审阅前 HR-7 继续未放行。
 
-方案 A 的读取与投影修复归入 HR-3/HR-4，回归归入 HR-8：Run 内网页快照、实际 JSON 窗口与 ledger 一致、原执行状态保留及权限重检后的观察重放已纳入 `740f6d61`。其后自查在同一进展提取与 MCP 正文解析入口修正片段身份和完整性归属，修正仍在工作树。当前实现合同见 [04](./04-adaptive-agent-loop-and-tool-contracts.md)，命名测试见[附录 A](./appendices/A-status-and-test-traceability.md)。终态类型、预算外露、检索语义和联网起步仍按[施工方案](../docs/superpowers/plans/2026-09-14-agent-correctness-remediation.md)的 B/C/D 推进，不能由 A 的确定性回归推导 HR-7 通过。
+方案 A 的读取与投影修复归入 HR-3/HR-4，回归归入 HR-8：Run 内网页快照、实际 JSON 窗口与 ledger 一致、原执行状态保留及权限重检后的观察重放已纳入 `740f6d61`。其后自查在同一进展提取与 MCP 正文解析入口修正片段身份和完整性归属，修正仍在工作树。方案 B 的终态类型与循环状态投影同样归入 HR-3/HR-4、回归归入 HR-8：`AgentToolLoopOutcome` 现携带显式终态类型，新 Run 不再按正文前缀授予校验豁免，旧前缀识别隔离为持久化记录适配器，模型观察只保留「能否继续 / 是否必须综合 / 失败类型 / 下一步」。当前实现合同见 [04](./04-adaptive-agent-loop-and-tool-contracts.md)，命名测试见[附录 A](./appendices/A-status-and-test-traceability.md)。检索语义（C）和联网起步、失败恢复与回答质量（D）仍按[施工方案](../docs/superpowers/plans/2026-09-14-agent-correctness-remediation.md)推进，不能由 A/B 的确定性回归推导 HR-7 通过。
 
 ## 3. HR-6 清理纪律
 

@@ -6964,7 +6964,8 @@ async fn probe_model_turn_limit(
         // stand in for the limit.
         calls == 8
             && result.is_ok_and(|outcome| {
-                crate::ai_runtime::agent_tool_loop::is_evidence_limited_response(&outcome.content)
+                outcome.terminal
+                    == crate::ai_runtime::agent_tool_loop::AgentTerminalType::HostEvidenceLimited
             })
     })
 }

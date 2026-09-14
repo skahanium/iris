@@ -36,6 +36,35 @@ pub(super) fn apply_required_web_degradation_notice(
     Ok(())
 }
 
+/// Commit a terminal body the Host wrote itself.
+///
+/// The tool loop declares this terminal through
+/// `AgentTerminalType::HostEvidenceLimited`; nothing here inspects the text to
+/// decide it. Because the body is not Provider output it is not run through
+/// model finish-reason/integrity recovery, and because it makes no attributed
+/// claim it carries no citations, no source summary and no evidence binding.
+pub(super) fn finalize_host_authored_limitation(
+    db: &Database,
+    session: &AssistantSessionRef,
+    run_id: &str,
+    state_version: u64,
+    content: String,
+    sink: &impl RunEventSink,
+) -> AppResult<()> {
+    finalize_and_emit_with_sink(
+        db,
+        session,
+        run_id,
+        state_version,
+        content,
+        Vec::new(),
+        None,
+        None,
+        None,
+        sink,
+    )
+}
+
 pub(super) fn linkify_final_web_citations(
     db: &Database,
     run_id: &str,

@@ -25,10 +25,17 @@ use crate::storage::db::Database;
 mod observations;
 pub(crate) use observations::safe_progress_identities;
 use observations::ExecutionRecord;
-pub(crate) use payload_fit::{prepare_tool_result, tool_result_message};
+
+#[path = "agent_tool_loop/loop_projection.rs"]
+mod loop_projection;
+pub(crate) use loop_projection::{
+    observation_failure_type, LoopProjection, NEXT_ACTION_CONTINUE, NEXT_ACTION_SYNTHESIZE,
+};
 
 #[path = "agent_tool_loop/payload_fit.rs"]
 mod payload_fit;
+pub(crate) use payload_fit::{prepare_tool_result, tool_result_message};
+
 #[path = "agent_tool_loop/prompt_budget.rs"]
 mod prompt_budget;
 #[cfg(test)]
@@ -121,27 +128,14 @@ pub(crate) fn is_natural_clarification(content: &str) -> bool {
             .any(|character| matches!(character, '.' | '。' | '!' | '！'))
 }
 
-/// Result of a fully bounded model/tool exchange.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentToolLoopOutcome {
-    /// Final assistant content emitted only after the model has stopped calling tools.
-    pub(crate) content: String,
-    /// Provider stop reason associated with the final assistant content.
-    pub(crate) finish_reason: String,
-    /// Internal structured submission when the model used the reserved final
-    /// answer tool. It never enters the model transcript or tool audit.
-    pub(crate) final_submission: Option<FinalAnswerSubmission>,
-    /// Number of model turns used by this Run.
-    pub(crate) model_turns: u32,
-    /// Number of concrete tool dispatch attempts made by this Run.
-    pub(crate) tool_calls: u32,
-    /// Provider-reported input tokens consumed across all model turns.
-    pub(crate) prompt_tokens: u32,
-    /// Provider-reported output tokens consumed across all model turns.
-    pub(crate) completion_tokens: u32,
-    /// Provider-reported total tokens consumed across all model turns.
-    pub(crate) total_tokens: u32,
-}
+/// Which producer owns the terminal assistant body of one bounded Run, plus the
+/// outcome envelope that carries it.
+#[path = "agent_tool_loop/terminal.rs"]
+mod terminal;
+#[cfg(test)]
+pub(crate) use terminal::evidence_limited_outcome as evidence_limited_outcome_for_test;
+use terminal::{evidence_limited_outcome, model_terminal_type};
+pub(crate) use terminal::{AgentTerminalType, AgentToolLoopOutcome, EVIDENCE_LIMITED_RESPONSE};
 
 /// Budget consumed so far, including execution paths that end in an error.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -383,24 +377,6 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     }
 }
 
-pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIX: &str = "本轮未取得足够的可核验来源正文";
-
-/// A bounded limitation published after the Run already holds verifiable
-/// material but could not finish attribution. It is Host-authored too, so the
-/// finalisation layer must recognise it exactly like the prefix above.
-pub(crate) const EVIDENCE_LIMITED_WITH_EVIDENCE_PREFIX: &str = "本轮已取得可核验资料";
-
-/// Every Host-authored bounded limitation starts with one of these. Producers
-/// must build their text from these constants (see `evidence_limited_response`
-/// in the Run tool loop) so the text and the recogniser cannot drift apart —
-/// the defect this list was introduced to close.
-pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIXES: [&str; 2] = [
-    EVIDENCE_LIMITED_RESPONSE_PREFIX,
-    EVIDENCE_LIMITED_WITH_EVIDENCE_PREFIX,
-];
-pub(crate) const EVIDENCE_LIMITED_RESPONSE: &str =
-    "本轮未取得足够的可核验来源正文，无法确认问题涉及的当前情况。未核实的线索不能作为当前事实的依据。";
-
 /// Executes the only permitted shape of an Agent tool loop.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AgentToolLoop {
@@ -483,6 +459,37 @@ impl AgentToolLoop {
             ToolBudgetClass::Runtime => self.max_runtime_tool_calls,
             ToolBudgetClass::ConfirmedChange => self.max_confirmed_change_calls,
         }
+    }
+
+    /// Project the Host's exact counters onto what the model may know.
+    ///
+    /// The Host keeps the real numbers; the model only learns whether another
+    /// action is affordable and which action to take next. Publishing exact
+    /// remaining quotas made the model narrate internal budget to the user and
+    /// treat a numeric allowance as a target.
+    fn loop_projection(
+        &self,
+        remaining_model_turns: u32,
+        tool_calls: u32,
+        tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
+    ) -> LoopProjection {
+        let category_remaining = [
+            ToolBudgetClass::Local,
+            ToolBudgetClass::Network,
+            ToolBudgetClass::ExternalRead,
+            ToolBudgetClass::Runtime,
+            ToolBudgetClass::ConfirmedChange,
+        ]
+        .into_iter()
+        .all(|class| {
+            let used = tool_calls_by_class.get(&class).copied().unwrap_or_default();
+            used < self.tool_call_limit(class)
+        });
+        LoopProjection::for_observation(
+            remaining_model_turns > 1 && tool_calls < self.max_tool_calls && category_remaining,
+            None,
+            false,
+        )
     }
 
     /// Run model turns until a non-empty final answer is received or a bound is reached.
@@ -576,17 +583,7 @@ impl AgentToolLoop {
             .iter()
             .rposition(|message| matches!(message.role, MessageRole::User))
             .unwrap_or(messages.len());
-        messages.insert(
-            loop_state_position,
-            initial_loop_budget_instruction(
-                self.max_model_turns,
-                self.max_tool_calls,
-                self.max_local_tool_calls,
-                self.max_network_tool_calls,
-                self.max_external_read_tool_calls,
-                self.max_runtime_tool_calls,
-            ),
-        );
+        messages.insert(loop_state_position, initial_loop_budget_instruction());
         let mut model_turns = 0_u32;
         let mut tool_calls = 0;
         let mut prompt_tokens = 0_u32;
@@ -602,6 +599,10 @@ impl AgentToolLoop {
         let mut source_binding_repair_required = false;
         let mut incomplete_final_answer_repair_used = false;
         let mut incomplete_final_draft = None::<String>;
+        // The Host can withhold a model draft and request one bounded repair or
+        // a forced synthesis turn. A publishable answer reached that way is
+        // still Provider prose, so it records only how the turn was reached.
+        let mut model_answer_repaired = false;
         // Distinguish an answer that skipped a required Web lookup from one
         // produced after an attempted lookup yielded no usable evidence. The
         // former receives one tool-enabled repair; asking the model to repair
@@ -999,6 +1000,7 @@ impl AgentToolLoop {
                         ));
                     }
                     missing_evidence_repair_used = true;
+                    model_answer_repaired = true;
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
                         content: content.into(),
@@ -1024,6 +1026,7 @@ impl AgentToolLoop {
                         ));
                     }
                     missing_evidence_repair_used = true;
+                    model_answer_repaired = true;
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
                         content: content.into(),
@@ -1051,6 +1054,7 @@ impl AgentToolLoop {
                         ));
                     }
                     final_submission_repair_used = true;
+                    model_answer_repaired = true;
                     synthesis_required = true;
                     // The withheld draft is continuation context only. It is
                     // never persisted or emitted, and the correction surface
@@ -1090,6 +1094,7 @@ impl AgentToolLoop {
                         ));
                     }
                     incomplete_final_answer_repair_used = true;
+                    model_answer_repaired = true;
                     incomplete_final_draft = Some(content.clone());
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
@@ -1116,6 +1121,7 @@ impl AgentToolLoop {
                         ));
                     }
                     source_binding_repair_used = true;
+                    model_answer_repaired = true;
                     source_binding_repair_required = true;
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
@@ -1129,6 +1135,7 @@ impl AgentToolLoop {
                 }
                 return Ok(AgentToolLoopOutcome {
                     content,
+                    terminal: model_terminal_type(model_answer_repaired),
                     finish_reason: response.finish_reason,
                     final_submission: None,
                     model_turns,
@@ -1148,6 +1155,7 @@ impl AgentToolLoop {
                 if executor.final_submission_is_valid(submission) {
                     return Ok(AgentToolLoopOutcome {
                         content: submission.visible_content(),
+                        terminal: model_terminal_type(model_answer_repaired),
                         finish_reason: response.finish_reason,
                         final_submission: Some(submission.clone()),
                         model_turns,
@@ -1179,9 +1187,7 @@ impl AgentToolLoop {
                 let (message, _) = tool_result_message(
                     call,
                     &result,
-                    self.max_model_turns.saturating_sub(model_turns),
-                    self.max_tool_calls.saturating_sub(tool_calls),
-                    self.tool_call_limit(ToolBudgetClass::ExternalRead),
+                    self.loop_projection(self.max_model_turns.saturating_sub(model_turns), tool_calls, &tool_calls_by_class),
                 )?;
                 messages.push(message);
                 continue;
@@ -1266,7 +1272,19 @@ impl AgentToolLoop {
                 .all(|(_, disposition)| *disposition != ToolCallDisposition::Dispatched)
             {
                 provider.on_tool_proposals_not_dispatched(provider_run_id)?;
-                messages.push(tool_proposal_feedback_instruction(&proposal_dispositions, active_tools, self.max_model_turns.saturating_sub(model_turns), self.max_tool_calls.saturating_sub(tool_calls), self.max_network_tool_calls.saturating_sub(*tool_calls_by_class.get(&ToolBudgetClass::Network).unwrap_or(&0))));
+                let target_action = if rejected_rounds.saturating_add(1) >= 2
+                    || model_turns.saturating_add(1) >= self.max_model_turns
+                    || tool_calls >= self.max_tool_calls
+                {
+                    NEXT_ACTION_SYNTHESIZE
+                } else {
+                    NEXT_ACTION_CONTINUE
+                };
+                messages.push(tool_proposal_feedback_instruction(
+                    &proposal_dispositions,
+                    active_tools,
+                    target_action,
+                ));
                 rejected_rounds = rejected_rounds.saturating_add(1);
                 executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair", "round":rejected_rounds}));
                 if rejected_rounds >= 2 || model_turns.saturating_add(1) >= self.max_model_turns
@@ -1381,16 +1399,14 @@ impl AgentToolLoop {
                         }
                     }
                 };
-                let class = catalog_tool_budget_class(&call.function.name)
-                    .unwrap_or(ToolBudgetClass::ExternalRead);
-                let class_used = tool_calls_by_class.get(&class).copied().unwrap_or_default();
-                let projected = tool_result_message(
-                    call,
-                    &result,
-                    self.max_model_turns.saturating_sub(model_turns),
-                    self.max_tool_calls.saturating_sub(tool_calls),
-                    self.tool_call_limit(class).saturating_sub(class_used),
-                );
+                let projection = self
+                    .loop_projection(
+                        self.max_model_turns.saturating_sub(model_turns),
+                        tool_calls,
+                        &tool_calls_by_class,
+                    )
+                    .with_failure_type(observation_failure_type(&result));
+                let projected = tool_result_message(call, &result, projection);
                 let (mut message, truncated) = match projected {
                     Ok(projected) => projected,
                     Err(error) if SafeRunErrorCode::from_app_error(&error) == SafeRunErrorCode::ToolLoopLimit => {
@@ -1419,7 +1435,11 @@ impl AgentToolLoop {
                 messages.push(message);
             }
             if !non_dispatched.is_empty() {
-                messages.push(tool_proposal_feedback_instruction(&non_dispatched, active_tools, self.max_model_turns.saturating_sub(model_turns), self.max_tool_calls.saturating_sub(tool_calls), self.max_network_tool_calls.saturating_sub(*tool_calls_by_class.get(&ToolBudgetClass::Network).unwrap_or(&0))));
+                messages.push(tool_proposal_feedback_instruction(
+                    &non_dispatched,
+                    active_tools,
+                    NEXT_ACTION_CONTINUE,
+                ));
             }
             observer.on_tools_finished()?;
             if round_had_success {
@@ -1474,13 +1494,15 @@ impl AgentToolLoop {
         ))
         }.await;
         let exit_reason = match &outcome {
-            Ok(result) if result.finish_reason == "evidence_limited" => "evidence_limited",
+            // The typed terminal decides this, not the body text and not a
+            // synthetic Provider finish reason.
+            Ok(result) if result.terminal.is_host_authored() => "evidence_limited",
             Ok(result) if is_natural_clarification(&result.content) => "clarification",
             Ok(_) if rejected_rounds >= 2 => "recovery_exhausted",
             Ok(_) if !web_observation_performed && executor.web_capability_blocked() => {
                 "tool_unavailable"
             }
-            Ok(_) => "model_answer",
+            Ok(result) => result.terminal.as_str(),
             Err(error) => SafeRunErrorCode::from_app_error(error).as_str(),
         };
         executor.record_tool_loop_diagnostic(serde_json::json!({"event":"exit", "reason":exit_reason, "modelTurns":model_turns, "toolCalls":tool_calls, "observationPerformed":web_observation_performed, "capabilityBlocked":executor.web_capability_blocked()}));
@@ -1608,9 +1630,7 @@ fn plan_tool_proposals<'a>(
 fn tool_proposal_feedback_instruction(
     proposals: &[(&ToolCall, ToolCallDisposition)],
     tools: &[ToolSpec],
-    remaining_models: u32,
-    remaining_tools: u32,
-    remaining_network: u32,
+    target_action: &str,
 ) -> LlmMessage {
     let surface = tools
         .iter()
@@ -1640,7 +1660,7 @@ fn tool_proposal_feedback_instruction(
     LlmMessage {
         role: MessageRole::System,
         content: format!(
-            "The previous tool proposal was not dispatched by the Host ({feedback}). It created no tool result and no external action. Correct the request using the exposed surface; this is not a failed search and consumed no execution budget. Remaining model turns={remaining_models}, tools={remaining_tools}, network={remaining_network}. Allowed tool names and parameter schemas: {surface}. Supply a nonempty call id and JSON object matching the schema. Do not claim the rejected action ran."
+            "The previous tool proposal was not dispatched by the Host ({feedback}). It created no tool result and no external action. Correct the request using the exposed surface; this is not a failed search and it consumed no execution allowance. Next action: {target_action}. Allowed tool names and parameter schemas: {surface}. Supply a nonempty call id and JSON object matching the schema. Do not claim the rejected action ran."
         )
         .into(),
         tool_call_id: None,
@@ -1659,20 +1679,16 @@ fn register_safe_progress(progress: &mut HashSet<String>, result: &ToolCallResul
     added
 }
 
-fn initial_loop_budget_instruction(
-    max_model_turns: u32,
-    max_tool_calls: u32,
-    max_local_tool_calls: u32,
-    max_network_tool_calls: u32,
-    max_external_read_tool_calls: u32,
-    max_runtime_tool_calls: u32,
-) -> LlmMessage {
+/// Open the loop with the behavior this bounded exchange expects.
+///
+/// The exact Host allowances are deliberately absent: the Host enforces them,
+/// the model only needs to know that the loop is bounded and that each
+/// observation reports whether another action is still available. Publishing
+/// the counters here made the model repeat internal budget to the user.
+fn initial_loop_budget_instruction() -> LlmMessage {
     LlmMessage {
         role: MessageRole::System,
-        content: format!(
-            "This Run uses one bounded observation-action loop. Budgets are maxima, not targets: modelTurns={max_model_turns}, totalTools={max_tool_calls}, localReads={max_local_tool_calls}, network={max_network_tool_calls}, externalReads={max_external_read_tool_calls}, runtime={max_runtime_tool_calls}. Choose only actions that can add information, inspect each returned observation before dependent actions, and finish as soon as the user goal is adequately supported. Do not reveal private reasoning."
-        )
-        .into(),
+        content: "This Run uses one bounded observation-action loop. Its allowances are Host-enforced maxima, not targets. Each observation reports whether you may continue and what to do next. Choose only actions that can add information, inspect each returned observation before dependent actions, and finish as soon as the user goal is adequately supported. Do not reveal private reasoning or describe the run's internal allowances to the user.".into(),
         tool_call_id: None,
         tool_calls: None,
         reasoning_content: None,
@@ -1707,33 +1723,6 @@ fn source_binding_repair_instruction() -> LlmMessage {
         tool_calls: None,
         reasoning_content: None,
     }
-}
-
-fn evidence_limited_outcome(
-    content: String,
-    model_turns: u32,
-    tool_calls: u32,
-    prompt_tokens: u32,
-    completion_tokens: u32,
-    total_tokens: u32,
-) -> AgentToolLoopOutcome {
-    AgentToolLoopOutcome {
-        content,
-        finish_reason: "evidence_limited".to_string(),
-        final_submission: None,
-        model_turns,
-        tool_calls,
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
-    }
-}
-
-pub(crate) fn is_evidence_limited_response(content: &str) -> bool {
-    let trimmed = content.trim_start();
-    EVIDENCE_LIMITED_RESPONSE_PREFIXES
-        .iter()
-        .any(|prefix| trimmed.starts_with(prefix))
 }
 
 /// Update the already-compiled system message after the bounded compaction

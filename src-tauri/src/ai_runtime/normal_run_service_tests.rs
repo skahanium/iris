@@ -2225,9 +2225,9 @@ async fn strict_current_fact_repairs_out_of_run_w8_then_completes_with_limitatio
             .collect::<Vec<_>>();
     assert_eq!(assistant_messages.len(), 1);
     assert!(
-        assistant_messages[0]
-            .content
-            .starts_with(super::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE_PREFIX),
+        assistant_messages[0].content.starts_with(
+            super::run_engine::legacy_terminal_records::EVIDENCE_LIMITED_RESPONSE_PREFIX
+        ),
         "strict current-fact limitation must stay Host-authored: {}",
         assistant_messages[0].content
     );

@@ -155,9 +155,11 @@ fn attribution_contract() -> &'static str {
 
 fn user_visible_answer_style_contract() -> &'static str {
     "## UserVisibleAnswerStyle\n\
-     Write ordinary user-visible Markdown as natural conversation. Keep tool protocol and execution mechanics private. Use supplied [Wn] markers or exact source links next to claims supported by fetched bodies; the Harness resolves these references into citation badges and the controlled source area. Do not expose database IDs or explain internal lifecycle labels such as Run, current_run_web, source-group disclosure, or previous/current-round verification. Do not organize an ordinary answer around whether material was verified in a current or previous round. The source area carries source and verification metadata.\n\
+     Write ordinary user-visible Markdown as natural conversation. Organize it around the question: the events, the conclusions the evidence supports, and the uncertainty that remains. Keep tool protocol and execution mechanics private. Use supplied [Wn] markers or exact source links next to claims supported by fetched bodies; the Harness resolves these references into citation badges and the controlled source area. Do not expose database IDs or explain internal lifecycle labels such as Run, current_run_web, source-group disclosure, or previous/current-round verification. Do not organize an ordinary answer around whether material was verified in a current or previous round. The source area carries source and verification metadata.\n\
+     Keep the denominators of your own answer honest. A search-result summary is a candidate, a citation marker identifies which source supports a claim, and neither one establishes that every report inside a source was checked. Multiple pages from one source are not independent corroboration. Never present a bound source as if it had independently confirmed each of its claims.\n\
      Do not create a source appendix, a \"Sources\"/\"References\" list, a raw URL list, or \"sources below\" language in the answer body. The controlled source area is the only source list, including when the user asks for sources. When no controlled evidence is available, never invent or assemble links; say naturally that no reliable source was found for that detail.\n\
      When the user explicitly asks about sources, verification, or uncertainty, explain the limitation in ordinary language without exposing internal protocol; for example, use natural language such as \"I have not found a reliable source for that detail yet\".\n\
+     When a Run cannot verify an answer with this round's evidence, the Harness may publish its own bounded limitation text in place of a model draft. That text states that verification was not obtained and, when the Run already holds material, that material was obtained without a completed final source binding. It is complete as written: do not restate, embellish, or contradict it, and do not treat it as a draft to continue.\n\
      Do not open an ordinary answer by announcing whether it needs the internet, tools, or training knowledge, whether it is a subjective analysis, or that you will break it down. Start directly with the substance of the answer."
 }
 
@@ -173,6 +175,26 @@ mod citation_instruction_consistency_tests {
         assert!(!style.contains("current_run_web, [Wn]"));
         assert!(!attribution.contains("leave source detail to the source area unless asked"));
         assert!(style.contains("Do not create a source appendix"));
+    }
+
+    /// Stage B: reading one page is not evidence that every report it mentions
+    /// was verified, and the Host's own limitation copy is final.
+    #[test]
+    fn style_contract_separates_candidate_material_from_independent_confirmation() {
+        let style = user_visible_answer_style_contract();
+
+        assert!(style.contains("A search-result summary is a candidate"));
+        assert!(style.contains("Multiple pages from one source are not independent corroboration"));
+        assert!(style.contains(
+            "Never present a bound source as if it had independently confirmed each of its claims"
+        ));
+        assert!(style.contains("Keep the denominators of your own answer honest"));
+        assert!(style.contains("the Harness may publish its own bounded limitation text"));
+        assert!(style.contains("It is complete as written"));
+        // The old framing is gone: no assertion or example may equate "already
+        // read an aggregate page" with "verified every report".
+        assert!(!style.contains("已核实每条报道"));
+        assert!(!style.contains("aggregate page"));
     }
 }
 

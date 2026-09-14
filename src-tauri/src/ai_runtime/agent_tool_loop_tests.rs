@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
-    is_evidence_limited_response, is_natural_clarification, AgentModelTurnBudget, AgentToolLoop,
+    is_natural_clarification, AgentModelTurnBudget, AgentTerminalType, AgentToolLoop,
     RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
 };
 use super::model_gateway::{StreamEventObserver, StreamSurface};
@@ -22,15 +22,40 @@ fn standard_tool_loop() -> AgentToolLoop {
     AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
 }
 
-fn assert_host_evidence_limited(content: &str) {
-    assert!(
-        is_evidence_limited_response(content),
-        "host limitation must keep the evidence-limited prefix: {content}"
+/// The Host-authored limitation is identified by the loop's own terminal type,
+/// never by its body text. Body assertions stay here only to prove the user
+/// still receives a complete, non-domain-specific limitation.
+fn assert_host_evidence_limited(outcome: &super::agent_tool_loop::AgentToolLoopOutcome) {
+    assert_eq!(
+        outcome.terminal,
+        AgentTerminalType::HostEvidenceLimited,
+        "a Host limitation must be typed, not inferred from prose: {}",
+        outcome.content
     );
+    assert!(
+        outcome.terminal.is_host_authored(),
+        "a Host limitation must never be validated as model output"
+    );
+    let content = outcome.content.as_str();
     assert!(
         content.contains("无法确认") && !content.contains("用药") && !content.contains("签证"),
         "the limitation must describe missing verification without unrelated domain advice: {content}"
     );
+}
+
+/// Ordinary prose stays model output even when it opens with the exact words a
+/// Host limitation uses. This is the regression that used to let a model answer
+/// skip validation by prefix.
+fn assert_model_answer(outcome: &super::agent_tool_loop::AgentToolLoopOutcome) {
+    assert!(
+        matches!(
+            outcome.terminal,
+            AgentTerminalType::ModelAnswer | AgentTerminalType::RepairedModelAnswer
+        ),
+        "model prose must stay model output: {:?}",
+        outcome.terminal
+    );
+    assert!(!outcome.terminal.is_host_authored());
 }
 
 #[test]
@@ -1908,7 +1933,7 @@ async fn partial_visible_stream_recovery_rejects_a_business_tool_call() {
 
     // The tool surface stays shut: no business tool executed. The Run closes
     // with the bounded limitation rather than a terminal error.
-    assert!(is_evidence_limited_response(&outcome.content));
+    assert_host_evidence_limited(&outcome);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -2250,7 +2275,7 @@ async fn repeated_invalid_structured_source_binding_finishes_with_limitation() {
         .await
         .expect("invalid structured submission degrades safely");
 
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
     assert!(outcome.final_submission.is_none());
     assert_eq!(outcome.tool_calls, 0);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
@@ -2970,7 +2995,7 @@ async fn web_required_without_a_tool_surface_finishes_with_a_bounded_limitation(
         )
         .await
         .expect("a mismatched required-Web surface should degrade without showing a draft");
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
 }
 
 #[tokio::test]
@@ -3016,7 +3041,7 @@ async fn empty_web_search_preserves_a_research_repair_before_bounded_completion(
         .await
         .expect("an empty current Web result should complete safely");
 
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
     assert_eq!(outcome.model_turns, 3);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
 }
@@ -3067,8 +3092,8 @@ async fn web_preferred_keeps_the_model_draft_when_search_or_fetch_fails() {
         outcome.content,
         "勒布朗仍在打球，以下分析不依赖本轮网页正文。"
     );
-    assert!(!is_evidence_limited_response(&outcome.content));
-    assert_ne!(outcome.finish_reason, "evidence_limited");
+    assert_model_answer(&outcome);
+    assert_eq!(outcome.finish_reason, "stop");
 }
 
 #[test]
@@ -3178,7 +3203,7 @@ async fn external_required_repairs_then_limits_an_answer_without_registered_evid
         )
         .await
         .expect("external-required degrades to a safe limitation");
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 
@@ -3449,7 +3474,7 @@ async fn assert_web_projection_boundary(call: ToolCall) {
         )
         .await
         .expect("projection overflow has a visible Host outcome");
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
     assert_eq!(outcome.tool_calls, 1);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     assert!(provider
@@ -3546,7 +3571,7 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
     // The protected invariant is that no tool executed. The Run now ends with
     // the Host-authored bounded limitation instead of a terminal error, because
     // a terminal error reached the user as nothing at all.
-    assert!(is_evidence_limited_response(&outcome.content));
+    assert_host_evidence_limited(&outcome);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
@@ -3725,7 +3750,7 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
     // Six calls executed and the seventh did not: that is the frozen budget,
     // and it is unchanged. Only the terminal shape moved from a hard error to a
     // publishable limitation.
-    assert!(is_evidence_limited_response(&outcome.content));
+    assert_host_evidence_limited(&outcome);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 6);
 }
@@ -3767,8 +3792,9 @@ async fn strict_submission_exhaustion_publishes_a_bounded_limitation() {
         .await
         .expect("strict submission exhaustion must publish a bounded limitation");
 
-    assert!(
-        is_evidence_limited_response(&outcome.content),
+    assert_eq!(
+        outcome.terminal,
+        AgentTerminalType::HostEvidenceLimited,
         "expected the Host-authored bounded limitation, got {:?}",
         outcome.content
     );
@@ -3824,8 +3850,9 @@ async fn model_turn_exhaustion_publishes_a_bounded_limitation() {
         .await
         .expect("model turn exhaustion must publish a bounded limitation");
 
-    assert!(
-        is_evidence_limited_response(&outcome.content),
+    assert_eq!(
+        outcome.terminal,
+        AgentTerminalType::HostEvidenceLimited,
         "expected the Host-authored bounded limitation, got {:?}",
         outcome.content
     );

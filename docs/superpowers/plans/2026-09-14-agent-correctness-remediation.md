@@ -151,3 +151,18 @@
 修正沿用现有进展提取函数，识别两种现行字段合同并排除失败项；MCP 解码一次返回正文、方法及其所属完整性声明，删除按正文内容再次递归匹配的实现。未增加权限、调用、预算或第二套恢复路径。相关测试与真实入口见 [Harness 附录 A](../../../agent-harness/appendices/A-status-and-test-traceability.md)。
 
 自查修正的本地验证已通过：沿用上节完整 Rust 命令，库测试 1,995 通过、5 忽略，全部集成和文档测试成功，其中确定性 RAG 为 14 通过、2 忽略；前端 362 个文件、2,629 项通过。Agent 脚本测试 16/16、smoke 26/26、contract 52/52（39 项回答、13 项预期拒绝）。lint、typecheck、format、Rust fmt/clippy、docs/size/version 和 diff 检查均通过。忽略项、许可证工具、远程 CI 与真实验收边界仍按上节保留；B/C/D 和 HR-7 状态不因本次自查升级。
+
+### B 的实施记录（工作树）
+
+B 按第 2 节 B 落地，未新增依赖、数据库表、IPC、预算或第二套恢复路径。
+
+- 终态类型：`AgentToolLoopOutcome` 新增 `AgentTerminalType`（`ModelAnswer` / `RepairedModelAnswer` / `HostEvidenceLimited`）。四个构造点显式赋值；校验、引用绑定、来源与证据提交消费同一字段。`finish_reason` 只表达 Provider 停止原因，Host 兜底不再写合成值。Run engine 的前缀识别分支及其后的分支判断全部删除。
+- 旧记录适配器：正文前缀识别隔离为 `run_engine::legacy_terminal_records`，且要求完整旧披露形状（开头词加固定验证声明）而非裸前缀；新 Run 的任何校验路径都不再读取正文前缀。无固定结尾声明的旧 `None` 变体被有意排除在识别之外，宁可当作模型输出重新校验。
+- 循环状态两个投影：模型观察与提议反馈从精确剩余额度改为 `canContinue`、`mustSynthesize`、`failureType`、`nextAction`；开启时的预算清单、`remainingBudgetMs`、`webUsage` 从模型可见载荷移除，Host 仍持有精确计数。预尺寸改用 `LoopProjection::widest()` 保证已登记摘录不被二次缩短。
+- 回答边界：`UserVisibleAnswerStyle` 增加候选/绑定/独立印证的区分与 Host 限制文案按最终稿对待的要求。
+
+**必须删除**已全部删除或从未存在：新 Run 的前缀豁免分支、模型可见的重复预算清单、“已读聚合页 = 已核实每条报道”的示例或断言（仓库内原本没有该断言，现以负例断言固定其不得回归）。
+
+命名回归与生产入口见 [Harness 附录 A](../../../agent-harness/appendices/A-status-and-test-traceability.md) 的「方案 B」小节。这些是确定性合同，不证明真实模型不再复述内部预算；真实回答质量仍属 D 与 HR-7，状态不因 B 升级。
+
+B 的本地验证：Rust 库测试 1,999 通过、5 忽略（含 5 项 B 命名回归），全部集成与文档测试成功，其中确定性 RAG 14 通过、2 忽略；前端 362 个文件、2,629 项通过。`agent:eval:smoke` 脚本测试 16/16，确定性与 smoke 通过；`agent:eval:contract` 52/52（39 项回答、13 项预期安全拒绝，非预期失败为零）。lint、typecheck、format、Rust fmt/clippy（all-targets，warnings as errors）、docs/size/version 与 `test:e2e` 通过。未运行远程 CI、macOS/发布矩阵、真实桌面 E2E 和付费 Campaign；许可证工具与忽略项按 A 节保留。

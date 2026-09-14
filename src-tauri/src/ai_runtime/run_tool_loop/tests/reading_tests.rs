@@ -101,8 +101,12 @@ async fn plan_a_multi_url_windows_fit_escaped_json_and_preserve_upstream_bounds(
         "a batch cannot share a continuation pointer"
     );
     assert_eq!(result.output["count"], 8);
-    let (message, shortened) =
-        crate::ai_runtime::agent_tool_loop::tool_result_message(&call, &result, 7, 23, 5).unwrap();
+    let (message, shortened) = crate::ai_runtime::agent_tool_loop::tool_result_message(
+        &call,
+        &result,
+        crate::ai_runtime::agent_tool_loop::LoopProjection::default(),
+    )
+    .unwrap();
     assert!(!shortened);
     assert!(message.content.text_content().chars().count() <= 32000);
     let payload: serde_json::Value = serde_json::from_str(&message.content.text_content()).unwrap();
@@ -322,9 +326,12 @@ async fn plan_a_executor_reads_tail_without_refetch_and_binds_exact_excerpt() {
         );
         let result = executor.execute(&accepted.run_id, &call, 1).await.unwrap();
         assert!(result.success, "{:?}", result.error);
-        let (message, shortened) =
-            crate::ai_runtime::agent_tool_loop::tool_result_message(&call, &result, 7, 23, 5)
-                .unwrap();
+        let (message, shortened) = crate::ai_runtime::agent_tool_loop::tool_result_message(
+            &call,
+            &result,
+            crate::ai_runtime::agent_tool_loop::LoopProjection::default(),
+        )
+        .unwrap();
         assert!(!shortened, "ledger excerpts cannot change in the loop");
         let visible: serde_json::Value =
             serde_json::from_str(&message.content.text_content()).unwrap();
