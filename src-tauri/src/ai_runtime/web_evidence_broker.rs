@@ -1,5 +1,6 @@
 //! Unified network evidence broker for research workflows.
 
+mod completeness;
 use chrono::Utc;
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,8 @@ pub struct WebEvidenceItem {
     pub domain: String,
     pub snippet: String,
     pub fetched_excerpt: Option<String>,
+    #[serde(default)]
+    pub completeness: crate::llm::fetch_web_page::PageContentCompleteness,
     pub provider_id: String,
     pub provider_kind: String,
     pub cost_class: String,
@@ -1446,6 +1449,7 @@ fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebE
                 title: row.title,
                 snippet: row.snippet,
                 fetched_excerpt: None,
+                completeness: Default::default(),
                 provider_id: fetch.provider_id.clone(),
                 provider_kind: fetch.provider_kind.clone(),
                 cost_class: "free".into(),
@@ -1677,6 +1681,7 @@ enum FetchProviderCandidate {
 
 #[derive(Debug, Clone)]
 struct PageProviderFetch {
+    completeness: crate::llm::fetch_web_page::PageContentCompleteness,
     title: String,
     text: String,
     provider_id: String,
@@ -1864,6 +1869,7 @@ fn merge_page_provider_fetches(url: &str, fetches: Vec<PageProviderFetch>) -> Pa
 
     let merged_text = texts.join("\n\n---\n\n");
     PageProviderFetch {
+        completeness: Default::default(),
         title: titles
             .into_iter()
             .find(|title| !title.trim().is_empty())
@@ -1979,6 +1985,7 @@ async fn collect_mcp_page_fetch(
 
 fn page_provider_fetch_from_native(page: PageFetchResult) -> PageProviderFetch {
     PageProviderFetch {
+        completeness: page.completeness,
         title: page.title,
         text: page.text,
         provider_id: "native.fetch".into(),
@@ -1998,6 +2005,7 @@ fn mcp_page_fetch_result(
     }
     let (title, text, extraction_method) = decode_mcp_fetch_body(url, payload)?;
     Ok(PageProviderFetch {
+        completeness: completeness::mcp_completeness(payload, &text, url),
         title,
         text,
         provider_id: provider_id.into(),
@@ -2245,7 +2253,12 @@ fn apply_page_provider_fetch(item: &mut WebEvidenceItem, page: PageProviderFetch
         item.title = page.title;
     }
     if !page.text.trim().is_empty() {
-        item.fetched_excerpt = Some(page.text);
+        item.completeness = if page.text.chars().count() > FETCH_EXCERPT_MAX_CHARS {
+            crate::llm::fetch_web_page::PageContentCompleteness::Bounded
+        } else {
+            page.completeness
+        };
+        item.fetched_excerpt = Some(page.text.chars().take(FETCH_EXCERPT_MAX_CHARS).collect());
         item.extraction_method = page.extraction_method;
         item.provider_id = page.provider_id;
         item.provider_kind = page.provider_kind;
@@ -2279,6 +2292,7 @@ fn explicit_url_item(url: &str) -> WebEvidenceItem {
         title: url.trim().to_string(),
         snippet: String::new(),
         fetched_excerpt: None,
+        completeness: Default::default(),
         provider_id: "native.url".into(),
         provider_kind: "native".into(),
         cost_class: "free".into(),
@@ -2325,6 +2339,7 @@ fn failed_evidence_item_with_kind(
         url,
         snippet: String::new(),
         fetched_excerpt: None,
+        completeness: Default::default(),
         provider_id: provider_id.into(),
         provider_kind: provider_kind.into(),
         cost_class: "free".into(),
@@ -2432,6 +2447,7 @@ mod tests {
             domain: domain_from_url(url).unwrap_or_default(),
             snippet: "Snippet".into(),
             fetched_excerpt: None,
+            completeness: Default::default(),
             provider_id: "mcp.test".into(),
             provider_kind: "mcp".into(),
             cost_class: "free".into(),
@@ -2766,6 +2782,7 @@ mod tests {
         apply_page_fetch(
             &mut item,
             PageFetchResult {
+                completeness: Default::default(),
                 title: "Actual article title".into(),
                 text: "Article body".into(),
             },
@@ -2833,6 +2850,7 @@ mod tests {
         apply_page_fetch(
             &mut item,
             PageFetchResult {
+                completeness: Default::default(),
                 title: "Fetched title".into(),
                 text: "Fetched body".into(),
             },
@@ -3744,6 +3762,7 @@ mod tests {
             "https://example.com/a",
             vec![
                 PageProviderFetch {
+                    completeness: Default::default(),
                     title: "Native title".into(),
                     text: "Native body".into(),
                     provider_id: "native.fetch".into(),
@@ -3751,6 +3770,7 @@ mod tests {
                     extraction_method: "native_readability".into(),
                 },
                 PageProviderFetch {
+                    completeness: Default::default(),
                     title: "MCP title".into(),
                     text: "MCP body".into(),
                     provider_id: "mcp-fetch".into(),
@@ -3773,6 +3793,7 @@ mod tests {
             "https://example.com/a",
             vec![
                 PageProviderFetch {
+                    completeness: Default::default(),
                     title: "Native title".into(),
                     text: "苹".repeat(12_000),
                     provider_id: "native.fetch".into(),
@@ -3780,6 +3801,7 @@ mod tests {
                     extraction_method: "native_readability".into(),
                 },
                 PageProviderFetch {
+                    completeness: Default::default(),
                     title: "MCP title".into(),
                     text: "表".repeat(12_000),
                     provider_id: "mcp-fetch".into(),

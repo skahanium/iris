@@ -4,7 +4,7 @@
 > **文档类型**：实施路线
 > **事实基线**：2026-09-05，审计起点 `70c929ac`
 
-> 本路线的施工状态补充至 2026-09-13 工作树；“施工中”不构成已部署事实。
+> 本路线的施工状态补充至 2026-09-14 工作树；“施工中”不构成已部署事实。
 
 本路线取代曾把 AH-2/AH-3 与 HR-2/HR-4/HR-7 写成已验收的结论。历史记录仅在 `archive/` 保留，不构成当前能力声明。
 
@@ -42,6 +42,8 @@ INC-HR-007 继续在同一循环内回正真实工具闭环，不增加研究状
 INC-HR-009 重新打开 HR-3 的“提议—派发”边界和 HR-4 的长对话连续性：`WebRequired` 由同一 executor 先取得最低搜索/抓取观察；只有实际派发调用才消耗预算、审计并绑定 Provider；fetch 使用 5/18/20 秒有界 failover，健康统计按 `web.search`/`web.fetch` 分离，migration 073 只重建既有统计表。MiMo 工具续轮适配、错误语义和一次模型摘要压缩均留在 Gateway/现有会话字段内；这些确定性修复不代表 HR-7 真实质量通过。
 
 INC-HR-010 是 HR-3/HR-4 的收敛施工，不创建第二个循环或研究架构。它要求预算只由冻结 Run 合同产生并在 executor、ToolLoop、Direct Gateway 和评测之间使用同一有效值；所有退出路径都保留最终综合；候选工具响应与已接纳 continuation 分离；历史、观察、最终消息与评测均消费当前 Run 的持久化事实。其退出条件是组合回归与完整链路验收，而不是局部测试数量；真实校准和人工审阅前 HR-7 继续未放行。
+
+方案 A 的读取与投影修复归入 HR-3/HR-4，回归归入 HR-8：Run 内网页快照、实际 JSON 窗口与 ledger 一致、原执行状态保留及权限重检后的观察重放已进入工作树。当前实现合同见 [04](./04-adaptive-agent-loop-and-tool-contracts.md)，命名测试见[附录 A](./appendices/A-status-and-test-traceability.md)。终态类型、预算外露、检索语义和联网起步仍按[施工方案](../docs/superpowers/plans/2026-09-14-agent-correctness-remediation.md)的 B/C/D 推进，不能由 A 的确定性回归推导 HR-7 通过。
 
 ## 3. HR-6 清理纪律
 

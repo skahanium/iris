@@ -1178,7 +1178,10 @@ struct ChangeSetRecordingExecutor {
 struct FailingWebExecutor;
 struct LargeResultExecutor;
 struct LargeWebResultExecutor;
-struct OversizedWebResultExecutor;
+#[derive(Default)]
+struct OversizedWebResultExecutor {
+    produced: Mutex<Vec<ToolCallResult>>,
+}
 struct RequiredWebExecutor;
 struct RequiredExternalExecutor;
 struct SourceBindingExecutor;
@@ -1508,14 +1511,19 @@ impl ToolLoopExecutor for OversizedWebResultExecutor {
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         let tool_name = call.function.name.clone();
         Box::pin(async move {
-            Ok(ToolCallResult {
+            let result = ToolCallResult {
                 tool_name,
                 success: true,
                 output: serde_json::json!({ "evidence": "x".repeat(40_000) }),
                 duration_ms: 1,
                 tokens_used: None,
                 error: None,
-            })
+            };
+            self.produced
+                .lock()
+                .expect("produced observations")
+                .push(result.clone());
+            Ok(result)
         })
     }
 }
@@ -3409,41 +3417,29 @@ async fn web_tool_results_use_the_web_specific_budget_without_losing_the_tail() 
     }));
 }
 
-#[tokio::test]
-async fn oversized_web_tool_results_fail_closed_with_valid_json() {
+// Projection failure is a Host budget boundary, not a fabricated failed fetch.
+async fn assert_web_projection_boundary(call: ToolCall) {
+    let tool_name = call.function.name.clone();
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
-            super::model_gateway::GatewayResponse {
-                content: None,
-                tool_calls: vec![web_tool_call()],
-                usage: Default::default(),
-                finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
-            },
-            super::model_gateway::GatewayResponse {
-                content: Some("I cannot verify this from the returned evidence.".into()),
-                tool_calls: Vec::new(),
-                usage: Default::default(),
-                finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
-            },
+            scripted_tool_response(call),
+            scripted_final_response("This model turn must not receive an oversized observation."),
         ])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
     };
+    let executor = OversizedWebResultExecutor::default();
     let mut observer = NoopObserver;
-    standard_tool_loop()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
-            &OversizedWebResultExecutor,
-            "run-web-result-overflow",
+            &executor,
+            &format!("run-{tool_name}-projection"),
             Vec::new(),
             vec![ToolSpec {
-                name: "web_search".into(),
-                description: "Search Web".into(),
-                input_schema: serde_json::json!({ "type": "object" }),
+                name: tool_name,
+                description: "Web observation".into(),
+                input_schema: serde_json::json!({"type":"object"}),
                 access_level: crate::ai_runtime::ToolAccessLevel::Network,
                 requires_confirmation: false,
                 max_results: None,
@@ -3452,72 +3448,38 @@ async fn oversized_web_tool_results_fail_closed_with_valid_json() {
             &mut observer,
         )
         .await
-        .expect("overflow is presented as a valid failed tool result");
-
-    let messages = provider
+        .expect("projection overflow has a visible Host outcome");
+    assert_host_evidence_limited(&outcome.content);
+    assert_eq!(outcome.tool_calls, 1);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert!(provider
         .second_turn_messages
         .lock()
-        .expect("second turn messages lock");
-    let tool_payload = messages
-        .iter()
-        .find(|message| matches!(message.role, MessageRole::Tool))
-        .expect("tool result")
-        .content
-        .text_content();
-    let parsed: serde_json::Value = serde_json::from_str(&tool_payload).expect("valid JSON packet");
-    assert_eq!(parsed["success"], false);
-    assert_eq!(parsed["error"], "web_evidence_pack_overflow");
+        .expect("model transcript")
+        .is_empty());
+    let produced = executor.produced.lock().expect("execution facts");
+    assert_eq!(produced.len(), 1);
+    assert!(produced[0].success);
+    assert!(produced[0].error.is_none());
+    assert_eq!(
+        produced[0].output["evidence"].as_str().unwrap().len(),
+        40_000
+    );
 }
 
 #[tokio::test]
-async fn oversized_web_fetch_results_fail_closed_with_valid_json() {
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            scripted_tool_response(tool_call_with_arguments(
-                "call-web-fetch",
-                "web_fetch",
-                serde_json::json!({"urls":["https://example.test/article"]}),
-            )),
-            scripted_final_response("I cannot verify this from the returned evidence."),
-        ])),
-        calls: AtomicU32::new(0),
-        second_turn_messages: Mutex::new(Vec::new()),
-    };
-    let mut observer = NoopObserver;
-    standard_tool_loop()
-        .execute(
-            &provider,
-            &OversizedWebResultExecutor,
-            "run-web-fetch-result-overflow",
-            Vec::new(),
-            vec![ToolSpec {
-                name: "web_fetch".into(),
-                description: "Fetch selected Web pages".into(),
-                input_schema: serde_json::json!({ "type": "object" }),
-                access_level: crate::ai_runtime::ToolAccessLevel::Network,
-                requires_confirmation: false,
-                max_results: None,
-                capability_affinity: Vec::new(),
-            }],
-            &mut observer,
-        )
-        .await
-        .expect("overflow is presented as a valid failed fetch result");
+async fn oversized_web_tool_results_stop_at_projection_boundary_without_fabricated_failure() {
+    assert_web_projection_boundary(web_tool_call()).await;
+}
 
-    let messages = provider
-        .second_turn_messages
-        .lock()
-        .expect("second turn messages lock");
-    let tool_payload = messages
-        .iter()
-        .find(|message| matches!(message.role, MessageRole::Tool))
-        .expect("tool result")
-        .content
-        .text_content();
-    let parsed: serde_json::Value =
-        serde_json::from_str(&tool_payload).expect("web_fetch overflow must remain valid JSON");
-    assert_eq!(parsed["success"], false);
-    assert_eq!(parsed["error"], "web_evidence_pack_overflow");
+#[tokio::test]
+async fn oversized_web_fetch_results_stop_at_projection_boundary_without_fabricated_failure() {
+    assert_web_projection_boundary(tool_call_with_arguments(
+        "call-web-fetch",
+        "web_fetch",
+        serde_json::json!({"urls":["https://example.test/article"]}),
+    ))
+    .await;
 }
 
 #[tokio::test]

@@ -1,126 +1,173 @@
-//! Payload shaping for the Agent tool loop: fitting an over-budget tool result
-//! into the model's character budget without breaking its JSON envelope.
+//! Fit model observations as JSON values, preserving execution status and ranges.
 
-use super::truncate_chars;
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
+use crate::error::{AppError, AppResult};
+use serde_json::{json, Value};
 
-/// Prose fields a tool payload may give up to fit the character budget.
-const SHRINKABLE_TEXT_FIELDS: &[&str] = &["content", "excerpt", "text", "body"];
-
-/// Fit an over-budget tool payload into `budget` characters **without breaking
-/// its JSON envelope**.
-///
-/// Slicing the serialized string produced invalid JSON and dropped
-/// `nextStartByte`, so the model lost both the tail of the body and the pointer
-/// for continuing the read. This shortens a known prose field instead and, for a
-/// ranged read, recomputes the continuation pointer from the prefix that
-/// actually survived — so what the model can see and where the next read
-/// resumes agree.
-///
-/// The tool result envelope is `{success, output, error, loopObservation}`, so
-/// the shrinkable text is either `output` itself or one of `SHRINKABLE_TEXT_FIELDS`
-/// on the `output` object. A payload with no such field falls back to a plain
-/// slice; that is a last resort, not the normal path.
+/// Fit an observation without slicing its serialized representation. Unknown
+/// shapes whose metadata cannot fit fail at the projection boundary; they never
+/// become a fabricated tool failure or malformed model message.
 pub(crate) fn fit_tool_payload(
-    payload: &serde_json::Value,
+    payload: &Value,
     budget: usize,
     serialized: &str,
-) -> (String, bool) {
+) -> AppResult<(String, bool)> {
     if serialized.chars().count() <= budget {
-        return (serialized.to_string(), false);
+        return Ok((serialized.to_owned(), false));
     }
     let mut value = payload.clone();
-
-    // Decide the shrink plan with immutable borrows only; the mutable pass below
-    // must not overlap with the overhead measurement.
-    let output = value.get("output");
-    let field: Option<&'static str> = match output {
-        Some(serde_json::Value::Object(object)) => SHRINKABLE_TEXT_FIELDS
-            .iter()
-            .find(|field| {
-                object
-                    .get(**field)
-                    .is_some_and(serde_json::Value::is_string)
-            })
-            .copied(),
-        _ => None,
-    };
-    let shrinkable = matches!(output, Some(serde_json::Value::String(_))) || field.is_some();
-    if !shrinkable {
-        return (truncate_chars(serialized, budget), true);
-    }
-    let overhead = match field {
-        Some(field) => measure_without_output_field(&value, field),
-        None => measure_without_output(&value),
-    };
-    let allowed = budget.saturating_sub(overhead + 32);
-    if allowed < 256 {
-        return (truncate_chars(serialized, budget), true);
-    }
-
-    let Some(serde_json::Value::Object(object)) = value.get_mut("output") else {
-        // `output` is a plain string: shorten it in place.
-        if let Some(serde_json::Value::String(text)) = value.get_mut("output") {
-            if text.chars().count() <= allowed {
-                return (truncate_chars(serialized, budget), true);
+    // Lists contain independently useful records. Drop whole suffix records,
+    // never cut evidence text while retaining a pointer to a different excerpt.
+    for key in ["results", "packets"] {
+        if value["output"][key].is_array() {
+            let mut omitted = 0;
+            loop {
+                let items = value["output"][key].as_array_mut().expect("array checked");
+                if items.pop().is_none() {
+                    return Err(projection_limit());
+                }
+                omitted += 1;
+                let count = items.len();
+                value["output"]["truncated"] = json!(true);
+                value["output"]["omittedResults"] = json!(omitted);
+                if value["output"].get("count").is_some() {
+                    value["output"]["count"] = json!(count);
+                }
+                let text = serde_json::to_string(&value)?;
+                if text.chars().count() <= budget {
+                    return Ok((text, true));
+                }
             }
-            let kept: String = text.chars().take(allowed).collect();
-            *text = kept;
-            return match serde_json::to_string(&value) {
-                Ok(fitted) if fitted.chars().count() <= budget => (fitted, true),
-                _ => (truncate_chars(serialized, budget), true),
-            };
-        }
-        return (truncate_chars(serialized, budget), true);
-    };
-
-    let Some(field) = field else {
-        return (truncate_chars(serialized, budget), true);
-    };
-    let Some(serde_json::Value::String(text)) = object.get_mut(field) else {
-        return (truncate_chars(serialized, budget), true);
-    };
-    if text.chars().count() <= allowed {
-        return (truncate_chars(serialized, budget), true);
-    }
-    let kept: String = text.chars().take(allowed).collect();
-    let kept_bytes = kept.len();
-    *text = kept;
-    object.insert("truncated".into(), serde_json::Value::Bool(true));
-    if field == "content" {
-        let start = object
-            .get("sourceSpan")
-            .and_then(|span| span.get("start"))
-            .and_then(serde_json::Value::as_u64);
-        if let Some(start) = start {
-            object.insert(
-                "nextStartByte".into(),
-                serde_json::Value::Number((start + kept_bytes as u64).into()),
-            );
         }
     }
-    match serde_json::to_string(&value) {
-        Ok(fitted) if fitted.chars().count() <= budget => (fitted, true),
-        _ => (truncate_chars(serialized, budget), true),
+    if value["output"].is_string() {
+        value["output"] = json!({"content":value["output"],"truncated":true});
     }
+    // Preserve the existing closed set of prose slots. Only the read_note
+    // content contract carries byte ranges; other prose has no inferred paging.
+    let field = ["content", "excerpt", "text", "body"]
+        .into_iter()
+        .find(|field| value["output"][*field].is_string())
+        .ok_or_else(projection_limit)?;
+    let pointer = format!("/output/{field}");
+    let ranged = field == "content" && value["output"]["sourceSpan"]["start"].as_u64().is_some();
+    let original = value
+        .pointer(&pointer)
+        .and_then(Value::as_str)
+        .expect("text checked");
+    let chars: Vec<char> = original.chars().collect();
+    let start = value["output"]["sourceSpan"]["start"].as_u64().unwrap_or(0);
+    let mut low = 0;
+    let mut high = chars.len();
+    let mut fitted = None;
+    while low <= high {
+        let keep = low + (high - low) / 2;
+        let prefix: String = chars[..keep].iter().collect();
+        let end = start
+            .checked_add(prefix.len() as u64)
+            .ok_or_else(projection_limit)?;
+        *value.pointer_mut(&pointer).expect("text checked") = Value::String(prefix);
+        if value["output"].is_object() {
+            value["output"]["truncated"] = json!(true);
+            if ranged {
+                value["output"]["sourceSpan"]["end"] = json!(end);
+                value["output"]["nextStartByte"] = json!(end);
+            }
+        } else {
+            value["outputTruncated"] = json!(true);
+        }
+        let text = serde_json::to_string(&value)?;
+        if text.chars().count() <= budget {
+            // An empty ranged read would hand back the same continuation.
+            if keep > 0 || !ranged {
+                fitted = Some(text);
+            }
+            low = keep + 1;
+        } else if keep == 0 {
+            break;
+        } else {
+            high = keep - 1;
+        }
+    }
+    fitted.map(|text| (text, true)).ok_or_else(projection_limit)
 }
 
-/// Serialized length once `output` is emptied.
-fn measure_without_output(value: &serde_json::Value) -> usize {
-    let mut probe = value.clone();
-    if let Some(object) = probe.as_object_mut() {
-        object.insert("output".into(), serde_json::Value::Null);
-    }
-    serde_json::to_string(&probe).map_or(0, |text| text.chars().count())
+fn projection_limit() -> AppError {
+    AppError::run(SafeRunErrorCode::ToolLoopLimit)
 }
 
-/// Serialized length once `output.<field>` is emptied.
-fn measure_without_output_field(value: &serde_json::Value, field: &str) -> usize {
-    let mut probe = value.clone();
-    if let Some(object) = probe
-        .get_mut("output")
-        .and_then(serde_json::Value::as_object_mut)
+use super::{
+    LlmMessage, MessageRole, ToolCall, ToolCallResult, MAX_TOOL_RESULT_CHARS,
+    MAX_WEB_TOOL_RESULT_CHARS,
+};
+pub(crate) fn tool_result_message(
+    call: &ToolCall,
+    result: &ToolCallResult,
+    remaining_model_turns: u32,
+    remaining_tool_calls: u32,
+    remaining_category_calls: u32,
+) -> AppResult<(LlmMessage, bool)> {
+    let payload = tool_result_payload(
+        result,
+        remaining_model_turns,
+        remaining_tool_calls,
+        remaining_category_calls,
+    );
+    let serialized = serde_json::to_string(&payload)?;
+    let budget = tool_result_char_budget(&call.function.name);
+    // Web excerpts have already been sized and registered by the executor.
+    // Changing them here would detach the visible content from its evidence.
+    if serialized.chars().count() > budget
+        && matches!(call.function.name.as_str(), "web_search" | "web_fetch")
     {
-        object.insert(field.into(), serde_json::Value::String(String::new()));
+        return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
     }
-    serde_json::to_string(&probe).map_or(0, |text| text.chars().count())
+    let (content, truncated) = fit_tool_payload(&payload, budget, &serialized)?;
+    Ok((
+        LlmMessage {
+            role: MessageRole::Tool,
+            content: content.into(),
+            tool_call_id: Some(call.id.clone()),
+            tool_calls: None,
+            reasoning_content: None,
+        },
+        truncated,
+    ))
+}
+
+fn tool_result_payload(
+    result: &ToolCallResult,
+    models: u32,
+    calls: u32,
+    category: u32,
+) -> serde_json::Value {
+    serde_json::json!({
+        "success": result.success, "output": result.output, "error": result.error,
+        "loopObservation": {
+            "remainingModelTurns": models, "remainingToolCalls": calls,
+            "remainingCategoryCalls": category, "historicalObservation": false
+        }
+    })
+}
+
+/// Size the output before the executor registers evidence. Reserve the maximum
+/// counter width so the model projection cannot shorten it a second time.
+pub(crate) fn prepare_tool_result(result: &mut ToolCallResult) -> AppResult<()> {
+    let payload = tool_result_payload(result, u32::MAX, u32::MAX, u32::MAX);
+    let serialized = serde_json::to_string(&payload)?;
+    let (fitted, _) = fit_tool_payload(
+        &payload,
+        tool_result_char_budget(&result.tool_name),
+        &serialized,
+    )?;
+    result.output = serde_json::from_str::<serde_json::Value>(&fitted)?["output"].take();
+    Ok(())
+}
+
+fn tool_result_char_budget(tool_name: &str) -> usize {
+    if matches!(tool_name, "web_search" | "web_fetch") {
+        MAX_WEB_TOOL_RESULT_CHARS
+    } else {
+        MAX_TOOL_RESULT_CHARS
+    }
 }

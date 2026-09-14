@@ -42,6 +42,20 @@ fn random_user_agent() -> &'static str {
 pub struct PageFetchResult {
     pub title: String,
     pub text: String,
+    pub completeness: PageContentCompleteness,
+}
+
+/// Completeness of extracted text, independently of any later reading window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageContentCompleteness {
+    /// The transport did not report whether its extraction was truncated.
+    #[default]
+    Unknown,
+    /// Only a bounded prefix of the extracted page is available.
+    Bounded,
+    /// All text produced by the extractor is available (not all HTML content).
+    Complete,
 }
 
 #[derive(Debug)]
@@ -543,6 +557,11 @@ pub async fn fetch_web_page(
         return Ok(PageFetchResult {
             title: cached.title.unwrap_or_default(),
             text,
+            completeness: if cached.body_text.chars().count() > max_chars {
+                PageContentCompleteness::Bounded
+            } else {
+                PageContentCompleteness::Complete
+            },
         });
     }
 
@@ -572,7 +591,12 @@ pub async fn fetch_web_page(
 
     store_cache(db, &hash, title_opt.as_deref(), &text, &scope)?;
 
-    if text.chars().count() > max_chars {
+    let completeness = if text.chars().count() > max_chars {
+        PageContentCompleteness::Bounded
+    } else {
+        PageContentCompleteness::Complete
+    };
+    if completeness == PageContentCompleteness::Bounded {
         text = text.chars().take(max_chars).collect();
     }
 
@@ -586,6 +610,7 @@ pub async fn fetch_web_page(
     Ok(PageFetchResult {
         title: title_opt.unwrap_or_default(),
         text,
+        completeness,
     })
 }
 

@@ -38,6 +38,20 @@
 
 ## 2. 生产事故与审计发现
 
+### 方案 A：读取、投影和压缩（2026-09-14 工作树）
+
+实现入口为 [`web_reading.rs`](../../src-tauri/src/ai_runtime/run_tool_loop/web_reading.rs)、[`payload_fit.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop/payload_fit.rs)、[`prompt_budget.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop/prompt_budget.rs) 及现有 `AgentToolLoop`。本轮尚未生成提交 ID，不把工作树状态写成部署事实。
+
+- `plan_a_executor_reads_tail_without_refetch_and_binds_exact_excerpt`：真实 executor → 模型 JSON → ledger，验证中文/emoji/转义正文末段、同 URL 多页的独立引用、EOF/越界、重复读取和新 executor 无快照时拒绝续读；覆盖原先首段截断后误报结束的反例。既有服务回归 `timeliness_later_fetch_uses_run_labels_instead_of_restarting_at_w1` 保持原断言，验证真实入口使用当前 Run 的引用序号与既有 `citation_label` 字段。
+- `plan_a_multi_url_windows_fit_escaped_json_and_preserve_upstream_bounds`、`plan_a_mcp_snapshot_continuation_preserves_unknown_completeness`：真实多 URL 载荷、逐页实际指针、部分成功、12,000 字快照上限和 MCP 未声明完整性的续读；不把同页后文计为第二来源。
+- `plan_a_escaped_read_keeps_valid_json_and_exact_byte_span`、`plan_a_list_payload_never_becomes_a_json_fragment`、`plan_a_minimum_metadata_overflow_is_a_projection_error`：实际转义体积、UTF-8 本地偏移、整项列表省略及不可容纳元数据；覆盖旧 JSON 盲切反例。
+- `plan_a_known_prose_slots_shrink_without_inventing_read_ranges` 保留既有正文槽位兼容，`six_combined_terminal_cases_execute_real_component_combinations` 保持原断言并验证 8 轮/24 调用组合边界；`plan_a_external_observation_is_sized_before_its_evidence_prefix` 验证外部只读工具的摘录前置收缩，`plan_a_projection_overflow_closes_the_loop_with_a_visible_outcome` 验证最小投影超限时可见收束。
+- `plan_a_read_progress_binds_resource_revision_and_range`、`plan_a_compaction_preserves_failure_and_the_latest_tool_batch`、`plan_a_compaction_preserves_write_receipt_and_latest_user_constraint`：组合阅读身份、原失败状态、最近整批观察、写入回执与用户约束。
+- `plan_a_loop_replays_compacted_read_without_redispatch`：真实循环触发压缩后重放，覆盖允许/拒绝权限与失败观察；逻辑调用仍计数，真实读取仅两次，Provider 不再执行第三次读取。
+- `oversized_web_tool_results_stop_at_projection_boundary_without_fabricated_failure`、`oversized_web_fetch_results_stop_at_projection_boundary_without_fabricated_failure` 替代原先强制把成功观察改为 `web_evidence_pack_overflow` 失败的旧断言：保持真实成功结果，检查只有一次执行、可见 Host 终态和未向下一模型回合发送超限载荷。
+
+这些证据属于 HR-3/HR-4/HR-8 的确定性合同。旧测试只调用已删除分页/打包辅助函数的路径随实现退役，由上述生产入口回归替代。B/C/D 与真实新闻质量仍未验收，INC-HR-009/010 和 HR-7 状态不因此升级。
+
 ### 笔记集成检查点（2026-09-06，尚未完整验收）
 
 已增加 `rejected_patch_is_not_a_successful_dispatch_and_creates_no_version`、`move_preserves_backlink_bytes_and_creates_recovery_snapshot`、`interrupted_trash_metadata_is_recovered_from_the_prepared_manifest`、`rejected_symlink_parent_creates_no_outside_directories`、`vault_switch_waits_for_the_current_note_operation`。这些覆盖各自的派发、保存和恢复边界，不证明整套 CRUD 或 Agent 撤销已可用。

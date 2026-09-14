@@ -21,6 +21,12 @@ use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolS
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+#[path = "agent_tool_loop/observations.rs"]
+mod observations;
+pub(crate) use observations::safe_progress_identities;
+use observations::ExecutionRecord;
+pub(crate) use payload_fit::{prepare_tool_result, tool_result_message};
+
 #[path = "agent_tool_loop/payload_fit.rs"]
 mod payload_fit;
 #[path = "agent_tool_loop/prompt_budget.rs"]
@@ -205,6 +211,16 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
 
 /// Run-bound side of a tool loop.
 pub(crate) trait ToolLoopExecutor: Send + Sync {
+    /// Recheck access before replaying a bounded historical observation. This
+    /// performs no tool action; executors without this gate fail closed.
+    fn observation_replay_rejection(
+        &self,
+        _run_id: &str,
+        _call: &ToolCall,
+        _step: u32,
+    ) -> AppResult<Option<&'static str>> {
+        Ok(Some("observation_replay_unavailable"))
+    }
     /// Accept only Host-created, content-free counters and enum codes.
     fn record_tool_loop_diagnostic(&self, _event: serde_json::Value) {}
 
@@ -577,7 +593,7 @@ impl AgentToolLoop {
         let mut completion_tokens = 0_u32;
         let mut total_tokens = 0_u32;
         let mut fingerprints = HashMap::<String, u32>::new();
-        let mut successful_fingerprints = HashSet::<String>::new();
+        let mut executions = HashMap::<String, ExecutionRecord>::new();
         let mut tool_calls_by_class = HashMap::<ToolBudgetClass, u32>::new();
         let mut observed_progress = HashSet::<String>::new();
         let mut final_submission_repair_used = false;
@@ -817,8 +833,15 @@ impl AgentToolLoop {
                         .map_or(allowed_output, |limit| limit.min(allowed_output)),
                 );
             }
-            prompt_budget::compact_tool_observations(&mut messages, active_tools, model_turn_budget);
-            enforce_prompt_budget(&messages, active_tools, model_turn_budget)?;
+            let compacted = prompt_budget::compact_tool_observations(&mut messages, active_tools, model_turn_budget);
+            for record in executions.values_mut() {
+                if compacted.contains(&record.call_id) { record.compacted = true; }
+            }
+            if enforce_prompt_budget(&messages, active_tools, model_turn_budget).is_err() {
+                if tool_calls == 0 { return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit)); }
+                executor.record_tool_loop_diagnostic(serde_json::json!({"event":"projection_limit","reason":"prompt_budget"}));
+                return Ok(evidence_limited_outcome(executor.evidence_limited_response(),model_turns,tool_calls,prompt_tokens,completion_tokens,total_tokens));
+            }
             if model_turn_budget.max_completion_tokens == Some(0) {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
@@ -1159,7 +1182,7 @@ impl AgentToolLoop {
                     self.max_model_turns.saturating_sub(model_turns),
                     self.max_tool_calls.saturating_sub(tool_calls),
                     self.tool_call_limit(ToolBudgetClass::ExternalRead),
-                );
+                )?;
                 messages.push(message);
                 continue;
             }
@@ -1211,7 +1234,7 @@ impl AgentToolLoop {
                 discovery_calls_this_turn,
                 tool_calls,
                 &tool_calls_by_class,
-                &successful_fingerprints,
+                &executions,
                 &fingerprints,
                 self,
             );
@@ -1272,6 +1295,8 @@ impl AgentToolLoop {
             let mut round_made_progress = false;
             let mut round_had_success = false;
             for call in &dispatched_response.tool_calls {
+                let mut recorded_execution = false;
+                let mut replayed = false;
                 ensure_run_not_cancelled(run_id)?;
                 let valid_arguments = valid_call_arguments(call);
                 let executor_owns_invalid_arguments =
@@ -1286,12 +1311,12 @@ impl AgentToolLoop {
                     deferred_result(call)
                 } else {
                     let fingerprint = tool_fingerprint(call);
-                    if successful_fingerprints.contains(&fingerprint) {
+                    if executions.get(&fingerprint).is_some_and(ExecutionRecord::blocks_execution) {
                         rejected_result(call, "tool_call_already_succeeded")
                     } else {
                         let count = fingerprints.entry(fingerprint.clone()).or_insert(0);
                         *count += 1;
-                        if *count > MAX_REPEAT_CALLS {
+                        if *count > MAX_REPEAT_CALLS && !executions.get(&tool_fingerprint(call)).is_some_and(|record|record.compacted) {
                             rejected_result(call, "tool_call_repeated")
                         } else if tool_calls >= self.max_tool_calls {
                             if let Some(telemetry) = telemetry {
@@ -1320,10 +1345,27 @@ impl AgentToolLoop {
                                     telemetry.record_executed_tool_call(&call.function.name);
                                 }
                                 provider.on_tool_call_dispatched(provider_run_id)?;
-                                let result = match executor.execute(run_id, call, tool_calls).await {
+                                let replay = executions.get(&fingerprint).filter(|record|record.compacted);
+                                let execution = if let Some(record) = replay {
+                                    if let Some(reason) = executor.observation_replay_rejection(run_id,call,tool_calls)? {
+                                        Ok(rejected_result(call,reason))
+                                    } else {
+                                        replayed = true;
+                                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"observation_replay","tool":crate::ai_runtime::tool_catalog::catalog_find(&call.function.name).map_or("external", |entry| entry.name),"providerAttempts":0}));
+                                        Ok(record.result.clone())
+                                    }
+                                } else {
+                                    recorded_execution = true;
+                                    executor.execute(run_id,call,tool_calls).await
+                                };
+                                let result = match execution {
                                     Ok(result) => result,
                                     Err(error) => {
                                         executor.record_tool_loop_diagnostic(serde_json::json!({"event":"tool_error", "tool":crate::ai_runtime::tool_catalog::catalog_find(&call.function.name).map_or("unknown", |entry| entry.name), "reason":SafeRunErrorCode::from_app_error(&error).as_str()}));
+                                        if SafeRunErrorCode::from_app_error(&error) == SafeRunErrorCode::ToolLoopLimit {
+                                            observer.on_tools_finished()?;
+                                            return Ok(evidence_limited_outcome(executor.evidence_limited_response(),model_turns,tool_calls,prompt_tokens,completion_tokens,total_tokens));
+                                        }
                                         return Err(error);
                                     }
                                 };
@@ -1334,11 +1376,6 @@ impl AgentToolLoop {
                                     web_observation_performed |= executor.web_observation_performed().unwrap_or(true);
                                 }
                                 round_had_success |= result.success;
-                                if result.success {
-                                    successful_fingerprints.insert(fingerprint);
-                                }
-                                round_made_progress |=
-                                    register_safe_progress(&mut observed_progress, &result);
                                 result
                             }
                         }
@@ -1347,19 +1384,37 @@ impl AgentToolLoop {
                 let class = catalog_tool_budget_class(&call.function.name)
                     .unwrap_or(ToolBudgetClass::ExternalRead);
                 let class_used = tool_calls_by_class.get(&class).copied().unwrap_or_default();
-                let (message, truncated) = tool_result_message(
+                let projected = tool_result_message(
                     call,
                     &result,
                     self.max_model_turns.saturating_sub(model_turns),
                     self.max_tool_calls.saturating_sub(tool_calls),
                     self.tool_call_limit(class).saturating_sub(class_used),
                 );
+                let (mut message, truncated) = match projected {
+                    Ok(projected) => projected,
+                    Err(error) if SafeRunErrorCode::from_app_error(&error) == SafeRunErrorCode::ToolLoopLimit => {
+                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"projection_limit","reason":"tool_payload"}));
+                        observer.on_tools_finished()?;
+                        return Ok(evidence_limited_outcome(executor.evidence_limited_response(),model_turns,tool_calls,prompt_tokens,completion_tokens,total_tokens));
+                    }
+                    Err(error) => return Err(error),
+                };
                 if truncated {
                     if let Some(telemetry) = telemetry {
                         telemetry.record_truncation(
                             crate::ai_runtime::agent_capacity_eval::TruncationOutcome::ToolResultTruncated,
                         );
                     }
+                }
+                if recorded_execution || replayed {
+                    let mut payload:serde_json::Value = serde_json::from_str(&message.content.text_content())?;
+                    if replayed { payload["loopObservation"]["historicalObservation"] = serde_json::json!(true); }
+                    let mut bounded = result.clone();
+                    bounded.output = payload["output"].clone();
+                    if !replayed { round_made_progress |= register_safe_progress(&mut observed_progress,&bounded); }
+                    executions.insert(tool_fingerprint(call),ExecutionRecord {result:bounded,call_id:call.id.clone(),compacted:false});
+                    message.content = serde_json::to_string(&payload)?.into();
                 }
                 messages.push(message);
             }
@@ -1463,7 +1518,7 @@ fn plan_tool_proposals<'a>(
     discovery_calls_this_turn: u32,
     tool_calls: u32,
     tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
-    successful_fingerprints: &HashSet<String>,
+    executions: &HashMap<String, ExecutionRecord>,
     fingerprints: &HashMap<String, u32>,
     loop_policy: &AgentToolLoop,
 ) -> Vec<(&'a ToolCall, ToolCallDisposition)> {
@@ -1510,7 +1565,10 @@ fn plan_tool_proposals<'a>(
                 return (call, ToolCallDisposition::Rejected(reason));
             }
             let fingerprint = tool_fingerprint(call);
-            if successful_fingerprints.contains(&fingerprint) {
+            if executions
+                .get(&fingerprint)
+                .is_some_and(ExecutionRecord::blocks_execution)
+            {
                 return (
                     call,
                     ToolCallDisposition::Rejected("tool_call_already_succeeded"),
@@ -1521,7 +1579,11 @@ fn plan_tool_proposals<'a>(
             }
             let count = planned_fingerprints.entry(fingerprint).or_insert(0);
             *count = count.saturating_add(1);
-            if *count > MAX_REPEAT_CALLS {
+            if *count > MAX_REPEAT_CALLS
+                && !executions
+                    .get(&tool_fingerprint(call))
+                    .is_some_and(|record| record.compacted)
+            {
                 return (call, ToolCallDisposition::Rejected("tool_call_repeated"));
             }
             let class = catalog_tool_budget_class(&call.function.name)
@@ -1615,81 +1677,6 @@ fn initial_loop_budget_instruction(
         tool_calls: None,
         reasoning_content: None,
     }
-}
-
-pub(crate) fn safe_progress_identities(output: &serde_json::Value) -> Vec<String> {
-    const SAFE_IDENTITY_KEYS: &[&str] = &[
-        "resourceId",
-        "resource_id",
-        "resourceIds",
-        "resource_ids",
-        "canonicalUrl",
-        "canonical_url",
-        "canonicalUrls",
-        "canonical_urls",
-        "contentHash",
-        "content_hash",
-        "revision",
-        "fileHash",
-        "file_hash",
-        "targetFileHash",
-        "target_file_hash",
-        // Ranged reads: paging through one note keeps the same content hash, so
-        // the range itself must count as the new resource identity. Without
-        // these keys two consecutive pages looked like "no progress" and the
-        // business tools were closed mid-read.
-        "nextStartByte",
-        "next_start_byte",
-        "startByte",
-        "start_byte",
-        "endByte",
-        "end_byte",
-        "offset",
-        "rangeStart",
-        "range_start",
-    ];
-
-    fn collect_identity_values(value: &serde_json::Value, identities: &mut HashSet<String>) {
-        match value {
-            serde_json::Value::String(value) if !value.trim().is_empty() => {
-                identities.insert(value.clone());
-            }
-            serde_json::Value::Number(value) => {
-                identities.insert(value.to_string());
-            }
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    collect_identity_values(value, identities);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn collect(value: &serde_json::Value, identities: &mut HashSet<String>) {
-        match value {
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    collect(value, identities);
-                }
-            }
-            serde_json::Value::Object(values) => {
-                for (key, value) in values {
-                    if SAFE_IDENTITY_KEYS.contains(&key.as_str()) {
-                        collect_identity_values(value, identities);
-                    }
-                    collect(value, identities);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut identities = HashSet::new();
-    collect(output, &mut identities);
-    let mut identities = identities.into_iter().collect::<Vec<_>>();
-    identities.sort();
-    identities
 }
 
 fn tool_surface_closed_instruction() -> LlmMessage {
@@ -1929,74 +1916,6 @@ fn assistant_tool_message(response: &GatewayResponse) -> LlmMessage {
     }
 }
 
-pub(crate) fn tool_result_message(
-    call: &ToolCall,
-    result: &ToolCallResult,
-    remaining_model_turns: u32,
-    remaining_tool_calls: u32,
-    remaining_category_calls: u32,
-) -> (LlmMessage, bool) {
-    let payload = serde_json::json!({
-        "success": result.success,
-        "output": result.output,
-        "error": result.error,
-        "loopObservation": {
-            "remainingModelTurns": remaining_model_turns,
-            "remainingToolCalls": remaining_tool_calls,
-            "remainingCategoryCalls": remaining_category_calls,
-        },
-    });
-    let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| {
-        "{\"success\":false,\"error\":\"tool_result_serialization_failed\"}".into()
-    });
-    let budget = tool_result_char_budget(&call.function.name);
-    let truncated = serialized.chars().count() > budget;
-    // Web evidence is a structured protocol packet, not prose. Slicing it
-    // would turn a capacity problem into malformed JSON and let the model
-    // reason over a partial, unverifiable result. The normal Web executor
-    // packs its output below this limit; this branch is a fail-closed guard
-    // for every other executor (including harness implementations).
-    if truncated && matches!(call.function.name.as_str(), "web_search" | "web_fetch") {
-        let overflow = serde_json::json!({
-            "success": false,
-            "output": serde_json::Value::Null,
-            "error": "web_evidence_pack_overflow",
-        });
-        let content = serde_json::to_string(&overflow).unwrap_or_else(|_| {
-            "{\"success\":false,\"error\":\"web_evidence_pack_overflow\"}".into()
-        });
-        return (
-            LlmMessage {
-                role: MessageRole::Tool,
-                content: content.into(),
-                tool_call_id: Some(call.id.clone()),
-                tool_calls: None,
-                reasoning_content: None,
-            },
-            false,
-        );
-    }
-    let (content, _) = payload_fit::fit_tool_payload(&payload, budget, &serialized);
-    (
-        LlmMessage {
-            role: MessageRole::Tool,
-            content: content.into(),
-            tool_call_id: Some(call.id.clone()),
-            tool_calls: None,
-            reasoning_content: None,
-        },
-        truncated,
-    )
-}
-
-fn tool_result_char_budget(tool_name: &str) -> usize {
-    if matches!(tool_name, "web_search" | "web_fetch") {
-        MAX_WEB_TOOL_RESULT_CHARS
-    } else {
-        MAX_TOOL_RESULT_CHARS
-    }
-}
-
 fn valid_call_arguments(call: &ToolCall) -> bool {
     valid_call_identity(call)
         && serde_json::from_str::<serde_json::Value>(&call.function.arguments)
@@ -2077,15 +1996,5 @@ fn rejected_result(call: &ToolCall, reason: &str) -> ToolCallResult {
         duration_ms: 0,
         tokens_used: None,
         error: Some(reason.to_string()),
-    }
-}
-
-pub(super) fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let prefix = chars.by_ref().take(max_chars).collect::<String>();
-    if chars.next().is_some() {
-        format!("{prefix}…")
-    } else {
-        prefix
     }
 }

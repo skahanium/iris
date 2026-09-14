@@ -6,6 +6,8 @@
 //! when an authorized Web operation fails without usable evidence. Runs
 //! without `web.search` never enable either tool.
 
+mod web_reading;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
@@ -122,6 +124,7 @@ const fn failure_reason_for_code(code: SafeRunErrorCode) -> WebEvidenceFailureRe
 
 #[derive(Debug)]
 struct RunWebEvidenceState {
+    snapshots: BTreeMap<String, web_reading::PageSnapshot>,
     evidence_ids: Vec<i64>,
     candidate_urls: BTreeSet<String>,
     domains: BTreeSet<String>,
@@ -140,6 +143,7 @@ struct UnverifiedWebLead {
 impl Default for RunWebEvidenceState {
     fn default() -> Self {
         Self {
+            snapshots: BTreeMap::new(),
             evidence_ids: Vec::new(),
             candidate_urls: BTreeSet::new(),
             domains: BTreeSet::new(),
@@ -224,11 +228,17 @@ impl WebEvidenceReservation {
             .shared
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
+        let previous = state.evidence_ids.len();
+        for id in evidence_ids {
+            if !state.evidence_ids.contains(id) {
+                state.evidence_ids.push(*id);
+            }
+        }
+        let added = state.evidence_ids.len().saturating_sub(previous);
         state.slots_in_use = state
             .slots_in_use
             .saturating_sub(self.capacity)
-            .saturating_add(evidence_ids.len());
-        state.evidence_ids.extend(evidence_ids.iter().copied());
+            .saturating_add(added);
         self.finalized = true;
         Ok(())
     }
@@ -518,31 +528,25 @@ impl<'a> NormalRunToolExecutor<'a> {
         if discovery_only && !urls.is_empty() {
             return Err(AppError::msg("tool_arguments_invalid"));
         }
-        let max_fetches = urls.len();
-        let evidence_reservation = if discovery_only {
-            None
+        let start_char = args
+            .get("startChar")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let start_char =
+            usize::try_from(start_char).map_err(|_| AppError::msg("tool_arguments_invalid"))?;
+        let fetch_urls = if discovery_only || start_char > 0 {
+            Vec::new()
         } else {
-            let Some(reservation) =
-                WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
-            else {
-                self.set_web_failure(Some(WebFailure::new(
-                    SafeRunErrorCode::WebEvidenceInvalid,
-                    false,
-                )))?;
-                return Ok(failed_tool_call(tool_name, "web_evidence_budget_exhausted"));
-            };
-            Some(reservation)
+            self.cached_fetch_urls(&urls)?
         };
-        let remaining = evidence_reservation
-            .as_ref()
-            .map(WebEvidenceReservation::capacity)
-            .unwrap_or(MAX_WEB_CANDIDATES_PER_DISCOVERY);
+        let max_fetches = fetch_urls.len().min(INITIAL_WEB_SEARCH_RESULTS);
+        let remaining = MAX_WEB_CANDIDATES_PER_DISCOVERY;
         // A single Web dispatch is bounded, while cross-call exploration is
         // governed exclusively by the generic network category budget.
         let provider_snapshots = self.ordered_web_provider_snapshots(tool_name);
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.clone(),
-            urls: urls.clone(),
+            urls: fetch_urls,
             enabled: self.has_capability("web.search"),
             max_search_results: web_result_limit(discovery_only, remaining, 1),
             max_fetches,
@@ -551,7 +555,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         };
         let call_started = Instant::now();
         let mut attempts_for_search = 0_u32;
-        let output =
+        let output = if discovery_only || max_fetches > 0 {
             loop {
                 attempts_for_search = attempts_for_search.saturating_add(1);
                 let attempt_count = self.record_web_attempt()?;
@@ -610,7 +614,13 @@ impl<'a> NormalRunToolExecutor<'a> {
                     call_started.elapsed(),
                     remaining_web_tool_budget_ms(call_started.elapsed()),
                 ));
-            };
+            }
+        } else {
+            crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
+                items: Vec::new(),
+                usage: Default::default(),
+            }
+        };
         self.remember_web_provider_winner(tool_name, &output.usage)?;
         if discovery_only {
             let previously_known_urls = self
@@ -724,126 +734,14 @@ impl<'a> NormalRunToolExecutor<'a> {
                 error: None,
             });
         }
-        let selected_urls = urls.iter().cloned().collect::<BTreeSet<_>>();
-        let selected_items = output
-            .items
-            .iter()
-            .filter(|item| selected_urls.contains(&normalize_fetch_url(&item.canonical_url)))
-            .filter(|item| {
-                item.fetched_excerpt
-                    .as_deref()
-                    .is_some_and(|excerpt| !excerpt.trim().is_empty())
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut packed_items =
-            match pack_web_evidence_for_model(&query, &selected_items, remaining, &output.usage) {
-                Ok(items) if !items.is_empty() => items,
-                Ok(_) | Err(_) => {
-                    let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
-                    self.set_web_failure(Some(failure))?;
-                    return Ok(failed_web_tool_call(
-                        tool_name,
-                        failure,
-                        self.web_attempt_count(),
-                        call_started.elapsed(),
-                        remaining_web_tool_budget_ms(call_started.elapsed()),
-                    ));
-                }
-            };
-        let evidence_ids = register_model_web_evidence(
-            &self.state.db,
-            self.accepted,
-            self.context,
-            (self.subagent_depth == 0).then_some(self.sink),
+        self.observe_web_pages(
+            &urls,
+            start_char,
+            output.items,
+            &output.usage,
             state_version,
-            &packed_items,
-            remaining,
-        )?;
-        if evidence_ids.is_empty() {
-            let failure = classify_web_evidence_output_failure(&output);
-            self.set_web_failure(Some(failure))?;
-            return Ok(failed_web_tool_call(
-                tool_name,
-                failure,
-                self.web_attempt_count(),
-                call_started.elapsed(),
-                remaining_web_tool_budget_ms(call_started.elapsed()),
-            ));
-        }
-        self.set_web_failure(None)?;
-        self.local_evidence_ids
-            .lock()
-            .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
-            .extend(evidence_ids.iter().copied());
-        evidence_reservation
-            .expect("selected URL fetch reserves evidence capacity")
-            .commit(&evidence_ids)?;
-        self.record_web_evidence_quality(&packed_items)?;
-        let failed_urls = failed_fetch_urls(&urls, &packed_items);
-        let remaining_evidence_requirement = if self.has_web_evidence() {
-            serde_json::Value::Null
-        } else if self.requires_corroborated_web_evidence() {
-            serde_json::json!("second_independent_domain")
-        } else {
-            serde_json::json!("one_fetched_body")
-        };
-        // A fetched body is far longer than the excerpt the model sees, and the
-        // tool previously had no way to ask for the rest, so the second half of a
-        // page could never enter the context. `startChar` asks for a later
-        // window; `excerptWindow` below hands back the offset for the next one.
-        let start_char = args
-            .get("startChar")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0) as usize;
-        let excerpt_window = apply_excerpt_window(&mut packed_items, start_char);
-        let mut packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
-            &query,
-            &packed_items,
-            MAX_WEB_EXCERPT_CHARS,
-        );
-        // Broker packets are numbered within a single fetch batch. Only the
-        // Run ledger owns W labels across Host bootstrap and later model reads.
-        let citations = AgentEvidenceRepository::list_current_run_web_citation_links(
-            &self.state.db,
-            &self.accepted.run_id,
-        )?;
-        for packet in &mut packets {
-            let url = packet.source_path.as_deref().unwrap_or_default();
-            let citation = citations
-                .iter()
-                .find(|citation| normalize_fetch_url(&citation.url) == normalize_fetch_url(url))
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::UnverifiedWebCitation))?;
-            packet.citation_label = citation.label.clone();
-            packet.id = format!("run-web-{}", citation.index);
-        }
-        let resource_ids = packets
-            .iter()
-            .map(|packet| packet.id.clone())
-            .collect::<Vec<_>>();
-        Ok(ToolCallResult {
-            tool_name: tool_name.to_string(),
-            success: true,
-            output: serde_json::json!({
-                "results": packets,
-                "sourceDomains": distinct_source_domains(packed_items.iter()),
-                "scopeCheck": WEB_SCOPE_CHECK_NOTE,
-                "resourceIds": resource_ids,
-                "evidenceIds": evidence_ids,
-                "count": evidence_ids.len(),
-                "failedUrls": failed_urls,
-                "remainingEvidenceRequirement": remaining_evidence_requirement,
-                "observationDepth": "fetched_body",
-                "excerptWindow": excerpt_window,
-                "requiresFetchForCitation": false,
-                "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
-                "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
-                "webUsage": output.usage,
-            }),
-            duration_ms: bounded_duration_ms(call_started.elapsed()),
-            tokens_used: None,
-            error: None,
-        })
+            call_started.elapsed(),
+        )
     }
 
     fn request_change_confirmation(
@@ -1299,21 +1197,6 @@ fn normalize_fetch_url(url: &str) -> String {
     normalized.to_string()
 }
 
-fn failed_fetch_urls(
-    requested_urls: &[String],
-    fetched_items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
-) -> Vec<String> {
-    let fetched_urls = fetched_items
-        .iter()
-        .map(|item| normalize_fetch_url(&item.canonical_url))
-        .collect::<BTreeSet<_>>();
-    requested_urls
-        .iter()
-        .filter(|url| !fetched_urls.contains(*url))
-        .cloned()
-        .collect()
-}
-
 fn explicit_user_urls(message: &str) -> BTreeSet<String> {
     message
         .match_indices("https://")
@@ -1518,7 +1401,20 @@ impl NormalRunToolExecutor<'_> {
                                 Ok(output) => {
                                     let raw_result_hash =
                                         hex::encode(Sha256::digest(call_result.result.to_string()));
-                                    let excerpt = output
+                                    // Reserve the widest source reference before registering
+                                    // evidence, so the loop cannot later shorten its text.
+                                    let mut observation = ToolCallResult {
+                                        tool_name: call.function.name.clone(),
+                                        success: true,
+                                        output: serde_json::json!({"content":output,"sourceRef":format!("E{}", i64::MAX)}),
+                                        duration_ms: bounded_duration_ms(started.elapsed()),
+                                        tokens_used: None,
+                                        error: None,
+                                    };
+                                    crate::ai_runtime::agent_tool_loop::prepare_tool_result(
+                                        &mut observation,
+                                    )?;
+                                    let excerpt = observation.output["content"].as_str().unwrap_or_default()
                                         .chars()
                                         .take(
                                             crate::ai_runtime::mcp_external_tools::MAX_EXTERNAL_EVIDENCE_CHARS,
@@ -1567,17 +1463,9 @@ impl NormalRunToolExecutor<'_> {
                                                     )
                                                 })?
                                                 .push(evidence.evidence_id);
-                                            ToolCallResult {
-                                                tool_name: call.function.name.clone(),
-                                                success: true,
-                                                output: serde_json::json!({
-                                                    "content": output,
-                                                    "sourceRef": source_ref,
-                                                }),
-                                                duration_ms: bounded_duration_ms(started.elapsed()),
-                                                tokens_used: None,
-                                                error: None,
-                                            }
+                                            observation.output["sourceRef"] =
+                                                serde_json::json!(source_ref);
+                                            observation
                                         }
                                     }
                                 }
@@ -1651,6 +1539,55 @@ fn safe_external_tool_failure(error: &AppError) -> &'static str {
 }
 
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
+    fn observation_replay_rejection(
+        &self,
+        run_id: &str,
+        call: &ToolCall,
+        step: u32,
+    ) -> AppResult<Option<&'static str>> {
+        if crate::ai_runtime::model_gateway::is_abort_requested(run_id) {
+            return Err(AppError::run(SafeRunErrorCode::Cancelled));
+        }
+        if run_id != self.accepted.run_id || !self.allowed_tool_names.contains(&call.function.name)
+        {
+            return Ok(Some("tool_not_in_run_surface"));
+        }
+        if let Some(reason) = self.proposal_rejection_reason(call)? {
+            return Ok(Some(reason));
+        }
+        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)?;
+        if let Some(snapshot) = self.external_snapshot(&call.function.name) {
+            return Ok((!self.has_capability("external.read")
+                || !crate::ai_runtime::mcp_external_tools::snapshot_contract_is_valid(snapshot)
+                || !crate::ai_runtime::mcp_external_tools::provider_is_current(
+                    &self.state.db,
+                    snapshot,
+                )?
+                || crate::ai_runtime::mcp_external_tools::validate_and_map_arguments(
+                    snapshot, &args,
+                )
+                .is_err())
+            .then_some("external_tool_replay_access_denied"));
+        }
+        let Some(entry) = catalog_find(&call.function.name) else {
+            return Ok(Some("tool_not_in_run_surface"));
+        };
+        let gate = ToolExecutionGate {
+            run_id,
+            session_id: Some(self.context.session_id),
+            run_step: step,
+            entry,
+            args: &args,
+            authorized_capabilities: &self.authorized_capabilities,
+            skill_id: None,
+            subagent_depth: self.subagent_depth,
+        };
+        let outcome = evaluate_tool_execution(&self.state.db, gate)?;
+        Ok(outcome
+            .tool_result
+            .is_some()
+            .then_some("observation_replay_access_denied"))
+    }
     fn proposal_rejection_reason(&self, call: &ToolCall) -> AppResult<Option<&'static str>> {
         if call.function.name != WEB_FETCH_TOOL_NAME {
             return Ok(None);
@@ -1913,7 +1850,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             Ok(Some(RequiredWebBootstrapObservation {
                 tool_calls,
                 network_tool_calls: tool_calls,
-                observation: truncate_web_field(&observation, MAX_WEB_TOOL_RESULT_CHARS),
+                observation,
             }))
         })
     }
@@ -2050,7 +1987,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 serde_json::json!({"event":"dispatch", "tool":entry.name,
                 "host":call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX)}),
             );
-            let result = if let Some(result) = gate_outcome.tool_result {
+            let mut result = if let Some(result) = gate_outcome.tool_result {
                 result
             } else if entry.requires_confirmation {
                 self.request_change_confirmation(
@@ -2084,6 +2021,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 "resultCount": result.output.get("count").and_then(serde_json::Value::as_u64).unwrap_or(0),
                 "brokerAttempts":self.web_attempt_count()}));
             audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+            if !matches!(
+                call.function.name.as_str(),
+                WEB_FETCH_TOOL_NAME | WEB_SEARCH_TOOL_NAME
+            ) {
+                crate::ai_runtime::agent_tool_loop::prepare_tool_result(&mut result)?;
+            }
             self.register_local_tool_evidence(run_id, &call.function.name, &args, &result)?;
             let summary = if result.success {
                 "工具调用完成"
@@ -3545,78 +3488,6 @@ struct BoundedWebItem {
     conflict_group: Option<String>,
 }
 
-/// Select and normalize the exact Web evidence that may reach a model. The
-/// same normalized values are later written to the evidence ledger, which
-/// prevents a session record from claiming support that the model never saw.
-fn pack_web_evidence_for_model(
-    query: &str,
-    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
-    limit: usize,
-    usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
-) -> AppResult<Vec<crate::ai_runtime::web_evidence_broker::WebEvidenceItem>> {
-    let mut packed = items
-        .iter()
-        .filter(|item| item.failure_reason.is_none())
-        .filter(|item| {
-            item.url.starts_with("https://") && item.canonical_url.starts_with("https://")
-        })
-        .filter_map(|item| {
-            let bounded = bounded_page_evidence(item)?;
-            let mut item = item.clone();
-            item.title = truncate_web_field(&bounded.title, 256);
-            item.url = truncate_web_field(&bounded.url, 512);
-            item.canonical_url = truncate_web_field(&bounded.canonical_url, 512);
-            item.domain = truncate_web_field(&bounded.domain, 255);
-            item.provider_id = truncate_web_field(&bounded.provider_id, 128);
-            item.provider_kind = truncate_web_field(&bounded.provider_kind, 128);
-            item.raw_result_hash = truncate_web_field(&bounded.raw_result_hash, 128);
-            item.extraction_method = truncate_web_field(&bounded.extraction_method, 128);
-            item.snippet = bounded.excerpt.clone();
-            item.fetched_excerpt = Some(bounded.excerpt);
-            Some(item)
-        })
-        .take(limit)
-        .collect::<Vec<_>>();
-
-    // The final evidence ids are decimal SQLite identifiers. Reserve their
-    // worst-case serialized footprint before persistence, then compact the
-    // longest excerpts until the *actual JSON shape* fits. Never leave a
-    // later generic string truncation to corrupt the JSON packet.
-    let placeholder_ids = vec!["9223372036854775807"; packed.len()];
-    while !packed.is_empty()
-        && serialized_web_tool_payload_chars(query, &packed, &placeholder_ids, usage)
-            > MAX_WEB_TOOL_RESULT_CHARS
-    {
-        let Some((index, length)) = packed
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                item.fetched_excerpt
-                    .as_ref()
-                    .map(|excerpt| (index, excerpt.chars().count()))
-            })
-            .max_by_key(|(_, length)| *length)
-        else {
-            break;
-        };
-        if length <= 64 {
-            return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
-        }
-        let next_length = length.saturating_sub(256).max(64);
-        let excerpt = packed[index].fetched_excerpt.as_deref().unwrap_or_default();
-        let compact = truncate_web_field(excerpt, next_length);
-        packed[index].snippet = compact.clone();
-        packed[index].fetched_excerpt = Some(compact);
-    }
-    if packed.is_empty()
-        || serialized_web_tool_payload_chars(query, &packed, &placeholder_ids, usage)
-            > MAX_WEB_TOOL_RESULT_CHARS
-    {
-        return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
-    }
-    Ok(packed)
-}
-
 /// Distinct source domains for one bounded Web observation, lowercased and
 /// sorted so the value is stable across batches.
 ///
@@ -3671,81 +3542,8 @@ fn pack_web_candidates_for_model(
     packed
 }
 
-fn serialized_web_tool_payload_chars(
-    query: &str,
-    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
-    evidence_ids: &[&str],
-    usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
-) -> usize {
-    let packets =
-        crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
-            query,
-            items,
-            MAX_WEB_EXCERPT_CHARS,
-        );
-    serde_json::to_string(&serde_json::json!({
-        "success": true,
-        "output": {
-            "results": packets,
-            // Keep this in step with the assembled payload: the scope block is
-            // part of what the model receives, so the shrink loop must budget
-            // for it. `distinct_source_domains` is derived from `items`, so it
-            // is stable across the excerpt-shrinking iterations.
-            "sourceDomains": distinct_source_domains(items.iter()),
-            "scopeCheck": WEB_SCOPE_CHECK_NOTE,
-            "evidenceIds": evidence_ids,
-            "count": evidence_ids.len(),
-            "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
-            // The window block is part of the payload the model receives, so the
-            // size estimate must budget for its largest representation.
-            "excerptWindow": {
-                "startChar": u64::MAX,
-                "limitChars": MAX_WEB_EXCERPT_CHARS,
-                "nextStartChar": u64::MAX,
-                "truncated": true,
-            },
-            // Reserve the largest possible decimal representation because the
-            // remaining budget is produced after the packer has run.
-            "remainingBudgetMs": u64::MAX,
-            "webUsage": usage,
-        },
-        "error": serde_json::Value::Null,
-    }))
-    .map(|value| value.chars().count())
-    .unwrap_or(usize::MAX)
-}
-
 fn truncate_web_field(value: &str, limit: usize) -> String {
     value.chars().take(limit).collect()
-}
-
-/// Skip `start_char` characters of every fetched body and report the window.
-///
-/// The full body is already in `fetched_excerpt`, so skipping here pages through
-/// a long page without touching the Broker or re-fetching; the packer then bounds
-/// what the model sees. Units are characters, matching that limit. The reported
-/// `nextStartChar` is what the model passes back to continue reading.
-pub(crate) fn apply_excerpt_window(
-    items: &mut [crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
-    start_char: usize,
-) -> serde_json::Value {
-    let mut truncated = false;
-    for item in items.iter_mut() {
-        let Some(body) = item.fetched_excerpt.take() else {
-            continue;
-        };
-        if body.chars().count() > start_char + MAX_WEB_EXCERPT_CHARS {
-            truncated = true;
-        }
-        item.fetched_excerpt = Some(body.chars().skip(start_char).collect());
-    }
-    let next_start_char = truncated.then_some(start_char + MAX_WEB_EXCERPT_CHARS);
-    serde_json::json!({
-        "startChar": start_char,
-        "limitChars": MAX_WEB_EXCERPT_CHARS,
-        "nextStartChar": next_start_char,
-        "truncated": truncated,
-    })
 }
 
 fn bounded_page_evidence(
@@ -3754,8 +3552,7 @@ fn bounded_page_evidence(
     let excerpt = item
         .fetched_excerpt
         .as_deref()
-        .filter(|excerpt| !excerpt.trim().is_empty())
-        .map(str::trim)?;
+        .filter(|excerpt| !excerpt.is_empty())?;
     if excerpt.is_empty() {
         return None;
     }
@@ -3768,7 +3565,7 @@ fn bounded_page_evidence(
         provider_kind: item.provider_kind.clone(),
         raw_result_hash: item.raw_result_hash.clone(),
         extraction_method: item.extraction_method.clone(),
-        excerpt: excerpt.chars().take(MAX_WEB_EXCERPT_CHARS).collect(),
+        excerpt: excerpt.to_string(),
         conflict_group: item.conflict_group.clone(),
     })
 }
@@ -3932,6 +3729,7 @@ fn corroborated_source_threshold_met(independent_domains: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    mod reading_tests;
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::future::Future;
     use std::pin::Pin;
@@ -3943,11 +3741,10 @@ mod tests {
         append_model_tool_completed_with_report, append_model_tool_started, bounded_page_evidence,
         corroborated_source_threshold_met, corroborated_web_evidence_required,
         distinct_source_domains, emit_deferred_web_degradation, expected_post_content_hashes,
-        failed_fetch_urls, normalize_fetch_url, pack_web_candidates_for_model,
-        remember_candidate_urls, validate_public_fetch_urls, web_output_has_usable_result,
-        web_result_limit, web_search_result_limit, DeferredWebDegradationInput,
-        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR, MAX_SOURCE_DOMAINS,
-        WEB_SCOPE_CHECK_NOTE,
+        normalize_fetch_url, pack_web_candidates_for_model, remember_candidate_urls,
+        validate_public_fetch_urls, web_output_has_usable_result, web_result_limit,
+        web_search_result_limit, DeferredWebDegradationInput, NormalRunToolExecutor,
+        RunWebEvidenceState, CONFIRMATION_PENDING_ERROR, MAX_SOURCE_DOMAINS, WEB_SCOPE_CHECK_NOTE,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -6022,40 +5819,6 @@ mod tests {
     }
 
     #[test]
-    fn partial_fetch_observation_preserves_the_failed_url_for_model_recovery() {
-        let requested = vec![
-            "https://example.com/ok".to_string(),
-            "https://example.net/blocked".to_string(),
-        ];
-        let fetched = vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
-            url: requested[0].clone(),
-            canonical_url: requested[0].clone(),
-            title: "Fetched article".into(),
-            domain: "example.com".into(),
-            snippet: "candidate".into(),
-            fetched_excerpt: Some("usable fetched body".into()),
-            provider_id: "search-provider".into(),
-            provider_kind: "mcp".into(),
-            cost_class: "free".into(),
-            raw_result_hash: "body-hash".into(),
-            extraction_method: "mcp_fetch_raw_content".into(),
-            trust_level: "external_untrusted".into(),
-            retrieval_reason: "web.fetch".into(),
-            search_backend: crate::ai_types::WebSearchBackend::Provider,
-            source_rank: crate::ai_types::WebSourceRank::Unknown,
-            freshness_label: None,
-            failure_reason: None,
-            conflict_group: None,
-            conflict_note: None,
-        }];
-
-        assert_eq!(
-            failed_fetch_urls(&requested, &fetched),
-            [requested[1].clone()]
-        );
-    }
-
-    #[test]
     fn search_snippet_never_becomes_registered_page_evidence() {
         let item = crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
             url: "https://example.com/article".into(),
@@ -6064,6 +5827,7 @@ mod tests {
             domain: "example.com".into(),
             snippet: "search snippet only".into(),
             fetched_excerpt: None,
+            completeness: Default::default(),
             provider_id: "search-provider".into(),
             provider_kind: "mcp".into(),
             cost_class: "free".into(),
@@ -6105,6 +5869,7 @@ mod tests {
             domain: "example.com".into(),
             snippet: format!("snippet {url}"),
             fetched_excerpt: None,
+            completeness: Default::default(),
             provider_id: "test".into(),
             provider_kind: "test".into(),
             cost_class: "free".into(),
@@ -6154,6 +5919,7 @@ mod tests {
             domain: "example.com".into(),
             snippet: format!("snippet {url}"),
             fetched_excerpt: None,
+            completeness: Default::default(),
             provider_id: "test".into(),
             provider_kind: "test".into(),
             cost_class: "free".into(),
@@ -6723,6 +6489,7 @@ mod tests {
             domain: domain.into(),
             snippet: "Snippet".into(),
             fetched_excerpt: None,
+            completeness: Default::default(),
             provider_id: "mcp.test".into(),
             provider_kind: "mcp".into(),
             cost_class: "free".into(),

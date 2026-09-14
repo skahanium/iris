@@ -66,13 +66,17 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 ## 5. 重复、进展与收束
 
-- 工具 fingerprint 由 tool name 和规范化参数组成；成功 fingerprint 不再执行。
+- 工具 fingerprint 由 tool name 和规范化参数组成；成功且仍可见的观察不再执行。既有 fingerprint 状态保存本 Run 的有界执行结果和压缩标记，不另建结果账本。
 - 相同失败 fingerprint 最多执行两次，且必须受总预算约束。
-- 进展只使用安全、可比较的事实：新 candidate/evidence/resource ID、新 canonical URL、更深的正文、新内容 hash、新 revision、目标文件 hash，或首次出现的可行动错误类别。
+- 阅读进展使用组合身份 `(resource, revision/hash, start, actualEnd, unit)`，本地单位为 UTF-8 字节，网页为 Unicode scalar；空窗口与同页重放不是新进展。非阅读工具保留既有安全资源身份。
 - 不同查询返回相同资源和内容不算新进展。
 - 连续两个完整模型—工具回合没有新进展时，Host 关闭工具面并发出一次通用综合指令。
 - 探索预算即将耗尽时同样关闭工具，保留最后一次模型轮次；不得先把全部轮次消耗完再返回 `ToolLoopLimit`。
 - 强制综合后仍没有可见正文、发生权限越界或严格证据要求未满足，才进入失败终态。
+
+工具观察压缩仅省略旧正文，保留原始 success/error、身份、范围、指针和完整写入回执；最近一批完整 assistant/tool 交互与用户约束保持原样。模型以相同参数请求已压缩观察时，Host 重检当前权限并重放已保存的有界结果，标记 `historicalObservation`，不表示重新读取最新资源。重放消耗逻辑调用和类别预算，但不访问 Provider、不重登记证据、不增加进展；写入回执保持可见，绝不因恢复正文而重执行写入。记录容量受原 Run 调用和工具载荷上限约束。
+
+观察只按合法 JSON 值收缩，并核算实际序列化后的转义开销。列表省略完整尾项，读取适配层更新实际范围与续读指针，再登记最终摘录；通用循环不得再缩短已登记的 Web 摘录。最小合法信封或受保护的最新批次仍超限时，走既有预算终态，不制造工具失败、删除最新观察或发送 JSON 片段。
 
 ## 6. 工具输入与结果
 
@@ -89,7 +93,10 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 ## 7. Web 候选、正文与本地工具
 
-- 模型工具面只保留两个单一职责网络动作：`web_search { query }` 发现候选，`web_fetch { urls, startChar? }` 读取已选正文。两者共用同一个 `web.search` 用户授权、network 分类预算、`WebEvidenceBroker`、冻结 Provider 顺序和 evidence ledger，不构成第二套循环。当前字符续读 schema 已存在，但先截断后分页的生产缺陷尚未修复，不能把 `excerptWindow` 字段存在视为续读能力验收。
+- 模型工具面只保留两个单一职责网络动作：`web_search { query }` 发现候选，`web_fetch { urls, startChar? }` 读取已选正文。两者共用同一个 `web.search` 用户授权、network 分类预算、`WebEvidenceBroker`、冻结 Provider 顺序和 evidence ledger，不构成第二套循环。
+- native 与 MCP 的受控正文进入同一 Run 内存快照，保留规范 URL、内容 hash 和来源；每页最多 12,000 字，快照数受原 Run 证据容量约束。首读复用快照；`startChar > 0` 只能读取已有快照，缺失时返回 `snapshot_unavailable`，不能重新抓取后拼接旧偏移。Run 结束后不沿用快照身份。
+- 每个窗口最多 2,000 个 Unicode scalar 字符；先取窗口，再按实际 JSON 大小收缩，最后将同一摘录登记进 ledger。`endChar` 和 `nextStartChar` 按实际可见字符数计算，每个结果独立携带窗口；仅单页兼容顶层 `excerptWindow`。引用按返回的 evidence ID 取 Run 内标签；同 URL 的后页不借用首页引用，也不增加独立来源数。
+- `startChar == snapshotChars` 返回 EOF，大于该值返回范围错误，两者不登记空证据。`nextStartChar: null` 仅表示快照结束；`upstreamCompleteness` 的 `complete`、`bounded`、`unknown` 分别表示上游提取正文已完整返回、明确受限和未提供完整性证明，不等于整张网页或其中全部报道已核实。
 - `web_search` 每次最多返回 4 个去重候选，每 Run 最多保留 8 个。候选只提供标题、来源、时间和有界片段，`evidenceIds` 为空；它不再接受 `urls` 重载。
 - `web_fetch` 接受公开 HTTPS URL。只有抓取到 URL 匹配的实质正文才登记 evidence 并获得 `Wn`；搜索片段绝不能在 `run_tool_loop` 中被升级为证据。
 - 一批 URL 部分成功时，观察同时返回成功正文、失败 URL、剩余证据要求和预算，让模型选择换源、补充抓取或基于已取得正文完成；单个抓取失败不直接把整轮降级为限制回答。
