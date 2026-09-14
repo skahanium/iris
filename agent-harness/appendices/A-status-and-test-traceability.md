@@ -86,6 +86,20 @@
 
 这些证据属于 HR-3/HR-8 的确定性检索合同，不证明真实新闻回答质量；D 与 HR-7 状态不因本轮升级。
 
+### 方案 D 第 1 条：联网保底时机（2026-09-14）
+
+实现入口为 [`agent_tool_loop.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop.rs) 的 `dispatch_host_web_bootstrap` 与两个派发边界，以及 [`run_tool_loop.rs`](../../src-tauri/src/ai_runtime/run_tool_loop.rs) 的保底实现（派发时登记 Web 尝试）。测试夹具侧新增 [`test_support.rs`](../../src-tauri/src/ai_runtime/agent_capacity_eval/test_support.rs) 的 `finish_within`。
+
+- `timeliness_observation_original_movie_question_executes_before_a_model_can_skip_search`：按新契约改写。断言模型恰好一次请求（保底不额外增加模型回合）、保底恰好一次 `web_search` 与一次 `web_fetch`、观察确实以 `kind: host_web_bootstrap` 进入模型上下文且查询带默认地域、观察不伪装成 tool 角色消息。
+- `required_web_run_receives_host_observation_before_a_model_can_skip_tools`：模型先出草稿（草稿不发布）→ 保底派发一次 → 同一循环继续；断言 `bootstrap_calls == 1` 与第二次模型回合能看到 `Host Web observation`。
+- `required_web_bootstrap_is_rejected_before_dispatch_when_two_network_actions_do_not_fit`：冻结合同负担不起最低观察时，保底派发次数为 0、不产生半套派发，Run 以有界 Host 限制收束（不再以预算错误丢弃整轮）。
+- `web_required_accepts_a_natural_clarification_after_host_bootstrap`：必要的澄清仍是正常完成，保底先于发布执行。
+- `timeliness_failed_bootstrap_keeps_one_tool_enabled_research_opportunity`：服务不可用时保底只尝试一次，模型仍保有可调用工具的回合，最终发布 Host 有界限制而不是把「Host 自己失败」当成「模型无证据作答」。
+
+**工具链定位记录（按原样保留）**：延后保底让这类 Run 的模型回合数由 Host 控制流决定。`spawn_llm_protocol_double::finish()` join 监听任务，要求脚本响应数等于请求数，多余脚本会让测试永久等待——本轮曾把它误判为引擎死锁，逐段插桩（`emit_run_terminal`、服务层、引擎均正常返回，最后停在收尾的 `finish()`）后才确认为夹具等待。`finish_within(grace)` 用于回合数不由脚本决定的测试，`finish()` 的严格语义保留。
+
+这些证据属于 HR-3/HR-7 的确定性契约，不证明真实联网回答质量；D 的第 2–6 条与 HR-7 状态不因此升级。
+
 ### 笔记集成检查点（2026-09-06，尚未完整验收）
 
 已增加 `rejected_patch_is_not_a_successful_dispatch_and_creates_no_version`、`move_preserves_backlink_bytes_and_creates_recovery_snapshot`、`interrupted_trash_metadata_is_recovered_from_the_prepared_manifest`、`rejected_symlink_parent_creates_no_outside_directories`、`vault_switch_waits_for_the_current_note_operation`。这些覆盖各自的派发、保存和恢复边界，不证明整套 CRUD 或 Agent 撤销已可用。
