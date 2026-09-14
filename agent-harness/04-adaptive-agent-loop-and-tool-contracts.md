@@ -51,7 +51,9 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 每个模型轮次都会看到同一种简洁循环状态：当前目标和最新纠正、必要历史与有界摘要、授权工具、已获得观察、上一轮机械反馈，以及模型/工具/分类剩余额度。预算是上限而非目标；Harness 不要求输出思维链或完整计划对象。
 
-`WebRequired` 另有一个最小、确定性的起步观察：Host 在首个回答回合前用用户原文执行一次搜索，并抓取最多两个不同候选 URL。它完全复用本循环的 executor、授权、预算、审计、Broker 与 evidence ledger，结果以 Host Observation 注入上下文；它不伪造 assistant 工具调用，也不关闭后续 Web 工具面。`WebPreferred` 和 Direct 没有该动作。
+当前实现对 `WebRequired` 及需要实际检索的 `WebPreferred / VolatileExternalFact` 提供最低起步观察：Host 在首个模型回答回合前用允许外发的用户问题和可信日期搜索，并抓取最多两个不同候选 URL；指定 URL 优先读取。它复用同一 executor、授权、预算、审计、Broker 与 evidence ledger，结果以 Host Observation 注入上下文，不伪造 assistant 工具调用，也不关闭后续工具面。无检索义务的普通 Direct 没有该动作。
+
+2026-09-14 的[修复方案](../docs/superpowers/plans/2026-09-14-agent-correctness-remediation.md)拟让自然问句先在既有模型回合中理解上下文，将 Host 保底移至未满足观察义务的提前终局校验点；这是待实现目标，不能作为当前执行事实。精确预算向模型的现行投影及其正文外露问题也由该方案收敛；内部预算不属于普通用户回答内容。
 
 ## 4. 有界行动批次
 
@@ -87,7 +89,7 @@ Prompt 只提供通用研究行为，不提供电影、天气等领域脚本：
 
 ## 7. Web 候选、正文与本地工具
 
-- 模型工具面只保留两个单一职责网络动作：`web_search { query }` 发现候选，`web_fetch { urls }` 读取已选正文。两者共用同一个 `web.search` 用户授权、network 分类预算、`WebEvidenceBroker`、冻结 Provider 顺序和 evidence ledger，不构成第二套循环。
+- 模型工具面只保留两个单一职责网络动作：`web_search { query }` 发现候选，`web_fetch { urls, startChar? }` 读取已选正文。两者共用同一个 `web.search` 用户授权、network 分类预算、`WebEvidenceBroker`、冻结 Provider 顺序和 evidence ledger，不构成第二套循环。当前字符续读 schema 已存在，但先截断后分页的生产缺陷尚未修复，不能把 `excerptWindow` 字段存在视为续读能力验收。
 - `web_search` 每次最多返回 4 个去重候选，每 Run 最多保留 8 个。候选只提供标题、来源、时间和有界片段，`evidenceIds` 为空；它不再接受 `urls` 重载。
 - `web_fetch` 接受公开 HTTPS URL。只有抓取到 URL 匹配的实质正文才登记 evidence 并获得 `Wn`；搜索片段绝不能在 `run_tool_loop` 中被升级为证据。
 - 一批 URL 部分成功时，观察同时返回成功正文、失败 URL、剩余证据要求和预算，让模型选择换源、补充抓取或基于已取得正文完成；单个抓取失败不直接把整轮降级为限制回答。

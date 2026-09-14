@@ -48,10 +48,11 @@
 在飞计划只描述任务分解与当时的核验记录，**不自行声明完成度**。阶段与版本状态分别以
 [Harness 实施路线](../agent-harness/05-implementation-roadmap.md) 和 [ROADMAP.md](../ROADMAP.md) 为准。
 
-| 文档                                                                                                   | 用途                                      |
-| ------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| [Agent / RAG 可靠性修复计划](./superpowers/plans/2026-08-07-iris-agent-rag-reliability-remediation.md) | 检索与 Agent 可靠性的在飞修复契约与阻断项 |
-| [RSS 订阅资料库实施计划](./superpowers/plans/2026-08-11-rss-subscription-library.md)                   | RSS 资料库的在飞任务分解与发布门禁        |
+| 文档                                                                                                   | 用途                                                    |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| [Agent / RAG 可靠性修复计划](./superpowers/plans/2026-08-07-iris-agent-rag-reliability-remediation.md) | 检索与 Agent 可靠性的在飞修复契约与阻断项               |
+| [Agent 正确性与联网回答质量修复方案](./superpowers/plans/2026-09-14-agent-correctness-remediation.md)  | 2026-09-14 复审后的读取、终态、检索、联网质量与文档修正 |
+| [RSS 订阅资料库实施计划](./superpowers/plans/2026-08-11-rss-subscription-library.md)                   | RSS 资料库的在飞任务分解与发布门禁                      |
 
 ## 归档
 

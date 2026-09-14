@@ -4,7 +4,7 @@
 > **文档类型**：当前事实审计
 > **事实基线**：2026-09-05，审计起点 `70c929ac`
 
-> 本轮施工事实补充至 2026-09-08 工作树；未提交代码不得被当作已部署能力。
+> 事实复核补充至 2026-09-14、`99187cf1`。历史施工记录仅说明当时改动；当前缺陷以本文件「2026-09-14 复审」为准，未实施方案不得被当作已部署能力。
 
 ## 可保留基础
 
@@ -115,111 +115,41 @@
   `clippy --all-targets -D warnings` 能重新发现「连测试都不用」的代码。
 - **文件长度预算进 CI**：新增 `npm run size:check`（`scripts/file-size-budget.mjs`），默认
   2000 行，超限文件进入 `SPLIT_QUEUE` 并按当前规模钉住，只许变短；文件缩回默认以内却不删除
-  条目会让门禁失败。`agent_capacity_eval.rs`（13.4k 行）排队拆分，方案见下。
+  条目会让门禁失败。评测模块已开始按职责拆分，当前模块事实见下方复审记录。
 
-### 外部评审（GPT6）十条的处置（2026-09-13）
+### 2026-09-14 复审：撤回过强的完成声明
 
-逐条核对后的状态。**①–⑧、⑩ 已修并各自带反向验证**（拆掉修复看测试变红），⑨ 属设计取舍：
+复审基线为 `99187cf1`，覆盖 `76afc57e..99187cf1`。本节替代此前“①–⑧、⑩ 已修并各自带反向验证”的结论；局部测试通过不能覆盖生产路径反例。以下修复尚未实施，任务分解和验收条件见[针对性修复方案](../docs/superpowers/plans/2026-09-14-agent-correctness-remediation.md)。
 
-| #   | 事项                            | 状态                                                                             |
-| --- | ------------------------------- | -------------------------------------------------------------------------------- |
-| ①   | 终态限制说明识别失败            | 已修：常量表 + 生产者共用常量 + 类级不变量测试                                   |
-| ②   | 本地载荷盲切破坏 JSON           | 已修：JSON 感知收缩、保留 `nextStartByte`；集成级测试反向验证通过                |
-| ③   | 中文索引/查询不匹配             | 已修：查询侧 `"双字词短语" OR "原样词"`；禁用扩张即复现 0 命中                   |
-| ④   | 片段无答案 + 无相关性排序       | 已修：`bm25()` 排序 + 词项覆盖率选段；反转排序即选中「Introduction」             |
-| ⑤   | 逐页阅读被判无进展              | 已修：身份键纳入范围；去掉范围键即失败                                           |
-| ⑥   | 诊断不外传                      | 已修：回传有界 `retrievalStatus`（layer + 类型化状态），不泄漏自由文本/标识/路径 |
-| ⑦   | 候选先截断后过滤范围            | 已修：路径范围下推进 FTS/元数据 SQL；禁用谓词即复现 `got [outside/note-0..3]`    |
-| ⑧   | 网页正文只取前 2,000 字且无续读 | 已修：`web_fetch` 增开 `startChar`，载荷回传 `excerptWindow`；禁用偏移即失败     |
-| ⑨   | Host 先搜后理解                 | **设计取舍，不按缺陷改**，见下                                                   |
-| ⑩   | 工具轨迹无压缩、超预算即失败    | 已修：最旧大结果替换为有界标记；接线测试反向验证通过                             |
+| 原事项             | 当前状态             | 复审核实的事实                                                                                                 |
+| ------------------ | -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| ① 终态限制说明识别 | 已知缺陷             | 新 Run 仍按正文前缀推断 Host 身份；模型文本可能进入校验豁免及清空证据分支。需要内部类型化终态                  |
+| ② JSON 载荷收缩    | 已知缺陷             | 转义字符和非顶层正文形状仍落入序列化字符串盲切，能产生无效 JSON                                                |
+| ③ 中文查询         | 部分实现，有已知缺陷 | 单个 CJK 查询可命中；OR 未分组使多词查询丢失 AND 约束                                                          |
+| ④ 相关性与选段     | 部分实现，有已知缺陷 | 词项覆盖选段保留；BM25 分数转换反向，现有测试还断言了错误方向                                                  |
+| ⑤ 阅读进展         | 部分实现             | 本地字节范围已进入身份提取；网页字符窗口未形成完整资源/版本/范围身份，不能声称通用续读已验证                   |
+| ⑥ 检索状态         | 部分实现             | 已有有界 `retrievalStatus`；不代表模型内部预算与工具机制不会进入用户正文                                       |
+| ⑦ 范围下推         | 已知缺陷             | LIKE 将路径中的 `_`、`%` 当作通配符，范围外候选可占满 LIMIT 后被删除，造成漏召回                               |
+| ⑧ 网页续读         | 已知缺陷             | `startChar` 已进入 schema，但生产路径先截到 2,000 字再分页；5,000 字页面误报无下一页，偏移 2,000 返回空        |
+| ⑨ Host 起步        | 已实现，质量未校准   | 自然时效与严格检索均可能先取 Host 最低观察；历史依赖问题可能浪费预算和被早期候选影响，设计取舍仍须接受质量检验 |
+| ⑩ 工具观察压缩     | 已知缺陷             | 固定标记把失败变为 `success: true`，紧张预算下最新观察也可被删；没有可恢复正文与失败状态的保证                 |
 
-**⑧ 的实施方案（已定位到具体触点，可直接机械执行）**：本项唯一未完成，原因是它跨
-工具 schema 与两处正文切片，不能在会话尾声仓促改。触点如下——
-① schema：`tool_catalog/web.rs:35` 的 `urls` 项（现为 `{"type":"string","format":"uri"}`）
-增开可选同级整数 `startByte`（整次调用生效，避免改成对象数组而牵动
-`agent_permissions.rs:606` 的域名提取与 `run_tool_loop.rs:1649` 的 URL 校验——两者都只读
-字符串，保持 `urls` 为字符串数组即可不动）；
-② 切片点共两处，必须同时改，否则模型看到的上限仍不一致：`run_tool_loop.rs:3704`
-`bounded_page_evidence`（`excerpt.chars().take(MAX_WEB_EXCERPT_CHARS)`）与
-`web_evidence_broker.rs:230` `web_evidence_items_to_packets_with_excerpt_limit`
-（`WEB_PACKET_EXCERPT_MAX_CHARS` 路径）；
-③ 载荷回传 `excerptStart` / `nextStartByte` / `totalChars`，与 `note.rs` 的读取合同保持
-同一词汇，模型才知道还有后续、并能续读；
-④ 同步更新工具描述（`tool_catalog/web.rs:31`）、`tool_catalog/tests.rs` 的 schema 断言
-（`:67`、`:77`）与 `prompt_contract` 的工具面断言。
-**不要**只调大 `MAX_WEB_EXCERPT_CHARS`——那只是把同一个问题推远。
+网页续读旧方案中的 `startByte`、只改 schema 即完成、MCP 必然命中既有页面缓存等描述撤回。当前输入是 `startChar`；Broker 正文、模型窗口、JSON 收缩、证据登记与进展必须一起修正，具体目标只在施工方案和工具合同中维护。
 
-（原方案记录）：`web_fetch` 现只接受 `urls`，正文经
-`MAX_WEB_EXCERPT_CHARS`（2,000）在 `run_tool_loop.rs` 的取证与载荷两处截断，页面
-后半段永远进不了上下文。要改三处并保持向后兼容：①工具 schema 接受可选的按 URL 起始
-偏移（`urls` 元素保持字符串，或接受 `{url, startByte}` 对象）；②Broker 侧对已缓存页面
-按偏移重新切片（`web_page_cache` 已有缓存，不必二次外发）；③载荷回传
-`excerptStart`/`nextStartByte`/`totalChars`，使模型知道还有后续且能续读。同时更新
-`prompt_contract`/catalog 的 schema 断言与工具描述。**不要**只把上限调大——那只是把
-同一个问题推远。
+#### 与本次生产会话的因果边界
 
-**⑨ 的判断依据**：`bootstrap_required_web_observation`（`run_tool_loop.rs:1815`）按当前
-问句加日期先取一次最低观察，是 INC-HR-009 明确设计（见本文件与 HR 路线中的「最低实际
-观察」条目），不是疏漏。它的已知代价是：依赖历史的追问（如「那今年呢」）会先用预算
-取一批可能无关的材料。可以评估的改进方向是「当请求明显是省略式追问且历史已含足够
-上下文时跳过 bootstrap」，但**必须先有实测发生率**，否则就是用猜测换掉一个有意的
-安全默认。定性上它是取舍，量化前不应与 ①–⑧ 并列成缺陷。
+- 09:41 自然新闻提问：搜索成功返回 4 个候选，抓取约 20 秒超时；模型后续 3 个不在当前工具集合内的提议被拒，恢复耗尽。无法从现有安全记录定位未知工具原名或断言具体协议根因。
+- 09:52 宽泛重试：一次抓取失败，随后一次成功，只登记一个聚合页；模型尚有预算即结束。系统不存在一次只许一个来源的上限，读取聚合页也不等于核实其中每条原报道。
+- 精确预算长期作为 `loopObservation` 进入模型；正文中的“web_fetch 还可三次”把 network 分类额度误解释成单工具额度。超时和预算注入早于本轮重构；没有证据表明政治话题触发特殊限制。
+- 新的分页/压缩/检索缺陷有代码证据；不能据此声称压缩或本地 FTS 导致了这次短新闻会话失败。网站、网络与 Provider 内部耗时仍需按调用阶段继续诊断。
 
-### `agent_capacity_eval.rs` 拆分计划（进行中：3/21）
+#### 验证状态与保留项
 
-该文件 407 个顶层项里只有 147 项是生产代码（约 3.9k 行），其余 260 项、约 9.6k 行是
-`#[cfg(test)]` 支撑代码，真正的测试在 `agent_capacity_eval_tests.rs`。可机械拆成 21 个子模块
-（每个 < 1.6k 行），父文件只留模块文档、`mod` 声明与 `pub(crate) use <child>::{...};` 门面，使
-`crate::ai_runtime::agent_capacity_eval::X` 路径与 `provider_continuation_tests.rs` 的 glob
-导入保持不变。关键约束：约 20 个结构体的私有字段被兄弟模块构造或读取，需要逐个 `pub(super)`；
-生产/测试项在同文件内交错 25 次，必须保留每项自己的 `#[cfg(test)]`。
+复审运行的 Rust 库测试为 1,977 通过、5 忽略，相关前端测试 33 通过；lint、typecheck、docs、size、Rust fmt 通过。全仓 Prettier 的 15 个失败文件不属于本轮变更。源码函数探针和内存 SQLite 查询复现了上述反例，但尚未作为新回归测试提交；这些全绿结果不能用作新修复证明。真实 Campaign 未运行，HR-7 仍为实测未通过。
 
-已完成（`75fc9323`）：`contract.rs`（567 行）、`telemetry.rs`（354 行）、`tool_class.rs`（121 行），
-父文件 13,453 → 12,431 行。机制与三条硬教训：
+失败用户轮次可见、严格提交 fixture 对齐及评测模块拆分有合理依据。当前 `agent_capacity_eval` 已提取 `contract`、`telemetry`、`tool_class`、`verdict` 和测试专用 `test_support`；撤回过期的“3/21”进度、行数及盲替换/回退操作指令。后续拆分只以调用关系、职责与回归为依据，不以拆分文件数作为质量指标。
 
-1. **子模块声明用 `#[path = "agent_capacity_eval/<child>.rs"] mod <child>;`**（与 `skills_impl.rs`
-   同一写法），不要另建 `agent_capacity_eval/mod.rs`。子模块内用 `use super::contract::*;`
-   加上 `std`/`serde` 的显式导入，不要用 `use super::*;`（父文件的 glob 再导出会被判为未使用）。
-2. **可见性只升不降**：原本 `pub(crate)`、被 `agent_capacity_eval_tests.rs` 或其它模块导入的项
-   必须保持 `pub(crate)`，否则 `pub(crate) use` 会报 E0603/E0364；只有仅在同文件树内使用的项才改
-   `pub(super)`。用一个盲替换「先匹配空前缀再匹配 `pub(crate) `」的脚本会把 `pub(crate)` 降级成
-   `pub(super)` —— 必须按 `git show HEAD:<file>` 逐个核对原可见性。
-3. **父文件的再导出清单要由外部消费者反推**，不要整段 glob 或全量复制：只再导出
-   `agent_capacity_eval_tests.rs` 与生产模块真正 `use` 的名字，且仅被测试使用的名字要加
-   `#[cfg(test)]`，否则非测试构建会报未使用导入。**绝不要按行删除 `#[cfg(test)]` 行**——文件里
-   有 267 处 item 级 `#[cfg(test)]`，误删会直接破坏结构（本轮已发生过一次，靠
-   `git checkout -- <file>` 回退重来）。
-
-4. **子模块要显式导入「留在父文件里的类型」**：按簇首/簇尾定位时，簇前的定义（例如
-   `ScenarioLanguage`）不会被一起搬走，子模块必须 `use super::ScenarioLanguage;`。同理，父文件
-   自己要用的 `pub(super)` 辅助函数要写**显式** `use <child>::{a, b, c};`——`use <child>::*;`
-   在本仓库的实测里没有稳定带进这些项。
-5. **不要在 `#[path]`/`mod` 声明前留下游离的 `#[cfg(test)]`**：文件里 267 处 item 级
-   `#[cfg(test)]` 与空行交错，按行删属性极易把模块声明变成「仅测试构建存在」，表现为
-   `unresolved module`。删除属性必须成对匹配到具体的 item。
-
-（本轮 `case_matrix` 簇（819 行）就卡在第 4、5 条上，已回退到上一个全绿提交重来——**拆分期间
-每个子模块都必须停在 `cargo clippy --all-targets -- -D warnings` 全绿**，回退用
-`git checkout -- src-tauri/src/ai_runtime/agent_capacity_eval.rs`。）
-
-剩余 18 个候选：`verdict`(含 quality)、`case_matrix`、`pressure`、`headless`、`scoring`、
-`summary`、`boundary`、`live_capability`、`security`、`report`、`live_preflight`、`live_pilot`、
-`live_result_io`、`live_attestation`、`live_state`、`mcp_contract`、`doubles`。每拆一个都要跑
-`cargo clippy --all-targets -- -D warnings`，并在若干节点跑完整 `cargo test --lib`。
-
-自查确认无问题的两处：
-
-- 引用映射（来源区）由**账本**构建（`finalization.rs:474`），不扫描正文，因此剥离正文链接
-  不会影响来源列表。
-- 取消路径的重复投影不会累积气泡；已补一条回归守卫，并顺手把测试文件的 describe 名改为
-  「terminal turn visibility」，因为它同时覆盖失败与取消两种终态。
-
-**更正二**：曾据行号过滤（`awk '$2<640'`）判定 `apply_required_web_degradation_notice` 在生产中
-零调用。该过滤把 `run_engine/mod.rs` 整个排除在外，结论错误；它是被生产调用的有意空操作接缝，
-不删除。
-
-**更正**：曾据本地库把 4 次失败归因于「`native.fetch` 证据不被 `has_web_evidence()` 承认」。代码不支持该机制——`bounded_page_evidence`（`run_tool_loop.rs:3653`）与 `record_web_evidence_quality`（`:2486`）只要求「非空正文 + HTTPS」，与 provider 无关，且当事运行实据为 2 条证据、2 个不同域名、正文各 2000 字。该相关为伪相关（失败运行恰好都是严格运行），不作为修复依据。
+两项历史误归因继续撤回：`apply_required_web_degradation_notice` 是有生产调用的空操作接缝；native fetch 来源不会仅因 Provider 类型而被拒绝。以上不作为本方案新增修复的依据。
 
 ### 自然时效提问与调用恢复（2026-09-08）
 
@@ -257,7 +187,7 @@
 - 当前 Run 的检索义务（普通时效或严格核实）先在同一 executor、权限、网络预算、审计和 evidence ledger 内完成 Host 最低观察：原用户问题加可信日期搜索，最多两个候选正文抓取；指定 URL 优先读取。观察作为 system data 进入首个模型回合，不伪造 assistant tool-call；模型仍可在同一循环内改写查询、换源或停止。
 - 工具提议在 Host 预检后才成为执行：只有实际 `dispatched` 的调用消耗预算、写审计、进入 assistant/tool transcript 并绑定同 Provider 续轮；纯 rejected/deferred 提议只形成受控反馈，后续模型失败仍可按现有规则切换。
 - Web 发现每次最多返回 4 个候选、每 Run 最多保留 8 个；候选只含有界片段且不写 evidence。模型以当前 Run 候选 URL 发起精确读取、正文抓取成功后才登记为可引用来源。
-- 模型工具面已拆成 `web_search { query }` 与 `web_fetch { urls }` 两个单一职责动作；抓取传入 Broker 的搜索结果额度固定为 0，Broker 仍保留由独立 `max_fetches` 约束的显式 URL，不能在模型未观察结果时暗中重新发现。两者共享现有授权、network 预算、Broker 和冻结 Provider 顺序。普通时效事实以一份合格正文和精确引用为最低门槛；高风险、CitationCheck 或显式交叉核实才要求官方来源或两个独立域名。
+- 模型工具面已拆成 `web_search { query }` 与 `web_fetch { urls, startChar? }` 两个单一职责动作；字符续读的生产路径仍有已知缺陷。抓取传入 Broker 的搜索结果额度固定为 0，Broker 仍保留由独立 `max_fetches` 约束的显式 URL，不能在模型未观察结果时暗中重新发现。两者共享现有授权、network 预算、Broker 和冻结 Provider 顺序。普通时效最低观察不等于答案充分；交叉印证按现有独立域名门槛检查，当前不存在官方来源分类捷径。
 - 2026-09-08 补充回归：发现旧 Broker 无视零搜索额度，在 `web_fetch` 内再次搜索，形成一次读取中的搜索/抓取双向切换。现已在 Broker 执行分支阻断，生产入口同时检查 provider health 证明没有隐式搜索；不只检查外层工具事件。过程区区分搜索与读取的备用提示，候选无该能力不算服务失败。
 - 地域敏感的日常时效问题使用本轮明确范围、当前话题用户已确认范围、中国大陆默认范围的优先级。Host 仅对无上下文、无具体限定的泛问补默认地区；复杂实体、上下文和地域无关事实保留原文，由已有模型循环结合统一范围合同形成后续查询。该合同是产品偏好，不推断用户所在地，也不把海外来源自动认定为大陆事实。
 - MCP fetch 现在独立解析 transport 信封与一层 JSON 应用载荷；错误信封、URL 不匹配、空正文、标题/搜索包装均不登记 evidence。抓取按当前候选来源优先、再按冻结 `web.fetch` 顺序切换；全部失败时以可行动的 fetch 失败观察返回模型。

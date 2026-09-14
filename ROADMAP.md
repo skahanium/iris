@@ -13,6 +13,7 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 在继续 v1.2.19 的界面工作前，优先完成 Agent / RAG 可靠性修复。阶段 0 的冻结基线、已知阻断项和逐项施工契约见 [修复计划](./docs/superpowers/plans/2026-08-07-iris-agent-rag-reliability-remediation.md) 与 [基线记录](./docs/eval/results/v1.2.18-agent-rag-stage0-baseline.json)。此工作不构成新的发布版本承诺；v1.2.19 的新功能交付不应绕过这些门禁。
 
 - 先修复 Markdown chunk/source 元数据、图关系事实源、语义检索可用性和嵌入状态，再扩大 Agent 的上下文、预算或工具能力。
+- 2026-09-14 复审确认的网页续读、工具观察保真、终态身份和检索语义缺陷，按[针对性修复方案](./docs/superpowers/plans/2026-09-14-agent-correctness-remediation.md)优先收敛；自然联网回答须通过现有真实质量门，局部回归不提升 HR-7 状态，不构成新版本承诺。
 - sqlite-vec 目标为全平台默认的本地检索后端；引入或升级所需的 `unsafe` 注册必须满足仓库安全审查规则，且 FTS 是明确可见的降级路径，不得以空结果或 Rust 全表 cosine scan 伪装成功。
 - 修复完成前，发布质量必须同时证明 RAG 质量、范围/引用完整性、稳定 Agent 闭环用例（当前基线 52 case，覆盖四类验证需求）和依赖许可；没有真实证据不得把来源组表述为逐段语义核验。确定性矩阵必须覆盖分类器可达的每个验证类，并由具名门承担；未走到某个类的门不得对该类作出结论。
 
@@ -152,7 +153,7 @@ Wave 1 另已覆盖：语义 token（`--brand`、边框三级、warning/success 
 
 - 联网开关表示授权；Run Envelope 使用 `offline`、`web_preferred`、`web_required` 三级语义，并记录稳定原因码。
 - 本机事实、转换任务和对话元问题直接回答；模糊问题由同一回答模型决定是否调用 `web_search`。
-- 单 provider 的搜索与抓取共享 10 秒预算，瞬态失败最多重试一次；失败产生非终态 `capability_degraded` 事件并在不依赖联网证据的情况下继续生成答复（Host 不约束也不包裹该正文，见 agent-harness/05 的 HR-8 一节）。
+- 本版本当时采用单 provider 搜索/抓取共享 10 秒预算；该历史策略已被替代。当前抓取采用单候选 5 秒、整批 18 秒、外层调用 20 秒的边界，现行行为以[工具合同](./agent-harness/04-adaptive-agent-loop-and-tool-contracts.md)为准。能力降级事件、普通受限回答与严格证据终态按各自合同处理，不能把历史预算当作当前排障依据。
 - 正常会话注入最近 6 条历史、ConversationMemory、PromptProfile、可信本机时间与上一轮脱敏安全摘要。
 - 前端将能力降级显示为对话内轻量状态，红色错误仅用于整轮无法回答的终态故障。
 - 普通域本地引用使用结构化轮次输入：`@` 文件以磁盘一致哈希作为单轮全文引用，`@` 文件夹与 `#` 标签仅限定本地检索范围；输入与历史气泡只显示带位置注解的浅绿色名称。
