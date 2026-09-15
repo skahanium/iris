@@ -97,10 +97,85 @@ export function buildAgentEvalChildEnvironment(source, controls = {}) {
   return environment;
 }
 
+export const EVAL_SUMMARY_SCHEMA_V3 = "agent-eval-summary-v3";
+export const CAPACITY_REPORT_SCHEMA_V3 = "agent-capacity-report-v3";
+
+const BASELINE_IDENTITY_KEYS = [
+  "sourceCommit",
+  "workingTree",
+  "comparable",
+  "release",
+  "scoringSchema",
+  "scenarioSetHash",
+  "fixtureHashes",
+  "os",
+  "arch",
+];
+
+function isHex(value, length) {
+  return (
+    typeof value === "string" &&
+    value.length === length &&
+    /^[0-9a-fA-F]+$/.test(value)
+  );
+}
+
+function closedObjectKeys(value, expectedKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value);
+  return (
+    keys.length === expectedKeys.length &&
+    expectedKeys.every((key) => keys.includes(key))
+  );
+}
+
+function assertClosedBaselineIdentity(identity, invalidCode) {
+  if (!closedObjectKeys(identity, BASELINE_IDENTITY_KEYS)) {
+    throw new Error(invalidCode);
+  }
+  if (
+    !isHex(identity.sourceCommit, 40) ||
+    !isHex(identity.scenarioSetHash, 64) ||
+    typeof identity.release !== "string" ||
+    identity.release.length === 0 ||
+    identity.scoringSchema !== CAPACITY_REPORT_SCHEMA_V3 ||
+    (identity.workingTree !== "clean" && identity.workingTree !== "dirty") ||
+    typeof identity.comparable !== "boolean" ||
+    identity.comparable !== (identity.workingTree === "clean") ||
+    typeof identity.os !== "string" ||
+    identity.os.length === 0 ||
+    typeof identity.arch !== "string" ||
+    identity.arch.length === 0
+  ) {
+    throw new Error(invalidCode);
+  }
+  if (
+    !closedObjectKeys(identity.fixtureHashes, ["agentAnswerV1"]) ||
+    !isHex(identity.fixtureHashes.agentAnswerV1, 64)
+  ) {
+    throw new Error(invalidCode);
+  }
+}
+
+function assertComparableBaseline(identity, notComparableCode) {
+  if (identity.comparable !== true) {
+    throw new Error(notComparableCode);
+  }
+}
+
 export function assertStrictSmokeSummary(summary) {
   if (!summary || typeof summary !== "object") {
     throw new Error("agent_eval_smoke_summary_invalid");
   }
+  if (summary.schemaVersion !== EVAL_SUMMARY_SCHEMA_V3) {
+    throw new Error("agent_eval_smoke_summary_invalid");
+  }
+  assertClosedBaselineIdentity(
+    summary.baselineIdentity,
+    "agent_eval_smoke_summary_invalid",
+  );
   // The smoke slice is one online variant per declared base question, so it
   // grows with the matrix. Pin the floor rather than the size: the slice may
   // grow but must never shrink, and it must stay internally consistent.
@@ -115,15 +190,23 @@ export function assertStrictSmokeSummary(summary) {
   if (summary.passed !== summary.caseCount || summary.failed !== 0) {
     throw new Error("agent_eval_smoke_failed");
   }
+  assertComparableBaseline(
+    summary.baselineIdentity,
+    "agent_eval_smoke_baseline_not_comparable",
+  );
 }
 
 export function assertStrictContractSummary(summary) {
   if (!summary || typeof summary !== "object") {
     throw new Error("agent_eval_contract_summary_invalid");
   }
-  if (summary.schemaVersion !== "agent-eval-summary-v2") {
+  if (summary.schemaVersion !== EVAL_SUMMARY_SCHEMA_V3) {
     throw new Error("agent_eval_contract_summary_invalid");
   }
+  assertClosedBaselineIdentity(
+    summary.baselineIdentity,
+    "agent_eval_contract_summary_invalid",
+  );
   // The core matrix is the declared plan table crossed with Offline/Online, so
   // its size grows whenever a coverage plan is added. Pin the floor rather than
   // the exact size: coverage may grow, but it must never shrink, and every
@@ -149,6 +232,47 @@ export function assertStrictContractSummary(summary) {
   ) {
     throw new Error("agent_eval_contract_failed");
   }
+  assertComparableBaseline(
+    summary.baselineIdentity,
+    "agent_eval_contract_baseline_not_comparable",
+  );
+}
+
+export function assertStrictCapacityReport(report, summary) {
+  if (!report || typeof report !== "object") {
+    throw new Error("agent_eval_contract_summary_invalid");
+  }
+  if (report.schemaVersion !== CAPACITY_REPORT_SCHEMA_V3) {
+    throw new Error("agent_eval_contract_summary_invalid");
+  }
+  assertClosedBaselineIdentity(
+    report.baselineIdentity,
+    "agent_eval_contract_summary_invalid",
+  );
+  if (
+    typeof report.release !== "string" ||
+    report.release !== report.baselineIdentity.release
+  ) {
+    throw new Error("agent_eval_contract_summary_invalid");
+  }
+  if (
+    summary &&
+    report.baselineIdentity.release !== summary.baselineIdentity.release
+  ) {
+    throw new Error("agent_eval_contract_summary_invalid");
+  }
+  assertComparableBaseline(
+    report.baselineIdentity,
+    "agent_eval_contract_baseline_not_comparable",
+  );
+}
+
+export function assertFullContractArtifacts(summary, capacityReport) {
+  assertStrictContractSummary(summary);
+  if (capacityReport == null) {
+    throw new Error("agent_eval_contract_summary_invalid");
+  }
+  assertStrictCapacityReport(capacityReport, summary);
 }
 
 export function hasUnsafeCredentialMetadata(
@@ -836,9 +960,18 @@ function main() {
     "agent-eval",
     mode === "smoke" ? "core-smoke.json" : "core-full.json",
   );
+  const capacityOutput = path.join(
+    workspaceRoot,
+    "target",
+    "agent-eval",
+    "capacity-full.json",
+  );
   // Do not let a failed subprocess be mistaken for a fresh evaluation merely
   // because a report from an earlier run remains on disk.
   rmSync(output, { force: true });
+  if (mode === "full") {
+    rmSync(capacityOutput, { force: true });
+  }
   const result = runCargoEntrypoint(
     "ai_runtime::agent_capacity_eval_tests::deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested",
     { IRIS_AGENT_EVAL_MODE: mode },
@@ -855,7 +988,10 @@ function main() {
       if (mode === "smoke") {
         assertStrictSmokeSummary(summary);
       } else {
-        assertStrictContractSummary(summary);
+        const capacityReport = existsSync(capacityOutput)
+          ? JSON.parse(readFileSync(capacityOutput, "utf8"))
+          : null;
+        assertFullContractArtifacts(summary, capacityReport);
       }
     } catch (error) {
       console.error(

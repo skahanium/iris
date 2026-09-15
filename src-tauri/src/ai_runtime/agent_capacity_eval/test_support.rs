@@ -4391,10 +4391,9 @@ pub(crate) async fn run_headless_core_evaluation(
     mode: EvalRunMode,
     fault: Option<EvalFault>,
 ) -> Result<EvaluationSummary, EvalContractError> {
-    let identity = if std::env::var("IRIS_AGENT_EVAL_MODE").is_ok() {
-        BaselineIdentity::capture_from_git()?
-    } else {
-        BaselineIdentity::for_tests(WorkingTree::Clean)?
+    let identity = match std::env::var("IRIS_AGENT_EVAL_MODE").ok().as_deref() {
+        Some("smoke") | Some("full") => BaselineIdentity::capture_from_git()?,
+        _ => BaselineIdentity::for_tests(WorkingTree::Clean)?,
     };
     run_headless_core_evaluation_with_identity(mode, fault, identity).await
 }
