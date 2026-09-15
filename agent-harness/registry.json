@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 26,
+  "registryRevision": 29,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-15T11:19:15.321Z"
+    "recordedAt": "2026-09-15T16:06:17.446Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -38,7 +38,7 @@
       "refs": [
         "P04"
       ],
-      "fingerprint": "a45501911ed6d19a129333f70fab6750"
+      "fingerprint": "2bb2e0ae8f59d3e7ef2d7e2d32b47d56"
     },
     "SRC-ROADMAP-REPO": {
       "path": "ROADMAP.md",
@@ -54,472 +54,472 @@
     "README.md": {
       "container": "P01",
       "registration": "P01#file",
-      "fingerprint": "c23cf95d20e2c755f184f9f6f1d4a0a4"
+      "fingerprint": "c39b645f05cf0cf50c5c8b9d825acdaa"
     },
     "contracts/K01-request-identity.md": {
       "container": "K01",
       "registration": "K01#file",
-      "fingerprint": "9b133c2ec2e8c663b4b2d94cd10ffdd4"
+      "fingerprint": "f3110043ad995acd8ee9d99dd3a72042"
     },
     "contracts/K02-run-lifecycle.md": {
       "container": "K02",
       "registration": "K02#file",
-      "fingerprint": "ab6eab052fd129c6657f776aa326a0b5"
+      "fingerprint": "58bdfdf79190b1ca413ef0c964c5adf8"
     },
     "contracts/K03-instruction-revision.md": {
       "container": "K03",
       "registration": "K03#file",
-      "fingerprint": "3c61d8b59f813f6628ca8804bb56949d"
+      "fingerprint": "e3ed3cec7a907808d59fb2151c835591"
     },
     "contracts/K04-provider-capability.md": {
       "container": "K04",
       "registration": "K04#file",
-      "fingerprint": "475295e2ad08fc0ce4110ef08dd0b9bb"
+      "fingerprint": "815e79de0fb9d3382a7bdfd171786d36"
     },
     "contracts/K05-authorization-and-confirmation.md": {
       "container": "K05",
       "registration": "K05#file",
-      "fingerprint": "586dbf02c24e8bccc53e793d42587a31"
+      "fingerprint": "0d5be5cb2a0e634c18b4747068944c57"
     },
     "contracts/K06-budget-ledger.md": {
       "container": "K06",
       "registration": "K06#file",
-      "fingerprint": "1dd8d897cd164f2d6cc58826f73c3110"
+      "fingerprint": "a0fabf2ccaf18d3eb16ba7ff0704dfbb"
     },
     "contracts/K07-context-assembly.md": {
       "container": "K07",
       "registration": "K07#file",
-      "fingerprint": "f6cfef1f54f9489c0301e3095d6049be"
+      "fingerprint": "d296d0483e610e2d13deedf8ceac6a3f"
     },
     "contracts/K08-compaction-and-memory.md": {
       "container": "K08",
       "registration": "K08#file",
-      "fingerprint": "4efc098556787703d88a28fe9d6fc067"
+      "fingerprint": "cef96b2a968ed5ace8bf4712d8db7013"
     },
     "contracts/K09-web-authorization.md": {
       "container": "K09",
       "registration": "K09#file",
-      "fingerprint": "d978b4ba137095c1e2216e680f680ac4"
+      "fingerprint": "9c08fce5937d5a940a716abd103dc5d4"
     },
     "contracts/K10-tool-surface.md": {
       "container": "K10",
       "registration": "K10#file",
-      "fingerprint": "765155f242dbfc11d793a364284d8e82"
+      "fingerprint": "c3e2ae8b38f3cffd7283f966ead36d97"
     },
     "contracts/K11-dual-path-search.md": {
       "container": "K11",
       "registration": "K11#file",
-      "fingerprint": "dcf2fa682c95f1b847831e33c7436eb9"
+      "fingerprint": "4fe58a477494503356a81b0035f2f353"
     },
     "contracts/K12-native-search-subrequest.md": {
       "container": "K12",
       "registration": "K12#file",
-      "fingerprint": "596e18a0a3f3747628b0d54a37d22899"
+      "fingerprint": "1fa9b4c3001da66ab818c3e264dc4aa3"
     },
     "contracts/K13-web-reading-window.md": {
       "container": "K13",
       "registration": "K13#file",
-      "fingerprint": "3689896f9880d1e6c1815d71981c8be1"
+      "fingerprint": "5b2939fe3ad58fec5790dd0ee95cef85"
     },
     "contracts/K14-evidence-and-provenance.md": {
       "container": "K14",
       "registration": "K14#file",
-      "fingerprint": "dc7609d64f7e4c59feae4465c542bc22"
+      "fingerprint": "16b858be578d6b1e44b6f838ac0d24ce"
     },
     "contracts/K15-delivery-result.md": {
       "container": "K15",
       "registration": "K15#file",
-      "fingerprint": "bc62ebef4443f500c11a6407e02f86fa"
+      "fingerprint": "f0a471afa73d0088a1bc0b661041dda3"
     },
     "contracts/K16-verification-report.md": {
       "container": "K16",
       "registration": "K16#file",
-      "fingerprint": "e2587b8d5d6f952fcc1c8a0eb052e4cc"
+      "fingerprint": "ad1ce0179286373dbee6193a98876551"
     },
     "contracts/K17-audit-events.md": {
       "container": "K17",
       "registration": "K17#file",
-      "fingerprint": "a75bd282fa0e561fb01adf219af21109"
+      "fingerprint": "a6a5dc7c551bd41b397b489ed614f327"
     },
     "contracts/K18-mcp-transport.md": {
       "container": "K18",
       "registration": "K18#file",
-      "fingerprint": "9b3e3fe62ef2ffc5c10658f19a7e3c4d"
+      "fingerprint": "6bdbf080eff8abd3300244fc27297d8c"
     },
     "contracts/README.md": {
       "container": "README-CONTRACTS",
       "registration": "README-CONTRACTS#file",
-      "fingerprint": "3dea6be6441957fd310ded9c1210f73f"
+      "fingerprint": "1a7861b845db4839d834e98f5731d0d0"
     },
     "decisions/README.md": {
       "container": "FILE-DECISIONS",
       "registration": "FILE-DECISIONS#file",
-      "fingerprint": "e8862cbb4563bc89e9b347535e726bec"
+      "fingerprint": "7d4709239b3b2e13d5647c0e216fec1a"
     },
     "flows/L01-conversation-and-revision.md": {
       "container": "L01",
       "registration": "L01#file",
-      "fingerprint": "741237eca32dc81a8ae4537454da7f80"
+      "fingerprint": "16e25604c13e02d7ec4176b34ab37e73"
     },
     "flows/L02-web-retrieval.md": {
       "container": "L02",
       "registration": "L02#file",
-      "fingerprint": "8bba7228e0e43ea3c1be6f50a9a4658e"
+      "fingerprint": "909023b6284df3cd72530213621091d4"
     },
     "flows/L03-editing-and-application.md": {
       "container": "L03",
       "registration": "L03#file",
-      "fingerprint": "46281429c9e468de3244da750095e6cc"
+      "fingerprint": "8a47eeb79ad8b6f36a9522038a434fc5"
     },
     "flows/L04-format-preservation.md": {
       "container": "L04",
       "registration": "L04#file",
-      "fingerprint": "a5f76f0efe305fd633128beb15233633"
+      "fingerprint": "8a642c50e69f122e460f74634fb80e36"
     },
     "flows/L05-context-and-memory.md": {
       "container": "L05",
       "registration": "L05#file",
-      "fingerprint": "05ae8431fd851b9deb72edde40e3115a"
+      "fingerprint": "e53f979253ffa0436ebbec76a9eebc22"
     },
     "flows/L06-delegation.md": {
       "container": "L06",
       "registration": "L06#file",
-      "fingerprint": "a437c33e7787e48219ecaa591d35ac1a"
+      "fingerprint": "ce4681eaeff183f57a5c6f97dad9e228"
     },
     "flows/README.md": {
       "container": "README-FLOWS",
       "registration": "README-FLOWS#file",
-      "fingerprint": "3dae4938c46cf413cf1d23fbcf6b7ddf"
+      "fingerprint": "763fdb929bdc3b8cd07b779b3ce38b04"
     },
     "implementation/D01-trustworthy-baseline.md": {
       "container": "D01",
       "registration": "D01#file",
-      "fingerprint": "64ffd0e1b2fd25265704f83435356e6c"
+      "fingerprint": "b3209faabf4b611cc56ea6dc0467478d"
     },
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "c575af39b32c12f267abc1c4b1886e79"
+      "fingerprint": "44027aae75d4697b5763e1efcf560c10"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
       "registration": "D03#file",
-      "fingerprint": "1a9e3b1ed748266ae531c6471ced891b"
+      "fingerprint": "9f1faa4555f42f616a248563ffc5b67a"
     },
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "95c3abd423ad343897a89995ecf69715"
+      "fingerprint": "47bedb7441a268072efa4ea0cd0e4fd9"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "bcb1eec66fe043a4da387172d1763069"
+      "fingerprint": "ed130faa373101e37ee926ac5250dbe8"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
       "registration": "FILE-IMPLEMENTATION#file",
-      "fingerprint": "b5366f463f1ba06acfd19f6bab7e77fd"
+      "fingerprint": "c1b431c083eaac925535d843ffd8f909"
     },
     "modules/README.md": {
       "container": "README-MODULES",
       "registration": "README-MODULES#file",
-      "fingerprint": "71f2fcbf9d9ac1a626a8325e10a6011a"
+      "fingerprint": "f737b6922d7d81c7345f631d6ce679f0"
     },
     "modules/eval-system.md": {
       "container": "FILE-EVAL-SYSTEM",
       "registration": "FILE-EVAL-SYSTEM#file",
-      "fingerprint": "43c279ee8147f54d9f5ce636eeef9267"
+      "fingerprint": "351913ecad71bd956172f32cdea2d1e5"
     },
     "modules/m01-session-and-run.md": {
       "container": "M01",
       "registration": "M01#file",
-      "fingerprint": "5a64c2adba7617ea0b10c693566a81ff"
+      "fingerprint": "86a42d66926dad2fdf89f2b0660ea529"
     },
     "modules/m02-permission-and-side-effects.md": {
       "container": "M02",
       "registration": "M02#file",
-      "fingerprint": "2c91d0526ad1158d371b37261833850c"
+      "fingerprint": "d63244fc4885dfbb46e6c467b5205155"
     },
     "modules/m03-context-and-memory.md": {
       "container": "M03",
       "registration": "M03#file",
-      "fingerprint": "003bbfe2c953c1b5ad2b5648e485c292"
+      "fingerprint": "753a126df5dcfc75e4c13fb07d87636e"
     },
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04#file",
-      "fingerprint": "f8a0262b689e89fda64f6c73cbf25c58"
+      "fingerprint": "581e7283b22084fe23be8ccb02690f46"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05#file",
-      "fingerprint": "84ebe61102585daf696b73f3b8a4c901"
+      "fingerprint": "a6d97dd479a27d89c68190b3ec355597"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
       "registration": "M06#file",
-      "fingerprint": "492358361eb4d7b22fbecf051a980d54"
+      "fingerprint": "cc6f5cfb575d30aae58c6c05356aee61"
     },
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
       "registration": "M07#file",
-      "fingerprint": "727a127cbfbdd083117e865cf5f02057"
+      "fingerprint": "dd2bf149e6e87ad32eef5273be999945"
     },
     "modules/m08-verification-and-delivery.md": {
       "container": "M08",
       "registration": "M08#file",
-      "fingerprint": "89b0d203979686d7a973829dfc056d16"
+      "fingerprint": "ecc6abd514a5e9ece56583b2e04721ca"
     },
     "modules/m09-audit-and-diagnostics.md": {
       "container": "M09",
       "registration": "M09#file",
-      "fingerprint": "b5c31e0e83478ac35f16fcd4e5a779b9"
+      "fingerprint": "8436ea4435984c6f3376258678e68ec7"
     },
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "44924c632306cafa27401470c9e13217"
+      "fingerprint": "95bc854ed9210657c6aa92063ae82ac0"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
       "registration": "P04#file",
-      "fingerprint": "c56e438075c706f33f3e0c5f831cc093"
+      "fingerprint": "cbd097b4ee83ef633e312732fd820fb3"
     },
     "requirements/open-items.md": {
       "container": "P05",
       "registration": "P05#file",
-      "fingerprint": "b8cc54b27f6c1a760daaf2cbf621c178"
+      "fingerprint": "e3ed45ddd0603ed7ad9ec9a3f431f02d"
     },
     "requirements/requirements.md": {
       "container": "P06",
       "registration": "P06#file",
-      "fingerprint": "d817c7278f3406327ebd6a2e7f6f2eb9"
+      "fingerprint": "5a4c415578278cf8afb5cdf5de9170a5"
     },
     "rules/governance.md": {
       "container": "P03",
       "registration": "P03#file",
-      "fingerprint": "a3b11b2f0b6d4eb51c6cbc24bf79f220"
+      "fingerprint": "3bf3e8306589f4dc09ff76f424be34de"
     },
     "rules/objects.md": {
       "container": "P02",
       "registration": "P02#file",
-      "fingerprint": "46aa1aa502de68a9d88b137f14cecbf8"
+      "fingerprint": "10e7b35fd9a963abdfa2808a98359336"
     },
     "testing/acceptance-matrix.md": {
       "container": "V03",
       "registration": "V03#file",
-      "fingerprint": "6bc71569647e814da0d0a101b3b5d392"
+      "fingerprint": "7b2cdf2cfcef95872991134521855846"
     },
     "testing/evidence.md": {
       "container": "V01",
       "registration": "V01#file",
-      "fingerprint": "b06cfe85745fc25b2a589da72f508da0"
+      "fingerprint": "4908958cac5eeb37cc7e95060ea0f7a1"
     },
     "tests/legacy-batch-plan.md": {
       "container": "D06",
       "registration": "D06#file",
-      "fingerprint": "c002f3d64923a5d117c745f308893898"
+      "fingerprint": "bf524b8a014264b0443479688056ee50"
     },
     "tools/README.md": {
       "container": "README-TOOLS",
       "registration": "README-TOOLS#file",
-      "fingerprint": "b0280b9eb3585167d1fd8d2c6d1776c5"
+      "fingerprint": "1a19de58a33b5a657ef3abad1d2d8316"
     },
     "tools/app_context_read.md": {
       "container": "T02",
       "registration": "T02#file",
-      "fingerprint": "4fd3e84222eb24d0d915a1555fd9d466"
+      "fingerprint": "7457c35ec630204519ae5ee6d7a4a29e"
     },
     "tools/capabilities_read.md": {
       "container": "T03",
       "registration": "T03#file",
-      "fingerprint": "377e343d2abe2ec9504a42e3327b4176"
+      "fingerprint": "699a9b821bcef21cbe904cf4e0313d84"
     },
     "tools/doc_extract_citations.md": {
       "container": "T26",
       "registration": "T26#file",
-      "fingerprint": "04b3025dcfb59d48a963e72318d46267"
+      "fingerprint": "16f686fd8fadb6af7787cf96b79ca1cc"
     },
     "tools/doc_normalize_markdown.md": {
       "container": "T25",
       "registration": "T25#file",
-      "fingerprint": "32cfa73b5010ec73001c118809f79290"
+      "fingerprint": "9b9f3c08604f396dc155bb03e03b1f9a"
     },
     "tools/fs_export.md": {
       "container": "T22",
       "registration": "T22#file",
-      "fingerprint": "82ccc7494e9bb94a07f8562678a9cc49"
+      "fingerprint": "daad6c3b497acd1d969e952fd4479602"
     },
     "tools/fs_import_to_vault.md": {
       "container": "T21",
       "registration": "T21#file",
-      "fingerprint": "682ffab51b8815c263a71a9c86c7b3ad"
+      "fingerprint": "739e6f23c5cc85643ebf46381d900c0b"
     },
     "tools/fs_read_authorized_folder.md": {
       "container": "T23",
       "registration": "T23#file",
-      "fingerprint": "6422e862b1b0c708ea91e5810c61d9c1"
+      "fingerprint": "9ecf015c4e7934770e1fab5ef2d6b62f"
     },
     "tools/fs_write_authorized_export.md": {
       "container": "T24",
       "registration": "T24#file",
-      "fingerprint": "9bd44e34e6cc543c30ae444e904c0948"
+      "fingerprint": "7323de35ff8b9909a27154092c53c7e4"
     },
     "tools/get_backlinks.md": {
       "container": "T09",
       "registration": "T09#file",
-      "fingerprint": "524d770b7f6ca72ec5367bcf5528a842"
+      "fingerprint": "ac1e03bf642fc78673d20bf444a46fd7"
     },
     "tools/get_context_packets.md": {
       "container": "T10",
       "registration": "T10#file",
-      "fingerprint": "ed73653eaa1f3b50cdadd1754fa56b47"
+      "fingerprint": "29331e78d3a56087c30e4638d0b05798"
     },
     "tools/get_outline.md": {
       "container": "T08",
       "registration": "T08#file",
-      "fingerprint": "09131bd433bb59168081c7506cb1853e"
+      "fingerprint": "cfa8d8b5c9f2d41555f80cb9e3ebbae8"
     },
     "tools/get_regulation.md": {
       "container": "T30",
       "registration": "T30#file",
-      "fingerprint": "aed6b1504ad4ccd899abdbf21cc9afd3"
+      "fingerprint": "2368d13e0db23f5d6fd3e1d03529cc4e"
     },
     "tools/git_read_diff.md": {
       "container": "T18",
       "registration": "T18#file",
-      "fingerprint": "7fa7a72e39dc579214222bfad3849176"
+      "fingerprint": "aa66d1809266b0cd05f2ac000b9c06a5"
     },
     "tools/git_read_log.md": {
       "container": "T19",
       "registration": "T19#file",
-      "fingerprint": "28c820c530f3c08038a3f6676037ab30"
+      "fingerprint": "183bd6cd131ad52746f57e593fde428a"
     },
     "tools/git_read_status.md": {
       "container": "T17",
       "registration": "T17#file",
-      "fingerprint": "3fe23fa13c9c9eb5c83ee799e77700cb"
+      "fingerprint": "f309db74501fd9f8d422c578b3dfa489"
     },
     "tools/git_write_commit.md": {
       "container": "T27",
       "registration": "T27#file",
-      "fingerprint": "3f35fb50ed599fda5b99987b5922c24f"
+      "fingerprint": "588dc19ea1bd92b6d0f34ea934d0de08"
     },
     "tools/insert_text_at_cursor.md": {
       "container": "T15",
       "registration": "T15#file",
-      "fingerprint": "6588407ea5f7c9a5b37b908f8e87d6ae"
+      "fingerprint": "81e92953209f0ee60c15a0d4bc71b1e1"
     },
     "tools/list_vault.md": {
       "container": "T07",
       "registration": "T07#file",
-      "fingerprint": "3097d107679e67651bd918e843f2f0a0"
+      "fingerprint": "5d45e945c0eeab7adeca8bd91fdd4214"
     },
     "tools/memory_read.md": {
       "container": "T13",
       "registration": "T13#file",
-      "fingerprint": "afd9328c8295e5a1bfc2e2e740a11d8e"
+      "fingerprint": "9e21b0d72c7bb351829da7e2aa5544df"
     },
     "tools/memory_write.md": {
       "container": "T14",
       "registration": "T14#file",
-      "fingerprint": "f88590475de1dd1899a115fe5de012aa"
+      "fingerprint": "607f200d5e2c196145032b669601746d"
     },
     "tools/read_note.md": {
       "container": "T06",
       "registration": "T06#file",
-      "fingerprint": "e03139a7e32b497f6a2b4ed833f3070d"
+      "fingerprint": "6ebf1c527efa54f4b44203f288dbced8"
     },
     "tools/replace_selection.md": {
       "container": "T16",
       "registration": "T16#file",
-      "fingerprint": "56084ecc6f4a14c1ba1cd58662d815ae"
+      "fingerprint": "4018d420edc849ae406bcf1f93921e46"
     },
     "tools/scheduled_task_create.md": {
       "container": "T32",
       "registration": "T32#file",
-      "fingerprint": "f00e9aedaef9d2f28d53edc51f32f606"
+      "fingerprint": "c6d94b4a3880a9f6583941f6f78168f5"
     },
     "tools/scheduled_task_delete.md": {
       "container": "T34",
       "registration": "T34#file",
-      "fingerprint": "913bf070d379a0787e578f3ed1d6be06"
+      "fingerprint": "7c8d4f17ecfb10efbad9e7ddc0cd06f1"
     },
     "tools/scheduled_task_list.md": {
       "container": "T33",
       "registration": "T33#file",
-      "fingerprint": "d54bdea43ac91cc9d8aba99cb37b08dd"
+      "fingerprint": "82895f20b17b39267876c24ac39202d3"
     },
     "tools/search_hybrid.md": {
       "container": "T05",
       "registration": "T05#file",
-      "fingerprint": "89b0e6a580eb62aed49b593794f2d4e7"
+      "fingerprint": "a2cd9d17f3e294791f4f50d4d0eb665c"
     },
     "tools/search_keyword.md": {
       "container": "T29",
       "registration": "T29#file",
-      "fingerprint": "f00139781eb2e99e765add815d033d64"
+      "fingerprint": "32bb70bf044f29f13a89a15beead1630"
     },
     "tools/search_semantic.md": {
       "container": "T28",
       "registration": "T28#file",
-      "fingerprint": "5d91b7d4738b85e338232fbd2dd75bc7"
+      "fingerprint": "5f860fc38da502504f78aa9afc7c8de0"
     },
     "tools/secret_exists.md": {
       "container": "T20",
       "registration": "T20#file",
-      "fingerprint": "178b58103656eaa9cb348f889eb7fde7"
+      "fingerprint": "70d1ed9fa09e7a91e50e6c8400356e1e"
     },
     "tools/skills_list.md": {
       "container": "T04",
       "registration": "T04#file",
-      "fingerprint": "fa7a6e482dd4d316793e75d4932e875c"
+      "fingerprint": "880a79f16ccca38b1a3665189f747371"
     },
     "tools/spawn_subagent.md": {
       "container": "T31",
       "registration": "T31#file",
-      "fingerprint": "859c4b9f3499fa92279e432113192239"
+      "fingerprint": "0c6177a011a7d7a635950a68a6e67b3e"
     },
     "tools/system_time_now.md": {
       "container": "T01",
       "registration": "T01#file",
-      "fingerprint": "8fedd563fffbe633fca4056cda540723"
+      "fingerprint": "ec564b24872c0b13ee14e38491645ada"
     },
     "tools/vault_asset_write.md": {
       "container": "T38",
       "registration": "T38#file",
-      "fingerprint": "fda18f0709e198ef83651a0b6610bacb"
+      "fingerprint": "61b290c299300785e92e6419d96b148d"
     },
     "tools/vault_create_note.md": {
       "container": "T35",
       "registration": "T35#file",
-      "fingerprint": "eb48efce0ed52ef6b2c284b0d68b4681"
+      "fingerprint": "2fdac5d243bd2f7d4fe61c85aa97172c"
     },
     "tools/vault_delete_to_trash.md": {
       "container": "T37",
       "registration": "T37#file",
-      "fingerprint": "18d0e60afab654fe77aad56ac779cf68"
+      "fingerprint": "03681892cde2c35991c21c5a3fde08fe"
     },
     "tools/vault_rename_move.md": {
       "container": "T36",
       "registration": "T36#file",
-      "fingerprint": "bea15b3a979ccdf23e702dcb7de85150"
+      "fingerprint": "b3c119d75c25d679a7be63a0c00d2ed2"
     },
     "tools/vault_version_list.md": {
       "container": "T39",
       "registration": "T39#file",
-      "fingerprint": "14c6dc7c9b589fb4794f72953635bf1b"
+      "fingerprint": "47e24da343a82b6009834a2490bdce0d"
     },
     "tools/web_fetch.md": {
       "container": "T12",
       "registration": "T12#file",
-      "fingerprint": "6f9ddf761b02e02e20467169cf234c61"
+      "fingerprint": "d8291b506d9b5d9ab6e895d09e519091"
     },
     "tools/web_search.md": {
       "container": "T11",
       "registration": "T11#file",
-      "fingerprint": "c0e11a308115b6d64c35e5b0fdcf7f0b"
+      "fingerprint": "3cecf54116f487584c464de10811711a"
     }
   },
   "objects": {
@@ -1332,16 +1332,16 @@
       "title": "C26 安全边界事件",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "modules/m09-audit-and-diagnostics.md",
         "anchor": "C26",
         "line": 157,
         "endLine": 197,
-        "fingerprint": "d5e50095a5bce274340e96a5017210e3"
+        "fingerprint": "48e1a8c40e3430e47b34ba3b69fcfce8"
       },
       "implementation": {
-        "state": "partial"
+        "state": "present"
       },
       "verification": {
         "state": "none"
@@ -1361,16 +1361,16 @@
       "title": "C27 诊断查询与解释",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/m09-audit-and-diagnostics.md",
         "anchor": "C27",
         "line": 199,
         "endLine": 239,
-        "fingerprint": "edbd50bbae9b655614595564e77ed773"
+        "fingerprint": "4384d82dd344640c3634247994e0c3c8"
       },
       "implementation": {
-        "state": "partial"
+        "state": "present"
       },
       "verification": {
         "state": "none"
@@ -1408,7 +1408,7 @@
         "state": "none"
       },
       "work": {
-        "state": "planned"
+        "state": "done"
       },
       "scope": [
         "N01",
@@ -1956,13 +1956,13 @@
       "title": "出站结构诊断与完整关联",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G04",
         "line": 52,
-        "endLine": 62,
-        "fingerprint": "1362e6e5d66985ada9877add1a564e1b"
+        "endLine": 63,
+        "fingerprint": "e266f35bd09c892a8a8d8df299b9ae62"
       },
       "implementation": {
         "state": "unknown"
@@ -1992,8 +1992,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G05",
-        "line": 64,
-        "endLine": 74,
+        "line": 65,
+        "endLine": 75,
         "fingerprint": "554d41dc4e13f6eed48903dae3ad6b37"
       },
       "implementation": {
@@ -2530,13 +2530,13 @@
       "title": "K17 审计事件与诊断查询",
       "owner": "C26",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "contracts/K17-audit-events.md",
         "anchor": "K17",
         "line": 13,
         "endLine": 113,
-        "fingerprint": "5e280676ea208fd3b365b34a49255789"
+        "fingerprint": "58cb397b479a7b308169c750616a1574"
       },
       "implementation": {
         "state": "unknown"
@@ -2595,13 +2595,13 @@
       "title": "L01 对话与修订链路",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "flows/L01-conversation-and-revision.md",
         "anchor": "L01",
         "line": 11,
         "endLine": 100,
-        "fingerprint": "5dd146b8554224e3e1c4ec1ed7dbb5d7"
+        "fingerprint": "49e5e1a27960d31871254bb6e379f638"
       },
       "implementation": {
         "state": "unknown"
@@ -3627,7 +3627,7 @@
       "name": "harness-entry",
       "title": "Agent Harness 文档体系入口",
       "owner": "P01",
-      "maturity": "draft",
+      "maturity": "defined",
       "revision": 11,
       "definition": {
         "file": "README.md",
@@ -3707,8 +3707,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 256,
-        "endLine": 269,
+        "line": 261,
+        "endLine": 274,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": {
@@ -3736,8 +3736,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "P05",
-        "line": 76,
-        "endLine": 90,
+        "line": 77,
+        "endLine": 91,
         "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
       "implementation": {
@@ -3812,13 +3812,13 @@
       "title": "历史未知工具提议的唯一根因未确定",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q01",
         "line": 46,
-        "endLine": 55,
-        "fingerprint": "c513f04cc32abf93e9d669b9724921fa"
+        "endLine": 56,
+        "fingerprint": "744d610614d0de3716dcb1496066b8c6"
       },
       "implementation": {
         "state": "unknown"
@@ -3852,8 +3852,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q02",
-        "line": 57,
-        "endLine": 66,
+        "line": 58,
+        "endLine": 67,
         "fingerprint": "f1c5075a0bc8bca566f28b5a4ae91414"
       },
       "implementation": {
@@ -3888,8 +3888,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q03",
-        "line": 68,
-        "endLine": 78,
+        "line": 69,
+        "endLine": 79,
         "fingerprint": "4529e0f687301d751d596d8c204e647f"
       },
       "implementation": {
@@ -3924,8 +3924,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q04",
-        "line": 80,
-        "endLine": 89,
+        "line": 81,
+        "endLine": 90,
         "fingerprint": "6fb3315525dddd0766de0c9e64067958"
       },
       "implementation": {
@@ -3956,8 +3956,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q05",
-        "line": 91,
-        "endLine": 100,
+        "line": 92,
+        "endLine": 101,
         "fingerprint": "a5da417706fc9b514dab65dbcc0a8223"
       },
       "implementation": {
@@ -3988,8 +3988,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q06",
-        "line": 102,
-        "endLine": 111,
+        "line": 103,
+        "endLine": 112,
         "fingerprint": "cc701424e395c94c887aab555656a2f8"
       },
       "implementation": {
@@ -4020,8 +4020,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q07",
-        "line": 113,
-        "endLine": 122,
+        "line": 114,
+        "endLine": 123,
         "fingerprint": "b5520ca814a1c858c44ab7cde7906f9b"
       },
       "implementation": {
@@ -4052,8 +4052,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q08",
-        "line": 124,
-        "endLine": 133,
+        "line": 125,
+        "endLine": 134,
         "fingerprint": "96cd6a36e82f49c1cd20d656df887851"
       },
       "implementation": {
@@ -4080,13 +4080,13 @@
       "title": "诊断关联不完整",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q09",
-        "line": 135,
-        "endLine": 144,
-        "fingerprint": "6704c93678519facb35d5d8348a3794f"
+        "line": 136,
+        "endLine": 146,
+        "fingerprint": "9d25a63f3fe8285bff6462ef33cb42d5"
       },
       "implementation": {
         "state": "unknown"
@@ -4116,8 +4116,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q10",
-        "line": 146,
-        "endLine": 155,
+        "line": 148,
+        "endLine": 157,
         "fingerprint": "b7509a7f335ff8a10a09baa4b7257c7c"
       },
       "implementation": {
@@ -4144,13 +4144,13 @@
       "title": "部分确定性测试与实现共享同一错误假设",
       "owner": "E03",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q11",
-        "line": 157,
-        "endLine": 166,
-        "fingerprint": "76f601fcae343c394fc2059f7721f81b"
+        "line": 159,
+        "endLine": 169,
+        "fingerprint": "a29a814ce8718467ddb68e0a0584ed1b"
       },
       "implementation": {
         "state": "unknown"
@@ -4180,13 +4180,13 @@
       "title": "历史诊断不足以区分工具名来源",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q12",
-        "line": 168,
-        "endLine": 177,
-        "fingerprint": "f94ce35a946871fd3b442d2961c96f32"
+        "line": 171,
+        "endLine": 181,
+        "fingerprint": "1fd09ca6c8ef12588e6d7926d8e470fa"
       },
       "implementation": {
         "state": "unknown"
@@ -4216,8 +4216,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
-        "line": 179,
-        "endLine": 188,
+        "line": 183,
+        "endLine": 192,
         "fingerprint": "d616c25c613e433cce26324da8e6c1f4"
       },
       "implementation": {
@@ -4248,8 +4248,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
-        "line": 190,
-        "endLine": 199,
+        "line": 194,
+        "endLine": 203,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": {
@@ -4280,8 +4280,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 201,
-        "endLine": 210,
+        "line": 205,
+        "endLine": 214,
         "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
       "implementation": {
@@ -4312,8 +4312,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 212,
-        "endLine": 221,
+        "line": 216,
+        "endLine": 225,
         "fingerprint": "44e2c0b7263f747b8836de0478fa8f7c"
       },
       "implementation": {
@@ -4344,8 +4344,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 223,
-        "endLine": 232,
+        "line": 227,
+        "endLine": 236,
         "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
       "implementation": {
@@ -4372,13 +4372,13 @@
       "title": "缺少出站请求的安全结构证据",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 234,
-        "endLine": 243,
-        "fingerprint": "c9e840cad7fd78e678dac515b8c58f4a"
+        "line": 238,
+        "endLine": 248,
+        "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": {
         "state": "unknown"
@@ -4408,8 +4408,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 245,
-        "endLine": 254,
+        "line": 250,
+        "endLine": 259,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": {
@@ -5949,13 +5949,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 16,
+      "revision": 17,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 79,
-        "fingerprint": "ba5764e435210f60396413cfaf87d879"
+        "endLine": 80,
+        "fingerprint": "7d2817dfe119391fd501365c599358c1"
       },
       "implementation": {
         "state": "unknown"
@@ -6074,13 +6074,13 @@
       "title": "V07 界面交互与诊断可定位性证据",
       "owner": "M09",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "testing/acceptance-matrix.md",
         "anchor": "V07",
         "line": 111,
         "endLine": 134,
-        "fingerprint": "9f49124ef22595bb954575f52d239d30"
+        "fingerprint": "7ee436d9210c6e024c6b8a2238b74d76"
       },
       "implementation": {
         "state": "unknown"
@@ -6103,8 +6103,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 81,
-        "endLine": 103,
+        "line": 82,
+        "endLine": 104,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": {
@@ -6279,22 +6279,66 @@
       "kind": "V03",
       "testPath": "src-tauri/src/ai_runtime/boundary_events.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib boundary_events",
-      "environment": "local / Windows 10 / cargo test",
-      "fingerprint": "d5e50095a5bce274340e96a5017210e3",
-      "at": "2026-09-15T11:40:00Z",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "48e1a8c40e3430e47b34ba3b69fcfce8",
+      "at": "2026-09-15T15:47:14Z",
       "applicability": "current",
-      "note": "registryRevision 26：机械负例覆盖出站见证不含正文或密钥、缺握手结束不得成功、已知取消不得标 missing_end、循环恢复事件不被挤掉、四层记录可分。不证明 C27 视图或 V07 演练，也不把 C26/D01/G04 verification 标为通过。"
+      "note": "registryRevision 27：机械负例覆盖出站见证不含正文或密钥、缺握手结束不得成功、已知取消不得标 missing_end、循环恢复事件不被挤掉、四层记录可分。不把 C26 verification 标为通过。"
     },
     {
       "object": "V02",
       "kind": "V03",
       "testPath": "src-tauri/src/ai_runtime/boundary_events.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib known_abort_is_recorded_complete_not_missing_end",
-      "environment": "local / Windows 10 / cargo test",
-      "fingerprint": "ba5764e435210f60396413cfaf87d879",
-      "at": "2026-09-15T11:40:00Z",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "7d2817dfe119391fd501365c599358c1",
+      "at": "2026-09-15T15:47:14Z",
       "applicability": "current",
-      "note": "registryRevision 26：为 C26 四条不变量补了对应测试名。不把 V02 verification 标为通过。"
+      "note": "registryRevision 27：V02 表补 V07 八类故障投影测试名。不把 V02 verification 标为通过。"
+    },
+    {
+      "object": "C27",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/diagnostic_query.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostic_query",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "4384d82dd344640c3634247994e0c3c8",
+      "at": "2026-09-15T15:47:14Z",
+      "applicability": "current",
+      "note": "registryRevision 27：C27 查询合同覆盖八类故障解释、缺 hop 不得归因、查询失败不得空成功。不把 C27 verification 标为通过。"
+    },
+    {
+      "object": "C27",
+      "kind": "V07",
+      "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
+      "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
+      "environment": "local / macOS / vitest",
+      "fingerprint": "4384d82dd344640c3634247994e0c3c8",
+      "at": "2026-09-15T15:47:14Z",
+      "applicability": "current",
+      "note": "registryRevision 27：V07 八类故障界面投影：定位对象、错误分类、归因、恢复与影响、关联路径、敏感信息隔离。不证明完整诊断工作台。"
+    },
+    {
+      "object": "V07",
+      "kind": "V07",
+      "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
+      "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
+      "environment": "local / macOS / vitest",
+      "fingerprint": "7ee436d9210c6e024c6b8a2238b74d76",
+      "at": "2026-09-15T15:47:14Z",
+      "applicability": "current",
+      "note": "registryRevision 27：D01 最小诊断的 V07 八类故障投影已运行。不把付费实网或语义质量标为通过。"
+    },
+    {
+      "object": "D01",
+      "kind": "V07",
+      "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
+      "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx && cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostic_query -- --test-threads=1 && cargo test --manifest-path src-tauri/Cargo.toml --lib headless_smoke_summary_exposes_only_the_closed_contract -- --test-threads=1",
+      "environment": "local / macOS / vitest + cargo test",
+      "fingerprint": "44ad7c11457beef2f48b762dad178874",
+      "at": "2026-09-15T15:47:14Z",
+      "applicability": "current",
+      "note": "registryRevision 27：D01 最小诊断可定位性与 v3 机械评测口径已有绑定证据。不把 D01 verification 标为语义或 live 通过。"
     }
   ],
   "changes": [
@@ -18232,6 +18276,100 @@
           "fingerprintTo": "ba5764e435210f60396413cfaf87d879"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-15-19",
+      "at": "2026-09-15T15:47:14.011Z",
+      "author": "skahanium",
+      "classification": "refinement",
+      "reason": "D01 最小诊断与评测口径落地：绑定 C27/V07 证据并关闭阻断验收的问题",
+      "review": null,
+      "objects": [
+        {
+          "id": "C26",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "d5e50095a5bce274340e96a5017210e3",
+          "fingerprintTo": "48e1a8c40e3430e47b34ba3b69fcfce8"
+        },
+        {
+          "id": "C27",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "edbd50bbae9b655614595564e77ed773",
+          "fingerprintTo": "4384d82dd344640c3634247994e0c3c8"
+        },
+        {
+          "id": "K17",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "5e280676ea208fd3b365b34a49255789",
+          "fingerprintTo": "58cb397b479a7b308169c750616a1574"
+        },
+        {
+          "id": "L01",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "5dd146b8554224e3e1c4ec1ed7dbb5d7",
+          "fingerprintTo": "49e5e1a27960d31871254bb6e379f638"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 16,
+          "revisionTo": 17,
+          "fingerprintFrom": "ba5764e435210f60396413cfaf87d879",
+          "fingerprintTo": "7d2817dfe119391fd501365c599358c1"
+        },
+        {
+          "id": "V07",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "9f49124ef22595bb954575f52d239d30",
+          "fingerprintTo": "7ee436d9210c6e024c6b8a2238b74d76"
+        },
+        {
+          "id": "Q01",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "c513f04cc32abf93e9d669b9724921fa",
+          "fingerprintTo": "744d610614d0de3716dcb1496066b8c6"
+        },
+        {
+          "id": "Q09",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "6704c93678519facb35d5d8348a3794f",
+          "fingerprintTo": "9d25a63f3fe8285bff6462ef33cb42d5"
+        },
+        {
+          "id": "Q11",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "76f601fcae343c394fc2059f7721f81b",
+          "fingerprintTo": "a29a814ce8718467ddb68e0a0584ed1b"
+        },
+        {
+          "id": "Q12",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "f94ce35a946871fd3b442d2961c96f32",
+          "fingerprintTo": "1fd09ca6c8ef12588e6d7926d8e470fa"
+        },
+        {
+          "id": "Q18",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "c9e840cad7fd78e678dac515b8c58f4a",
+          "fingerprintTo": "3f810ccc1d3b4c03fc1d3257e60816a0"
+        },
+        {
+          "id": "G04",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "1362e6e5d66985ada9877add1a564e1b",
+          "fingerprintTo": "e266f35bd09c892a8a8d8df299b9ae62"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18276,7 +18414,7 @@
   ],
   "issues": {
     "Q01": {
-      "state": "open"
+      "state": "closed"
     },
     "Q02": {
       "state": "open"
@@ -18300,16 +18438,16 @@
       "state": "open"
     },
     "Q09": {
-      "state": "open"
+      "state": "closed"
     },
     "Q10": {
       "state": "open"
     },
     "Q11": {
-      "state": "open"
+      "state": "closed"
     },
     "Q12": {
-      "state": "open"
+      "state": "closed"
     },
     "Q13": {
       "state": "open"
@@ -18327,7 +18465,7 @@
       "state": "open"
     },
     "Q18": {
-      "state": "open"
+      "state": "closed"
     },
     "Q19": {
       "state": "open"
@@ -18342,7 +18480,7 @@
       "state": "open"
     },
     "G04": {
-      "state": "open"
+      "state": "closed"
     },
     "G05": {
       "state": "open"

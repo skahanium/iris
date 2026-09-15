@@ -2798,6 +2798,26 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
     assert_eq!(value["schemaVersion"], "agent-eval-summary-v3");
     let expected_cases = u64::try_from(report_gate_plan_count()).expect("smoke slice fits u64");
     assert_eq!(value["evidenceLevel"], "headless_deterministic");
+    assert!(
+        !serialized.contains("\"semanticStatus\":\"passed\""),
+        "mechanical smoke must not promote semantic quality to passed"
+    );
+    assert!(
+        !serialized.contains("live_quality_gate_passed"),
+        "mechanical smoke must not claim live quality"
+    );
+    let mut promoted_semantic = value.clone();
+    promoted_semantic["semanticStatus"] = serde_json::json!("passed");
+    validate_serialized_evaluation_summary(
+        &serde_json::to_string(&promoted_semantic).expect("promoted semantic json"),
+    )
+    .expect_err("mechanical summary must reject semanticStatus=passed");
+    let mut live_gate = value.clone();
+    live_gate["liveQualityGatePassed"] = serde_json::json!(true);
+    validate_serialized_evaluation_summary(
+        &serde_json::to_string(&live_gate).expect("live gate json"),
+    )
+    .expect_err("mechanical summary must reject a live quality gate field");
     assert_eq!(value["caseCount"], expected_cases);
     assert_eq!(value["executedCaseCount"], expected_cases);
     assert_eq!(value["completedCaseCount"], expected_cases);

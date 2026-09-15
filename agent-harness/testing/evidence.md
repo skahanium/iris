@@ -4,7 +4,7 @@
 
 核心纪律（`document.md` §4）：证据采用**用途分类及组合要求**，不采用「高级证据替代低级证据」的单一等级；未运行、空分母、不适用和失效证据不能变成必需维度的通过；模块及工作包验收由具体声明汇总，不能拿一个测试覆盖全部能力。
 
-**本体系本轮没有执行任何新实验**：下列条目中的状态一律是「未运行」或「待执行」，直到有绑定指纹的证据记录写入 `registry.json.verify` 为止。
+未绑定当前指纹的条目不得计为通过；具体状态以 `registry.json.verify` 为准。付费实网评测仍未运行。
 
 <!-- iris:object V01 kind=rules file=true -->
 
@@ -69,6 +69,7 @@
 | 缺握手结束不得推断成功         | 有开始无结束 → `outcome-unknown` 并写 `missing_end` | 缺结束事件却标为成功握手                    | `C26`        | 标未知，不默认执行成功               | `missing_handshake_end_is_outcome_unknown_not_success`（`V03` 机械负例）                                                                                                                                                                       |
 | 已知终止不得标成缺失结束       | 取消／超时／传输失败写 `handshake_end`              | 已知失败却只写 `missing_end`                | `C26`        | 记录对应终止类别，完整性为 complete  | `known_abort_is_recorded_complete_not_missing_end`（`V03` 机械负例）                                                                                                                                                                           |
 | 循环恢复事件不得被挤掉         | 15 次 repair 全部可查                               | 只保留最近 12 条导致中间恢复丢失            | `C26`        | 追加写入权威表，界面快照可仍截断     | `loop_recovery_events_are_retained_past_twelve`（`V03` 机械负例）                                                                                                                                                                              |
+| 已知故障能在诊断中定位         | 八类故障投影含发现位置、分类、归因、恢复与路径      | 缺口或限制显示成空成功／程序错误            | `C27`／`V07` | 报告缺口或预期限制，不归因于模型     | `tests/assistant-run-diagnostic-v07.test.tsx`（`V07` 界面投影）                                                                                                                                                                                |
 
 登记表随实现推进补齐；**未补齐即表示该项尚无证据**，不得据「表里写了」声称已验证。
 
