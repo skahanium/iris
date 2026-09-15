@@ -10,7 +10,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -585,6 +591,51 @@ function reconcileFixture(root, classification = "refinement") {
   }
 }
 
+function loadRegistry(harness) {
+  const text = readFileSync(path.join(harness, "registry.json"), "utf8");
+  const payload = text
+    .split("\n")
+    .filter((line) => !line.startsWith("<!--"))
+    .join("\n");
+  return JSON.parse(payload);
+}
+
+function saveRegistry(harness, registry) {
+  writeFileSync(
+    path.join(harness, "registry.json"),
+    `<!-- iris:object FILE-REGISTRY kind=rules file=true -->\n${JSON.stringify(registry, null, 2)}\n`,
+  );
+}
+
+const K01_BODY = `# 夹具合同
+
+<!-- iris:object K01 kind=contract file=true -->
+
+夹具合同正文。
+
+<!-- iris:end K01 -->
+
+<!-- iris:object K01 kind=contract name=contract owner=M01 -->
+
+## 接口
+
+接口：输入与输出。
+
+## 状态转换
+
+状态：转换规则。
+
+## 不变量
+
+不变量：冻结确认绑定版本。
+
+## 异常处理
+
+异常：绑定失败时拒绝执行。
+
+<!-- iris:end K01 -->
+`;
+
 /** 对已存在的夹具仓库运行检查器，返回 { exitCode, report }。 */
 function runCheck(root) {
   try {
@@ -953,6 +1004,60 @@ test("外围正文变化使子对象进入复核", () => {
   }
 });
 
+test("子对象正文变化而文件外围不变时阻断", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    const first = runCheck(fixture.root);
+    assert.equal(first.exitCode, 0, JSON.stringify(first.report.violations));
+
+    writeFileSync(
+      path.join(fixture.harness, "contracts", "K01.md"),
+      K01_BODY.replace(
+        "不变量：冻结确认绑定版本。",
+        "不变量：冻结确认绑定版本（已修订）。",
+      ),
+    );
+    const second = runCheck(fixture.root);
+    assert.notEqual(second.exitCode, 0, "对象正文变化后必须报未接受的指纹变化");
+    assert.ok(
+      hasViolation(second.report, "fingerprint"),
+      JSON.stringify(second.report.violations),
+    );
+    assert.ok(
+      violationMessages(second.report, "fingerprint").includes("K01"),
+      violationMessages(second.report, "fingerprint"),
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("对象块内标题变化被计入指纹并阻断", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    assert.equal(runCheck(fixture.root).exitCode, 0);
+
+    writeFileSync(
+      path.join(fixture.harness, "contracts", "K01.md"),
+      K01_BODY.replace("## 不变量", "## 可变约束"),
+    );
+    const second = runCheck(fixture.root);
+    assert.notEqual(second.exitCode, 0, "标题是正式定义正文，变化必须被检出");
+    assert.ok(
+      hasViolation(second.report, "fingerprint"),
+      JSON.stringify(second.report.violations),
+    );
+    assert.ok(
+      violationMessages(second.report, "fingerprint").includes("K01"),
+      violationMessages(second.report, "fingerprint"),
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 // ── 成熟度与就绪 ─────────────────────────────────────────────
 
 test("只有登记（无正式定义）的对象不能作为前置支持可施工声明", () => {
@@ -1054,15 +1159,25 @@ test("声明 defined 但缺少必备要素时阻断", () => {
 // ── 变更、复核与阻断 ─────────────────────────────────────────
 
 test("一个问题关闭但另一阻断仍存在，工作包不能解封", () => {
-  const { report } = runFixture({
+  const fixture = buildFixture({
+    files: { "implementation/D01.md": "D01" },
     objects: {
       Q01: {
         kind: "issue",
         name: "Q01",
-        title: "夹具问题",
+        title: "夹具问题甲",
         owner: "M01",
         maturity: "draft",
         definition: { file: "requirements/current-baseline.md", anchor: "Q01" },
+        blocks: [{ id: "D01", at: "acceptance" }],
+      },
+      Q02: {
+        kind: "issue",
+        name: "Q02",
+        title: "夹具问题乙",
+        owner: "M01",
+        maturity: "draft",
+        definition: { file: "requirements/current-baseline.md", anchor: "Q02" },
         blocks: [{ id: "D01", at: "acceptance" }],
       },
       D01: {
@@ -1071,16 +1186,56 @@ test("一个问题关闭但另一阻断仍存在，工作包不能解封", () =>
         title: "夹具工作包",
         owner: "M01",
         maturity: "defined",
-        definition: { file: "decisions/README.md", anchor: "D01" },
+        definition: { file: "implementation/D01.md", anchor: "D01" },
         work: { state: "planned" },
-        scope: ["N01", "Q01"],
+        scope: ["N01", "Q01", "Q02"],
         closes: [],
       },
     },
     overrides: {
+      "requirements/current-baseline.md": `# 夹具基线
+
+<!-- iris:object W04 kind=rules file=true -->
+
+夹具基线正文（事实：仅用于自测）。
+
+<!-- iris:end W04 -->
+
+<!-- iris:object W04 kind=rules -->
+
+### W04 夹具规则
+
+夹具基线正文（事实：仅用于自测）。
+
+<!-- iris:end W04 -->
+
+<!-- iris:object Q01 kind=issue owner=M01 -->
+
+### Q01 夹具未决问题
+
+- **已确认事实**：夹具问题甲。
+- **所需证据**：夹具证据。
+
+<!-- iris:end Q01 -->
+
+<!-- iris:object Q02 kind=issue owner=M01 -->
+
+### Q02 夹具未决问题乙
+
+- **已确认事实**：夹具问题乙。
+- **所需证据**：夹具证据。
+
+<!-- iris:end Q02 -->
+`,
       "implementation/D01.md": `# 夹具工作包
 
 <!-- iris:object D01 kind=work owner=M01 file=true -->
+
+夹具工作包正文。
+
+<!-- iris:end D01 -->
+
+<!-- iris:object D01 kind=work owner=M01 -->
 
 ## 一、前置条件
 
@@ -1102,10 +1257,85 @@ test("一个问题关闭但另一阻断仍存在，工作包不能解封", () =>
 `,
     },
   });
-  const ready = report.readiness?.D01;
-  assert.ok(ready);
-  assert.equal(ready.acceptanceReady, false);
-  assert.ok(ready.acceptanceReasons.join(" ").includes("Q01"));
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    const registry = loadRegistry(fixture.harness);
+    assert.equal(registry.issues?.Q01?.state, "open");
+    assert.equal(registry.issues?.Q02?.state, "open");
+    registry.issues.Q01 = { state: "closed" };
+    saveRegistry(fixture.harness, registry);
+
+    const { report } = runCheck(fixture.root);
+    const ready = report.readiness?.D01;
+    assert.ok(ready);
+    assert.equal(ready.acceptanceReady, false);
+    const reasons = ready.acceptanceReasons.join(" ");
+    assert.ok(reasons.includes("Q02"), JSON.stringify(ready));
+    assert.equal(
+      reasons.includes("Q01"),
+      false,
+      `Q01 已关闭，不应再出现在验收阻断里：${reasons}`,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("架构变更的 reconcile 不得自签已完成复核", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    writeFileSync(
+      path.join(fixture.harness, "contracts", "K01.md"),
+      K01_BODY.replace(
+        "不变量：冻结确认绑定版本。",
+        "不变量：冻结确认绑定版本（架构变更夹具）。",
+      ),
+    );
+    assert.equal(
+      reconcileFixture(fixture.root, "architecture"),
+      0,
+      "指定 --reviewer 后 reconcile 应能写入",
+    );
+
+    const registry = loadRegistry(fixture.harness);
+    const change = [...(registry.changes ?? [])].find(
+      (entry) => entry.classification === "architecture",
+    );
+    assert.ok(change, "必须留下架构变更记录");
+    assert.equal(change.author, "fixture");
+    const review = (registry.reviews ?? []).find(
+      (entry) => entry.id === change.review,
+    );
+    assert.ok(review, "必须留下待复核记录");
+    assert.equal(review.author, "independent-fixture");
+    assert.equal(review.reviewer, "fixture");
+    assert.notEqual(
+      review.conclusion,
+      "synchronized",
+      "reconcile 不能把待复核写成已完成",
+    );
+
+    const pending = runCheck(fixture.root);
+    assert.equal(pending.exitCode, 1, "待复核结论不能解封架构变更");
+    assert.ok(
+      hasViolation(pending.report, "reviews"),
+      JSON.stringify(pending.report.violations),
+    );
+
+    review.conclusion = "synchronized";
+    review.evidence = "夹具独立复核材料";
+    review.reason = "夹具确认无额外影响";
+    saveRegistry(fixture.harness, registry);
+    const released = runCheck(fixture.root);
+    assert.equal(
+      released.exitCode,
+      0,
+      JSON.stringify(released.report.violations),
+    );
+  } finally {
+    fixture.cleanup();
+  }
 });
 
 test("架构变更缺独立复核时阻断", () => {

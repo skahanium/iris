@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 20,
+  "registryRevision": 21,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-15T07:14:11.842Z"
+    "recordedAt": "2026-09-15T07:26:44.337Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "6b944743f1ca41a96ca57184796c7975"
+      "fingerprint": "e3a3af4493352c531f8d63d178f8c7ac"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -304,7 +304,7 @@
     "rules/objects.md": {
       "container": "P02",
       "registration": "P02#file",
-      "fingerprint": "cf36c5405fdb7211e0e69dd9a49f1430"
+      "fingerprint": "0210d63e060af77ea65ba7ffb0e59d1f"
     },
     "testing/acceptance-matrix.md": {
       "container": "V03",
@@ -529,13 +529,13 @@
       "title": "C01 请求与引用绑定",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m01-session-and-run.md",
         "anchor": "C01",
         "line": 127,
         "endLine": 167,
-        "fingerprint": "bcf2472238afdaa9b3f6820b2aec736f"
+        "fingerprint": "70008a4a66f03dbd77223e12aaa1b361"
       },
       "implementation": {
         "state": "present"
@@ -558,13 +558,13 @@
       "title": "C02 会话与运行状态",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m01-session-and-run.md",
         "anchor": "C02",
         "line": 169,
         "endLine": 209,
-        "fingerprint": "244e297862d3930ef7d1399f9e41128d"
+        "fingerprint": "ce4c209b3f4d2bfabd8a62fa29224467"
       },
       "implementation": {
         "state": "present"
@@ -587,13 +587,13 @@
       "title": "C03 指令修订与取消协调",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m01-session-and-run.md",
         "anchor": "C03",
         "line": 211,
         "endLine": 251,
-        "fingerprint": "fb074e803d7ee1c1ce0097dc6f0178c1"
+        "fingerprint": "f327db20835338cf39afa5d3b49a9b9d"
       },
       "implementation": {
         "state": "partial"
@@ -620,13 +620,13 @@
       "title": "C04 授权与外发策略",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m02-permission-and-side-effects.md",
         "anchor": "C04",
         "line": 129,
         "endLine": 169,
-        "fingerprint": "acdaf2593b63c3b2c45832fc910ef9ab"
+        "fingerprint": "ea388829eaa9035ea2b27b7ccf353d75"
       },
       "implementation": {
         "state": "present"
@@ -652,13 +652,13 @@
       "title": "C05 变更冻结与确认",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m02-permission-and-side-effects.md",
         "anchor": "C05",
         "line": 171,
         "endLine": 211,
-        "fingerprint": "a266412cb05c24f8043a672f676f7c0d"
+        "fingerprint": "5102979b7ea99c0505bb9d7d65758e53"
       },
       "implementation": {
         "state": "present"
@@ -685,13 +685,13 @@
       "title": "C06 确定性副作用执行",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m02-permission-and-side-effects.md",
         "anchor": "C06",
         "line": 213,
         "endLine": 253,
-        "fingerprint": "2793fafe39e5acb884d03bde3dc2a6df"
+        "fingerprint": "c4b49c79ae7e64029994ab9e42289b40"
       },
       "implementation": {
         "state": "present"
@@ -717,13 +717,13 @@
       "title": "C07 当前上下文装配",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m03-context-and-memory.md",
         "anchor": "C07",
         "line": 125,
         "endLine": 165,
-        "fingerprint": "16f74220608044b101f8e7994eac79b8"
+        "fingerprint": "be303c3a129014a4e0d7518aef656c0e"
       },
       "implementation": {
         "state": "present"
@@ -746,13 +746,13 @@
       "title": "C08 会话压缩与工作状态",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m03-context-and-memory.md",
         "anchor": "C08",
         "line": 167,
         "endLine": 207,
-        "fingerprint": "a68dfe432c5120629fa96475ad518c46"
+        "fingerprint": "ad81b8040ed4b9e46fdac02d1b1fe22c"
       },
       "implementation": {
         "state": "partial"
@@ -779,13 +779,13 @@
       "title": "C09 长期记忆",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m03-context-and-memory.md",
         "anchor": "C09",
         "line": 209,
         "endLine": 249,
-        "fingerprint": "bcba6e0494f93f1257f6ee805e77b943"
+        "fingerprint": "2cc4ec4d60cda186a5e1cf795ad4c457"
       },
       "implementation": {
         "state": "present"
@@ -811,13 +811,13 @@
       "title": "C10 能力与路由",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C10",
         "line": 123,
         "endLine": 163,
-        "fingerprint": "b33f697ed92517f228a25a01b9f91622"
+        "fingerprint": "be0402c6b183a31449ed2e49fa0f98f1"
       },
       "implementation": {
         "state": "partial"
@@ -840,13 +840,13 @@
       "title": "C11 协议与续轮适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C11",
         "line": 165,
         "endLine": 205,
-        "fingerprint": "c435915e46d73bd7fe1055c2cf9ca98f"
+        "fingerprint": "23164cb506b6b33996e71d27dbc4edc2"
       },
       "implementation": {
         "state": "partial"
@@ -872,13 +872,13 @@
       "title": "C12 调用执行与用量",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C12",
         "line": 207,
         "endLine": 247,
-        "fingerprint": "83c6cd777a52d5276b9b03e8c1eaa59c"
+        "fingerprint": "f9d0b4447363412e70c6258c5f548d6f"
       },
       "implementation": {
         "state": "present"
@@ -905,13 +905,13 @@
       "title": "C13 循环状态与预算",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C13",
         "line": 150,
         "endLine": 190,
-        "fingerprint": "864dffd57a95da8556a25f5be8eff852"
+        "fingerprint": "b485a81f7a39c8b00b0e6e93885c0675"
       },
       "implementation": {
         "state": "partial"
@@ -934,13 +934,13 @@
       "title": "C14 行动与恢复协调",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C14",
         "line": 192,
         "endLine": 232,
-        "fingerprint": "e5834116952dd5076150a110c94382c6"
+        "fingerprint": "945a21c757ef1aa04c8077fc2ef5fc97"
       },
       "implementation": {
         "state": "partial"
@@ -967,13 +967,13 @@
       "title": "C15 子任务协调",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C15",
         "line": 234,
         "endLine": 274,
-        "fingerprint": "ab0616c82f6a6592a4b18609e8368fc0"
+        "fingerprint": "1c1ce0630de04592faf7804a4f84fe6b"
       },
       "implementation": {
         "state": "partial"
@@ -1001,13 +1001,13 @@
       "title": "C16 工具目录、工具面与技能接入",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m06-tools-and-connectors.md",
         "anchor": "C16",
         "line": 130,
         "endLine": 170,
-        "fingerprint": "a2fb6e870f7226c9d58b037c961f7e89"
+        "fingerprint": "6c006eeb089856f2b1c793f04290a945"
       },
       "implementation": {
         "state": "present"
@@ -1030,13 +1030,13 @@
       "title": "C17 调用派发与观察",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m06-tools-and-connectors.md",
         "anchor": "C17",
         "line": 172,
         "endLine": 212,
-        "fingerprint": "6e349fabcd2536da64a3b77a44669a16"
+        "fingerprint": "a01749ccfab0cb5b4c04063effbe4eca"
       },
       "implementation": {
         "state": "present"
@@ -1065,13 +1065,13 @@
       "title": "C18 MCP 连接与传输",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m06-tools-and-connectors.md",
         "anchor": "C18",
         "line": 214,
         "endLine": 254,
-        "fingerprint": "945f5c791f73f551b9d95710ab229a19"
+        "fingerprint": "729f1227294ffe6353c21967ce46311f"
       },
       "implementation": {
         "state": "present"
@@ -1097,13 +1097,13 @@
       "title": "C19 本地检索",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m07-retrieval-and-evidence.md",
         "anchor": "C19",
         "line": 137,
         "endLine": 177,
-        "fingerprint": "21e36fd3fab7febb5daaa6723c2b6fdc"
+        "fingerprint": "273f9c59f1a745c8ed3e190859f6cacc"
       },
       "implementation": {
         "state": "present"
@@ -1129,13 +1129,13 @@
       "title": "C20 双路网页搜索协调",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m07-retrieval-and-evidence.md",
         "anchor": "C20",
         "line": 179,
         "endLine": 219,
-        "fingerprint": "f807a711eb9b92883cbac1846306435e"
+        "fingerprint": "8bc5250a9d2468f928b8347fb471adcf"
       },
       "implementation": {
         "state": "absent"
@@ -1166,13 +1166,13 @@
       "title": "C21 网页读取与提取",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m07-retrieval-and-evidence.md",
         "anchor": "C21",
         "line": 221,
         "endLine": 261,
-        "fingerprint": "82223e77ba81ccc461db73f32567adc4"
+        "fingerprint": "7a55ec7bfdda5aa16c8a9f6f4966dcff"
       },
       "implementation": {
         "state": "present"
@@ -1199,13 +1199,13 @@
       "title": "C22 证据与出处管理",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m07-retrieval-and-evidence.md",
         "anchor": "C22",
         "line": 263,
         "endLine": 303,
-        "fingerprint": "be5c9012c08e5c62641bf27dc211fa05"
+        "fingerprint": "8d62c96656893980f0e4c437115921cb"
       },
       "implementation": {
         "state": "present"
@@ -1232,13 +1232,13 @@
       "title": "C23 任务验证",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m08-verification-and-delivery.md",
         "anchor": "C23",
         "line": 131,
         "endLine": 171,
-        "fingerprint": "7ead6f7a316f4c130875d8fcd4b556cc"
+        "fingerprint": "62b79fae885c68c01316461398c862e0"
       },
       "implementation": {
         "state": "partial"
@@ -1264,13 +1264,13 @@
       "title": "C24 编辑候选与差异",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m08-verification-and-delivery.md",
         "anchor": "C24",
         "line": 173,
         "endLine": 213,
-        "fingerprint": "552b74f21b604d73e91656481bea1d22"
+        "fingerprint": "a134c89546702d47d643e6c4a1cad6f4"
       },
       "implementation": {
         "state": "partial"
@@ -1299,13 +1299,13 @@
       "title": "C25 最终发布与 UI 投影",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m08-verification-and-delivery.md",
         "anchor": "C25",
         "line": 215,
         "endLine": 255,
-        "fingerprint": "3bef13baa362fdcaf128b0bd1931ad3c"
+        "fingerprint": "b63690cb7b325e9e9b251e97bd0beaf2"
       },
       "implementation": {
         "state": "partial"
@@ -1332,13 +1332,13 @@
       "title": "C26 安全边界事件",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m09-audit-and-diagnostics.md",
         "anchor": "C26",
         "line": 157,
         "endLine": 197,
-        "fingerprint": "b88f2553179d13966d28c8824e6732cc"
+        "fingerprint": "5a9fb259b370b2e83106ca01b01aa6fc"
       },
       "implementation": {
         "state": "partial"
@@ -1361,13 +1361,13 @@
       "title": "C27 诊断查询与解释",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m09-audit-and-diagnostics.md",
         "anchor": "C27",
         "line": 199,
         "endLine": 239,
-        "fingerprint": "f8359667d2fc302e463d4ac1fa21fd8b"
+        "fingerprint": "edbd50bbae9b655614595564e77ed773"
       },
       "implementation": {
         "state": "partial"
@@ -1393,13 +1393,13 @@
       "title": "D01 建立可信基线与最小诊断",
       "owner": "M09",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "implementation/D01-trustworthy-baseline.md",
         "anchor": "D01",
         "line": 63,
         "endLine": 76,
-        "fingerprint": "7f3d876242ded138ad4ef482d093a8fa"
+        "fingerprint": "44ad7c11457beef2f48b762dad178874"
       },
       "implementation": {
         "state": "unknown"
@@ -1445,13 +1445,13 @@
       "title": "D02 修正协议与有界纠偏",
       "owner": "C14",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "implementation/D02-protocol-and-recovery.md",
         "anchor": "D02",
         "line": 64,
         "endLine": 77,
-        "fingerprint": "967a80918d8984d0fc2ba0b2f86544f6"
+        "fingerprint": "8b599b00a16e291502d013cd2f2c2918"
       },
       "implementation": {
         "state": "unknown"
@@ -1492,13 +1492,13 @@
       "title": "D03 收清会话、权限与上下文",
       "owner": "C07",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "implementation/D03-session-permission-context.md",
         "anchor": "D03",
         "line": 67,
         "endLine": 80,
-        "fingerprint": "6d28b9db405bd9f5508c2e543eaf9d59"
+        "fingerprint": "e77e1c00915e96a6b2dd3c1203e75dec"
       },
       "implementation": {
         "state": "unknown"
@@ -1542,13 +1542,13 @@
       "title": "D04 接通双路搜索完整链路",
       "owner": "C20",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "implementation/D04-dual-path-search.md",
         "anchor": "D04",
         "line": 69,
         "endLine": 82,
-        "fingerprint": "bc8a2ce38f36475fa3b5ac8852aaa72d"
+        "fingerprint": "dfa6dc6f683960bdd2826b5095156bd6"
       },
       "implementation": {
         "state": "unknown"
@@ -1600,13 +1600,13 @@
       "title": "D05 贯通文档任务与最终交付",
       "owner": "C23",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "implementation/D05-document-tasks-and-delivery.md",
         "anchor": "D05",
         "line": 70,
         "endLine": 83,
-        "fingerprint": "6519cb24d7a52973d9092a6fca46025a"
+        "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
       "implementation": {
         "state": "unknown"
@@ -1643,13 +1643,13 @@
       "title": "D06 校准整体行为及可选委派",
       "owner": "C15",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tests/legacy-batch-plan.md",
         "anchor": "D06",
         "line": 45,
         "endLine": 58,
-        "fingerprint": "aeab3f09379e14407160c5a5d75b61db"
+        "fingerprint": "1ef0e3f3adfdd9f347eebbefe4e583c2"
       },
       "implementation": {
         "state": "unknown"
@@ -1683,13 +1683,13 @@
       "title": "E01 案例与判据",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/eval-system.md",
         "anchor": "E01",
         "line": 29,
         "endLine": 70,
-        "fingerprint": "9fc6d7792ef519c4d855a4e3307f843b"
+        "fingerprint": "cfdf265bf8f8ac961552a6fd14c36e34"
       },
       "implementation": {
         "state": "present"
@@ -1713,13 +1713,13 @@
       "title": "E02 执行与重放",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/eval-system.md",
         "anchor": "E02",
         "line": 72,
         "endLine": 112,
-        "fingerprint": "8ec6328d378dc573c80a3fb6f292f6d2"
+        "fingerprint": "f1a85a52f58e1ce70d2004c9738485e5"
       },
       "implementation": {
         "state": "present"
@@ -1746,13 +1746,13 @@
       "title": "E03 评分与校准",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/eval-system.md",
         "anchor": "E03",
         "line": 114,
         "endLine": 154,
-        "fingerprint": "c582152092a23bce400a037eb42b68c8"
+        "fingerprint": "0a04e4e99c2c6856e86a0ea2d34fd8d0"
       },
       "implementation": {
         "state": "partial"
@@ -1781,13 +1781,13 @@
       "title": "decisions/README.md 的文件级容器",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "FILE-DECISIONS",
         "line": 49,
         "endLine": 57,
-        "fingerprint": "74eb48ddd25b09cc2632bc8c13a40134"
+        "fingerprint": "b6e34ecfb5534c962d91bf02bf6a2e00"
       },
       "implementation": {
         "state": "unknown"
@@ -1806,13 +1806,13 @@
       "title": "modules/eval-system.md 的文件级容器",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/eval-system.md",
         "anchor": "FILE-EVAL-SYSTEM",
         "line": 19,
         "endLine": 27,
-        "fingerprint": "ee0adeaa34a2f8ffc3a490aefda21d05"
+        "fingerprint": "662fb9e35e9230459e92c2ba1196c9d4"
       },
       "implementation": {
         "state": "unknown"
@@ -1831,13 +1831,13 @@
       "title": "implementation/README.md 的文件级容器",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "implementation/README.md",
         "anchor": "FILE-IMPLEMENTATION",
         "line": 45,
         "endLine": 53,
-        "fingerprint": "4df04d8d58b6144a7e3250aecbb0f324"
+        "fingerprint": "bad9307c79e0801c99d3df4ad9d5aa7b"
       },
       "implementation": {
         "state": "unknown"
@@ -1856,13 +1856,13 @@
       "title": "工具目录目标与现状的差异",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G01",
         "line": 16,
         "endLine": 26,
-        "fingerprint": "1e445c37a2b88a0f9e9503f9b3afb701"
+        "fingerprint": "ddb6a2d0fc7fc00153da9b3284f8cc84"
       },
       "implementation": {
         "state": "unknown"
@@ -1892,13 +1892,13 @@
       "title": "双路搜索协调的真实执行",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G02",
         "line": 28,
         "endLine": 38,
-        "fingerprint": "4521f4e79f55692af10d18ee5c66bada"
+        "fingerprint": "6dab04deb226e5c2cfd7a5e1cf92a8d8"
       },
       "implementation": {
         "state": "unknown"
@@ -1924,13 +1924,13 @@
       "title": "原生搜索事件的接入与端点适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G03",
         "line": 40,
         "endLine": 50,
-        "fingerprint": "28094e65c2b1930bade192ea46ed1093"
+        "fingerprint": "54906f8713143d7805bf16e2de2fc6d8"
       },
       "implementation": {
         "state": "unknown"
@@ -1956,13 +1956,13 @@
       "title": "出站结构诊断与完整关联",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G04",
         "line": 52,
         "endLine": 62,
-        "fingerprint": "a04fe969d4634a9f5afe1a438fd6443d"
+        "fingerprint": "0a6457af5632366867f508ca3f78b599"
       },
       "implementation": {
         "state": "unknown"
@@ -1988,13 +1988,13 @@
       "title": "运行中输入修订与压缩覆盖一致性",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G05",
         "line": 64,
         "endLine": 74,
-        "fingerprint": "6b6c1f45675f6043dad54fbb33acc406"
+        "fingerprint": "554d41dc4e13f6eed48903dae3ad6b37"
       },
       "implementation": {
         "state": "unknown"
@@ -2020,13 +2020,13 @@
       "title": "K01 请求身份与引用绑定",
       "owner": "C01",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K01-request-identity.md",
         "anchor": "K01",
         "line": 11,
         "endLine": 91,
-        "fingerprint": "7ef2abfaa50a9a80822db9fed96dea85"
+        "fingerprint": "f47c02b89d7569bbb5e4152b3ba0814c"
       },
       "implementation": {
         "state": "unknown"
@@ -2052,13 +2052,13 @@
       "title": "K02 Run 生命周期与任务结果分离",
       "owner": "C02",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K02-run-lifecycle.md",
         "anchor": "K02",
         "line": 11,
         "endLine": 87,
-        "fingerprint": "c97f430e5b09012014af7481f7897b9f"
+        "fingerprint": "21737948fbfe97459310db283fc3e40a"
       },
       "implementation": {
         "state": "unknown"
@@ -2083,13 +2083,13 @@
       "title": "K03 输入修订与取消",
       "owner": "C03",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K03-instruction-revision.md",
         "anchor": "K03",
         "line": 13,
         "endLine": 99,
-        "fingerprint": "f717636437baa35f38606c5f5f136df8"
+        "fingerprint": "950b239eba0664428f21925365a03787"
       },
       "implementation": {
         "state": "unknown"
@@ -2115,13 +2115,13 @@
       "title": "K04 供应商能力状态与续轮保真",
       "owner": "C10",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K04-provider-capability.md",
         "anchor": "K04",
         "line": 13,
         "endLine": 96,
-        "fingerprint": "97c0f7cb2ad44050ac0a2b7277162f35"
+        "fingerprint": "334e9bd2466e744c182b0f55f111a735"
       },
       "implementation": {
         "state": "unknown"
@@ -2147,13 +2147,13 @@
       "title": "K05 授权范围与冻结确认",
       "owner": "C04",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K05-authorization-and-confirmation.md",
         "anchor": "K05",
         "line": 11,
         "endLine": 101,
-        "fingerprint": "b08e1272e9fabdf9f9b5fbfb8db83e85"
+        "fingerprint": "ceda0a86513f667e831fb6736d47718c"
       },
       "implementation": {
         "state": "unknown"
@@ -2181,13 +2181,13 @@
       "title": "K06 统一预算账本",
       "owner": "C13",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K06-budget-ledger.md",
         "anchor": "K06",
         "line": 13,
         "endLine": 109,
-        "fingerprint": "2ddf4f9ba0ca0d3533d44b13e80c4715"
+        "fingerprint": "3e648abcc442f7bf9f959369c70ed403"
       },
       "implementation": {
         "state": "unknown"
@@ -2215,13 +2215,13 @@
       "title": "K07 上下文装配与裁剪边界",
       "owner": "C07",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K07-context-assembly.md",
         "anchor": "K07",
         "line": 13,
         "endLine": 95,
-        "fingerprint": "67b1d6aafdb8db6859f44cef8a9cf1d7"
+        "fingerprint": "65968fe0e8ee638639c26157d8a0654b"
       },
       "implementation": {
         "state": "unknown"
@@ -2246,13 +2246,13 @@
       "title": "K08 压缩覆盖与长期记忆条目",
       "owner": "C08",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K08-compaction-and-memory.md",
         "anchor": "K08",
         "line": 13,
         "endLine": 107,
-        "fingerprint": "f0bf5e681d285fad5ae5aea27058fa8a"
+        "fingerprint": "d2253154c3a79a098cdd0594c23f503a"
       },
       "implementation": {
         "state": "unknown"
@@ -2276,13 +2276,13 @@
       "title": "K09 联网授权与查询外发",
       "owner": "C04",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K09-web-authorization.md",
         "anchor": "K09",
         "line": 11,
         "endLine": 89,
-        "fingerprint": "01e90b333792d0a49e3eecaebe4a7c2a"
+        "fingerprint": "e74b319d8226c3ea96f545a5eb54c762"
       },
       "implementation": {
         "state": "unknown"
@@ -2309,13 +2309,13 @@
       "title": "K10 工具面版本与派发观察",
       "owner": "C16",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K10-tool-surface.md",
         "anchor": "K10",
         "line": 11,
         "endLine": 110,
-        "fingerprint": "d95fbb3ee3e0a5a942b057be2a4b037e"
+        "fingerprint": "246332272cdd744f523f02f8848ab836"
       },
       "implementation": {
         "state": "unknown"
@@ -2340,13 +2340,13 @@
       "title": "K11 双路搜索协调结果",
       "owner": "C20",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K11-dual-path-search.md",
         "anchor": "K11",
         "line": 13,
         "endLine": 109,
-        "fingerprint": "3cde4aa4a99071e422988445cd3bfb1a"
+        "fingerprint": "97455ada8a03b1b14e3706e043266316"
       },
       "implementation": {
         "state": "unknown"
@@ -2373,13 +2373,13 @@
       "title": "K12 原生搜索受控子请求",
       "owner": "C20",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K12-native-search-subrequest.md",
         "anchor": "K12",
         "line": 13,
         "endLine": 94,
-        "fingerprint": "c1207fe001e0693e44548f373c55b6e2"
+        "fingerprint": "91b94fe0837f4c3c218d7838bcf55b62"
       },
       "implementation": {
         "state": "unknown"
@@ -2404,13 +2404,13 @@
       "title": "K13 网页读取窗口与完整性",
       "owner": "C21",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K13-web-reading-window.md",
         "anchor": "K13",
         "line": 13,
         "endLine": 109,
-        "fingerprint": "3fc5b9e39e2a11b11fef0baf943df994"
+        "fingerprint": "9717ad70f62c8a1a70bfed3b59a03689"
       },
       "implementation": {
         "state": "unknown"
@@ -2435,13 +2435,13 @@
       "title": "K14 证据身份、来源与支持关系",
       "owner": "C22",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K14-evidence-and-provenance.md",
         "anchor": "K14",
         "line": 13,
         "endLine": 108,
-        "fingerprint": "edd998a6f59e9c037a7072d7f88abfbf"
+        "fingerprint": "87fb68d57378acbe17bc5a6c67fc6e25"
       },
       "implementation": {
         "state": "unknown"
@@ -2467,13 +2467,13 @@
       "title": "K15 交付结果与用户可见表达",
       "owner": "C25",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K15-delivery-result.md",
         "anchor": "K15",
         "line": 13,
         "endLine": 107,
-        "fingerprint": "2c783869a32b5d348a7432eafe765d97"
+        "fingerprint": "b5d197d66f42820ef83a738de88ca5b4"
       },
       "implementation": {
         "state": "unknown"
@@ -2498,13 +2498,13 @@
       "title": "K16 验证报告与可恢复错误反馈",
       "owner": "C23",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K16-verification-report.md",
         "anchor": "K16",
         "line": 13,
         "endLine": 111,
-        "fingerprint": "622268e3678c7b84502cd60e5a8299ce"
+        "fingerprint": "20c0ba6643b5f5df893a05fec1a2d03a"
       },
       "implementation": {
         "state": "unknown"
@@ -2530,13 +2530,13 @@
       "title": "K17 审计事件与诊断查询",
       "owner": "C26",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K17-audit-events.md",
         "anchor": "K17",
         "line": 13,
         "endLine": 113,
-        "fingerprint": "35cb1b1829b5cc588c42bfb12a256c16"
+        "fingerprint": "5e280676ea208fd3b365b34a49255789"
       },
       "implementation": {
         "state": "unknown"
@@ -2563,13 +2563,13 @@
       "title": "K18 MCP 传输与外部工具边界",
       "owner": "C18",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "contracts/K18-mcp-transport.md",
         "anchor": "K18",
         "line": 13,
         "endLine": 114,
-        "fingerprint": "50d983756b697f94db7ccb3041516cdb"
+        "fingerprint": "29b3cfcd4748c8dfa8899560294a4e78"
       },
       "implementation": {
         "state": "unknown"
@@ -2595,13 +2595,13 @@
       "title": "L01 对话与修订链路",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "flows/L01-conversation-and-revision.md",
         "anchor": "L01",
         "line": 11,
         "endLine": 100,
-        "fingerprint": "41f4928e98c6a5cb69bbad063041d615"
+        "fingerprint": "f9f57857906651cee63289a9e61bb28b"
       },
       "implementation": {
         "state": "unknown"
@@ -2633,13 +2633,13 @@
       "title": "L02 联网检索与核实链路",
       "owner": "M07",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "flows/L02-web-retrieval.md",
         "anchor": "L02",
         "line": 11,
         "endLine": 126,
-        "fingerprint": "f60ec056c7f7a879c41325be6c7b6f0b"
+        "fingerprint": "dcbd011a875a5fb7d3f50dbc8e41e95e"
       },
       "implementation": {
         "state": "unknown"
@@ -2674,13 +2674,13 @@
       "title": "L03 编辑与候选应用链路",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "flows/L03-editing-and-application.md",
         "anchor": "L03",
         "line": 11,
         "endLine": 96,
-        "fingerprint": "79636c863a6c0887a18811b9611771e2"
+        "fingerprint": "a75011aa6b19c5c547ebad7ea4f1fd15"
       },
       "implementation": {
         "state": "unknown"
@@ -2709,13 +2709,13 @@
       "title": "L04 格式保持链路",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "flows/L04-format-preservation.md",
         "anchor": "L04",
         "line": 11,
         "endLine": 88,
-        "fingerprint": "ddbdb1d902222fb32e1e17e81e0d16de"
+        "fingerprint": "139b6ef1a5de30641b8ea74388f2cc5d"
       },
       "implementation": {
         "state": "unknown"
@@ -2741,13 +2741,13 @@
       "title": "L05 上下文与记忆链路",
       "owner": "M03",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "flows/L05-context-and-memory.md",
         "anchor": "L05",
         "line": 11,
         "endLine": 95,
-        "fingerprint": "c0cd7c45047959d68ccc2704429ebd6d"
+        "fingerprint": "0dc6369a7ccf55b8483980b737d1e9a1"
       },
       "implementation": {
         "state": "unknown"
@@ -2775,13 +2775,13 @@
       "title": "L06 委派链路",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "flows/L06-delegation.md",
         "anchor": "L06",
         "line": 11,
         "endLine": 99,
-        "fingerprint": "0133ee0b98db2963a86d2c1e3e1fdeb9"
+        "fingerprint": "4e4e6f47a5acef8cb64b3e410ac7087b"
       },
       "implementation": {
         "state": "unknown"
@@ -2810,13 +2810,13 @@
       "title": "M1 会话与 Run 管理",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m01-session-and-run.md",
         "anchor": "M01",
         "line": 109,
         "endLine": 125,
-        "fingerprint": "2ff89165f20e8340b3593bf22226ea28"
+        "fingerprint": "ff2051893f6edbca84af816531040bb8"
       },
       "implementation": {
         "state": "partial"
@@ -2847,13 +2847,13 @@
       "title": "M2 权限与受控副作用",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m02-permission-and-side-effects.md",
         "anchor": "M02",
         "line": 111,
         "endLine": 127,
-        "fingerprint": "498db1fe6bc7c5da93997caafb648291"
+        "fingerprint": "8394c41fdd12474add177a8ff2c3d091"
       },
       "implementation": {
         "state": "present"
@@ -2883,13 +2883,13 @@
       "title": "M3 上下文与记忆",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m03-context-and-memory.md",
         "anchor": "M03",
         "line": 107,
         "endLine": 123,
-        "fingerprint": "00db46b31c51ed7954290a8637ee3813"
+        "fingerprint": "9400528d82c2529910a0e28219c8d16c"
       },
       "implementation": {
         "state": "partial"
@@ -2917,13 +2917,13 @@
       "title": "M4 模型网关",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "M04",
         "line": 105,
         "endLine": 121,
-        "fingerprint": "15394c74629720c2fe1c35d8fc35189f"
+        "fingerprint": "65c8ba7fbe4be8629c342daa9aa248ae"
       },
       "implementation": {
         "state": "partial"
@@ -2952,13 +2952,13 @@
       "title": "M5 Agent 执行控制",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "M05",
         "line": 132,
         "endLine": 148,
-        "fingerprint": "1bc8879f6a35355d8f6893635679ed87"
+        "fingerprint": "e6c79986f06b2b0e55e0597cfc652a1a"
       },
       "implementation": {
         "state": "partial"
@@ -2986,13 +2986,13 @@
       "title": "M6 工具与连接器",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m06-tools-and-connectors.md",
         "anchor": "M06",
         "line": 112,
         "endLine": 128,
-        "fingerprint": "f9c244b44ff25d21ba70a8f4c6a3a424"
+        "fingerprint": "0ed1e884bc91a5cccf905acb5db7415b"
       },
       "implementation": {
         "state": "present"
@@ -3020,13 +3020,13 @@
       "title": "M7 检索与证据",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m07-retrieval-and-evidence.md",
         "anchor": "M07",
         "line": 119,
         "endLine": 135,
-        "fingerprint": "d0d6e1174899564d3ee7fae8e7a3dea7"
+        "fingerprint": "a3bd6e620bc12ff62a1a1cbec28bb54b"
       },
       "implementation": {
         "state": "partial"
@@ -3059,13 +3059,13 @@
       "title": "M8 验证与交付",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m08-verification-and-delivery.md",
         "anchor": "M08",
         "line": 113,
         "endLine": 129,
-        "fingerprint": "7ac9501f066b82cef17add43cffd4d22"
+        "fingerprint": "3d80423084809f04405e998ab1a9f55c"
       },
       "implementation": {
         "state": "partial"
@@ -3096,13 +3096,13 @@
       "title": "M9 审计与诊断",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "modules/m09-audit-and-diagnostics.md",
         "anchor": "M09",
         "line": 139,
         "endLine": 155,
-        "fingerprint": "34ff2986525c67c5b1a19c888ff9cd7a"
+        "fingerprint": "83ad048f91a4243376a8d996089536b5"
       },
       "implementation": {
         "state": "partial"
@@ -3128,13 +3128,13 @@
       "title": "基础对话、话题切换、追问与纠正可靠",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N01",
         "line": 52,
         "endLine": 60,
-        "fingerprint": "8a08d4c4c8812ce541aea848ed4e239b"
+        "fingerprint": "613fcea6a35035ca8dda04f70406a315"
       },
       "implementation": {
         "state": "unknown"
@@ -3153,13 +3153,13 @@
       "title": "字词／句段润色、扩写与缩写",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N02",
         "line": 62,
         "endLine": 70,
-        "fingerprint": "f1f33482415b01c651ce61b36648b90b"
+        "fingerprint": "9878237a75e3a6977f844ac5f102e031"
       },
       "implementation": {
         "state": "unknown"
@@ -3178,13 +3178,13 @@
       "title": "按目标格式与文风生成内容，由用户插入",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N03",
         "line": 72,
         "endLine": 80,
-        "fingerprint": "2135222cb89071ca88252d62e9878f39"
+        "fingerprint": "7277548ae92676fe6ae4e73cafeab176"
       },
       "implementation": {
         "state": "unknown"
@@ -3203,13 +3203,13 @@
       "title": "Markdown 格式整理不修改实际内容（序号除外）",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N04",
         "line": 82,
         "endLine": 90,
-        "fingerprint": "d9f44d82bfe68f649cd64731b7636d76"
+        "fingerprint": "eccc6334d3654a54e643c9104cf5399d"
       },
       "implementation": {
         "state": "unknown"
@@ -3228,13 +3228,13 @@
       "title": "自然连续对话承接前文、指代与纠正",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N05",
         "line": 92,
         "endLine": 100,
-        "fingerprint": "457e171d31363cbd3010feb05f8c02cf"
+        "fingerprint": "4432bbaac03469ab31e72fd6310c980f"
       },
       "implementation": {
         "state": "unknown"
@@ -3253,13 +3253,13 @@
       "title": "联网查询与后续核实",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N06",
         "line": 102,
         "endLine": 110,
-        "fingerprint": "2ed860a8ad8bd60c482bd0977cc9b7eb"
+        "fingerprint": "6d94fe205205c5ea7d14d01d94e374c9"
       },
       "implementation": {
         "state": "unknown"
@@ -3278,13 +3278,13 @@
       "title": "原生与 MCP 两路都实际搜索",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N07",
         "line": 112,
         "endLine": 120,
-        "fingerprint": "7fb0ad7f013ac8b31c6c3723fcf412cf"
+        "fingerprint": "5ef40b6290ab02465383f288fd425dc4"
       },
       "implementation": {
         "state": "unknown"
@@ -3303,13 +3303,13 @@
       "title": "两路 URL 均可由 MCP 抓取，按需读取",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N08",
         "line": 122,
         "endLine": 130,
-        "fingerprint": "109ff4446b9654a5f767eb728906ccd6"
+        "fingerprint": "deb19650085c0c49d74d16c589d6648c"
       },
       "implementation": {
         "state": "unknown"
@@ -3328,13 +3328,13 @@
       "title": "不支持原生搜索时正常单 MCP，不显示降级",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N09",
         "line": 132,
         "endLine": 140,
-        "fingerprint": "7225edd0a46c67164d581461e11bb527"
+        "fingerprint": "8b55037d43c6eae5bf9b3b415293c756"
       },
       "implementation": {
         "state": "unknown"
@@ -3353,13 +3353,13 @@
       "title": "分路失败保留另一路结果并分别记录",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N10",
         "line": 142,
         "endLine": 150,
-        "fingerprint": "e336ab6f09522c9cbad6deff3f1909c5"
+        "fingerprint": "20c5d69a98e7395e25c36b918f426877"
       },
       "implementation": {
         "state": "unknown"
@@ -3378,13 +3378,13 @@
       "title": "所有路径失败时如实说明无法核实",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N11",
         "line": 152,
         "endLine": 160,
-        "fingerprint": "49a62995478779ba66915a9f48385dc8"
+        "fingerprint": "c15a7ffbf739918652714f53832b9c60"
       },
       "implementation": {
         "state": "unknown"
@@ -3403,13 +3403,13 @@
       "title": "严格场景保留联网限制，授权覆盖重试与子任务",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N12",
         "line": 162,
         "endLine": 170,
-        "fingerprint": "b5df0b74529cb2dbcc634c193cdc5481"
+        "fingerprint": "203687baa5683366bed9e2403d2620e5"
       },
       "implementation": {
         "state": "unknown"
@@ -3428,13 +3428,13 @@
       "title": "外发边界与双路冲突时先满足已授权数据边界",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N13",
         "line": 172,
         "endLine": 180,
-        "fingerprint": "73619fa062b9726d029862c4600a7e4e"
+        "fingerprint": "74644674b060b344c51238c1124f1797"
       },
       "implementation": {
         "state": "unknown"
@@ -3453,13 +3453,13 @@
       "title": "长对话压缩、记忆与最新约束承接",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N14",
         "line": 182,
         "endLine": 190,
-        "fingerprint": "44ebdffecf2ffd654ad9cd418775b3c1"
+        "fingerprint": "2fa475f1786556e17fe6df68488984df"
       },
       "implementation": {
         "state": "unknown"
@@ -3478,13 +3478,13 @@
       "title": "LOOP：持续行动、验证、纠错直到完成",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N15",
         "line": 192,
         "endLine": 200,
-        "fingerprint": "d97513ffc54127fa16bb2335ad58f166"
+        "fingerprint": "2f3d5d8944ea0707e5ba4cf61ae53983"
       },
       "implementation": {
         "state": "unknown"
@@ -3503,13 +3503,13 @@
       "title": "容错纠偏：可恢复错误不得一次即终止",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N16",
         "line": 202,
         "endLine": 210,
-        "fingerprint": "527327e52ab0d9d82e43c033d8c52e19"
+        "fingerprint": "7dcb82a0b089a15f8e411e3a4d720a14"
       },
       "implementation": {
         "state": "unknown"
@@ -3528,13 +3528,13 @@
       "title": "不得因单次工具错误提示模型能力降级",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N17",
         "line": 212,
         "endLine": 220,
-        "fingerprint": "c97164fd8d41789bbee8160f2ebc683e"
+        "fingerprint": "1e7b1b450e63fca7e2cbc3e18fba6bbd"
       },
       "implementation": {
         "state": "unknown"
@@ -3553,13 +3553,13 @@
       "title": "审计覆盖模块、组件、工具与模型行为并可定位",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N18",
         "line": 222,
         "endLine": 230,
-        "fingerprint": "b2f04cc5f7f4a0b81dd99e3257a760a0"
+        "fingerprint": "cd1d6969eb69409310f473b7b2bad5e6"
       },
       "implementation": {
         "state": "unknown"
@@ -3578,13 +3578,13 @@
       "title": "免费工具与自付费服务并存",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N19",
         "line": 232,
         "endLine": 240,
-        "fingerprint": "5233022de124b8d0648c8062690d110f"
+        "fingerprint": "a531375937e1633b4f735f2e09ebbec0"
       },
       "implementation": {
         "state": "unknown"
@@ -3603,13 +3603,13 @@
       "title": "MiniMax／DeepSeek 为主模型并兼顾国产模型",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N20",
         "line": 242,
         "endLine": 250,
-        "fingerprint": "56659cc5e649a220beae7a8bba7c5a68"
+        "fingerprint": "7f795c751e1680797beaf2880e71f91c"
       },
       "implementation": {
         "state": "unknown"
@@ -3628,13 +3628,13 @@
       "title": "Agent Harness 文档体系入口",
       "owner": "P01",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "README.md",
         "anchor": "P01",
         "line": 132,
         "endLine": 143,
-        "fingerprint": "ca7cc3a7881d6a736860344e18c37690"
+        "fingerprint": "1c8b2b9c4372b18427bac502f9e68e50"
       },
       "implementation": {
         "state": "unknown"
@@ -3653,13 +3653,13 @@
       "title": "对象、标记与引用规则",
       "owner": "P02",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "rules/objects.md",
         "anchor": "P02",
         "line": 174,
         "endLine": 209,
-        "fingerprint": "d622fb693058e792547987c6eb86bdf0"
+        "fingerprint": "307cd1d4482aa3bd86fb4af0b1d4936b"
       },
       "implementation": {
         "state": "unknown"
@@ -3678,13 +3678,13 @@
       "title": "治理规则：权威、状态、变更、复核与阻断",
       "owner": "P03",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "rules/governance.md",
         "anchor": "P03",
         "line": 183,
         "endLine": 203,
-        "fingerprint": "445c181155e3bf270d9f4320c7245db9"
+        "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
       },
       "implementation": {
         "state": "unknown"
@@ -3703,13 +3703,13 @@
       "title": "当前基线与未决问题",
       "owner": "P04",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
         "line": 255,
         "endLine": 268,
-        "fingerprint": "fd24f58eb5d4a68ee88b8c92d090c2a9"
+        "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": {
         "state": "unknown"
@@ -3732,13 +3732,13 @@
       "title": "缺口与未决项",
       "owner": "P05",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "P05",
         "line": 76,
         "endLine": 90,
-        "fingerprint": "58a3e8b6bf27babccbbdf4abb605cff6"
+        "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
       "implementation": {
         "state": "unknown"
@@ -3757,13 +3757,13 @@
       "title": "需求与边界",
       "owner": "P06",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "P06",
         "line": 36,
         "endLine": 50,
-        "fingerprint": "518512ff29ead8d0606d37f55cfb4c4c"
+        "fingerprint": "253a18e99117b13032854f8d14327a56"
       },
       "implementation": {
         "state": "unknown"
@@ -3782,13 +3782,13 @@
       "title": "协议入口与 Planned 占位登记",
       "owner": "P05",
       "maturity": "defined",
-      "revision": 2,
+      "revision": 3,
       "definition": {
         "file": "tools/README.md",
         "anchor": "P07",
         "line": 62,
         "endLine": 82,
-        "fingerprint": "546b52e1fcd07eb6d603a1e8044e5df9"
+        "fingerprint": "9c94a9f80256f6b5e33c5b24abb0da48"
       },
       "implementation": {
         "state": "unknown"
@@ -3812,13 +3812,13 @@
       "title": "历史未知工具提议的唯一根因未确定",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q01",
         "line": 46,
         "endLine": 55,
-        "fingerprint": "ef5f6b664a9ea9f5f2552c37a3156c5a"
+        "fingerprint": "c513f04cc32abf93e9d669b9724921fa"
       },
       "implementation": {
         "state": "unknown"
@@ -3848,13 +3848,13 @@
       "title": "两个设置入口的 MCP 搜索候选写入语义不一致",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q02",
         "line": 57,
         "endLine": 66,
-        "fingerprint": "528216dc82b9e02324798ae871479956"
+        "fingerprint": "f1c5075a0bc8bca566f28b5a4ae91414"
       },
       "implementation": {
         "state": "unknown"
@@ -3884,13 +3884,13 @@
       "title": "评测空分母被记为满分",
       "owner": "E03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q03",
         "line": 68,
         "endLine": 77,
-        "fingerprint": "0fe11bda83a8865940d94e4a5078db00"
+        "fingerprint": "95d414df1eef8a36bf00c68cfaedbaf4"
       },
       "implementation": {
         "state": "unknown"
@@ -3920,13 +3920,13 @@
       "title": "Chat Completions 流式终止原因丢失",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q04",
         "line": 79,
         "endLine": 88,
-        "fingerprint": "323c35361432a80530a8b3186c19ef13"
+        "fingerprint": "6fb3315525dddd0766de0c9e64067958"
       },
       "implementation": {
         "state": "unknown"
@@ -3952,13 +3952,13 @@
       "title": "读取路径写入数据库触发隐藏配置变更",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q05",
         "line": 90,
         "endLine": 99,
-        "fingerprint": "8fd5d02d95cc5ea5b98c65457aa9e31d"
+        "fingerprint": "a5da417706fc9b514dab65dbcc0a8223"
       },
       "implementation": {
         "state": "unknown"
@@ -3984,13 +3984,13 @@
       "title": "子任务 context_hint／max_rounds 未被消费",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q06",
         "line": 101,
         "endLine": 110,
-        "fingerprint": "3545426329938f276325ebb3615ef28e"
+        "fingerprint": "cc701424e395c94c887aab555656a2f8"
       },
       "implementation": {
         "state": "unknown"
@@ -4016,13 +4016,13 @@
       "title": "子工具缺少标准网页正文抓取",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q07",
         "line": 112,
         "endLine": 121,
-        "fingerprint": "f5733ea4756e4eb53be54ef767a52ed1"
+        "fingerprint": "b5520ca814a1c858c44ab7cde7906f9b"
       },
       "implementation": {
         "state": "unknown"
@@ -4048,13 +4048,13 @@
       "title": "压缩覆盖边界与裁剪边界不同源",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q08",
         "line": 123,
         "endLine": 132,
-        "fingerprint": "870c36ef1938056b65c35964e2a3d72b"
+        "fingerprint": "96cd6a36e82f49c1cd20d656df887851"
       },
       "implementation": {
         "state": "unknown"
@@ -4080,13 +4080,13 @@
       "title": "诊断关联不完整",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q09",
         "line": 134,
         "endLine": 143,
-        "fingerprint": "e7a543bfff5125532c36a1f6d40a3da4"
+        "fingerprint": "57996658a8f5396480973e8bee4fca3e"
       },
       "implementation": {
         "state": "unknown"
@@ -4112,13 +4112,13 @@
       "title": "模型协议字段丢失与续轮保真",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q10",
         "line": 145,
         "endLine": 154,
-        "fingerprint": "f8fb7d90708b4ca168f3e5b4830171d2"
+        "fingerprint": "b7509a7f335ff8a10a09baa4b7257c7c"
       },
       "implementation": {
         "state": "unknown"
@@ -4144,13 +4144,13 @@
       "title": "部分确定性测试与实现共享同一错误假设",
       "owner": "E03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q11",
         "line": 156,
         "endLine": 165,
-        "fingerprint": "f34df397e27b0adb93a995b1e4670129"
+        "fingerprint": "76f601fcae343c394fc2059f7721f81b"
       },
       "implementation": {
         "state": "unknown"
@@ -4180,13 +4180,13 @@
       "title": "历史诊断不足以区分工具名来源",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q12",
         "line": 167,
         "endLine": 176,
-        "fingerprint": "3c77b97a4d6f791f465eb76a39031b4b"
+        "fingerprint": "f94ce35a946871fd3b442d2961c96f32"
       },
       "implementation": {
         "state": "unknown"
@@ -4212,13 +4212,13 @@
       "title": "预算存档兼容：同版本不同数值可能读取失败",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
         "line": 178,
         "endLine": 187,
-        "fingerprint": "fd23dec85fb3cdb52828299d117d68f0"
+        "fingerprint": "d616c25c613e433cce26324da8e6c1f4"
       },
       "implementation": {
         "state": "unknown"
@@ -4244,13 +4244,13 @@
       "title": "双路搜索对纯编辑任务的触发范围未单独确认",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
         "line": 189,
         "endLine": 198,
-        "fingerprint": "739c45a6fb395c98a9eb184c1d34f2ed"
+        "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": {
         "state": "unknown"
@@ -4276,13 +4276,13 @@
       "title": "长期记忆的写入时机、有效期与冲突管理未确定",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
         "line": 200,
         "endLine": 209,
-        "fingerprint": "9f7e477c12e669321d17509b95cbc745"
+        "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
       "implementation": {
         "state": "unknown"
@@ -4308,13 +4308,13 @@
       "title": "运行中追加／修改指令的交互未确定",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
         "line": 211,
         "endLine": 220,
-        "fingerprint": "2726c947e9bd2aebb91b10d2596b7320"
+        "fingerprint": "44e2c0b7263f747b8836de0478fa8f7c"
       },
       "implementation": {
         "state": "unknown"
@@ -4340,13 +4340,13 @@
       "title": "原生搜索端点与混合续轮适配待验证",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
         "line": 222,
         "endLine": 231,
-        "fingerprint": "bd5bfcbd48e691510625177d93189c97"
+        "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
       "implementation": {
         "state": "unknown"
@@ -4372,13 +4372,13 @@
       "title": "缺少出站请求的安全结构证据",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
         "line": 233,
         "endLine": 242,
-        "fingerprint": "3333a25740bf55d313abf62a45ca3874"
+        "fingerprint": "b001de0bd62f6c0f02d817bcbe873e30"
       },
       "implementation": {
         "state": "unknown"
@@ -4404,13 +4404,13 @@
       "title": "网络额度是否为主要瓶颈待验证",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
         "line": 244,
         "endLine": 253,
-        "fingerprint": "b075cc53c5fb531b0deb7b2b914fae18"
+        "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": {
         "state": "unknown"
@@ -4436,13 +4436,13 @@
       "title": "R01 采用架构定义的 9 模块 27 组件",
       "owner": "M01",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R01",
         "line": 59,
         "endLine": 79,
-        "fingerprint": "ee9a8dd92b778c5a6f8736ef54662431"
+        "fingerprint": "0f83e37bea339e70b4fb3660ab96b9b7"
       },
       "implementation": {
         "state": "unknown"
@@ -4461,13 +4461,13 @@
       "title": "R02 保留运行底座、局部评估成熟协议实现",
       "owner": "M04",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R02",
         "line": 81,
         "endLine": 101,
-        "fingerprint": "2579f287ea2789c82831d1d35c397afd"
+        "fingerprint": "ce298478f741d2c69345dda2a443b402"
       },
       "implementation": {
         "state": "unknown"
@@ -4486,13 +4486,13 @@
       "title": "R03 单一搜索接口、两条内部路线",
       "owner": "M07",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R03",
         "line": 103,
         "endLine": 123,
-        "fingerprint": "ee5ea3b12342643be3b67d55a5136529"
+        "fingerprint": "24c06e85f6e7b29877dfd8f5863a4825"
       },
       "implementation": {
         "state": "unknown"
@@ -4511,13 +4511,13 @@
       "title": "R04 原生搜索隔离为受控子请求",
       "owner": "M04",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R04",
         "line": 125,
         "endLine": 145,
-        "fingerprint": "6fc1289ec1f1791c6b8ca908fddf7c6d"
+        "fingerprint": "c8b613cdf98521dcb8f2b367b050a515"
       },
       "implementation": {
         "state": "unknown"
@@ -4536,13 +4536,13 @@
       "title": "R05 输入修订在安全点生效",
       "owner": "M01",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R05",
         "line": 147,
         "endLine": 167,
-        "fingerprint": "9c8c7c63a0e289d413a435655fc69c29"
+        "fingerprint": "e69c32bbaa7fa7048e6a01cbb39ee2aa"
       },
       "implementation": {
         "state": "unknown"
@@ -4561,13 +4561,13 @@
       "title": "R06 验证与交付分离",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R06",
         "line": 169,
         "endLine": 189,
-        "fingerprint": "ca2fd6fdb22f1ff352ce8d26cdaf418d"
+        "fingerprint": "18d5085c59639a35d81313dccc0d6b33"
       },
       "implementation": {
         "state": "unknown"
@@ -4586,13 +4586,13 @@
       "title": "R07 诊断独立设模块",
       "owner": "M09",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R07",
         "line": 191,
         "endLine": 211,
-        "fingerprint": "e665c4d6855e4fdbf72f2bc6b59b05a0"
+        "fingerprint": "f991597da8f2577109135fba88fe72e5"
       },
       "implementation": {
         "state": "unknown"
@@ -4611,13 +4611,13 @@
       "title": "R08 可恢复错误先反馈再纠偏",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R08",
         "line": 213,
         "endLine": 233,
-        "fingerprint": "2cdc15d689dae3e27598901b6f056573"
+        "fingerprint": "9497dacb90ed0d106a4398de547977f2"
       },
       "implementation": {
         "state": "unknown"
@@ -4636,13 +4636,13 @@
       "title": "R09 不并行运行两套权威状态",
       "owner": "M01",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R09",
         "line": 235,
         "endLine": 255,
-        "fingerprint": "94b06cc2a9bbac90f7a5cf7cf9a0128f"
+        "fingerprint": "0143db6a2b4c154c3294c0224a6a271b"
       },
       "implementation": {
         "state": "unknown"
@@ -4661,13 +4661,13 @@
       "title": "R10 确定性测试不替代真实质量评价",
       "owner": "E03",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R10",
         "line": 257,
         "endLine": 277,
-        "fingerprint": "8940ca5b1d3b5b089293a4ac02df0c55"
+        "fingerprint": "52d9ec8de59718033291d3088789e519"
       },
       "implementation": {
         "state": "unknown"
@@ -4686,13 +4686,13 @@
       "title": "contracts/README.md 目录索引",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 4,
+      "revision": 5,
       "definition": {
         "file": "contracts/README.md",
         "anchor": "README-CONTRACTS",
         "line": 32,
         "endLine": 38,
-        "fingerprint": "e0a6a3a812df0e97cd4aa52dc85f0655"
+        "fingerprint": "38685944b2115fa5ad92e3b7de15f969"
       },
       "implementation": {
         "state": "unknown"
@@ -4711,13 +4711,13 @@
       "title": "flows/README.md 目录索引",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 4,
+      "revision": 5,
       "definition": {
         "file": "flows/README.md",
         "anchor": "README-FLOWS",
         "line": 20,
         "endLine": 26,
-        "fingerprint": "86d0fd32762ff9609235510696f4c810"
+        "fingerprint": "8ad1bd4ceea0c05e73de4006a4e75565"
       },
       "implementation": {
         "state": "unknown"
@@ -4736,13 +4736,13 @@
       "title": "modules/README.md 目录索引",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 4,
+      "revision": 5,
       "definition": {
         "file": "modules/README.md",
         "anchor": "README-MODULES",
         "line": 26,
         "endLine": 32,
-        "fingerprint": "c6086a1df35850ff5bc2f0ae2ef97343"
+        "fingerprint": "86b282d7c598378e3f29c803a429c646"
       },
       "implementation": {
         "state": "unknown"
@@ -4761,13 +4761,13 @@
       "title": "tools/README.md 目录索引",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 4,
+      "revision": 5,
       "definition": {
         "file": "tools/README.md",
         "anchor": "README-TOOLS",
         "line": 54,
         "endLine": 60,
-        "fingerprint": "7e58c203cebf680bbe9ecd44f07d8047"
+        "fingerprint": "19e6a4767318363afb1d35cba7293717"
       },
       "implementation": {
         "state": "unknown"
@@ -4786,13 +4786,13 @@
       "title": "system_time_now",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/system_time_now.md",
         "anchor": "T01",
         "line": 9,
         "endLine": 89,
-        "fingerprint": "d0495bc5a597ecd03c63af866e0f65a3"
+        "fingerprint": "96e7f1b4451011ba408d522328335085"
       },
       "implementation": {
         "state": "present"
@@ -4811,13 +4811,13 @@
       "title": "app_context_read",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/app_context_read.md",
         "anchor": "T02",
         "line": 9,
         "endLine": 88,
-        "fingerprint": "effebf59cfd5db30178fb7e013bb6280"
+        "fingerprint": "a60318807b45a3e4c918170eb313fd39"
       },
       "implementation": {
         "state": "present"
@@ -4841,13 +4841,13 @@
       "title": "capabilities_read",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/capabilities_read.md",
         "anchor": "T03",
         "line": 9,
         "endLine": 99,
-        "fingerprint": "5e47f5157904446ff44710e5ffa5f727"
+        "fingerprint": "ee1930c8c3f6a976f05b92b91d4cd856"
       },
       "implementation": {
         "state": "partial"
@@ -4870,13 +4870,13 @@
       "title": "skills_list",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/skills_list.md",
         "anchor": "T04",
         "line": 9,
         "endLine": 89,
-        "fingerprint": "2090b7516e6f1324fced12aa481d11e5"
+        "fingerprint": "a46649aa8eed3fe50e505da807f10c7d"
       },
       "implementation": {
         "state": "present"
@@ -4899,13 +4899,13 @@
       "title": "search_hybrid",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/search_hybrid.md",
         "anchor": "T05",
         "line": 9,
         "endLine": 94,
-        "fingerprint": "0c2297cd9bf1efd5a0c6610eabcd131e"
+        "fingerprint": "8e15aab926da19619fa9694e806cf4af"
       },
       "implementation": {
         "state": "present"
@@ -4928,13 +4928,13 @@
       "title": "read_note",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/read_note.md",
         "anchor": "T06",
         "line": 9,
         "endLine": 98,
-        "fingerprint": "89c087b96fd09a46f16f002eec7d61de"
+        "fingerprint": "02bbf8f55de77a570f9016770c94039b"
       },
       "implementation": {
         "state": "present"
@@ -4958,13 +4958,13 @@
       "title": "list_vault",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/list_vault.md",
         "anchor": "T07",
         "line": 9,
         "endLine": 102,
-        "fingerprint": "85b36e92566eb75b58166a6bf79fe752"
+        "fingerprint": "5a29b8cc4b3e1c4d13523bcc5837fed1"
       },
       "implementation": {
         "state": "present"
@@ -4987,13 +4987,13 @@
       "title": "get_outline",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/get_outline.md",
         "anchor": "T08",
         "line": 9,
         "endLine": 94,
-        "fingerprint": "3e1dc706de8c8e3ec805d9a372abe672"
+        "fingerprint": "9de783d22df4581b249fca84ea4ff75a"
       },
       "implementation": {
         "state": "present"
@@ -5016,13 +5016,13 @@
       "title": "get_backlinks",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/get_backlinks.md",
         "anchor": "T09",
         "line": 9,
         "endLine": 86,
-        "fingerprint": "60059a6c1dfeb59bab967dbeacbcf026"
+        "fingerprint": "4eae0566af7bfb7cfabd1dcc9535dcde"
       },
       "implementation": {
         "state": "present"
@@ -5045,13 +5045,13 @@
       "title": "get_context_packets",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/get_context_packets.md",
         "anchor": "T10",
         "line": 9,
         "endLine": 82,
-        "fingerprint": "69bf28273e5ade61dc72052e9c06151f"
+        "fingerprint": "7a0287968ad6e2b378c20399b8fcabf3"
       },
       "implementation": {
         "state": "present"
@@ -5074,13 +5074,13 @@
       "title": "web_search",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/web_search.md",
         "anchor": "T11",
         "line": 9,
         "endLine": 107,
-        "fingerprint": "a8518714e037c4f79270ac57b457937a"
+        "fingerprint": "925bd57a843af2f1873bdf6ba71837e2"
       },
       "implementation": {
         "state": "partial"
@@ -5105,13 +5105,13 @@
       "title": "web_fetch",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/web_fetch.md",
         "anchor": "T12",
         "line": 9,
         "endLine": 101,
-        "fingerprint": "0cb2d00ba28a5bb112aabcaef10f1d34"
+        "fingerprint": "4a07c2ebe0f3f258c844068b3ee0007c"
       },
       "implementation": {
         "state": "present"
@@ -5135,13 +5135,13 @@
       "title": "memory_read",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/memory_read.md",
         "anchor": "T13",
         "line": 9,
         "endLine": 86,
-        "fingerprint": "f239d59f563d8ffa03b29d6c267a6029"
+        "fingerprint": "dcab16c63530b19f5d475d6fd29bf74d"
       },
       "implementation": {
         "state": "present"
@@ -5165,13 +5165,13 @@
       "title": "memory_write",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/memory_write.md",
         "anchor": "T14",
         "line": 9,
         "endLine": 104,
-        "fingerprint": "5ddd3b16d5169a8c9fc03014b6a4d6f0"
+        "fingerprint": "83af751caf892cafdc91d595d3ffa792"
       },
       "implementation": {
         "state": "present"
@@ -5195,13 +5195,13 @@
       "title": "insert_text_at_cursor",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/insert_text_at_cursor.md",
         "anchor": "T15",
         "line": 9,
         "endLine": 106,
-        "fingerprint": "039f8579b46bd9484e02a58f8b49d96b"
+        "fingerprint": "1b6618a0bff3adff999409933746b17f"
       },
       "implementation": {
         "state": "present"
@@ -5225,13 +5225,13 @@
       "title": "replace_selection",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/replace_selection.md",
         "anchor": "T16",
         "line": 9,
         "endLine": 107,
-        "fingerprint": "951623d61f56ef5c53e79433b28ebdd6"
+        "fingerprint": "f19ec946d52f751440174e5f8cfa657d"
       },
       "implementation": {
         "state": "present"
@@ -5255,13 +5255,13 @@
       "title": "git_read_status",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/git_read_status.md",
         "anchor": "T17",
         "line": 9,
         "endLine": 118,
-        "fingerprint": "57a681e7ac8c3902649cbd36844f761c"
+        "fingerprint": "d2fd35fb049b7e2921fee554cad2104e"
       },
       "implementation": {
         "state": "present"
@@ -5284,13 +5284,13 @@
       "title": "git_read_diff",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/git_read_diff.md",
         "anchor": "T18",
         "line": 9,
         "endLine": 115,
-        "fingerprint": "a89fb36428a217e84f18938383842d0c"
+        "fingerprint": "1056470c84c319a4639de4693a79f64b"
       },
       "implementation": {
         "state": "present"
@@ -5313,13 +5313,13 @@
       "title": "git_read_log",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/git_read_log.md",
         "anchor": "T19",
         "line": 9,
         "endLine": 117,
-        "fingerprint": "60be326955aadecbee14436c56024472"
+        "fingerprint": "b4da95b1a3189b738fdc1170aab9036f"
       },
       "implementation": {
         "state": "present"
@@ -5342,13 +5342,13 @@
       "title": "secret_exists",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/secret_exists.md",
         "anchor": "T20",
         "line": 9,
         "endLine": 122,
-        "fingerprint": "d5811cab0bd5641b0c5f58068c709b50"
+        "fingerprint": "8b4bef166639be583885da22f5e23685"
       },
       "implementation": {
         "state": "present"
@@ -5371,13 +5371,13 @@
       "title": "fs_import_to_vault",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/fs_import_to_vault.md",
         "anchor": "T21",
         "line": 9,
         "endLine": 136,
-        "fingerprint": "0c5b3527f5fc740a7a327cdec37738e4"
+        "fingerprint": "84eca265c1fa3bb40a7618eebbe4645b"
       },
       "implementation": {
         "state": "present"
@@ -5400,13 +5400,13 @@
       "title": "fs_export",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/fs_export.md",
         "anchor": "T22",
         "line": 9,
         "endLine": 132,
-        "fingerprint": "ed910fadd1df5a558ac209e1093aad7f"
+        "fingerprint": "ab594963f3166beb5a2019f3038418b0"
       },
       "implementation": {
         "state": "present"
@@ -5429,13 +5429,13 @@
       "title": "fs_read_authorized_folder",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/fs_read_authorized_folder.md",
         "anchor": "T23",
         "line": 9,
         "endLine": 137,
-        "fingerprint": "fed51fe38bd014460a8cef554998dec5"
+        "fingerprint": "bc8c49b215242e1bc21c69065fbfe43e"
       },
       "implementation": {
         "state": "present"
@@ -5458,13 +5458,13 @@
       "title": "fs_write_authorized_export",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/fs_write_authorized_export.md",
         "anchor": "T24",
         "line": 9,
         "endLine": 131,
-        "fingerprint": "693c0a84f32b62ce54ec038037ec9de6"
+        "fingerprint": "5b4b9255ecd26e99339f793bd6b5ea53"
       },
       "implementation": {
         "state": "present"
@@ -5487,13 +5487,13 @@
       "title": "doc_normalize_markdown",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/doc_normalize_markdown.md",
         "anchor": "T25",
         "line": 9,
         "endLine": 98,
-        "fingerprint": "32ab593c14a95d1ff09735802341f9ed"
+        "fingerprint": "3da8499e32d9b813055cbb397390954c"
       },
       "implementation": {
         "state": "present"
@@ -5516,13 +5516,13 @@
       "title": "doc_extract_citations",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/doc_extract_citations.md",
         "anchor": "T26",
         "line": 9,
         "endLine": 105,
-        "fingerprint": "6ec526bbb8d1113ec90cc6f99340c325"
+        "fingerprint": "00706b568f1c694fd60ba6f4bad1158c"
       },
       "implementation": {
         "state": "present"
@@ -5545,13 +5545,13 @@
       "title": "git_write_commit",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/git_write_commit.md",
         "anchor": "T27",
         "line": 9,
         "endLine": 118,
-        "fingerprint": "e1b04e560d82c45e561cbb79431cf472"
+        "fingerprint": "6812c553f7f585d28e510094d83a9ad3"
       },
       "implementation": {
         "state": "present"
@@ -5574,13 +5574,13 @@
       "title": "search_semantic",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/search_semantic.md",
         "anchor": "T28",
         "line": 9,
         "endLine": 107,
-        "fingerprint": "085cf98c73ec0e336a4e983ac0e3aea8"
+        "fingerprint": "980ea27e20a8a7ec67b3f5952ba21349"
       },
       "implementation": {
         "state": "present"
@@ -5603,13 +5603,13 @@
       "title": "search_keyword",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/search_keyword.md",
         "anchor": "T29",
         "line": 9,
         "endLine": 108,
-        "fingerprint": "3b3c7b19cb4cdd340d0ea4ccbd82c43c"
+        "fingerprint": "cc677183809d965ac761091c53450309"
       },
       "implementation": {
         "state": "present"
@@ -5632,13 +5632,13 @@
       "title": "get_regulation",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/get_regulation.md",
         "anchor": "T30",
         "line": 9,
         "endLine": 109,
-        "fingerprint": "448a64fa292197e035497361bce4265d"
+        "fingerprint": "9598f25a9ec0dcf9b1fe5be77ee3a291"
       },
       "implementation": {
         "state": "present"
@@ -5661,13 +5661,13 @@
       "title": "spawn_subagent",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/spawn_subagent.md",
         "anchor": "T31",
         "line": 9,
         "endLine": 144,
-        "fingerprint": "fbc7f8ef9e2dba86e3889eb78f382539"
+        "fingerprint": "a0716570d3c567eda34c59d4ef47f317"
       },
       "implementation": {
         "state": "partial"
@@ -5692,13 +5692,13 @@
       "title": "scheduled_task_create",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "tools/scheduled_task_create.md",
         "anchor": "T32",
         "line": 9,
         "endLine": 126,
-        "fingerprint": "0adb29cd3ac7f7a298f9ce7e073b72b7"
+        "fingerprint": "fb37dc126c88ccfaf6c48faa0f440e14"
       },
       "implementation": {
         "state": "present"
@@ -5721,13 +5721,13 @@
       "title": "scheduled_task_list",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/scheduled_task_list.md",
         "anchor": "T33",
         "line": 9,
         "endLine": 105,
-        "fingerprint": "5f0838bb67c688e486824d13b3557d9b"
+        "fingerprint": "4b97296f44dc7f906e65a16b3d559c50"
       },
       "implementation": {
         "state": "present"
@@ -5750,13 +5750,13 @@
       "title": "scheduled_task_delete",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/scheduled_task_delete.md",
         "anchor": "T34",
         "line": 9,
         "endLine": 114,
-        "fingerprint": "9e6f51da320992d1164b82a78a38ebc7"
+        "fingerprint": "0af3a99fce54908a9c3421a2e413971c"
       },
       "implementation": {
         "state": "present"
@@ -5779,13 +5779,13 @@
       "title": "vault_create_note",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/vault_create_note.md",
         "anchor": "T35",
         "line": 9,
         "endLine": 121,
-        "fingerprint": "327f1c92e84fac9d7cc89eaa963fa9ee"
+        "fingerprint": "37cc8cb07af5b1d1d38479864412dce5"
       },
       "implementation": {
         "state": "present"
@@ -5808,13 +5808,13 @@
       "title": "vault_rename_move",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/vault_rename_move.md",
         "anchor": "T36",
         "line": 9,
         "endLine": 125,
-        "fingerprint": "29aadb536502b4ac22f976f41a861581"
+        "fingerprint": "d23cb0ff4e1c437e238308219aaf0fcf"
       },
       "implementation": {
         "state": "present"
@@ -5837,13 +5837,13 @@
       "title": "vault_delete_to_trash",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/vault_delete_to_trash.md",
         "anchor": "T37",
         "line": 9,
         "endLine": 121,
-        "fingerprint": "dba866ca9f2a3a0d89ddae7eb2e9cf75"
+        "fingerprint": "54bd47f10eea083593e268e34213ee8f"
       },
       "implementation": {
         "state": "present"
@@ -5866,13 +5866,13 @@
       "title": "vault_asset_write",
       "owner": "M02",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/vault_asset_write.md",
         "anchor": "T38",
         "line": 9,
         "endLine": 116,
-        "fingerprint": "8428c7328af1d8d64c8e5cf65fa49417"
+        "fingerprint": "9926b5145dfb83e19686759effe9be5d"
       },
       "implementation": {
         "state": "present"
@@ -5895,13 +5895,13 @@
       "title": "vault_version_list",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/vault_version_list.md",
         "anchor": "T39",
         "line": 9,
         "endLine": 120,
-        "fingerprint": "0af0b223871480727dc0ef06381d4b6d"
+        "fingerprint": "70cf50054be59679e7de7fa11c65cae3"
       },
       "implementation": {
         "state": "present"
@@ -5924,13 +5924,13 @@
       "title": "V01 证据用途分类与组合要求",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V01",
         "line": 26,
         "endLine": 45,
-        "fingerprint": "95037a04a85115370e20c7288f537e2b"
+        "fingerprint": "26b3b1339aacb37e1103f4fae3a446af"
       },
       "implementation": {
         "state": "unknown"
@@ -5949,13 +5949,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 73,
-        "fingerprint": "b70f99d891f69396a79148adae8d97a3"
+        "fingerprint": "aa27361e22a3139689c849a94d1b3823"
       },
       "implementation": {
         "state": "unknown"
@@ -5974,13 +5974,13 @@
       "title": "V03 局部机械不变量证据",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "testing/acceptance-matrix.md",
         "anchor": "V03",
         "line": 25,
         "endLine": 35,
-        "fingerprint": "61ec4ab44d80a802adf78e2ab35c615c"
+        "fingerprint": "c80708fe0d2a66019a63036eef7984d8"
       },
       "implementation": {
         "state": "unknown"
@@ -5999,13 +5999,13 @@
       "title": "V04 跨组件交接与生产入口证据",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "testing/acceptance-matrix.md",
         "anchor": "V04",
         "line": 37,
         "endLine": 59,
-        "fingerprint": "3ffee86b237dffeff3704bdec159154a"
+        "fingerprint": "a08b4a591370649c3a92dd7bc54b3257"
       },
       "implementation": {
         "state": "unknown"
@@ -6024,13 +6024,13 @@
       "title": "V05 协议兼容与真实端点证据",
       "owner": "M04",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "testing/acceptance-matrix.md",
         "anchor": "V05",
         "line": 61,
         "endLine": 84,
-        "fingerprint": "9b6514dc71041748a1107086c58cf872"
+        "fingerprint": "67b248f8696e2e85c0d03e29bceee08c"
       },
       "implementation": {
         "state": "unknown"
@@ -6049,13 +6049,13 @@
       "title": "V06 语义质量证据与人工抽检",
       "owner": "E03",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "testing/acceptance-matrix.md",
         "anchor": "V06",
         "line": 86,
         "endLine": 109,
-        "fingerprint": "05af2b51434280d3389483151707556d"
+        "fingerprint": "7f236062aa8a607f3a94021430b9d614"
       },
       "implementation": {
         "state": "unknown"
@@ -6074,13 +6074,13 @@
       "title": "V07 界面交互与诊断可定位性证据",
       "owner": "M09",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "testing/acceptance-matrix.md",
         "anchor": "V07",
         "line": 111,
         "endLine": 134,
-        "fingerprint": "0283f4d4ed548bc9fc3cf15cf8796d37"
+        "fingerprint": "9f49124ef22595bb954575f52d239d30"
       },
       "implementation": {
         "state": "unknown"
@@ -6099,13 +6099,13 @@
       "title": "V08 证据记录、绑定与当前适用性",
       "owner": "M09",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
         "line": 75,
         "endLine": 97,
-        "fingerprint": "77928984cbe353ed9f771dbd54fa8931"
+        "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": {
         "state": "unknown"
@@ -6124,13 +6124,13 @@
       "title": "X01 文档体系检查器",
       "owner": "P03",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X01",
         "line": 205,
         "endLine": 227,
-        "fingerprint": "3a736d3f7570d16eacfa10524a5b7b6d"
+        "fingerprint": "a351d9b85535d8e91447a82853ba9346"
       },
       "implementation": {
         "state": "unknown"
@@ -6154,13 +6154,13 @@
       "title": "X02 检查器负例自测",
       "owner": "P03",
       "maturity": "defined",
-      "revision": 10,
+      "revision": 11,
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X02",
         "line": 229,
         "endLine": 237,
-        "fingerprint": "cfb6f82088b19ab07f69de70663bfe01"
+        "fingerprint": "4c842f2a8182e09f8f86c31412d0b2b5"
       },
       "implementation": {
         "state": "unknown"
@@ -6188,13 +6188,13 @@
       "title": "X03 登记表",
       "owner": "P03",
       "maturity": "defined",
-      "revision": 9,
+      "revision": 10,
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X03",
         "line": 239,
         "endLine": 252,
-        "fingerprint": "c2c19c1887b0a52363ced6358b4bb25b"
+        "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc"
       },
       "implementation": {
         "state": "unknown"
@@ -6224,10 +6224,10 @@
       "testPath": "scripts/agent-harness-check.mjs",
       "command": "npm run agent-harness:check",
       "environment": "local / Windows 10 / node v24.14.1",
-      "fingerprint": "3a736d3f7570d16eacfa10524a5b7b6d",
-      "at": "2026-09-15T07:15:30Z",
+      "fingerprint": "a351d9b85535d8e91447a82853ba9346",
+      "at": "2026-09-15T07:27:51Z",
       "applicability": "current",
-      "note": "registryRevision 20：Prettier 重排 Markdown 表格后重新绑定文件级指纹；本机 npm run agent-harness:check 退出码 0。不沿用 macOS / node v26.0.0 的旧环境声明。"
+      "note": "registryRevision 21：检查器纳入标题并比对对象指纹后重新绑定；本机 npm run agent-harness:check 退出码 0。"
     },
     {
       "object": "X02",
@@ -6235,10 +6235,10 @@
       "testPath": "scripts/agent-harness-check.test.mjs",
       "command": "npm run agent-harness:test",
       "environment": "local / Windows 10 / node v24.14.1",
-      "fingerprint": "cfb6f82088b19ab07f69de70663bfe01",
-      "at": "2026-09-15T07:15:30Z",
+      "fingerprint": "4c842f2a8182e09f8f86c31412d0b2b5",
+      "at": "2026-09-15T07:27:51Z",
       "applicability": "current",
-      "note": "本机 npm run agent-harness:test：15 条负例全部通过（exit 0）。不声称覆盖 document.md §5 的全部检查器测试清单。"
+      "note": "本机 npm run agent-harness:test：18 条负例全部通过（exit 0）。不声称覆盖 document.md §5 的全部检查器测试清单。"
     }
   ],
   "changes": [
@@ -16695,6 +16695,1325 @@
           "fingerprintTo": "c2c19c1887b0a52363ced6358b4bb25b"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-15-13",
+      "at": "2026-09-15T07:26:44.337Z",
+      "author": "skahanium",
+      "classification": "refinement",
+      "reason": "检查器按 objects.md 纳入标题并比对对象指纹后重新绑定",
+      "review": null,
+      "objects": [
+        {
+          "id": "README-MODULES",
+          "revisionFrom": 4,
+          "revisionTo": 5,
+          "fingerprintFrom": "c6086a1df35850ff5bc2f0ae2ef97343",
+          "fingerprintTo": "86b282d7c598378e3f29c803a429c646"
+        },
+        {
+          "id": "README-CONTRACTS",
+          "revisionFrom": 4,
+          "revisionTo": 5,
+          "fingerprintFrom": "e0a6a3a812df0e97cd4aa52dc85f0655",
+          "fingerprintTo": "38685944b2115fa5ad92e3b7de15f969"
+        },
+        {
+          "id": "README-TOOLS",
+          "revisionFrom": 4,
+          "revisionTo": 5,
+          "fingerprintFrom": "7e58c203cebf680bbe9ecd44f07d8047",
+          "fingerprintTo": "19e6a4767318363afb1d35cba7293717"
+        },
+        {
+          "id": "README-FLOWS",
+          "revisionFrom": 4,
+          "revisionTo": 5,
+          "fingerprintFrom": "86d0fd32762ff9609235510696f4c810",
+          "fingerprintTo": "8ad1bd4ceea0c05e73de4006a4e75565"
+        },
+        {
+          "id": "P01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "ca7cc3a7881d6a736860344e18c37690",
+          "fingerprintTo": "1c8b2b9c4372b18427bac502f9e68e50"
+        },
+        {
+          "id": "P02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "d622fb693058e792547987c6eb86bdf0",
+          "fingerprintTo": "307cd1d4482aa3bd86fb4af0b1d4936b"
+        },
+        {
+          "id": "P03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "445c181155e3bf270d9f4320c7245db9",
+          "fingerprintTo": "ba2e902bad1a39fa846431526b1ba499"
+        },
+        {
+          "id": "P04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "fd24f58eb5d4a68ee88b8c92d090c2a9",
+          "fingerprintTo": "d7402993b611a78ed400107c36fd2100"
+        },
+        {
+          "id": "P05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "58a3e8b6bf27babccbbdf4abb605cff6",
+          "fingerprintTo": "3068eea7612d1a3f4c00c578a019595f"
+        },
+        {
+          "id": "P06",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "518512ff29ead8d0606d37f55cfb4c4c",
+          "fingerprintTo": "253a18e99117b13032854f8d14327a56"
+        },
+        {
+          "id": "P07",
+          "revisionFrom": 2,
+          "revisionTo": 3,
+          "fingerprintFrom": "546b52e1fcd07eb6d603a1e8044e5df9",
+          "fingerprintTo": "9c94a9f80256f6b5e33c5b24abb0da48"
+        },
+        {
+          "id": "M01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "2ff89165f20e8340b3593bf22226ea28",
+          "fingerprintTo": "ff2051893f6edbca84af816531040bb8"
+        },
+        {
+          "id": "M02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "498db1fe6bc7c5da93997caafb648291",
+          "fingerprintTo": "8394c41fdd12474add177a8ff2c3d091"
+        },
+        {
+          "id": "M03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "00db46b31c51ed7954290a8637ee3813",
+          "fingerprintTo": "9400528d82c2529910a0e28219c8d16c"
+        },
+        {
+          "id": "M04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "15394c74629720c2fe1c35d8fc35189f",
+          "fingerprintTo": "65c8ba7fbe4be8629c342daa9aa248ae"
+        },
+        {
+          "id": "M05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "1bc8879f6a35355d8f6893635679ed87",
+          "fingerprintTo": "e6c79986f06b2b0e55e0597cfc652a1a"
+        },
+        {
+          "id": "M06",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "f9c244b44ff25d21ba70a8f4c6a3a424",
+          "fingerprintTo": "0ed1e884bc91a5cccf905acb5db7415b"
+        },
+        {
+          "id": "M07",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "d0d6e1174899564d3ee7fae8e7a3dea7",
+          "fingerprintTo": "a3bd6e620bc12ff62a1a1cbec28bb54b"
+        },
+        {
+          "id": "M08",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "7ac9501f066b82cef17add43cffd4d22",
+          "fingerprintTo": "3d80423084809f04405e998ab1a9f55c"
+        },
+        {
+          "id": "M09",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "34ff2986525c67c5b1a19c888ff9cd7a",
+          "fingerprintTo": "83ad048f91a4243376a8d996089536b5"
+        },
+        {
+          "id": "C01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "bcf2472238afdaa9b3f6820b2aec736f",
+          "fingerprintTo": "70008a4a66f03dbd77223e12aaa1b361"
+        },
+        {
+          "id": "C02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "244e297862d3930ef7d1399f9e41128d",
+          "fingerprintTo": "ce4c209b3f4d2bfabd8a62fa29224467"
+        },
+        {
+          "id": "C03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "fb074e803d7ee1c1ce0097dc6f0178c1",
+          "fingerprintTo": "f327db20835338cf39afa5d3b49a9b9d"
+        },
+        {
+          "id": "C04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "acdaf2593b63c3b2c45832fc910ef9ab",
+          "fingerprintTo": "ea388829eaa9035ea2b27b7ccf353d75"
+        },
+        {
+          "id": "C05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "a266412cb05c24f8043a672f676f7c0d",
+          "fingerprintTo": "5102979b7ea99c0505bb9d7d65758e53"
+        },
+        {
+          "id": "C06",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "2793fafe39e5acb884d03bde3dc2a6df",
+          "fingerprintTo": "c4b49c79ae7e64029994ab9e42289b40"
+        },
+        {
+          "id": "C07",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "16f74220608044b101f8e7994eac79b8",
+          "fingerprintTo": "be303c3a129014a4e0d7518aef656c0e"
+        },
+        {
+          "id": "C08",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "a68dfe432c5120629fa96475ad518c46",
+          "fingerprintTo": "ad81b8040ed4b9e46fdac02d1b1fe22c"
+        },
+        {
+          "id": "C09",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "bcba6e0494f93f1257f6ee805e77b943",
+          "fingerprintTo": "2cc4ec4d60cda186a5e1cf795ad4c457"
+        },
+        {
+          "id": "C10",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "b33f697ed92517f228a25a01b9f91622",
+          "fingerprintTo": "be0402c6b183a31449ed2e49fa0f98f1"
+        },
+        {
+          "id": "C11",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "c435915e46d73bd7fe1055c2cf9ca98f",
+          "fingerprintTo": "23164cb506b6b33996e71d27dbc4edc2"
+        },
+        {
+          "id": "C12",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "83c6cd777a52d5276b9b03e8c1eaa59c",
+          "fingerprintTo": "f9d0b4447363412e70c6258c5f548d6f"
+        },
+        {
+          "id": "C13",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "864dffd57a95da8556a25f5be8eff852",
+          "fingerprintTo": "b485a81f7a39c8b00b0e6e93885c0675"
+        },
+        {
+          "id": "C14",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "e5834116952dd5076150a110c94382c6",
+          "fingerprintTo": "945a21c757ef1aa04c8077fc2ef5fc97"
+        },
+        {
+          "id": "C15",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "ab0616c82f6a6592a4b18609e8368fc0",
+          "fingerprintTo": "1c1ce0630de04592faf7804a4f84fe6b"
+        },
+        {
+          "id": "C16",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "a2fb6e870f7226c9d58b037c961f7e89",
+          "fingerprintTo": "6c006eeb089856f2b1c793f04290a945"
+        },
+        {
+          "id": "C17",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "6e349fabcd2536da64a3b77a44669a16",
+          "fingerprintTo": "a01749ccfab0cb5b4c04063effbe4eca"
+        },
+        {
+          "id": "C18",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "945f5c791f73f551b9d95710ab229a19",
+          "fingerprintTo": "729f1227294ffe6353c21967ce46311f"
+        },
+        {
+          "id": "C19",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "21e36fd3fab7febb5daaa6723c2b6fdc",
+          "fingerprintTo": "273f9c59f1a745c8ed3e190859f6cacc"
+        },
+        {
+          "id": "C20",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "f807a711eb9b92883cbac1846306435e",
+          "fingerprintTo": "8bc5250a9d2468f928b8347fb471adcf"
+        },
+        {
+          "id": "C21",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "82223e77ba81ccc461db73f32567adc4",
+          "fingerprintTo": "7a55ec7bfdda5aa16c8a9f6f4966dcff"
+        },
+        {
+          "id": "C22",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "be5c9012c08e5c62641bf27dc211fa05",
+          "fingerprintTo": "8d62c96656893980f0e4c437115921cb"
+        },
+        {
+          "id": "C23",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "7ead6f7a316f4c130875d8fcd4b556cc",
+          "fingerprintTo": "62b79fae885c68c01316461398c862e0"
+        },
+        {
+          "id": "C24",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "552b74f21b604d73e91656481bea1d22",
+          "fingerprintTo": "a134c89546702d47d643e6c4a1cad6f4"
+        },
+        {
+          "id": "C25",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "3bef13baa362fdcaf128b0bd1931ad3c",
+          "fingerprintTo": "b63690cb7b325e9e9b251e97bd0beaf2"
+        },
+        {
+          "id": "C26",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "b88f2553179d13966d28c8824e6732cc",
+          "fingerprintTo": "5a9fb259b370b2e83106ca01b01aa6fc"
+        },
+        {
+          "id": "C27",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "f8359667d2fc302e463d4ac1fa21fd8b",
+          "fingerprintTo": "edbd50bbae9b655614595564e77ed773"
+        },
+        {
+          "id": "E01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "9fc6d7792ef519c4d855a4e3307f843b",
+          "fingerprintTo": "cfdf265bf8f8ac961552a6fd14c36e34"
+        },
+        {
+          "id": "E02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "8ec6328d378dc573c80a3fb6f292f6d2",
+          "fingerprintTo": "f1a85a52f58e1ce70d2004c9738485e5"
+        },
+        {
+          "id": "E03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "c582152092a23bce400a037eb42b68c8",
+          "fingerprintTo": "0a04e4e99c2c6856e86a0ea2d34fd8d0"
+        },
+        {
+          "id": "K01",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "7ef2abfaa50a9a80822db9fed96dea85",
+          "fingerprintTo": "f47c02b89d7569bbb5e4152b3ba0814c"
+        },
+        {
+          "id": "K02",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "c97f430e5b09012014af7481f7897b9f",
+          "fingerprintTo": "21737948fbfe97459310db283fc3e40a"
+        },
+        {
+          "id": "K03",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "f717636437baa35f38606c5f5f136df8",
+          "fingerprintTo": "950b239eba0664428f21925365a03787"
+        },
+        {
+          "id": "K04",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "97c0f7cb2ad44050ac0a2b7277162f35",
+          "fingerprintTo": "334e9bd2466e744c182b0f55f111a735"
+        },
+        {
+          "id": "K05",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "b08e1272e9fabdf9f9b5fbfb8db83e85",
+          "fingerprintTo": "ceda0a86513f667e831fb6736d47718c"
+        },
+        {
+          "id": "K06",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "2ddf4f9ba0ca0d3533d44b13e80c4715",
+          "fingerprintTo": "3e648abcc442f7bf9f959369c70ed403"
+        },
+        {
+          "id": "K07",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "67b1d6aafdb8db6859f44cef8a9cf1d7",
+          "fingerprintTo": "65968fe0e8ee638639c26157d8a0654b"
+        },
+        {
+          "id": "K08",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "f0bf5e681d285fad5ae5aea27058fa8a",
+          "fingerprintTo": "d2253154c3a79a098cdd0594c23f503a"
+        },
+        {
+          "id": "K09",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "01e90b333792d0a49e3eecaebe4a7c2a",
+          "fingerprintTo": "e74b319d8226c3ea96f545a5eb54c762"
+        },
+        {
+          "id": "K10",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "d95fbb3ee3e0a5a942b057be2a4b037e",
+          "fingerprintTo": "246332272cdd744f523f02f8848ab836"
+        },
+        {
+          "id": "K11",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "3cde4aa4a99071e422988445cd3bfb1a",
+          "fingerprintTo": "97455ada8a03b1b14e3706e043266316"
+        },
+        {
+          "id": "K12",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "c1207fe001e0693e44548f373c55b6e2",
+          "fingerprintTo": "91b94fe0837f4c3c218d7838bcf55b62"
+        },
+        {
+          "id": "K13",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "3fc5b9e39e2a11b11fef0baf943df994",
+          "fingerprintTo": "9717ad70f62c8a1a70bfed3b59a03689"
+        },
+        {
+          "id": "K14",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "edd998a6f59e9c037a7072d7f88abfbf",
+          "fingerprintTo": "87fb68d57378acbe17bc5a6c67fc6e25"
+        },
+        {
+          "id": "K15",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "2c783869a32b5d348a7432eafe765d97",
+          "fingerprintTo": "b5d197d66f42820ef83a738de88ca5b4"
+        },
+        {
+          "id": "K16",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "622268e3678c7b84502cd60e5a8299ce",
+          "fingerprintTo": "20c0ba6643b5f5df893a05fec1a2d03a"
+        },
+        {
+          "id": "K17",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "35cb1b1829b5cc588c42bfb12a256c16",
+          "fingerprintTo": "5e280676ea208fd3b365b34a49255789"
+        },
+        {
+          "id": "K18",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "50d983756b697f94db7ccb3041516cdb",
+          "fingerprintTo": "29b3cfcd4748c8dfa8899560294a4e78"
+        },
+        {
+          "id": "L01",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "41f4928e98c6a5cb69bbad063041d615",
+          "fingerprintTo": "f9f57857906651cee63289a9e61bb28b"
+        },
+        {
+          "id": "L02",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "f60ec056c7f7a879c41325be6c7b6f0b",
+          "fingerprintTo": "dcbd011a875a5fb7d3f50dbc8e41e95e"
+        },
+        {
+          "id": "L03",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "79636c863a6c0887a18811b9611771e2",
+          "fingerprintTo": "a75011aa6b19c5c547ebad7ea4f1fd15"
+        },
+        {
+          "id": "L04",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "ddbdb1d902222fb32e1e17e81e0d16de",
+          "fingerprintTo": "139b6ef1a5de30641b8ea74388f2cc5d"
+        },
+        {
+          "id": "L05",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "c0cd7c45047959d68ccc2704429ebd6d",
+          "fingerprintTo": "0dc6369a7ccf55b8483980b737d1e9a1"
+        },
+        {
+          "id": "L06",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "0133ee0b98db2963a86d2c1e3e1fdeb9",
+          "fingerprintTo": "4e4e6f47a5acef8cb64b3e410ac7087b"
+        },
+        {
+          "id": "V01",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "95037a04a85115370e20c7288f537e2b",
+          "fingerprintTo": "26b3b1339aacb37e1103f4fae3a446af"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "b70f99d891f69396a79148adae8d97a3",
+          "fingerprintTo": "aa27361e22a3139689c849a94d1b3823"
+        },
+        {
+          "id": "V03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "61ec4ab44d80a802adf78e2ab35c615c",
+          "fingerprintTo": "c80708fe0d2a66019a63036eef7984d8"
+        },
+        {
+          "id": "V04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "3ffee86b237dffeff3704bdec159154a",
+          "fingerprintTo": "a08b4a591370649c3a92dd7bc54b3257"
+        },
+        {
+          "id": "V05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "9b6514dc71041748a1107086c58cf872",
+          "fingerprintTo": "67b248f8696e2e85c0d03e29bceee08c"
+        },
+        {
+          "id": "V06",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "05af2b51434280d3389483151707556d",
+          "fingerprintTo": "7f236062aa8a607f3a94021430b9d614"
+        },
+        {
+          "id": "V07",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "0283f4d4ed548bc9fc3cf15cf8796d37",
+          "fingerprintTo": "9f49124ef22595bb954575f52d239d30"
+        },
+        {
+          "id": "V08",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "77928984cbe353ed9f771dbd54fa8931",
+          "fingerprintTo": "ebc1a089d61c53c3f43d65f5c40bcc33"
+        },
+        {
+          "id": "D01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "7f3d876242ded138ad4ef482d093a8fa",
+          "fingerprintTo": "44ad7c11457beef2f48b762dad178874"
+        },
+        {
+          "id": "D02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "967a80918d8984d0fc2ba0b2f86544f6",
+          "fingerprintTo": "8b599b00a16e291502d013cd2f2c2918"
+        },
+        {
+          "id": "D03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "6d28b9db405bd9f5508c2e543eaf9d59",
+          "fingerprintTo": "e77e1c00915e96a6b2dd3c1203e75dec"
+        },
+        {
+          "id": "D04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "bc8a2ce38f36475fa3b5ac8852aaa72d",
+          "fingerprintTo": "dfa6dc6f683960bdd2826b5095156bd6"
+        },
+        {
+          "id": "D05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "6519cb24d7a52973d9092a6fca46025a",
+          "fingerprintTo": "3734b7e755da5dce11814be2bc828cd2"
+        },
+        {
+          "id": "D06",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "aeab3f09379e14407160c5a5d75b61db",
+          "fingerprintTo": "1ef0e3f3adfdd9f347eebbefe4e583c2"
+        },
+        {
+          "id": "R01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "ee9a8dd92b778c5a6f8736ef54662431",
+          "fingerprintTo": "0f83e37bea339e70b4fb3660ab96b9b7"
+        },
+        {
+          "id": "R02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "2579f287ea2789c82831d1d35c397afd",
+          "fingerprintTo": "ce298478f741d2c69345dda2a443b402"
+        },
+        {
+          "id": "R03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "ee5ea3b12342643be3b67d55a5136529",
+          "fingerprintTo": "24c06e85f6e7b29877dfd8f5863a4825"
+        },
+        {
+          "id": "R04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "6fc1289ec1f1791c6b8ca908fddf7c6d",
+          "fingerprintTo": "c8b613cdf98521dcb8f2b367b050a515"
+        },
+        {
+          "id": "R05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "9c8c7c63a0e289d413a435655fc69c29",
+          "fingerprintTo": "e69c32bbaa7fa7048e6a01cbb39ee2aa"
+        },
+        {
+          "id": "R06",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "ca2fd6fdb22f1ff352ce8d26cdaf418d",
+          "fingerprintTo": "18d5085c59639a35d81313dccc0d6b33"
+        },
+        {
+          "id": "R07",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "e665c4d6855e4fdbf72f2bc6b59b05a0",
+          "fingerprintTo": "f991597da8f2577109135fba88fe72e5"
+        },
+        {
+          "id": "R08",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "2cdc15d689dae3e27598901b6f056573",
+          "fingerprintTo": "9497dacb90ed0d106a4398de547977f2"
+        },
+        {
+          "id": "R09",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "94b06cc2a9bbac90f7a5cf7cf9a0128f",
+          "fingerprintTo": "0143db6a2b4c154c3294c0224a6a271b"
+        },
+        {
+          "id": "R10",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "8940ca5b1d3b5b089293a4ac02df0c55",
+          "fingerprintTo": "52d9ec8de59718033291d3088789e519"
+        },
+        {
+          "id": "Q01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "ef5f6b664a9ea9f5f2552c37a3156c5a",
+          "fingerprintTo": "c513f04cc32abf93e9d669b9724921fa"
+        },
+        {
+          "id": "Q02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "528216dc82b9e02324798ae871479956",
+          "fingerprintTo": "f1c5075a0bc8bca566f28b5a4ae91414"
+        },
+        {
+          "id": "Q03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "0fe11bda83a8865940d94e4a5078db00",
+          "fingerprintTo": "95d414df1eef8a36bf00c68cfaedbaf4"
+        },
+        {
+          "id": "Q04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "323c35361432a80530a8b3186c19ef13",
+          "fingerprintTo": "6fb3315525dddd0766de0c9e64067958"
+        },
+        {
+          "id": "Q05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "8fd5d02d95cc5ea5b98c65457aa9e31d",
+          "fingerprintTo": "a5da417706fc9b514dab65dbcc0a8223"
+        },
+        {
+          "id": "Q06",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "3545426329938f276325ebb3615ef28e",
+          "fingerprintTo": "cc701424e395c94c887aab555656a2f8"
+        },
+        {
+          "id": "Q07",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "f5733ea4756e4eb53be54ef767a52ed1",
+          "fingerprintTo": "b5520ca814a1c858c44ab7cde7906f9b"
+        },
+        {
+          "id": "Q08",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "870c36ef1938056b65c35964e2a3d72b",
+          "fingerprintTo": "96cd6a36e82f49c1cd20d656df887851"
+        },
+        {
+          "id": "Q09",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "e7a543bfff5125532c36a1f6d40a3da4",
+          "fingerprintTo": "57996658a8f5396480973e8bee4fca3e"
+        },
+        {
+          "id": "Q10",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "f8fb7d90708b4ca168f3e5b4830171d2",
+          "fingerprintTo": "b7509a7f335ff8a10a09baa4b7257c7c"
+        },
+        {
+          "id": "Q11",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "f34df397e27b0adb93a995b1e4670129",
+          "fingerprintTo": "76f601fcae343c394fc2059f7721f81b"
+        },
+        {
+          "id": "Q12",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "3c77b97a4d6f791f465eb76a39031b4b",
+          "fingerprintTo": "f94ce35a946871fd3b442d2961c96f32"
+        },
+        {
+          "id": "Q13",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "fd23dec85fb3cdb52828299d117d68f0",
+          "fingerprintTo": "d616c25c613e433cce26324da8e6c1f4"
+        },
+        {
+          "id": "Q14",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "739c45a6fb395c98a9eb184c1d34f2ed",
+          "fingerprintTo": "8035af42528aa4ff15a5cc256098c345"
+        },
+        {
+          "id": "Q15",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "9f7e477c12e669321d17509b95cbc745",
+          "fingerprintTo": "ea1bd203615f48134fd541c7e6dd97d3"
+        },
+        {
+          "id": "Q16",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "2726c947e9bd2aebb91b10d2596b7320",
+          "fingerprintTo": "44e2c0b7263f747b8836de0478fa8f7c"
+        },
+        {
+          "id": "Q17",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "bd5bfcbd48e691510625177d93189c97",
+          "fingerprintTo": "67a72aa222cab951486c0a5ba4866093"
+        },
+        {
+          "id": "Q18",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "3333a25740bf55d313abf62a45ca3874",
+          "fingerprintTo": "b001de0bd62f6c0f02d817bcbe873e30"
+        },
+        {
+          "id": "Q19",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "b075cc53c5fb531b0deb7b2b914fae18",
+          "fingerprintTo": "f8d6edc5504c815ca409550509e7ae39"
+        },
+        {
+          "id": "G01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "1e445c37a2b88a0f9e9503f9b3afb701",
+          "fingerprintTo": "ddb6a2d0fc7fc00153da9b3284f8cc84"
+        },
+        {
+          "id": "G02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "4521f4e79f55692af10d18ee5c66bada",
+          "fingerprintTo": "6dab04deb226e5c2cfd7a5e1cf92a8d8"
+        },
+        {
+          "id": "G03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "28094e65c2b1930bade192ea46ed1093",
+          "fingerprintTo": "54906f8713143d7805bf16e2de2fc6d8"
+        },
+        {
+          "id": "G04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "a04fe969d4634a9f5afe1a438fd6443d",
+          "fingerprintTo": "0a6457af5632366867f508ca3f78b599"
+        },
+        {
+          "id": "G05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "6b6c1f45675f6043dad54fbb33acc406",
+          "fingerprintTo": "554d41dc4e13f6eed48903dae3ad6b37"
+        },
+        {
+          "id": "X01",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "3a736d3f7570d16eacfa10524a5b7b6d",
+          "fingerprintTo": "a351d9b85535d8e91447a82853ba9346"
+        },
+        {
+          "id": "X02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "cfb6f82088b19ab07f69de70663bfe01",
+          "fingerprintTo": "4c842f2a8182e09f8f86c31412d0b2b5"
+        },
+        {
+          "id": "X03",
+          "revisionFrom": 9,
+          "revisionTo": 10,
+          "fingerprintFrom": "c2c19c1887b0a52363ced6358b4bb25b",
+          "fingerprintTo": "a3a82ed7e23bf01a63c5923b7e20aabc"
+        },
+        {
+          "id": "N01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "8a08d4c4c8812ce541aea848ed4e239b",
+          "fingerprintTo": "613fcea6a35035ca8dda04f70406a315"
+        },
+        {
+          "id": "N02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "f1f33482415b01c651ce61b36648b90b",
+          "fingerprintTo": "9878237a75e3a6977f844ac5f102e031"
+        },
+        {
+          "id": "N03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "2135222cb89071ca88252d62e9878f39",
+          "fingerprintTo": "7277548ae92676fe6ae4e73cafeab176"
+        },
+        {
+          "id": "N04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "d9f44d82bfe68f649cd64731b7636d76",
+          "fingerprintTo": "eccc6334d3654a54e643c9104cf5399d"
+        },
+        {
+          "id": "N05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "457e171d31363cbd3010feb05f8c02cf",
+          "fingerprintTo": "4432bbaac03469ab31e72fd6310c980f"
+        },
+        {
+          "id": "N06",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "2ed860a8ad8bd60c482bd0977cc9b7eb",
+          "fingerprintTo": "6d94fe205205c5ea7d14d01d94e374c9"
+        },
+        {
+          "id": "N07",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "7fb0ad7f013ac8b31c6c3723fcf412cf",
+          "fingerprintTo": "5ef40b6290ab02465383f288fd425dc4"
+        },
+        {
+          "id": "N08",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "109ff4446b9654a5f767eb728906ccd6",
+          "fingerprintTo": "deb19650085c0c49d74d16c589d6648c"
+        },
+        {
+          "id": "N09",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "7225edd0a46c67164d581461e11bb527",
+          "fingerprintTo": "8b55037d43c6eae5bf9b3b415293c756"
+        },
+        {
+          "id": "N10",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "e336ab6f09522c9cbad6deff3f1909c5",
+          "fingerprintTo": "20c5d69a98e7395e25c36b918f426877"
+        },
+        {
+          "id": "N11",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "49a62995478779ba66915a9f48385dc8",
+          "fingerprintTo": "c15a7ffbf739918652714f53832b9c60"
+        },
+        {
+          "id": "N12",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "b5df0b74529cb2dbcc634c193cdc5481",
+          "fingerprintTo": "203687baa5683366bed9e2403d2620e5"
+        },
+        {
+          "id": "N13",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "73619fa062b9726d029862c4600a7e4e",
+          "fingerprintTo": "74644674b060b344c51238c1124f1797"
+        },
+        {
+          "id": "N14",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "44ebdffecf2ffd654ad9cd418775b3c1",
+          "fingerprintTo": "2fa475f1786556e17fe6df68488984df"
+        },
+        {
+          "id": "N15",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "d97513ffc54127fa16bb2335ad58f166",
+          "fingerprintTo": "2f3d5d8944ea0707e5ba4cf61ae53983"
+        },
+        {
+          "id": "N16",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "527327e52ab0d9d82e43c033d8c52e19",
+          "fingerprintTo": "7dcb82a0b089a15f8e411e3a4d720a14"
+        },
+        {
+          "id": "N17",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "c97164fd8d41789bbee8160f2ebc683e",
+          "fingerprintTo": "1e7b1b450e63fca7e2cbc3e18fba6bbd"
+        },
+        {
+          "id": "N18",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "b2f04cc5f7f4a0b81dd99e3257a760a0",
+          "fingerprintTo": "cd1d6969eb69409310f473b7b2bad5e6"
+        },
+        {
+          "id": "N19",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "5233022de124b8d0648c8062690d110f",
+          "fingerprintTo": "a531375937e1633b4f735f2e09ebbec0"
+        },
+        {
+          "id": "N20",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "56659cc5e649a220beae7a8bba7c5a68",
+          "fingerprintTo": "7f795c751e1680797beaf2880e71f91c"
+        },
+        {
+          "id": "FILE-EVAL-SYSTEM",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "ee0adeaa34a2f8ffc3a490aefda21d05",
+          "fingerprintTo": "662fb9e35e9230459e92c2ba1196c9d4"
+        },
+        {
+          "id": "FILE-DECISIONS",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "74eb48ddd25b09cc2632bc8c13a40134",
+          "fingerprintTo": "b6e34ecfb5534c962d91bf02bf6a2e00"
+        },
+        {
+          "id": "FILE-IMPLEMENTATION",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "4df04d8d58b6144a7e3250aecbb0f324",
+          "fingerprintTo": "bad9307c79e0801c99d3df4ad9d5aa7b"
+        },
+        {
+          "id": "T01",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "d0495bc5a597ecd03c63af866e0f65a3",
+          "fingerprintTo": "96e7f1b4451011ba408d522328335085"
+        },
+        {
+          "id": "T02",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "effebf59cfd5db30178fb7e013bb6280",
+          "fingerprintTo": "a60318807b45a3e4c918170eb313fd39"
+        },
+        {
+          "id": "T03",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "5e47f5157904446ff44710e5ffa5f727",
+          "fingerprintTo": "ee1930c8c3f6a976f05b92b91d4cd856"
+        },
+        {
+          "id": "T04",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "2090b7516e6f1324fced12aa481d11e5",
+          "fingerprintTo": "a46649aa8eed3fe50e505da807f10c7d"
+        },
+        {
+          "id": "T05",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "0c2297cd9bf1efd5a0c6610eabcd131e",
+          "fingerprintTo": "8e15aab926da19619fa9694e806cf4af"
+        },
+        {
+          "id": "T06",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "89c087b96fd09a46f16f002eec7d61de",
+          "fingerprintTo": "02bbf8f55de77a570f9016770c94039b"
+        },
+        {
+          "id": "T07",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "85b36e92566eb75b58166a6bf79fe752",
+          "fingerprintTo": "5a29b8cc4b3e1c4d13523bcc5837fed1"
+        },
+        {
+          "id": "T08",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "3e1dc706de8c8e3ec805d9a372abe672",
+          "fingerprintTo": "9de783d22df4581b249fca84ea4ff75a"
+        },
+        {
+          "id": "T09",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "60059a6c1dfeb59bab967dbeacbcf026",
+          "fingerprintTo": "4eae0566af7bfb7cfabd1dcc9535dcde"
+        },
+        {
+          "id": "T10",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "69bf28273e5ade61dc72052e9c06151f",
+          "fingerprintTo": "7a0287968ad6e2b378c20399b8fcabf3"
+        },
+        {
+          "id": "T11",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "a8518714e037c4f79270ac57b457937a",
+          "fingerprintTo": "925bd57a843af2f1873bdf6ba71837e2"
+        },
+        {
+          "id": "T12",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "0cb2d00ba28a5bb112aabcaef10f1d34",
+          "fingerprintTo": "4a07c2ebe0f3f258c844068b3ee0007c"
+        },
+        {
+          "id": "T13",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "f239d59f563d8ffa03b29d6c267a6029",
+          "fingerprintTo": "dcab16c63530b19f5d475d6fd29bf74d"
+        },
+        {
+          "id": "T14",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "5ddd3b16d5169a8c9fc03014b6a4d6f0",
+          "fingerprintTo": "83af751caf892cafdc91d595d3ffa792"
+        },
+        {
+          "id": "T15",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "039f8579b46bd9484e02a58f8b49d96b",
+          "fingerprintTo": "1b6618a0bff3adff999409933746b17f"
+        },
+        {
+          "id": "T16",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "951623d61f56ef5c53e79433b28ebdd6",
+          "fingerprintTo": "f19ec946d52f751440174e5f8cfa657d"
+        },
+        {
+          "id": "T17",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "57a681e7ac8c3902649cbd36844f761c",
+          "fingerprintTo": "d2fd35fb049b7e2921fee554cad2104e"
+        },
+        {
+          "id": "T18",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "a89fb36428a217e84f18938383842d0c",
+          "fingerprintTo": "1056470c84c319a4639de4693a79f64b"
+        },
+        {
+          "id": "T19",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "60be326955aadecbee14436c56024472",
+          "fingerprintTo": "b4da95b1a3189b738fdc1170aab9036f"
+        },
+        {
+          "id": "T20",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "d5811cab0bd5641b0c5f58068c709b50",
+          "fingerprintTo": "8b4bef166639be583885da22f5e23685"
+        },
+        {
+          "id": "T21",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "0c5b3527f5fc740a7a327cdec37738e4",
+          "fingerprintTo": "84eca265c1fa3bb40a7618eebbe4645b"
+        },
+        {
+          "id": "T22",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "ed910fadd1df5a558ac209e1093aad7f",
+          "fingerprintTo": "ab594963f3166beb5a2019f3038418b0"
+        },
+        {
+          "id": "T23",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "fed51fe38bd014460a8cef554998dec5",
+          "fingerprintTo": "bc8c49b215242e1bc21c69065fbfe43e"
+        },
+        {
+          "id": "T24",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "693c0a84f32b62ce54ec038037ec9de6",
+          "fingerprintTo": "5b4b9255ecd26e99339f793bd6b5ea53"
+        },
+        {
+          "id": "T25",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "32ab593c14a95d1ff09735802341f9ed",
+          "fingerprintTo": "3da8499e32d9b813055cbb397390954c"
+        },
+        {
+          "id": "T26",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "6ec526bbb8d1113ec90cc6f99340c325",
+          "fingerprintTo": "00706b568f1c694fd60ba6f4bad1158c"
+        },
+        {
+          "id": "T27",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "e1b04e560d82c45e561cbb79431cf472",
+          "fingerprintTo": "6812c553f7f585d28e510094d83a9ad3"
+        },
+        {
+          "id": "T28",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "085cf98c73ec0e336a4e983ac0e3aea8",
+          "fingerprintTo": "980ea27e20a8a7ec67b3f5952ba21349"
+        },
+        {
+          "id": "T29",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "3b3c7b19cb4cdd340d0ea4ccbd82c43c",
+          "fingerprintTo": "cc677183809d965ac761091c53450309"
+        },
+        {
+          "id": "T30",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "448a64fa292197e035497361bce4265d",
+          "fingerprintTo": "9598f25a9ec0dcf9b1fe5be77ee3a291"
+        },
+        {
+          "id": "T31",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "fbc7f8ef9e2dba86e3889eb78f382539",
+          "fingerprintTo": "a0716570d3c567eda34c59d4ef47f317"
+        },
+        {
+          "id": "T32",
+          "revisionFrom": 10,
+          "revisionTo": 11,
+          "fingerprintFrom": "0adb29cd3ac7f7a298f9ce7e073b72b7",
+          "fingerprintTo": "fb37dc126c88ccfaf6c48faa0f440e14"
+        },
+        {
+          "id": "T33",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "5f0838bb67c688e486824d13b3557d9b",
+          "fingerprintTo": "4b97296f44dc7f906e65a16b3d559c50"
+        },
+        {
+          "id": "T34",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "9e6f51da320992d1164b82a78a38ebc7",
+          "fingerprintTo": "0af3a99fce54908a9c3421a2e413971c"
+        },
+        {
+          "id": "T35",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "327f1c92e84fac9d7cc89eaa963fa9ee",
+          "fingerprintTo": "37cc8cb07af5b1d1d38479864412dce5"
+        },
+        {
+          "id": "T36",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "29aadb536502b4ac22f976f41a861581",
+          "fingerprintTo": "d23cb0ff4e1c437e238308219aaf0fcf"
+        },
+        {
+          "id": "T37",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "dba866ca9f2a3a0d89ddae7eb2e9cf75",
+          "fingerprintTo": "54bd47f10eea083593e268e34213ee8f"
+        },
+        {
+          "id": "T38",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "8428c7328af1d8d64c8e5cf65fa49417",
+          "fingerprintTo": "9926b5145dfb83e19686759effe9be5d"
+        },
+        {
+          "id": "T39",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "0af0b223871480727dc0ef06381d4b6d",
+          "fingerprintTo": "70cf50054be59679e7de7fa11c65cae3"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -16710,28 +18029,28 @@
       "objects": [
         {
           "id": "P02",
-          "revision": 10,
-          "fingerprint": "d622fb693058e792547987c6eb86bdf0"
+          "revision": 11,
+          "fingerprint": "307cd1d4482aa3bd86fb4af0b1d4936b"
         },
         {
           "id": "P03",
-          "revision": 10,
-          "fingerprint": "445c181155e3bf270d9f4320c7245db9"
+          "revision": 11,
+          "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
         },
         {
           "id": "X01",
-          "revision": 11,
-          "fingerprint": "3a736d3f7570d16eacfa10524a5b7b6d"
+          "revision": 12,
+          "fingerprint": "a351d9b85535d8e91447a82853ba9346"
         },
         {
           "id": "X02",
-          "revision": 10,
-          "fingerprint": "cfb6f82088b19ab07f69de70663bfe01"
+          "revision": 11,
+          "fingerprint": "4c842f2a8182e09f8f86c31412d0b2b5"
         },
         {
           "id": "X03",
-          "revision": 9,
-          "fingerprint": "c2c19c1887b0a52363ced6358b4bb25b"
+          "revision": 10,
+          "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc"
         }
       ],
       "reviewer_was": "用户（会话内确认按 document.md 定稿方案执行）"
@@ -16816,6 +18135,7 @@
     "revision > 1 且 changes 中同一批 187 个对象全部变化，是建立期指纹比对缺陷（比较字段层级不一致）造成的假变化，不是 187 次真实修订；该缺陷已修复，此后无内容变化时 reconcile 不再产生变更记录。",
     "verify[] 是本仓库当前可复现的证据记录；其 fingerprint 对应各对象在本文件中的定义指纹。",
     "建立期的 changes 批次把登记、容器方案、对象补充与格式化合并为批量写入并统一标为 refinement；其中的治理性改变单独登记为 CHG-2026-09-15-GOV1 并由 REV-2026-09-15-GOV1 复核。此后每次变化必须单独分类。",
-    "本文件最后一次写入：2026-09-15T07:15:30Z。registryRevision 20 只接受 Prettier 引起的文件级指纹变化，未产生新的对象变更记录；verify[] 已改为本机可复现的环境与结论。"
+    "CHG-2026-09-15-13 是检查器改按 objects.md §3.1 把标题计入对象指纹、并开始比对 objects[].definition.fingerprint 后的算法重绑，不是 187 次语义修订。REV-2026-09-15-GOV1 绑定指纹随算法重绑更新，结论仍是当时的 synchronized，不构成新的治理复核。",
+    "本文件最后一次写入：2026-09-15T07:27:51Z。"
   ]
 }

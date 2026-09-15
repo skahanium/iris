@@ -181,7 +181,6 @@ const MARKER_FIELDS = new Set([
 const START_RE = /^<!--\s*iris:object\s+(.*?)\s*-->$/;
 const END_RE = /^<!--\s*iris:end\s+([A-Za-z0-9_-]+)\s*-->$/;
 const FENCE_RE = /^\s*(```|~~~)/;
-const HEADING_RE = /^#{1,6}\s/;
 
 function parseAttributes(raw, filePath, lineNumber) {
   const tokens = raw.trim().split(/\s+/);
@@ -338,7 +337,7 @@ function parseObjects(filePath, fileText) {
       continue;
     }
 
-    if (stack.length > 0 && !(stack.length === 1 && line.startsWith("#"))) {
+    if (stack.length > 0) {
       stack.forEach((entry) => entry.bodyLines.push(line));
     }
   }
@@ -933,6 +932,15 @@ function checkReviews(catalog, registry, definitions, currentFingerprints) {
       if (!review.evidence) {
         violation("reviews", `复核 ${review.id} 缺少可追溯评审记录`);
       }
+      if (
+        review.conclusion !== "no-impact" &&
+        review.conclusion !== "synchronized"
+      ) {
+        violation(
+          "reviews",
+          `架构/治理变更 ${change.id} 的复核结论为 ${review.conclusion ?? "缺失"}，不能解封（需要 no-impact 或 synchronized）`,
+        );
+      }
       for (const object of review.objects ?? []) {
         const recorded = currentFingerprints.get(object.id);
         if (!recorded) {
@@ -1401,8 +1409,7 @@ if (catalog && !infrastructure.length) {
     const mergedBody = container
       ? `${container.body}\n${found.body}`
       : found.body;
-    // 必备要素核对面是「对象块的完整文本」：小节标题本身即合同要素的声明，
-    // 而指纹只覆盖去标题正文（见 rules/objects.md §3.1）。
+    // 必备要素核对面是对象块的完整文本（含小节标题）；对象指纹同样覆盖范围内全部正文（见 rules/objects.md §3.1）。
     const mergedText = container
       ? `${container.blockText ?? container.body}\n${found.blockText ?? found.body}`
       : (found.blockText ?? found.body);
@@ -1439,13 +1446,35 @@ if (catalog && !infrastructure.length) {
     }
   }
 
+  // 对象指纹：正文变化必须被检出。文件级指纹把子对象整块替换为占位符，
+  // 因此只比对 files[] 会漏掉「外围不变、对象正文已变」的情况。
+  if (!options.reconcile) {
+    for (const [id, recorded] of currentFingerprints) {
+      if (isContainerRegistration(id)) continue;
+      const previous = registry.objects?.[id]?.definition?.fingerprint;
+      if (!previous || previous === recorded.fingerprint) continue;
+      violation(
+        "fingerprint",
+        `${id} 的对象正文变化而登记未接受：登记 ${previous}，当前 ${recorded.fingerprint}`,
+      );
+    }
+  }
+
   checkReviews(catalog, registry, definitions, currentFingerprints);
   checkArchive();
   checkDocsIndex();
   checkSources(catalog, registry);
 
   const blocked = computeBlocked(catalog);
-  const readiness = computeReadiness(catalog, definitions, null, violations);
+  const issueStates = new Map(
+    Object.entries(registry.issues ?? {}).map(([id, entry]) => [id, entry]),
+  );
+  const readiness = computeReadiness(
+    catalog,
+    definitions,
+    issueStates,
+    violations,
+  );
 
   if (options.reconcile) {
     // 接受变化是显式动作：必须给出作者与理由，且分类不能含糊。
@@ -1604,12 +1633,11 @@ if (catalog && !infrastructure.length) {
             id: reviewId,
             change: changeId,
             at: now,
-            author: options.author,
-            reviewer: options.reviewer,
-            conclusion: "synchronized",
+            author: options.reviewer,
+            reviewer: options.author,
+            conclusion: "needs-reverification",
             reason: options.reason,
-            evidence:
-              "--reconcile 记录（需在 decisions/ 或 docs/eval/results/ 补可追溯评审材料）",
+            evidence: "--reconcile 只登记待复核，不能作为独立复核完成依据",
             objects: changed.map((entry) => ({
               id: entry.id,
               revision: entry.to,
