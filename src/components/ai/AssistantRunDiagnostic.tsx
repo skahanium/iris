@@ -39,7 +39,7 @@ function FindingList({ title, items }: FindingListProps) {
             <span className="text-foreground/80">{item.statement}</span>
             <span className="ml-1 font-mono text-[10px] tabular-nums">
               {item.discovery.module} → {item.discovery.component} →{" "}
-              {item.discovery.callId}
+              {item.discovery.callId}/{item.discovery.attemptId}
               {item.discovery.toolInstance
                 ? ` · ${item.discovery.toolInstance}`
                 : ""}
@@ -92,9 +92,12 @@ export function AssistantRunDiagnosticReport({
         <p className="font-mono text-[10px] tabular-nums">
           路径：
           {report.path
-            .map(
-              (step) => `${step.module} → ${step.component} → ${step.callId}`,
-            )
+            .map((step) => {
+              const instance = step.toolInstance
+                ? ` · ${step.toolInstance}`
+                : "";
+              return `${step.module} → ${step.component} → ${step.callId}/${step.attemptId}${instance}`;
+            })
             .join("；")}
         </p>
       ) : null}

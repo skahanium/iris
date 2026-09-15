@@ -173,7 +173,11 @@ export function AssistantRunCapabilityDegraded({
       </details>
       {session && runId ? (
         <AssistantRunDiagnosticEntry session={session} runId={runId} />
-      ) : null}
+      ) : (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          诊断入口需要当前会话。
+        </p>
+      )}
     </div>
   );
 }

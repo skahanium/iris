@@ -125,9 +125,10 @@ describe("AssistantRunDiagnosticEntry", () => {
     );
     expect(report?.textContent).toContain("工具 web_fetch 执行失败");
     expect(report?.textContent).toContain("● 已证实");
-    expect(report?.textContent).toContain("M05 → C14 → call-1");
+    expect(report?.textContent).toContain("M05 → C14 → call-1/attempt-1");
     expect(report?.textContent).toContain("恢复耗尽");
     expect(report?.textContent).not.toContain("未发现问题");
+    expect(report?.textContent).not.toContain("未发现可证实的故障");
   });
 
   it("shows query failure instead of an empty success", async () => {

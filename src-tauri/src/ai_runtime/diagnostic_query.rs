@@ -1,7 +1,7 @@
 //! C27 诊断查询与解释：读取 C26 事件，给出已知事实、直接失败、恢复结果与待证根因。
 //!
-//! 本模块不保存第二套运行状态，不通过猜测代替事实。查询失败不得伪装成
-//! 「没有发现问题」。`recovery_exhausted` 是恢复结果，不是根因。
+//! 本模块不保存第二套运行状态，不通过猜测代替事实。查询失败、证据缺口或待证根因
+//! 不得伪装成「未发现可证实的故障」。`recovery_exhausted` 是恢复结果，不是根因。
 
 use serde::{Deserialize, Serialize};
 
@@ -147,6 +147,113 @@ fn payload_flag(event: &BoundaryEventRecord, key: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn identity_broken(event: &BoundaryEventRecord) -> bool {
+    event.call_id.trim().is_empty()
+        || event.attempt_id.trim().is_empty()
+        || event.input_revision.trim().is_empty()
+}
+
+fn handshake_start_count(events: &[BoundaryEventRecord]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.event_kind == BoundaryEventKind::HandshakeStart)
+        .count()
+}
+
+fn handshake_end_count(events: &[BoundaryEventRecord]) -> usize {
+    events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.event_kind,
+                BoundaryEventKind::HandshakeEnd | BoundaryEventKind::MissingEnd
+            )
+        })
+        .count()
+}
+
+fn redacted_tool_label(event: &BoundaryEventRecord) -> String {
+    if !payload_flag(event, "catalogKnown") {
+        "未登记工具".to_string()
+    } else {
+        payload_tool(event).unwrap_or("unknown").to_string()
+    }
+}
+
+fn classify_tool_failure(event: &BoundaryEventRecord) -> (IssueClass, &'static str) {
+    let reason = payload_reason(event).unwrap_or("");
+    if reason.starts_with("provider_")
+        || matches!(
+            reason,
+            "timeout" | "rate_limited" | "quota_exhausted" | "unavailable"
+        )
+    {
+        (IssueClass::ExternalService, "external-service")
+    } else {
+        (IssueClass::ToolExecution, "tool-execution")
+    }
+}
+
+fn outbound_statement(event: &BoundaryEventRecord) -> String {
+    let mut parts = vec![format!("出站层 {} 已记录", event.layer.as_str())];
+    if let Some(family) = event
+        .payload
+        .get("protocolFamily")
+        .and_then(serde_json::Value::as_str)
+    {
+        parts.push(format!("协议 {family}"));
+    }
+    if let Some(included) = event
+        .payload
+        .get("repairIncluded")
+        .and_then(serde_json::Value::as_bool)
+    {
+        parts.push(if included {
+            "修复消息已纳入".to_string()
+        } else {
+            "修复消息未纳入".to_string()
+        });
+    }
+    if let Some(counts) = event.payload.get("messageRoleCounts") {
+        let roles: Vec<String> = ["system", "user", "assistant", "tool"]
+            .iter()
+            .filter_map(|role| {
+                let n = counts.get(*role).and_then(serde_json::Value::as_u64)?;
+                (n > 0).then(|| format!("{role}:{n}"))
+            })
+            .collect();
+        if !roles.is_empty() {
+            parts.push(format!("角色 {}", roles.join("/")));
+        }
+    }
+    if let Some(fields) = event.payload.get("requiredFieldsPresent") {
+        let present: Vec<&str> = ["model", "messages", "tools"]
+            .iter()
+            .copied()
+            .filter(|key| fields.get(*key).and_then(serde_json::Value::as_bool) == Some(true))
+            .collect();
+        if !present.is_empty() {
+            parts.push(format!("必要字段 {}", present.join("/")));
+        }
+    }
+    if event
+        .payload
+        .get("requestSent")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        parts.push("已标记发出".to_string());
+    }
+    if let Some(status) = event
+        .payload
+        .get("httpStatusClass")
+        .and_then(serde_json::Value::as_str)
+    {
+        parts.push(format!("返回类 {status}"));
+    }
+    parts.join("，")
+}
+
 fn synthetic_gap(statement: &str) -> DiagnosticFinding {
     DiagnosticFinding {
         statement: statement.to_string(),
@@ -176,16 +283,18 @@ fn completeness_from(events: &[BoundaryEventRecord], persist_failed: bool) -> Re
     {
         return RecordCompleteness::PersistFailed;
     }
-    if events
-        .iter()
-        .any(|event| event.record_completeness == RecordCompleteness::BrokenCorrelation)
-    {
+    if events.iter().any(|event| {
+        event.record_completeness == RecordCompleteness::BrokenCorrelation || identity_broken(event)
+    }) {
         return RecordCompleteness::BrokenCorrelation;
     }
     if events.iter().any(|event| {
         event.event_kind == BoundaryEventKind::MissingEnd
             || event.record_completeness == RecordCompleteness::OutcomeUnknown
     }) {
+        return RecordCompleteness::OutcomeUnknown;
+    }
+    if handshake_start_count(events) > handshake_end_count(events) {
         return RecordCompleteness::OutcomeUnknown;
     }
     if events
@@ -195,6 +304,25 @@ fn completeness_from(events: &[BoundaryEventRecord], persist_failed: bool) -> Re
         return RecordCompleteness::MissingEvents;
     }
     RecordCompleteness::Complete
+}
+
+fn attribution_of(
+    record_completeness: RecordCompleteness,
+    independent_failures: usize,
+    pending: usize,
+    gaps: usize,
+) -> AttributionStatus {
+    if independent_failures >= 2 {
+        return AttributionStatus::MultipleCauses;
+    }
+    let incomplete = record_completeness != RecordCompleteness::Complete || gaps > 0;
+    if independent_failures == 1 && pending == 0 && !incomplete {
+        AttributionStatus::Confirmed
+    } else if pending > 0 && independent_failures == 0 {
+        AttributionStatus::Suspected
+    } else {
+        AttributionStatus::Unattributed
+    }
 }
 
 /// Interpret already-loaded C26 events. Empty events are a gap, never a pass.
@@ -264,14 +392,14 @@ pub(crate) fn interpret_events(
             BoundaryEventKind::OutboundWitness => {
                 known_facts.push(finding(
                     event,
-                    format!("出站层 {} 已记录", event.layer.as_str()),
+                    outbound_statement(event),
                     IssueClass::InternalContract,
                     None,
                 ));
             }
             BoundaryEventKind::LoopEvent => match payload_event(event) {
                 Some("proposal") => {
-                    let tool = payload_tool(event).unwrap_or("unknown");
+                    let tool = redacted_tool_label(event);
                     let catalog_known = payload_flag(event, "catalogKnown");
                     known_facts.push(finding(
                         event,
@@ -282,7 +410,7 @@ pub(crate) fn interpret_events(
                     if !catalog_known {
                         pending_root_causes.push(finding(
                             event,
-                            format!("工具名 {tool} 的来源未区分，不能证实为模型故障"),
+                            "未登记工具的来源未区分，不能证实为模型故障".to_string(),
                             IssueClass::ModelBehavior,
                             None,
                         ));
@@ -298,11 +426,12 @@ pub(crate) fn interpret_events(
                 }
                 Some("tool_error") => {
                     let tool = payload_tool(event).unwrap_or("tool");
+                    let (issue_class, source) = classify_tool_failure(event);
                     direct_failures.push(finding(
                         event,
                         format!("工具 {tool} 执行失败"),
-                        IssueClass::ToolExecution,
-                        Some("tool-execution".into()),
+                        issue_class,
+                        Some(source.into()),
                     ));
                 }
                 Some("result")
@@ -313,11 +442,12 @@ pub(crate) fn interpret_events(
                         == Some(false) =>
                 {
                     let tool = payload_tool(event).unwrap_or("tool");
+                    let (issue_class, source) = classify_tool_failure(event);
                     direct_failures.push(finding(
                         event,
                         format!("工具 {tool} 执行失败"),
-                        IssueClass::ToolExecution,
-                        Some("tool-execution".into()),
+                        issue_class,
+                        Some(source.into()),
                     ));
                 }
                 Some("exit") => {
@@ -403,27 +533,44 @@ pub(crate) fn interpret_events(
     if events.is_empty() && !persist_failed {
         evidence_gaps.push(synthetic_gap("没有可关联的边界事件，不能当作执行成功"));
     }
-
-    let record_completeness = completeness_from(events, persist_failed);
-    let independent_failures = direct_failures.len();
-    let attribution_status = if record_completeness != RecordCompleteness::Complete
-        || !pending_root_causes.is_empty()
-        || !evidence_gaps.is_empty()
+    if handshake_start_count(events) > handshake_end_count(events)
+        && !evidence_gaps
+            .iter()
+            .any(|gap| gap.statement.contains("握手"))
     {
-        if independent_failures >= 2 {
-            AttributionStatus::MultipleCauses
-        } else {
-            AttributionStatus::Unattributed
-        }
-    } else if independent_failures >= 2 {
-        AttributionStatus::MultipleCauses
-    } else if independent_failures == 1 && pending_root_causes.is_empty() {
-        AttributionStatus::Confirmed
-    } else {
-        AttributionStatus::Unattributed
-    };
+        evidence_gaps.push(synthetic_gap("握手开始已记录但缺少结束，结果未知"));
+    }
+    if events.iter().any(identity_broken) {
+        evidence_gaps.push(synthetic_gap("调用关联字段缺失或冲突，记录关联断裂"));
+    }
+    if recovery_results
+        .iter()
+        .any(|item| item.statement.contains("恢复耗尽"))
+        && direct_failures.is_empty()
+    {
+        evidence_gaps.push(synthetic_gap(
+            "恢复耗尽已记录，但缺少对应的原始失败，不能当作执行成功",
+        ));
+    }
+
+    let mut record_completeness = completeness_from(events, persist_failed);
+    if record_completeness == RecordCompleteness::Complete && !evidence_gaps.is_empty() {
+        record_completeness = RecordCompleteness::MissingEvents;
+    }
+    let independent_failures = direct_failures.len();
+    let attribution_status = attribution_of(
+        record_completeness,
+        independent_failures,
+        pending_root_causes.len(),
+        evidence_gaps.len(),
+    );
 
     let recovered = !direct_failures.is_empty() && !recovery_results.is_empty();
+    let clean_pass = record_completeness == RecordCompleteness::Complete
+        && evidence_gaps.is_empty()
+        && pending_root_causes.is_empty()
+        && direct_failures.is_empty()
+        && expected_restrictions.is_empty();
     let (headline, impact, recovery_state) = if persist_failed {
         (
             "审计写入失败，诊断可能不完整。".to_string(),
@@ -440,6 +587,12 @@ pub(crate) fn interpret_events(
         (
             "握手未结束，结果未知。".to_string(),
             "不能把缺失结束当成成功。".to_string(),
+            "未知。".to_string(),
+        )
+    } else if record_completeness == RecordCompleteness::BrokenCorrelation {
+        (
+            "关联字段缺失或冲突，记录无法对齐。".to_string(),
+            "不能把断裂关联当成成功。".to_string(),
             "未知。".to_string(),
         )
     } else if attribution_status == AttributionStatus::MultipleCauses {
@@ -474,7 +627,27 @@ pub(crate) fn interpret_events(
             "不得因恢复抹去原始失败。".to_string(),
             "已记录修复尝试。".to_string(),
         )
-    } else if record_completeness == RecordCompleteness::Complete && direct_failures.is_empty() {
+    } else if !direct_failures.is_empty() {
+        (
+            format!("{} 处直接失败仍可查看。", direct_failures.len()),
+            "失败分类见直接失败列表。".to_string(),
+            if recovery_results.is_empty() {
+                "无恢复轨迹。".to_string()
+            } else {
+                "已记录修复尝试。".to_string()
+            },
+        )
+    } else if !evidence_gaps.is_empty() || !pending_root_causes.is_empty() {
+        (
+            "诊断不完整，尚不能证实根因。".to_string(),
+            format!(
+                "{} 处证据缺口、{} 处待证根因，不能当作执行成功。",
+                evidence_gaps.len(),
+                pending_root_causes.len()
+            ),
+            "未知。".to_string(),
+        )
+    } else if clean_pass {
         (
             "未发现可证实的故障。".to_string(),
             "仅覆盖已记录的机械事实。".to_string(),
@@ -488,13 +661,19 @@ pub(crate) fn interpret_events(
         )
     };
 
-    let first = events.first();
+    let input_revision = events
+        .iter()
+        .map(|event| event.input_revision.as_str())
+        .find(|revision| !revision.is_empty())
+        .map(str::to_string);
+    let parent_run_id = events.iter().find_map(|event| event.parent_run_id.clone());
+    let child_run_id = events.iter().find_map(|event| event.child_run_id.clone());
     DiagnosticReport {
         schema_version: 1,
         run_id: run_id.to_string(),
-        input_revision: first.map(|event| event.input_revision.clone()),
-        parent_run_id: first.and_then(|event| event.parent_run_id.clone()),
-        child_run_id: first.and_then(|event| event.child_run_id.clone()),
+        input_revision,
+        parent_run_id,
+        child_run_id,
         record_completeness,
         attribution_status,
         audit_health: AuditHealth { persist_failed },
@@ -651,6 +830,14 @@ mod tests {
         )
     }
 
+    fn assert_not_clean_pass(report: &DiagnosticReport) {
+        assert!(
+            !report.headline.contains("未发现可证实的故障"),
+            "gap or pending cause must not look like a pass: {}",
+            report.headline
+        );
+    }
+
     #[test]
     fn empty_events_are_missing_events_not_a_pass() {
         let report = interpret_events("run-1", &[], false);
@@ -661,11 +848,7 @@ mod tests {
         assert_eq!(report.attribution_status, AttributionStatus::Unattributed);
         assert!(!report.audit_health.persist_failed);
         assert!(!report.evidence_gaps.is_empty());
-        assert!(
-            !report.headline.contains("未发现问题"),
-            "empty records must not look like a clean bill of health: {}",
-            report.headline
-        );
+        assert_not_clean_pass(&report);
         assert!(
             report.direct_failures.is_empty(),
             "missing records are a gap, not a fabricated failure"
@@ -684,6 +867,7 @@ mod tests {
             gap.issue_class == IssueClass::DiagnosticGap && gap.statement.contains("审计写入失败")
         }));
         assert_ne!(report.attribution_status, AttributionStatus::Confirmed);
+        assert_not_clean_pass(&report);
     }
 
     #[test]
@@ -779,7 +963,7 @@ mod tests {
             .iter()
             .any(|gap| gap.issue_class == IssueClass::DiagnosticGap));
         assert_ne!(report.attribution_status, AttributionStatus::Confirmed);
-        assert!(!report.headline.contains("未发现问题"));
+        assert_not_clean_pass(&report);
     }
 
     #[test]
@@ -825,7 +1009,8 @@ mod tests {
             .map(|fact| fact.statement.as_str())
             .collect();
         assert!(
-            layers.iter().any(|text| text.contains("generated")),
+            layers.iter().any(|text| text.contains("generated")
+                && (text.contains("协议") || text.contains("修复"))),
             "{layers:?}"
         );
         assert!(
@@ -865,6 +1050,93 @@ mod tests {
         assert!(report.evidence_gaps.iter().any(|gap| {
             gap.statement.contains("request_sent") || gap.statement.contains("未发送")
         }));
+        assert_eq!(
+            report.record_completeness,
+            RecordCompleteness::MissingEvents
+        );
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
+    fn handshake_start_without_end_is_outcome_unknown_not_a_pass() {
+        let start = BoundaryEventRecord {
+            event_kind: BoundaryEventKind::HandshakeStart,
+            layer: BoundaryLayer::Generated,
+            module_id: "M04".into(),
+            component_id: "C11".into(),
+            ..record(
+                BoundaryEventKind::HandshakeStart,
+                BoundaryLayer::Generated,
+                RecordCompleteness::Complete,
+                serde_json::json!({"schemaVersion":1}),
+            )
+        };
+        let report = interpret_events("run-1", &[start], false);
+        assert_eq!(
+            report.record_completeness,
+            RecordCompleteness::OutcomeUnknown
+        );
+        assert!(report.evidence_gaps.iter().any(|gap| {
+            gap.issue_class == IssueClass::DiagnosticGap && gap.statement.contains("握手")
+        }));
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
+    fn recovery_exhausted_without_original_failure_is_a_gap() {
+        let exit = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"exit","reason":"recovery_exhausted"}),
+        );
+        let report = interpret_events("run-1", &[exit], false);
+        assert!(report
+            .recovery_results
+            .iter()
+            .any(|item| item.statement.contains("恢复耗尽")));
+        assert!(report.direct_failures.is_empty());
+        assert!(!report.evidence_gaps.is_empty());
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
+    fn provider_timeout_is_external_service_not_confirmed_tool_defect() {
+        let failure = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"tool_error","tool":"web_fetch","reason":"provider_timeout"}),
+        );
+        let report = interpret_events("run-1", std::slice::from_ref(&failure), false);
+        assert_eq!(
+            report.direct_failures[0].issue_class,
+            IssueClass::ExternalService
+        );
+        assert_eq!(
+            report.direct_failures[0].confirmed_source.as_deref(),
+            Some("external-service")
+        );
+        assert_eq!(report.direct_failures[0].discovery.component, "C14");
+    }
+
+    #[test]
+    fn empty_correlation_identity_is_broken_correlation() {
+        let event = BoundaryEventRecord {
+            call_id: String::new(),
+            ..record(
+                BoundaryEventKind::HandshakeStart,
+                BoundaryLayer::Generated,
+                RecordCompleteness::Complete,
+                serde_json::json!({}),
+            )
+        };
+        let report = interpret_events("run-1", &[event], false);
+        assert_eq!(
+            report.record_completeness,
+            RecordCompleteness::BrokenCorrelation
+        );
+        assert_not_clean_pass(&report);
     }
 
     #[test]
@@ -923,16 +1195,22 @@ mod tests {
             serde_json::json!({"event":"proposal","tool":"unknown_search","catalogKnown":false,"reason":"unknown_tool"}),
         );
         let report = interpret_events("run-1", &[proposal], false);
-        assert_eq!(report.attribution_status, AttributionStatus::Unattributed);
+        assert_eq!(report.attribution_status, AttributionStatus::Suspected);
         assert!(report.pending_root_causes.iter().any(|item| {
             item.issue_class == IssueClass::ModelBehavior
                 && item.confirmed_source.is_none()
                 && item.discovery.component == "C14"
+                && item.statement.contains("未登记工具")
         }));
+        assert!(!report
+            .known_facts
+            .iter()
+            .any(|item| item.statement.contains("unknown_search")));
         assert!(!report
             .direct_failures
             .iter()
             .any(|item| item.confirmed_source.as_deref() == Some("model")));
+        assert_not_clean_pass(&report);
     }
 
     #[test]
@@ -985,7 +1263,7 @@ mod tests {
             .evidence_gaps
             .iter()
             .any(|gap| gap.issue_class == IssueClass::DiagnosticGap));
-        assert!(!report.headline.contains("未发现问题"));
+        assert_not_clean_pass(&report);
     }
 
     #[test]
@@ -993,6 +1271,18 @@ mod tests {
         let db = Database::open_in_memory().expect("db");
         let (session, _) = accept_run(&db, "c27-known");
         let error = diagnose_run(&db, &session, "missing-run").expect_err("unknown");
+        assert_eq!(
+            SafeRunErrorCode::from_app_error(&error),
+            SafeRunErrorCode::RunNotFound
+        );
+    }
+
+    #[test]
+    fn diagnose_run_rejects_run_owned_by_another_session() {
+        let db = Database::open_in_memory().expect("db");
+        let (session_a, _) = accept_run(&db, "c27-owner-a");
+        let (_, run_b) = accept_run(&db, "c27-owner-b");
+        let error = diagnose_run(&db, &session_a, &run_b).expect_err("foreign run");
         assert_eq!(
             SafeRunErrorCode::from_app_error(&error),
             SafeRunErrorCode::RunNotFound
@@ -1055,7 +1345,7 @@ mod tests {
             report.record_completeness,
             RecordCompleteness::PersistFailed
         );
-        assert!(!report.headline.contains("未发现问题"));
+        assert_not_clean_pass(&report);
     }
 
     #[test]

@@ -164,6 +164,24 @@ describe("AssistantRunCapabilityDegraded", () => {
     expect(host.textContent).not.toContain("可稍后重试");
   });
 
+  it("explains that diagnosis needs the current session", () => {
+    act(() => {
+      root.render(
+        <AssistantRunCapabilityDegraded
+          degradation={{
+            kind: "capability_degraded",
+            capability: "web.search",
+            code: "agent_run_web_provider_timeout",
+            retryable: true,
+            attemptCount: 1,
+            message: "联网核实暂不可用，已继续生成受约束答复。",
+          }}
+        />,
+      );
+    });
+    expect(host.textContent).toContain("诊断入口需要当前会话");
+  });
+
   it("is wired into the production assistant panel event projection", () => {
     const source = readFileSync(
       "src/components/ai/UnifiedAssistantPanel.impl.tsx",

@@ -30,6 +30,10 @@ describe("C27 diagnostic query contract", () => {
     expect(query).toContain("pub(crate) fn diagnose_run");
     expect(query).toContain("recovery_exhausted");
     expect(query).toContain("IssueClass::DiagnosticGap");
+    expect(query).toContain("AttributionStatus::Suspected");
+    expect(query).toContain("未登记工具");
+    expect(query).toContain("HandshakeStart");
+    expect(query).toContain("HandshakeEnd | BoundaryEventKind::MissingEnd");
   });
 
   it("exposes a typed ipc wrapper that cannot omit runId", () => {
@@ -60,8 +64,10 @@ describe("C27 diagnostic query contract", () => {
     expect(panel).toContain("session={runSession}");
     expect(panel).toContain("AssistantRunWebVerificationFailed");
     expect(failed).toContain("runId={failure.diagnosticId}");
+    expect(failed).toContain("诊断入口需要当前会话");
     expect(failed).not.toContain("诊断编号");
     expect(entry).toContain("查看诊断");
+    expect(entry).toContain("attemptId");
     expect(entry).not.toContain("opacity-0");
   });
 
