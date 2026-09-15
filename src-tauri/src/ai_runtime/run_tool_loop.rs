@@ -1603,6 +1603,11 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .map(|_| "web_url_not_public_https"))
     }
 
+    fn mapped_tool_name(&self, parsed_name: &str) -> bool {
+        crate::ai_runtime::tool_catalog::catalog_find(parsed_name).is_none()
+            && self.external_snapshot(parsed_name).is_some()
+    }
+
     fn record_tool_loop_diagnostic(&self, event: serde_json::Value) {
         let parent_run_id = crate::ai_runtime::agent_tool_loop::parent_run_id_for_provider_scope(
             &self.accepted.run_id,

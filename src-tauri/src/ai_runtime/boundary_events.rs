@@ -275,6 +275,7 @@ struct SlotTrace {
     provider_returned: Option<ProviderReturnStructure>,
     handshake_end: Option<RecordCompleteness>,
     recorded_layers: HashSet<BoundaryLayer>,
+    name_origin: Option<serde_json::Value>,
 }
 
 /// In-memory handshake slot shared between the gateway and C26 persistence.
@@ -332,6 +333,13 @@ impl BoundaryAuditSlot {
                 body,
                 generated_messages,
             ));
+        }
+    }
+
+    /// Record C11 parsed/declared tool-name fingerprints (never raw unknown names).
+    pub fn note_name_origin(&self, payload: serde_json::Value) {
+        if let Ok(mut trace) = self.inner.lock() {
+            trace.name_origin = Some(payload);
         }
     }
 
@@ -658,16 +666,28 @@ pub fn record_slot_layer(
             let Some(returned) = trace.provider_returned else {
                 return Ok(());
             };
+            let mut payload = serde_json::json!({
+                "schemaVersion": 1,
+                "httpStatusClass": returned.http_status_class,
+                "hasContent": returned.has_content,
+                "toolCallCount": returned.tool_call_count,
+                "finishReasonClass": returned.finish_reason_class,
+            });
+            if let (Some(object), Some(origin)) = (
+                payload.as_object_mut(),
+                trace
+                    .name_origin
+                    .clone()
+                    .and_then(|value| value.as_object().cloned()),
+            ) {
+                for (key, value) in origin {
+                    object.insert(key, value);
+                }
+            }
             (
                 BoundaryEventKind::OutboundWitness,
                 RecordCompleteness::Complete,
-                serde_json::json!({
-                    "schemaVersion": 1,
-                    "httpStatusClass": returned.http_status_class,
-                    "hasContent": returned.has_content,
-                    "toolCallCount": returned.tool_call_count,
-                    "finishReasonClass": returned.finish_reason_class,
-                }),
+                payload,
             )
         }
     };
@@ -815,6 +835,14 @@ fn sanitize_loop_event(event: &serde_json::Value) -> serde_json::Value {
         "providerAttempts",
         "rejectedProposals",
         "repairRounds",
+        "nameFingerprint",
+        "surfaceKnown",
+        "promptDeclared",
+        "mappingApplied",
+        "parsePath",
+        "rewritten",
+        "declaredNameFingerprints",
+        "parsedToolNames",
     ];
     let Some(object) = event.as_object() else {
         return serde_json::json!({"event": "loop"});
@@ -1440,6 +1468,42 @@ mod tests {
         );
         let joined = serde_json::to_string(&events).expect("json");
         assert!(!joined.contains(SECRET_NOTE), "{joined}");
+    }
+
+    #[test]
+    fn name_origin_handshake_persists_fingerprints_not_unknown_names() {
+        let db = Database::open_in_memory().expect("db");
+        let run_id = accept_run(&db, "c26-name-origin");
+        let slot = BoundaryAuditSlot::new(closed_correlation(&run_id));
+        slot.note_provider_returned(ProviderReturnStructure {
+            http_status_class: Some("2xx"),
+            has_content: false,
+            tool_call_count: 1,
+            finish_reason_class: Some("tool_calls"),
+        });
+        slot.note_name_origin(crate::ai_runtime::tool_name_origin::handshake_payload(
+            crate::ai_runtime::tool_name_origin::ParsePath::OpenAiToolCalls,
+            ["web_search"],
+            ["unknown_search"],
+            false,
+        ));
+        record_slot_layer(&db, &slot, BoundaryLayer::ProviderReturned).expect("returned");
+        let events = query_by_run(&db, &run_id).expect("query");
+        let returned = events
+            .iter()
+            .find(|event| event.layer == BoundaryLayer::ProviderReturned)
+            .expect("layer");
+        let hops = crate::ai_runtime::tool_name_origin::hops_from_payload(&returned.payload);
+        assert_eq!(hops.len(), 1);
+        assert_eq!(
+            hops[0].fingerprint,
+            crate::ai_runtime::tool_name_origin::name_fingerprint("unknown_search")
+        );
+        let encoded = serde_json::to_string(&returned.payload).expect("json");
+        assert!(!encoded.contains("unknown_search"), "{encoded}");
+        assert!(returned.payload["declaredNameFingerprints"]
+            .as_array()
+            .is_some_and(|names| !names.is_empty()));
     }
 
     #[test]

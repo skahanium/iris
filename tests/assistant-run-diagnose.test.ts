@@ -31,9 +31,16 @@ describe("C27 diagnostic query contract", () => {
     expect(query).toContain("recovery_exhausted");
     expect(query).toContain("IssueClass::DiagnosticGap");
     expect(query).toContain("AttributionStatus::Suspected");
-    expect(query).toContain("未登记工具");
     expect(query).toContain("HandshakeStart");
     expect(query).toContain("HandshakeEnd | BoundaryEventKind::MissingEnd");
+    const origin = read("src-tauri/src/ai_runtime/tool_name_origin.rs");
+    expect(origin).toContain("未登记工具");
+    expect(origin).toContain("name_fingerprint");
+    expect(origin).toContain("model-generated");
+    expect(origin).toContain("protocol-parsed");
+    expect(origin).toContain("name-mapped");
+    expect(origin).toContain("prompt-convention");
+    expect(query).toContain("explain_proposal");
   });
 
   it("exposes a typed ipc wrapper that cannot omit runId", () => {

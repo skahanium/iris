@@ -235,6 +235,11 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     /// Accept only Host-created, content-free counters and enum codes.
     fn record_tool_loop_diagnostic(&self, _event: serde_json::Value) {}
 
+    /// True when this parsed name is a Run-surface mapping, not a catalog tool.
+    fn mapped_tool_name(&self, _parsed_name: &str) -> bool {
+        false
+    }
+
     /// Read-only, Run-specific validation after JSON/schema validation and
     /// before provider binding, execution counters or tool lifecycle events.
     fn proposal_rejection_reason(&self, _call: &ToolCall) -> AppResult<Option<&'static str>> {
@@ -1388,15 +1393,19 @@ impl AgentToolLoop {
                     ToolCallDisposition::Deferred => "deferred_for_feedback",
                     ToolCallDisposition::Dispatched => "accepted",
                 };
-                let catalog_entry = crate::ai_runtime::tool_catalog::catalog_find(&call.function.name);
-                let name = catalog_entry.map_or("unknown", |entry| entry.name);
-                // Closed-vocabulary discriminator. Exposing the raw proposed
-                // name would risk echoing model-authored text into a persisted
-                // diagnostic; this boolean still separates "a real tool that is
-                // absent from this run's surface" from "a name that exists
-                // nowhere", which is the distinction an operator needs.
-                let catalog_known = catalog_entry.is_some();
-                executor.record_tool_loop_diagnostic(serde_json::json!({"event":"proposal", "tool":name, "catalogKnown":catalog_known, "reason":reason, "modelTurn":model_turns}));
+                let surface: Vec<&str> = active_allowed_tools.iter().copied().collect();
+                let declared: Vec<&str> =
+                    active_tools.iter().map(|tool| tool.name.as_str()).collect();
+                executor.record_tool_loop_diagnostic(
+                    crate::ai_runtime::tool_name_origin::proposal_payload(
+                        &call.function.name,
+                        &surface,
+                        &declared,
+                        executor.mapped_tool_name(&call.function.name),
+                        reason,
+                        model_turns,
+                    ),
+                );
             }
             if proposal_dispositions
                 .iter()

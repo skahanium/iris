@@ -342,6 +342,17 @@ impl ModelGateway {
                     }),
                 },
             );
+            slot.note_name_origin(
+                crate::ai_runtime::tool_name_origin::handshake_payload_for_turn(
+                    &request.provider.name,
+                    slot.correlation().protocol_adapter.as_str(),
+                    request.tools.iter().map(|tool| tool.function.name.as_str()),
+                    parsed
+                        .tool_calls
+                        .iter()
+                        .map(|call| call.function.name.as_str()),
+                ),
+            );
             slot.note_handshake_end(
                 crate::ai_runtime::boundary_events::RecordCompleteness::Complete,
             );

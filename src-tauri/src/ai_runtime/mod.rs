@@ -107,6 +107,7 @@ pub mod tool_catalog;
 pub mod tool_dispatch;
 pub mod tool_execution_pipeline;
 pub mod tool_executor;
+pub(crate) mod tool_name_origin;
 pub(crate) mod tool_surface;
 pub mod trace;
 pub mod web_evidence_broker;

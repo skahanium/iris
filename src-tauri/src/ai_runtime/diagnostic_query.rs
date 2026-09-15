@@ -11,6 +11,7 @@ use super::boundary_events::{
     RecordCompleteness,
 };
 use super::run_contract::{AssistantSessionRef, SafeRunErrorCode, SecurityDomain};
+use super::tool_name_origin::{explain_proposal, hops_from_payload, NameOrigin};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -170,14 +171,6 @@ fn handshake_end_count(events: &[BoundaryEventRecord]) -> usize {
             )
         })
         .count()
-}
-
-fn redacted_tool_label(event: &BoundaryEventRecord) -> String {
-    if !payload_flag(event, "catalogKnown") {
-        "未登记工具".to_string()
-    } else {
-        payload_tool(event).unwrap_or("unknown").to_string()
-    }
 }
 
 fn classify_tool_failure(event: &BoundaryEventRecord) -> (IssueClass, &'static str) {
@@ -340,6 +333,10 @@ pub(crate) fn interpret_events(
     let mut path: Vec<DiscoveryRef> = Vec::new();
     let mut layers_by_attempt: std::collections::BTreeMap<String, Vec<BoundaryLayer>> =
         std::collections::BTreeMap::new();
+    let parse_hops = events
+        .iter()
+        .flat_map(|event| hops_from_payload(&event.payload))
+        .collect::<Vec<_>>();
 
     for event in events {
         let discovery = discovery_of(event);
@@ -399,21 +396,26 @@ pub(crate) fn interpret_events(
             }
             BoundaryEventKind::LoopEvent => match payload_event(event) {
                 Some("proposal") => {
-                    let tool = redacted_tool_label(event);
-                    let catalog_known = payload_flag(event, "catalogKnown");
+                    let explanation = explain_proposal(&event.payload, &parse_hops);
                     known_facts.push(finding(
                         event,
-                        format!("工具提议 {tool} 在派发边界被记录"),
+                        explanation.known_fact,
                         IssueClass::ToolExecution,
                         None,
                     ));
-                    if !catalog_known {
-                        pending_root_causes.push(finding(
-                            event,
-                            "未登记工具的来源未区分，不能证实为模型故障".to_string(),
-                            IssueClass::ModelBehavior,
-                            None,
-                        ));
+                    if let Some(pending) = explanation.pending_statement {
+                        let issue_class = match explanation.origin {
+                            NameOrigin::ModelGenerated => IssueClass::ModelBehavior,
+                            NameOrigin::Unattributed => IssueClass::DiagnosticGap,
+                            NameOrigin::ProtocolParsed
+                            | NameOrigin::NameMapped
+                            | NameOrigin::PromptConvention => IssueClass::InternalContract,
+                        };
+                        if explanation.origin == NameOrigin::Unattributed {
+                            evidence_gaps.push(finding(event, pending, issue_class, None));
+                        } else {
+                            pending_root_causes.push(finding(event, pending, issue_class, None));
+                        }
                     }
                 }
                 Some("repair") => {
@@ -1195,13 +1197,16 @@ mod tests {
             serde_json::json!({"event":"proposal","tool":"unknown_search","catalogKnown":false,"reason":"unknown_tool"}),
         );
         let report = interpret_events("run-1", &[proposal], false);
-        assert_eq!(report.attribution_status, AttributionStatus::Suspected);
-        assert!(report.pending_root_causes.iter().any(|item| {
-            item.issue_class == IssueClass::ModelBehavior
-                && item.confirmed_source.is_none()
-                && item.discovery.component == "C14"
-                && item.statement.contains("未登记工具")
+        assert_ne!(report.attribution_status, AttributionStatus::Confirmed);
+        assert!(report.evidence_gaps.iter().any(|gap| {
+            gap.issue_class == IssueClass::DiagnosticGap
+                && gap.discovery.component == "C14"
+                && gap.statement.contains("不能归因于模型")
         }));
+        assert!(!report
+            .pending_root_causes
+            .iter()
+            .any(|item| item.issue_class == IssueClass::ModelBehavior));
         assert!(!report
             .known_facts
             .iter()
@@ -1210,6 +1215,193 @@ mod tests {
             .direct_failures
             .iter()
             .any(|item| item.confirmed_source.as_deref() == Some("model")));
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
+    fn unknown_tool_without_parse_hop_is_unattributed_gap() {
+        let proposal = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            crate::ai_runtime::tool_name_origin::proposal_payload(
+                "unknown_search",
+                &[],
+                &[],
+                false,
+                "tool_not_in_run_surface",
+                1,
+            ),
+        );
+        let report = interpret_events("run-1", std::slice::from_ref(&proposal), false);
+        assert_eq!(report.attribution_status, AttributionStatus::Unattributed);
+        assert!(report.evidence_gaps.iter().any(|gap| {
+            gap.issue_class == IssueClass::DiagnosticGap && gap.statement.contains("来源链")
+        }));
+        assert!(!report
+            .pending_root_causes
+            .iter()
+            .any(|item| item.issue_class == IssueClass::ModelBehavior));
+        assert!(!report
+            .known_facts
+            .iter()
+            .any(|item| item.statement.contains("unknown_search")));
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
+    fn name_origin_model_generated_is_suspected_not_confirmed() {
+        let hop = crate::ai_runtime::tool_name_origin::handshake_payload(
+            crate::ai_runtime::tool_name_origin::ParsePath::OpenAiToolCalls,
+            ["web_search"],
+            ["unknown_search"],
+            false,
+        );
+        let parsed = record(
+            BoundaryEventKind::OutboundWitness,
+            BoundaryLayer::ProviderReturned,
+            RecordCompleteness::Complete,
+            hop,
+        );
+        let proposal = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            crate::ai_runtime::tool_name_origin::proposal_payload(
+                "unknown_search",
+                &[],
+                &["web_search"],
+                false,
+                "tool_not_in_run_surface",
+                1,
+            ),
+        );
+        let report = interpret_events("run-1", &[parsed, proposal], false);
+        assert_eq!(report.attribution_status, AttributionStatus::Suspected);
+        assert!(report.pending_root_causes.iter().any(|item| {
+            item.issue_class == IssueClass::ModelBehavior
+                && item.confirmed_source.is_none()
+                && item.statement.contains("模型生成")
+        }));
+        assert!(!report
+            .known_facts
+            .iter()
+            .any(|item| item.statement.contains("unknown_search")));
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
+    fn name_origin_protocol_rewrite_is_internal_not_model() {
+        let hop = crate::ai_runtime::tool_name_origin::handshake_payload(
+            crate::ai_runtime::tool_name_origin::ParsePath::MinimaxContent,
+            ["web_search"],
+            ["unknown_search"],
+            true,
+        );
+        let parsed = record(
+            BoundaryEventKind::OutboundWitness,
+            BoundaryLayer::ProviderReturned,
+            RecordCompleteness::Complete,
+            hop,
+        );
+        let proposal = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            crate::ai_runtime::tool_name_origin::proposal_payload(
+                "unknown_search",
+                &[],
+                &["web_search"],
+                false,
+                "tool_not_in_run_surface",
+                1,
+            ),
+        );
+        let report = interpret_events("run-1", &[parsed, proposal], false);
+        assert!(report.pending_root_causes.iter().any(|item| {
+            item.issue_class == IssueClass::InternalContract && item.statement.contains("协议解析")
+        }));
+        assert!(!report
+            .pending_root_causes
+            .iter()
+            .any(|item| item.issue_class == IssueClass::ModelBehavior));
+        assert_ne!(report.attribution_status, AttributionStatus::Confirmed);
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
+    fn name_origin_mapped_name_is_not_model() {
+        let hop = crate::ai_runtime::tool_name_origin::handshake_payload(
+            crate::ai_runtime::tool_name_origin::ParsePath::OpenAiToolCalls,
+            ["weather_lookup"],
+            ["weather_lookup"],
+            false,
+        );
+        let parsed = record(
+            BoundaryEventKind::OutboundWitness,
+            BoundaryLayer::ProviderReturned,
+            RecordCompleteness::Complete,
+            hop,
+        );
+        let proposal = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            crate::ai_runtime::tool_name_origin::proposal_payload(
+                "weather_lookup",
+                &["weather_lookup"],
+                &["weather_lookup"],
+                true,
+                "tool_not_in_run_surface",
+                1,
+            ),
+        );
+        let report = interpret_events("run-1", &[parsed, proposal], false);
+        assert!(report.pending_root_causes.iter().any(|item| {
+            item.issue_class == IssueClass::InternalContract && item.statement.contains("名称映射")
+        }));
+        assert!(!report
+            .pending_root_causes
+            .iter()
+            .any(|item| item.issue_class == IssueClass::ModelBehavior));
+    }
+
+    #[test]
+    fn name_origin_catalog_not_on_surface_is_prompt_convention() {
+        let hop = crate::ai_runtime::tool_name_origin::handshake_payload(
+            crate::ai_runtime::tool_name_origin::ParsePath::OpenAiToolCalls,
+            ["read_note"],
+            ["web_search"],
+            false,
+        );
+        let parsed = record(
+            BoundaryEventKind::OutboundWitness,
+            BoundaryLayer::ProviderReturned,
+            RecordCompleteness::Complete,
+            hop,
+        );
+        let proposal = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            crate::ai_runtime::tool_name_origin::proposal_payload(
+                "web_search",
+                &["read_note"],
+                &["read_note"],
+                false,
+                "tool_not_in_run_surface",
+                1,
+            ),
+        );
+        let report = interpret_events("run-1", &[parsed, proposal], false);
+        assert!(report.pending_root_causes.iter().any(|item| {
+            item.issue_class == IssueClass::InternalContract
+                && (item.statement.contains("提示约定") || item.statement.contains("工具面"))
+        }));
+        assert!(!report
+            .pending_root_causes
+            .iter()
+            .any(|item| item.issue_class == IssueClass::ModelBehavior));
         assert_not_clean_pass(&report);
     }
 
