@@ -35,15 +35,16 @@ use super::agent_capacity_eval::{
     validate_serialized_live_pilot_result, validate_serialized_live_preflight_report,
     verify_attested_live_pilot_result, write_attested_live_pilot_result, write_blind_review_packet,
     write_live_pilot_result, write_live_preflight_report, write_live_preflight_session_state,
-    AnswerObservation, BudgetOutcome, CaseManifest, CaseQualityAtoms, CheckStatus,
-    CitationExpectation, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
-    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
-    LiveCostConfirmation, LivePilotCallProbe, LivePilotEvidenceOracle, LiveProfileCandidate,
-    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
-    McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
-    ProtocolValidationLevel, RequiredFact, RequiredSource, SafetyViolation, ScenarioLanguage,
-    SourceKind, StableLevelObservation, TruncationOutcome, VerdictReason, WebAnswerContamination,
-    WebQueryBoundary, WebSearchPolicy, WebState, BASE_QUESTION_PLANS, CORE_MATRIX_MIN_CASES,
+    AnswerObservation, BaselineIdentity, BudgetOutcome, CaseManifest, CaseQualityAtoms,
+    CheckStatus, CitationExpectation, CitationObservation, EvalFault, EvalRunMode,
+    EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
+    ImplicitVaultExpectation, LiveCostConfirmation, LivePilotCallProbe, LivePilotEvidenceOracle,
+    LiveProfileCandidate, LlmProtocolDouble, McpCapabilityContract, McpOperation,
+    McpTransportContract, McpTransportFailureContract, ObservedSource, PressureDimension,
+    ProtocolContractOutcome, ProtocolValidationLevel, RequiredFact, RequiredSource,
+    SafetyViolation, ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
+    VerdictReason, WebAnswerContamination, WebQueryBoundary, WebSearchPolicy, WebState,
+    WorkingTree, AGENT_ANSWER_V1_FIXTURE, BASE_QUESTION_PLANS, CORE_MATRIX_MIN_CASES,
     CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES, CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE,
     CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
 };
@@ -2646,6 +2647,74 @@ fn core_selection_is_stratified_without_claiming_execution_results() {
     );
 }
 
+#[test]
+fn baseline_identity_marks_dirty_tree_not_comparable() {
+    let clean = BaselineIdentity::for_tests(WorkingTree::Clean).expect("clean identity");
+    assert!(clean.comparable());
+    assert_eq!(clean.working_tree(), WorkingTree::Clean);
+    let dirty = BaselineIdentity::for_tests(WorkingTree::Dirty).expect("dirty identity");
+    assert!(
+        !dirty.comparable(),
+        "a dirty working tree must not be a comparable frozen baseline"
+    );
+}
+
+#[test]
+fn baseline_identity_rejects_tampered_fixture_hash() {
+    let expected = BaselineIdentity::agent_answer_v1_sha256();
+    assert!(BaselineIdentity::fixture_hash_matches(&expected, &expected));
+    let tampered = "0".repeat(64);
+    assert!(
+        !BaselineIdentity::fixture_hash_matches(&expected, &tampered),
+        "a mutated fixture hash must not match the embedded agent-answer bytes"
+    );
+}
+
+#[test]
+fn embedded_agent_answer_fixture_matches_workspace_file() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../docs/eval/fixtures/agent-answer-v1.json");
+    let disk = std::fs::read(&workspace).expect("workspace fixture");
+    assert_eq!(
+        disk.as_slice(),
+        AGENT_ANSWER_V1_FIXTURE.as_bytes(),
+        "disk fixture drifted from the embedded agent-answer-v1 bytes"
+    );
+}
+
+#[tokio::test]
+async fn evaluation_summary_requires_baseline_identity_object() {
+    let smoke = run_headless_core_evaluation(EvalRunMode::Smoke, None)
+        .await
+        .expect("headless smoke");
+    let serialized = serialize_evaluation_summary(&smoke).expect("strict summary");
+    let mut value: serde_json::Value = serde_json::from_str(&serialized).expect("summary json");
+    value
+        .as_object_mut()
+        .expect("summary object")
+        .remove("baselineIdentity");
+    let stripped = serde_json::to_string(&value).expect("stripped summary");
+    let error = validate_serialized_evaluation_summary(&stripped)
+        .expect_err("summaries without baselineIdentity must fail closed");
+    assert!(!error.to_string().contains("请在不检索"));
+
+    let mut dirty_comparable: serde_json::Value =
+        serde_json::from_str(&serialized).expect("summary json");
+    dirty_comparable["baselineIdentity"]["workingTree"] = serde_json::json!("dirty");
+    dirty_comparable["baselineIdentity"]["comparable"] = serde_json::json!(true);
+    let dirty_payload = serde_json::to_string(&dirty_comparable).expect("dirty comparable json");
+    validate_serialized_evaluation_summary(&dirty_payload)
+        .expect_err("dirty trees must not claim comparable=true");
+
+    let mut dirty_honest: serde_json::Value =
+        serde_json::from_str(&serialized).expect("summary json");
+    dirty_honest["baselineIdentity"]["workingTree"] = serde_json::json!("dirty");
+    dirty_honest["baselineIdentity"]["comparable"] = serde_json::json!(false);
+    let dirty_honest_payload = serde_json::to_string(&dirty_honest).expect("dirty identity json");
+    validate_serialized_evaluation_summary(&dirty_honest_payload)
+        .expect("a complete dirty identity may be persisted but is not comparable");
+}
+
 #[tokio::test]
 async fn headless_smoke_summary_exposes_only_the_closed_contract() {
     let smoke = run_headless_core_evaluation(EvalRunMode::Smoke, None)
@@ -2685,8 +2754,47 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
             "telemetry",
             "scorecard",
             "cases",
+            "baselineIdentity",
         ])
     );
+    let identity = value["baselineIdentity"]
+        .as_object()
+        .expect("baseline identity object");
+    let source_commit = identity["sourceCommit"].as_str().expect("source commit");
+    assert_eq!(source_commit.len(), 40);
+    assert!(source_commit.chars().all(|ch| ch.is_ascii_hexdigit()));
+    let scenario_hash = identity["scenarioSetHash"]
+        .as_str()
+        .expect("scenario set hash");
+    assert_eq!(scenario_hash.len(), 64);
+    assert!(scenario_hash.chars().all(|ch| ch.is_ascii_hexdigit()));
+    let fixture_hash = identity["fixtureHashes"]["agentAnswerV1"]
+        .as_str()
+        .expect("agent-answer fixture hash");
+    assert_eq!(fixture_hash.len(), 64);
+    assert!(fixture_hash.chars().all(|ch| ch.is_ascii_hexdigit()));
+    assert_eq!(
+        identity
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "sourceCommit",
+            "workingTree",
+            "comparable",
+            "release",
+            "scoringSchema",
+            "scenarioSetHash",
+            "fixtureHashes",
+            "os",
+            "arch",
+        ])
+    );
+    assert_eq!(identity["workingTree"], "clean");
+    assert_eq!(identity["comparable"], true);
+    assert_eq!(identity["release"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(identity["scoringSchema"], "agent-capacity-report-v3");
+    assert_eq!(value["schemaVersion"], "agent-eval-summary-v3");
     let expected_cases = u64::try_from(report_gate_plan_count()).expect("smoke slice fits u64");
     assert_eq!(value["evidenceLevel"], "headless_deterministic");
     assert_eq!(value["caseCount"], expected_cases);
@@ -2813,7 +2921,7 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
         let generated: serde_json::Value =
             serde_json::from_str(&report).expect("generated capacity JSON");
         let core_case_count = report_gate_plan_count() * 2;
-        assert_eq!(generated["release"], "v1.3.0");
+        assert_eq!(generated["release"], env!("CARGO_PKG_VERSION"));
         assert_eq!(
             generated["core"]["dimensions"]["contract"]["passed"],
             core_case_count

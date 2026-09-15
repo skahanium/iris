@@ -10,8 +10,15 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use telemetry::*;
 use tool_class::evaluation_local_read_tool_names;
+#[path = "agent_capacity_eval/baseline_identity.rs"]
+mod baseline_identity;
 #[path = "agent_capacity_eval/verdict.rs"]
 mod verdict;
+pub(crate) use baseline_identity::{
+    BaselineIdentity, CAPACITY_REPORT_SCHEMA_V3, EVAL_SUMMARY_SCHEMA_V3,
+};
+#[cfg(test)]
+pub(crate) use baseline_identity::{WorkingTree, AGENT_ANSWER_V1_FIXTURE};
 #[cfg(test)]
 pub(crate) use contract::{
     AnswerObservation, CaseManifest, CheckStatus, CitationExpectation, CitationObservation,
@@ -949,6 +956,7 @@ pub(crate) struct EvaluationSummary {
     telemetry: EvaluationTelemetrySummary,
     scorecard: CapacityScorecard,
     cases: Vec<EvaluationCaseSummary>,
+    baseline_identity: BaselineIdentity,
 }
 
 impl EvaluationSummary {
@@ -977,6 +985,10 @@ impl EvaluationSummary {
             .iter()
             .find(|case| case.case_id == case_id)
             .map(|case| &case.verdict)
+    }
+
+    pub(crate) const fn baseline_identity(&self) -> &BaselineIdentity {
+        &self.baseline_identity
     }
 }
 
@@ -1128,9 +1140,10 @@ pub(crate) fn validate_serialized_evaluation_summary(
             "telemetry",
             "scorecard",
             "cases",
+            "baselineIdentity",
         ],
     )?;
-    exact_string(root.get("schemaVersion"), &["agent-eval-summary-v2"])?;
+    exact_string(root.get("schemaVersion"), &[EVAL_SUMMARY_SCHEMA_V3])?;
     exact_string(root.get("evidenceLevel"), &["headless_deterministic"])?;
     exact_string(root.get("runMode"), &["smoke", "full"])?;
     let case_count = bounded_u64(root.get("caseCount"), summary_count_bound())?;
@@ -1166,6 +1179,7 @@ pub(crate) fn validate_serialized_evaluation_summary(
     validate_language_counts(root.get("languages"), case_count)?;
     validate_telemetry_summary(root.get("telemetry"))?;
     validate_capacity_scorecard(root.get("scorecard"))?;
+    validate_baseline_identity(root.get("baselineIdentity"))?;
 
     let cases = root
         .get("cases")
@@ -1249,6 +1263,66 @@ fn exact_string(
     } else {
         Err(EvalContractError::new("evaluation_summary_value_invalid"))
     }
+}
+
+fn exact_hex(value: Option<&serde_json::Value>, length: usize) -> Result<(), EvalContractError> {
+    let value = value
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(EvalContractError::new("evaluation_summary_value_invalid"))
+    }
+}
+
+fn validate_baseline_identity(value: Option<&serde_json::Value>) -> Result<(), EvalContractError> {
+    let object = exact_object(
+        value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &[
+            "sourceCommit",
+            "workingTree",
+            "comparable",
+            "release",
+            "scoringSchema",
+            "scenarioSetHash",
+            "fixtureHashes",
+            "os",
+            "arch",
+        ],
+    )?;
+    exact_hex(object.get("sourceCommit"), 40)?;
+    exact_hex(object.get("scenarioSetHash"), 64)?;
+    exact_string(object.get("release"), &[env!("CARGO_PKG_VERSION")])?;
+    exact_string(object.get("scoringSchema"), &[CAPACITY_REPORT_SCHEMA_V3])?;
+    let working_tree = object
+        .get("workingTree")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if working_tree != "clean" && working_tree != "dirty" {
+        return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+    }
+    let comparable = exact_bool(object.get("comparable"))?;
+    if comparable != (working_tree == "clean") {
+        return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+    }
+    let fixtures = exact_object(
+        object
+            .get("fixtureHashes")
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &["agentAnswerV1"],
+    )?;
+    exact_hex(fixtures.get("agentAnswerV1"), 64)?;
+    for key in ["os", "arch"] {
+        let token = object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+        if token.is_empty() || token.contains('/') || token.contains('\\') || token.contains("..") {
+            return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+        }
+    }
+    Ok(())
 }
 
 /// Upper bound for every per-case and per-summary count in the serialized

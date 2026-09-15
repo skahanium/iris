@@ -4391,6 +4391,20 @@ pub(crate) async fn run_headless_core_evaluation(
     mode: EvalRunMode,
     fault: Option<EvalFault>,
 ) -> Result<EvaluationSummary, EvalContractError> {
+    let identity = if std::env::var("IRIS_AGENT_EVAL_MODE").is_ok() {
+        BaselineIdentity::capture_from_git()?
+    } else {
+        BaselineIdentity::for_tests(WorkingTree::Clean)?
+    };
+    run_headless_core_evaluation_with_identity(mode, fault, identity).await
+}
+
+#[cfg(test)]
+async fn run_headless_core_evaluation_with_identity(
+    mode: EvalRunMode,
+    fault: Option<EvalFault>,
+    baseline_identity: BaselineIdentity,
+) -> Result<EvaluationSummary, EvalContractError> {
     let selected = select_core_scenarios(mode)?;
     let mut executed = Vec::with_capacity(selected.len());
     for scenario in &selected {
@@ -4484,7 +4498,7 @@ pub(crate) async fn run_headless_core_evaluation(
         })
         .sum();
     Ok(EvaluationSummary {
-        schema_version: "agent-eval-summary-v2",
+        schema_version: EVAL_SUMMARY_SCHEMA_V3,
         evidence_level: EvaluationEvidenceLevel::HeadlessDeterministic,
         run_mode: mode,
         case_count,
@@ -4514,6 +4528,7 @@ pub(crate) async fn run_headless_core_evaluation(
         telemetry: aggregate_telemetry(executed.iter().map(|result| &result.telemetry)),
         scorecard,
         cases,
+        baseline_identity,
     })
 }
 
@@ -8483,6 +8498,7 @@ pub(crate) struct AgentCapacityReport {
     security_failure_reasons: Vec<SecurityFailureRecord>,
     claim_boundary: CapacityClaimBoundary,
     live_capability_matrix: LiveCapabilityMatrix,
+    baseline_identity: BaselineIdentity,
 }
 
 #[cfg(test)]
@@ -8566,8 +8582,8 @@ pub(crate) fn build_agent_capacity_report(
         })
         .unwrap_or(0);
     Ok(AgentCapacityReport {
-        schema_version: "agent-capacity-report-v2",
-        release: "v1.3.0",
+        schema_version: CAPACITY_REPORT_SCHEMA_V3,
+        release: env!("CARGO_PKG_VERSION"),
         evidence_level: "headless_deterministic",
         run_mode: core.run_mode,
         core: CapacityCoreResult {
@@ -8641,6 +8657,7 @@ pub(crate) fn build_agent_capacity_report(
             web_latency: "live_not_tested",
         },
         live_capability_matrix: pairwise_live_capability_matrix(&[])?,
+        baseline_identity: core.baseline_identity().clone(),
     })
 }
 
@@ -8671,12 +8688,23 @@ pub(crate) fn serialize_agent_capacity_report(
             "securityFailureReasons",
             "claimBoundary",
             "liveCapabilityMatrix",
+            "baselineIdentity",
         ],
     )?;
-    exact_string(root.get("schemaVersion"), &["agent-capacity-report-v2"])?;
-    exact_string(root.get("release"), &["v1.3.0"])?;
+    exact_string(root.get("schemaVersion"), &[CAPACITY_REPORT_SCHEMA_V3])?;
+    exact_string(root.get("release"), &[env!("CARGO_PKG_VERSION")])?;
     exact_string(root.get("evidenceLevel"), &["headless_deterministic"])?;
     exact_string(root.get("runMode"), &["full"])?;
+    validate_baseline_identity(root.get("baselineIdentity"))?;
+    if root
+        .get("baselineIdentity")
+        .and_then(|identity| identity.get("release"))
+        != root.get("release")
+    {
+        return Err(EvalContractError::new(
+            "capacity_report_identity_release_mismatch",
+        ));
+    }
     if serialized.len() > 128 * 1024 {
         return Err(EvalContractError::new("capacity_report_too_large"));
     }

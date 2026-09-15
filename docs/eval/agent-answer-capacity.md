@@ -56,8 +56,12 @@ v1.2.15 的确定性结果属于 `headless_deterministic`。确定性矩阵使�
   不得当作质量证据放行；分母大于 0 时 `*Bps` 为 0–10000，门槛不变（召回 90%、
   引用/约束 95%）。报告同时给出各维 `*Numerator` / `*Denominator`。F1 没有独立
   计数分母：Precision 或 Recall 任一未覆盖则 `factF1Bps` 为 `null`。新生成的
-  确定性报告使用 `schemaVersion` `agent-capacity-report-v2`；冻结的
+  确定性报告使用 `schemaVersion` `agent-capacity-report-v3`，并内嵌封闭
+  `baselineIdentity`（提交、工作树、`CARGO_PKG_VERSION`、评分 schema、场景集合
+  哈希、夹具哈希、os／arch）。`comparable=true` 当且仅当工作树干净且身份字段合法；
+  脏树仍可写出报告，但不得当作冻结基线或 product-gate 输入。冻结的
   `docs/eval/results/v1.2.15-agent-capacity.json` 仍为 v1 旧口径，不得回写。
+  夹具或场景集合哈希对不上时整次运行无效，不是把某个案例记成失败。
 - `performance`：模型耗时与 TTFT 的 p50/p95、轮数与工具调用计数；
 - `faultRecovery`：降级、约束失败与截断计数。
 

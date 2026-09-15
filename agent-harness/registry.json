@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 23,
+  "registryRevision": 24,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-15T08:54:51.846Z"
+    "recordedAt": "2026-09-15T09:28:29.258Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -229,7 +229,7 @@
     "modules/eval-system.md": {
       "container": "FILE-EVAL-SYSTEM",
       "registration": "FILE-EVAL-SYSTEM#file",
-      "fingerprint": "a2360aa571fc7d32f1417e060cad71c8"
+      "fingerprint": "43c279ee8147f54d9f5ce636eeef9267"
     },
     "modules/m01-session-and-run.md": {
       "container": "M01",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "e84dfc2334aa35e8089dbf3f76206b7c"
+      "fingerprint": "5db5d4899d9187d1eab71aa9413cba4a"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1683,13 +1683,13 @@
       "title": "E01 案例与判据",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/eval-system.md",
         "anchor": "E01",
         "line": 29,
-        "endLine": 70,
-        "fingerprint": "cfdf265bf8f8ac961552a6fd14c36e34"
+        "endLine": 71,
+        "fingerprint": "884ecb3c7b4d83937aa67abd567961e8"
       },
       "implementation": {
         "state": "present"
@@ -1713,13 +1713,13 @@
       "title": "E02 执行与重放",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/eval-system.md",
         "anchor": "E02",
-        "line": 72,
-        "endLine": 112,
-        "fingerprint": "f1a85a52f58e1ce70d2004c9738485e5"
+        "line": 73,
+        "endLine": 114,
+        "fingerprint": "d2d1b0b6e629ea7c0e2f60344153dfcc"
       },
       "implementation": {
         "state": "present"
@@ -1746,13 +1746,13 @@
       "title": "E03 评分与校准",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "modules/eval-system.md",
         "anchor": "E03",
-        "line": 114,
-        "endLine": 154,
-        "fingerprint": "e7059b148ccc64395fae8b52213a279e"
+        "line": 116,
+        "endLine": 156,
+        "fingerprint": "5e7399bdb840f642ae74f5f89cde62ce"
       },
       "implementation": {
         "state": "partial"
@@ -5949,13 +5949,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 73,
-        "fingerprint": "a574edf21e8aa275eedb2515da574fb6"
+        "endLine": 75,
+        "fingerprint": "54f311535d8d7da715b2dee43347216a"
       },
       "implementation": {
         "state": "unknown"
@@ -6103,8 +6103,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 75,
-        "endLine": 97,
+        "line": 77,
+        "endLine": 99,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": {
@@ -6240,6 +6240,39 @@
       "at": "2026-09-15T07:42:40Z",
       "applicability": "current",
       "note": "registryRevision 22：本机 npm run agent-harness:test：22 条负例全部通过（exit 0）。覆盖范围以 X02 正文为准，不声称 document.md §5 全覆盖。"
+    },
+    {
+      "object": "E01",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib evaluation_summary_requires_baseline_identity_object",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "884ecb3c7b4d83937aa67abd567961e8",
+      "at": "2026-09-15T09:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 24：机械负例覆盖封闭 baselineIdentity 与夹具哈希；整次运行无效而非个案失败。不证明语义质量，也不把 D01 或 E01 verification 标为通过。"
+    },
+    {
+      "object": "E02",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib baseline_identity_marks_dirty_tree_not_comparable",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "d2d1b0b6e629ea7c0e2f60344153dfcc",
+      "at": "2026-09-15T09:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 24：机械负例覆盖脏工作树 comparable=false 与测试注入身份。不证明 live 质量，也不把 E02 verification 标为通过。"
+    },
+    {
+      "object": "E03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib headless_smoke_summary_exposes_only_the_closed_contract",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "5e7399bdb840f642ae74f5f89cde62ce",
+      "at": "2026-09-15T09:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 24：机械负例覆盖 scoringSchema 进入身份且 summary schema 为 v3。历史 v1.2.15 仍为旧口径。不证明语义质量，也不把 E03 verification 标为通过。"
     }
   ],
   "changes": [
@@ -18061,6 +18094,44 @@
           "revisionTo": 12,
           "fingerprintFrom": "95d414df1eef8a36bf00c68cfaedbaf4",
           "fingerprintTo": "4529e0f687301d751d596d8c204e647f"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-15-16",
+      "at": "2026-09-15T09:28:29.258Z",
+      "author": "skahanium",
+      "classification": "refinement",
+      "reason": "登记确定性评测报告的封闭基线身份，不把 E01-E03 标为已验证通过",
+      "review": null,
+      "objects": [
+        {
+          "id": "E01",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "cfdf265bf8f8ac961552a6fd14c36e34",
+          "fingerprintTo": "884ecb3c7b4d83937aa67abd567961e8"
+        },
+        {
+          "id": "E02",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "f1a85a52f58e1ce70d2004c9738485e5",
+          "fingerprintTo": "d2d1b0b6e629ea7c0e2f60344153dfcc"
+        },
+        {
+          "id": "E03",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "e7059b148ccc64395fae8b52213a279e",
+          "fingerprintTo": "5e7399bdb840f642ae74f5f89cde62ce"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "a574edf21e8aa275eedb2515da574fb6",
+          "fingerprintTo": "54f311535d8d7da715b2dee43347216a"
         }
       ]
     }

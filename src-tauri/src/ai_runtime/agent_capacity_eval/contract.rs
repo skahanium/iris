@@ -321,7 +321,7 @@ pub(crate) struct EvalContractError {
 }
 
 impl EvalContractError {
-    pub(super) const fn new(reason_code: &'static str) -> Self {
+    pub(crate) const fn new(reason_code: &'static str) -> Self {
         Self { reason_code }
     }
 
