@@ -55,11 +55,11 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 
 - 对话呈现改造：稳定会话与消息身份，统一远端终态和本地播放，采用时间驱动的局部字素 reveal、连续 Markdown 块与完整长文虚拟化；阅读锚点统一处理动态留白、用户中断和布局补偿。仅在事件时序回归、合成长文回放及 macOS/Windows 桌面验证后声明体验达标。
 
-- 2026-09-06：笔记集成验收重新打开。普通文件入口与 Agent 共享笔记操作，保存原语、版本、回收站、索引和编辑器修订各自负责明确边界；不建立第二套文档系统。目标为真实差异逐批确认、保存屏障、冲突安全的独立 Agent 撤销，以及持久联网授权和有界本地续读。施工与证据见唯一 [Harness 路线](./agent-harness/05-implementation-roadmap.md)；局部合同测试不代表完整笔记能力或 HR-7 产品放行。
+- 2026-09-06：笔记集成验收重新打开。普通文件入口与 Agent 共享笔记操作，保存原语、版本、回收站、索引和编辑器修订各自负责明确边界；不建立第二套文档系统。目标为真实差异逐批确认、保存屏障、冲突安全的独立 Agent 撤销，以及持久联网授权和有界本地续读。施工与证据原见 [Harness 路线](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)（该体系已于 2026-09-15 整体归档）；局部合同测试不代表完整笔记能力或 HR-7 产品放行。
 - 图片资源接入同一文档生命周期边界：创建不覆盖旧资源；迟到的粘贴／下载不得进入重新加载的文档，普通编辑期间保持发起选区，不重复派发原剪贴板下载。
 - 历史保护纳入同一笔记集成验收：版本身份不得依赖可重建索引行存活；旧版无法证明的归属保持未知，并通过显式选择目标恢复。版本面板异步响应必须绑定笔记库与文档会话，恢复途中产生的新编辑不得被迟到响应覆盖。
 
-Agent Harness 的现行问题审计、目标合同与 `HR-0` 至 `HR-8` 重构路线以 [Agent Harness 建设文档](./agent-harness/README.md) 为唯一入口；**各阶段的当前状态以该文档为准**，本节只记录版本范围内已交付的能力。本版本撤回此前将 Web 专用研究、六类领域 operation 和普通事实严格结构化终局作为核心架构的方向，改为 Provider-neutral 的通用有界工具循环；目标能力只有在对应 HR 阶段取得当前证据后才能写作已交付。
+Agent Harness 的问题审计、目标合同与 `HR-0` 至 `HR-8` 重构路线**曾以 [Agent Harness 建设文档](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md) 为唯一入口；该体系已于 2026-09-15 整体归档，现行阶段状态待文档体系重建后确定**，本节只记录版本范围内已交付的能力。本版本撤回此前将 Web 专用研究、六类领域 operation 和普通事实严格结构化终局作为核心架构的方向，改为 Provider-neutral 的通用有界工具循环；目标能力只有在对应 HR 阶段取得当前证据后才能写作已交付。
 
 - 用户主动选区与 `@` 文档是独立的 `UserAuthorizedMaterial` 通道：通过安全校验后必须进入最终 Prompt，不按文件路径或 corpus 归类，也不受自动检索的 authority/exemplar/reference/lookup 筛选影响；这些角色只适用于系统自动召回材料。来源摘要显示“授权材料”，当前 user message 保持纯文本，选区正文不新增持久化。
 
@@ -78,11 +78,11 @@ Agent Harness 的现行问题审计、目标合同与 `HR-0` 至 `HR-8` 重构�
 - 明确依赖本地知识库、但未 `@` 指定单篇笔记的任务，由 Intake 冻结为隐式本地资料边界；ContextAssembler 必须在任何模型回合前检索、应用文档权限并登记当次本地证据。找不到可送入模型的材料时安全终止，不能用模型记忆或网页悄悄替代该依赖。混合本地/网页任务分别从本地子句和公开子句构造预取查询，网页查询仍经过本地材料防泄漏门禁。用户直接 `@` 选择的材料与自动本地检索分别进入 M / L 数据通道，均不得表述成用户原话。
 - 用户消息气泡以内容宽度收缩包裹、最长不超过消息行可用宽度的 88%；短中文输入不会逐字折行，长文本仍受安全换行规则约束。
 - 普通回答直接持久化自然正文并由 Harness 投影受控来源区，不强制模型调用结构化终局工具。`ProvenancePolicy` 继续作为 `W/E/L/M` 来源语法和当前 Run 所有权的唯一解释器；只有明确 CitationCheck、高风险当前事实或其他严格合同要求逐块来源覆盖。Harness 校验来源归属、时效字段和声明覆盖，不宣称已经实现自由文本 NLI；普通回答不得在正文已经可用后因内部协议格式被改为失败。
-- HR-3 的通用有界循环能力（阶段状态见 [Harness 路线](./agent-harness/05-implementation-roadmap.md)）：Direct 继续保持 1 次模型、0 工具；普通 ToolLoop 使用 8 次模型、24 次工具总上限，并冻结 local 12、network 6、external-read 6、runtime 4、confirmed-change 6 的分类上限。Web、本地检索、runtime 和外部只读工具共享同一个 `AgentToolLoop`；每轮最多执行 2 个独立发现调用，超出项返回 deferred，依赖动作必须等待观察。相同成功调用不重复，相同失败最多两次，连续两轮无新资源或内容、探索额度耗尽或只余最终模型回合时关闭工具并保留最后一次综合。旧 Web 专用 `FreshResearchPlan`、`EvidenceGap`、平行搜索/抓取/修复计数与 deadline 已退役；历史领域 envelope 只保留兼容读取路径。
+- HR-3 的通用有界循环能力（阶段状态见 [Harness 路线](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)）：Direct 继续保持 1 次模型、0 工具；普通 ToolLoop 使用 8 次模型、24 次工具总上限，并冻结 local 12、network 6、external-read 6、runtime 4、confirmed-change 6 的分类上限。Web、本地检索、runtime 和外部只读工具共享同一个 `AgentToolLoop`；每轮最多执行 2 个独立发现调用，超出项返回 deferred，依赖动作必须等待观察。相同成功调用不重复，相同失败最多两次，连续两轮无新资源或内容、探索额度耗尽或只余最终模型回合时关闭工具并保留最后一次综合。旧 Web 专用 `FreshResearchPlan`、`EvidenceGap`、平行搜索/抓取/修复计数与 deadline 已退役；历史领域 envelope 只保留兼容读取路径。
 - Web 工具面拆为 `web_search { query }` 与 `web_fetch { urls }` 两个单一职责动作，共用现有授权、network 预算、Broker 和冻结 Provider 顺序。搜索结果先成为每次最多 4 个、每 Run 最多 8 个的临时候选，不占最终 12 条 evidence 容量；模型选择候选或公开 HTTPS URL 并成功抓取正文后才登记可引用来源。地址、搜索片段、未选候选和抓取失败页面不能支持最终结论；部分失败必须把成功正文、失败 URL 与剩余要求一起返回模型。
 - 结构化工具名称、JSON Schema、typed result、权限和审计继续作为通用执行协议；天气、新闻、金融、影视、体育等领域 operation 退出 Intake、默认工具面和完成门禁。migration 072 和旧 Run 只做兼容读取；真实结构化 Provider 只有在明确需求和 PDR 通过后，才通过统一 catalog/MCP/capability 作为可选只读工具接入。
 - Markdown Apply 在确认前可以多轮读取和规划，并以现有 `FrozenChangePlan` 为基础形成最多 6 个操作、6 个文件的有界变更集。用户一次确认完整计划；Host 按授权和内容 hash 确定性执行，成功后最多允许 2 次模型和 4 次目标限定的本地只读验证，任何新增写入都必须重新确认。
-- 2026-08-30：HR-5 落地上述变更集、前缀恢复与确认后只读验证；第二项 hash 漂移会保留并报告已执行前缀，旧 Run 的确认后验证额度保持 `0/0`。该阶段的集成验收随后因公共笔记操作、保存屏障、真实差异与受控撤销的缺口重新打开，**当前状态以 [Harness Recovery 实施路线](./agent-harness/05-implementation-roadmap.md) 的阶段表为准**。
+- 2026-08-30：HR-5 落地上述变更集、前缀恢复与确认后只读验证；第二项 hash 漂移会保留并报告已执行前缀，旧 Run 的确认后验证额度保持 `0/0`。该阶段的集成验收随后因公共笔记操作、保存屏障、真实差异与受控撤销的缺口重新打开，**该体系已于 2026-09-15 整体归档，阶段表现状见[归档清单](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)**。
 - 2026-08-31：HR-6 已删除领域 tool catalog、dispatcher、Host 预取与专用终局路径；migration 072、旧 envelope 与旧 snapshot 仅兼容读取，活跃旧领域 Run 会在 Provider 调度前安全终态化。HR-7 的确定性矩阵已覆盖 26 个通用基础场景（`BaseQuestionPlan`，展开 52 个用例、四个验证类）、八项重复硬边界与 OpenAI-compatible/Anthropic mock 续接；这些结果仍不能替代真实 Provider 质量。
 - 2026-09-01：Provider 成功空响应改为无效响应；在没有可见正文、工具调用或 continuation 时，瞬态/无效响应先在原路由重试一次，再切换同工具能力候选。已有可见动作后禁止跨 Provider 暗接。现有 route summary 追加脱敏尝试、错误类别与切换决定；下一轮可读取上一请求、终态、模型/工具是否开始和尝试/切换计数来解释失败，不联网编造本地故障原因。
 - 2026-09-01：INC-HR-006 重新打开 Web 候选/正文分层的实测验收。MCP fetch 只把 URL 匹配的实质正文视为成功，应用错误、空正文和搜索包装会降级健康并按冻结 `web.fetch` 顺序切换；严格来源路径在验证绑定前不发布临时草稿，失败限制说明不显示来源。以上确定性回归不改变 HR-7“实测未通过”。
@@ -106,11 +106,11 @@ Agent Harness 的现行问题审计、目标合同与 `HR-0` 至 `HR-8` 重构�
 
 ### Harness Recovery 阶段（不构成额外版本承诺）
 
-具体依赖、删除项和退出条件见 [Harness Recovery 实施路线](./agent-harness/05-implementation-roadmap.md)。阶段顺序固定为：HR-0 文档事实重置、HR-1 回归基线、HR-2 Intake 去领域化、HR-3 通用自适应循环、HR-4 回答/澄清/投影、HR-5 冻结变更集、HR-6 领域核心退役、HR-7 通用质量与 Provider 校准、HR-8 覆盖回正与终态可见性（确定性层已实现，真实层未校准）。未授权工具面、Web 开关、classified 隔离、evidence Run 所有权和 Markdown 写入确认在所有阶段不可回退。
+具体依赖、删除项和退出条件见 [Harness Recovery 实施路线](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)。阶段顺序固定为：HR-0 文档事实重置、HR-1 回归基线、HR-2 Intake 去领域化、HR-3 通用自适应循环、HR-4 回答/澄清/投影、HR-5 冻结变更集、HR-6 领域核心退役、HR-7 通用质量与 Provider 校准、HR-8 覆盖回正与终态可见性（确定性层已实现，真实层未校准）。未授权工具面、Web 开关、classified 隔离、evidence Run 所有权和 Markdown 写入确认在所有阶段不可回退。
 
 ### 六阶段受控演进验收矩阵（不构成发布版本承诺）
 
-现行施工以 Harness Recovery 为准；下列冻结门禁在所有阶段不可回退，也不把局部通过写成已交付。
+Harness Recovery 施工体系已于 2026-09-15 整体归档（见[归档清单](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)），现行阶段归属待文档体系重建后确定；下列冻结门禁在所有阶段不可回退，也不把局部通过写成已交付。
 
 - 阶段 0：契约校准与回归基线
 - 阶段 0 基线门禁：`web_enabled` / `web.search` 是唯一授权来源
@@ -153,7 +153,7 @@ Wave 1 另已覆盖：语义 token（`--brand`、边框三级、warning/success 
 
 - 联网开关表示授权；Run Envelope 使用 `offline`、`web_preferred`、`web_required` 三级语义，并记录稳定原因码。
 - 本机事实、转换任务和对话元问题直接回答；模糊问题由同一回答模型决定是否调用 `web_search`。
-- 本版本当时采用单 provider 搜索/抓取共享 10 秒预算；该历史策略已被替代。当前抓取采用单候选 5 秒、整批 18 秒、外层调用 20 秒的边界，现行行为以[工具合同](./agent-harness/04-adaptive-agent-loop-and-tool-contracts.md)为准。能力降级事件、普通受限回答与严格证据终态按各自合同处理，不能把历史预算当作当前排障依据。
+- 本版本当时采用单 provider 搜索/抓取共享 10 秒预算；该历史策略已被替代。当前抓取采用单候选 5 秒、整批 18 秒、外层调用 20 秒的边界，现行行为以[工具合同](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)为准。能力降级事件、普通受限回答与严格证据终态按各自合同处理，不能把历史预算当作当前排障依据。
 - 正常会话注入最近 6 条历史、ConversationMemory、PromptProfile、可信本机时间与上一轮脱敏安全摘要。
 - 前端将能力降级显示为对话内轻量状态，红色错误仅用于整轮无法回答的终态故障。
 - 普通域本地引用使用结构化轮次输入：`@` 文件以磁盘一致哈希作为单轮全文引用，`@` 文件夹与 `#` 标签仅限定本地检索范围；输入与历史气泡只显示带位置注解的浅绿色名称。

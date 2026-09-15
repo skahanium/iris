@@ -49,15 +49,26 @@ describe("docs:check — document facts verification", () => {
 
     expect(source).toContain("checkRetiredArchitectureReferences");
     expect(source).toContain("checkAgentHarnessDocumentation");
-    expect(source).toContain("../agent-harness/README.md");
     expect(source).toContain("2026-08-pre-unification");
+    expect(source).toContain("2026-09-15-pre-reform");
     expect(source).toContain("version_cleanup_cmd");
   });
 
-  it("keeps one active Agent Harness entry and a complete historical archive", () => {
+  it("keeps the retired Harness construction set archived, not active", () => {
     expect(existsSync(path.join(repoRoot, "agent-harness", "README.md"))).toBe(
-      true,
+      false,
     );
+    expect(
+      existsSync(
+        path.join(
+          repoRoot,
+          "agent-harness",
+          "archive",
+          "2026-09-15-pre-reform",
+          "MANIFEST.md",
+        ),
+      ),
+    ).toBe(true);
     expect(
       existsSync(
         path.join(

@@ -8,22 +8,21 @@
 
 ## 现行规范
 
-| 文档                                                                     | 用途                                                              |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| [README.md](../README.md)                                                | 产品边界、快速开始与开发入口                                      |
-| [ROADMAP.md](../ROADMAP.md)                                              | 唯一版本排期与当前里程碑                                          |
-| [ARCHITECTURE.md](../ARCHITECTURE.md)                                    | 当前模块、数据流、单向兼容与安全边界                              |
-| [ipc-api-reference.md](./ipc-api-reference.md)                           | 当前 Tauri IPC 契约                                               |
-| [design-system.md](./design-system.md)                                   | 界面 token、组件规范与人工验收                                    |
-| [design-system/brand.md](./design-system/brand.md)                       | 品牌色、印记与视觉资产                                            |
-| [adaptive-workspace.md](./adaptive-workspace.md)                         | v1.2.19 自适应工作区状态与交互契约                                |
-| [rss-subscription-library.md](./rss-subscription-library.md)             | RSS 订阅资料库产品、数据与安全契约                                |
-| [markdown-export.md](./markdown-export.md)                               | 编辑器 Markdown 往返与保留节点语义                                |
-| [markdown-indexing-contract.md](./markdown-indexing-contract.md)         | 编辑器与索引器的当前解析边界                                      |
-| [llm-routing.md](./llm-routing.md)                                       | LLM 配置、连通性与联网证据                                        |
-| [ops/performance-guide.md](./ops/performance-guide.md)                   | 性能预算、测量方法与调优入口                                      |
-| [ops/web-capability-degradation.md](./ops/web-capability-degradation.md) | 联网能力降级的用户可见行为与诊断                                  |
-| [Agent Harness 建设文档](../agent-harness/README.md)                     | Harness 现行事实、目标合同、HR 阶段状态与验收入口（目录自带索引） |
+| 文档                                                                     | 用途                                 |
+| ------------------------------------------------------------------------ | ------------------------------------ |
+| [README.md](../README.md)                                                | 产品边界、快速开始与开发入口         |
+| [ROADMAP.md](../ROADMAP.md)                                              | 唯一版本排期与当前里程碑             |
+| [ARCHITECTURE.md](../ARCHITECTURE.md)                                    | 当前模块、数据流、单向兼容与安全边界 |
+| [ipc-api-reference.md](./ipc-api-reference.md)                           | 当前 Tauri IPC 契约                  |
+| [design-system.md](./design-system.md)                                   | 界面 token、组件规范与人工验收       |
+| [design-system/brand.md](./design-system/brand.md)                       | 品牌色、印记与视觉资产               |
+| [adaptive-workspace.md](./adaptive-workspace.md)                         | v1.2.19 自适应工作区状态与交互契约   |
+| [rss-subscription-library.md](./rss-subscription-library.md)             | RSS 订阅资料库产品、数据与安全契约   |
+| [markdown-export.md](./markdown-export.md)                               | 编辑器 Markdown 往返与保留节点语义   |
+| [markdown-indexing-contract.md](./markdown-indexing-contract.md)         | 编辑器与索引器的当前解析边界         |
+| [llm-routing.md](./llm-routing.md)                                       | LLM 配置、连通性与联网证据           |
+| [ops/performance-guide.md](./ops/performance-guide.md)                   | 性能预算、测量方法与调优入口         |
+| [ops/web-capability-degradation.md](./ops/web-capability-degradation.md) | 联网能力降级的用户可见行为与诊断     |
 
 ## 评测与验收
 
@@ -45,8 +44,7 @@
 
 ## 施工计划
 
-在飞计划只描述任务分解与当时的核验记录，**不自行声明完成度**。阶段与版本状态分别以
-[Harness 实施路线](../agent-harness/05-implementation-roadmap.md) 和 [ROADMAP.md](../ROADMAP.md) 为准。
+在飞计划只描述任务分解与当时的核验记录，**不自行声明完成度**。版本状态以 [ROADMAP.md](../ROADMAP.md) 为准；Agent Harness 阶段状态的现行归属待文档体系重建后确定，旧体系见[归档清单](../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)。
 
 | 文档                                                                                                   | 用途                                                    |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
@@ -56,19 +54,18 @@
 
 ## 归档
 
-归档只作对照，其中的模块、测试与结论可能已不存在。除本索引与
-[Agent Harness 入口](../agent-harness/README.md) 外，现行文档不得把归档材料作为依据引用。
+归档只作对照，其中的模块、测试与结论可能已不存在。除本索引外，现行文档不得把归档材料作为依据引用。
 
 | 文档                                                                               | 用途                                   |
 | ---------------------------------------------------------------------------------- | -------------------------------------- |
 | [archive/plans/MANIFEST.md](./archive/plans/MANIFEST.md)                           | 已落地／已撤回施工计划的清单与归档原因 |
 | [Harness 统一前归档](../agent-harness/archive/2026-08-pre-unification/MANIFEST.md) | 统一前 Harness 设计材料的受控归档      |
+| [Harness 重建前归档](../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)   | 重建前施工文档的受控归档（2026-09-15） |
 
 ## 维护规则
 
 1. 修改版本范围只更新 `ROADMAP.md`，并按需更新已完成事实的 CHANGELOG。
 2. 修改 IPC 时同步 Rust command、`src/types/ipc.ts`、`src/lib/ipc.ts`、测试和 IPC 参考。
 3. 修改 TipTap schema 或 Markdown 链路时同步 round-trip corpus 与 `markdown-export.md`。
-4. 当前文档不得把归档目录作为规范性依据，也不得描述不存在的模块、命令或事件；归档只能经本索引与
-   `agent-harness/README.md` 两个入口进入，且 `docs/archive/` 下每个文件都必须在对应 `MANIFEST.md` 登记。
+4. 当前文档不得把归档目录作为规范性依据，也不得描述不存在的模块、命令或事件；归档只能经本索引进入，且归档目录下每个文件都必须在对应 `MANIFEST.md` 登记。
 5. 新增、改名或删除文档时同步更新本索引；`scripts/docs-facts-check.mjs` 会校验索引完整性与链接可达性。
