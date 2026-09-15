@@ -45,6 +45,7 @@ pub(crate) mod citation_linkify;
 pub(crate) mod classified_document_policy_repository;
 pub(crate) mod classified_ephemeral;
 pub mod classified_retrieval;
+pub(crate) mod diagnostic_query;
 // Legacy CEF history is retained only so users' pre-existing encrypted files
 // remain untouched. New classified Runs use `classified_ephemeral` exclusively.
 pub mod classified_session;

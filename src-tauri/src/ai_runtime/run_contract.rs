@@ -778,6 +778,17 @@ pub struct AssistantRunGetRequest {
     pub(crate) run_id: Option<String>,
 }
 
+/// Session-bound C27 diagnostic query. `run_id` is required; omitting it is
+/// not a latest-active lookup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantRunDiagnoseRequest {
+    /// Session that owns the Run.
+    pub(crate) session: AssistantSessionRef,
+    /// Stable Run identifier taken from the current answer or failure.
+    pub(crate) run_id: String,
+}
+
 /// Start a fresh attempt from the latest terminal failed Run without
 /// duplicating the user turn in the persisted conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

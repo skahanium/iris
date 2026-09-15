@@ -14,6 +14,7 @@ describe("Assistant Run IPC contract", () => {
       "assistant_run_start",
       "assistant_run_control",
       "assistant_run_get",
+      "assistant_run_diagnose",
       "assistant_session_list",
       "assistant_session_load",
       "assistant_session_rename",
@@ -50,6 +51,7 @@ describe("Assistant Run IPC contract", () => {
     expect(ipc).toContain(
       'invoke<AssistantRunGetResponse | null>("assistant_run_get"',
     );
+    expect(ipc).toContain('invoke<DiagnosticReport>("assistant_run_diagnose"');
 
     for (const removed of [
       "assistantExecute",

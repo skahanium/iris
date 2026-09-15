@@ -46,6 +46,7 @@ describe("IPC boundary", () => {
       "assistant_run_start",
       "assistant_run_control",
       "assistant_run_get",
+      "assistant_run_diagnose",
     ]) {
       expect(commands).toContain(`pub async fn ${command}`);
       expect(ipc).toContain(`"${command}"`);
@@ -124,6 +125,7 @@ describe("IPC boundary", () => {
     expect(docs).toContain("assistant_run_start");
     expect(docs).toContain("assistant_run_control");
     expect(docs).toContain("assistant_run_get");
+    expect(docs).toContain("assistant_run_diagnose");
     expect(docs).toContain("assistant_execute");
     expect(docs).toContain("Skills are prompt-only");
     expect(docs).not.toContain("mcpRuntimeCapabilityCall");

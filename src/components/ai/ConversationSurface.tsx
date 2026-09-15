@@ -1,6 +1,7 @@
 import { memo, type RefObject } from "react";
 
 import { cn } from "@/lib/utils";
+import type { AssistantSessionRef } from "@/types/ai";
 import {
   AiMessageList,
   type AssistantPendingInputCard,
@@ -13,6 +14,7 @@ interface ConversationSurfaceProps {
   streaming: boolean;
   pendingInput?: AssistantPendingInputCard | null;
   selectedIndices?: Set<number>;
+  session?: AssistantSessionRef | null;
   messageListRef: RefObject<HTMLDivElement | null>;
   onCitationClick: (ref: string) => void;
   onQuoteToInput: (text: string) => void;
@@ -36,6 +38,7 @@ export const ConversationSurface = memo(function ConversationSurface({
   streaming,
   pendingInput,
   selectedIndices,
+  session = null,
   messageListRef,
   onCitationClick,
   onQuoteToInput,
@@ -58,6 +61,7 @@ export const ConversationSurface = memo(function ConversationSurface({
         streaming={streaming}
         pendingInput={pendingInput}
         selectedIndices={selectedIndices}
+        session={session}
         onCitationClick={onCitationClick}
         onRetract={onRetract}
         onSelect={onSelect}

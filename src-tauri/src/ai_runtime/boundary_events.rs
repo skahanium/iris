@@ -26,13 +26,6 @@ fn mark_persist_failed(run_id: &str) {
 }
 
 /// Whether C26 persistence failed for this Run in the current process.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "C27 diagnostic health surface; exercised by C26 tests"
-    )
-)]
 pub fn persist_failed(run_id: &str) -> bool {
     persist_failures()
         .lock()
@@ -100,7 +93,7 @@ pub enum BoundaryLayer {
 }
 
 impl BoundaryLayer {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Generated => "generated",
             Self::Serialized => "serialized",
@@ -255,13 +248,6 @@ pub struct ProviderReturnStructure {
 /// One persisted C26 record. Payload is closed JSON, never a model request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "C27 diagnostic query surface; exercised by C26 tests"
-    )
-)]
 pub struct BoundaryEventRecord {
     pub run_id: String,
     pub input_revision: String,
@@ -277,6 +263,7 @@ pub struct BoundaryEventRecord {
     pub record_completeness: RecordCompleteness,
     pub module_id: String,
     pub component_id: String,
+    pub tool_instance: Option<String>,
     pub payload: serde_json::Value,
 }
 
@@ -985,26 +972,19 @@ pub fn assess_completeness(db: &Database, run_id: &str) -> AppResult<RecordCompl
 }
 
 /// Read C26 events for one Run. Query failure is an error, never an empty success.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "C27 diagnostic query surface; exercised by C26 tests"
-    )
-)]
 pub fn query_by_run(db: &Database, run_id: &str) -> AppResult<Vec<BoundaryEventRecord>> {
     db.with_read_conn(|conn| {
         let mut statement = conn.prepare(
             "SELECT run_id, input_revision, parent_run_id, child_run_id, model_turn,
                     call_id, attempt_id, tool_surface_version, protocol_adapter,
                     layer, event_kind, record_completeness, module_id, component_id,
-                    payload_json
+                    tool_instance, payload_json
              FROM audit_boundary_events
              WHERE run_id = ?1
              ORDER BY id",
         )?;
         let rows = statement.query_map([run_id], |row| {
-            let payload_json: String = row.get(14)?;
+            let payload_json: String = row.get(15)?;
             Ok((
                 BoundaryEventRecord {
                     run_id: row.get(0)?,
@@ -1021,6 +1001,7 @@ pub fn query_by_run(db: &Database, run_id: &str) -> AppResult<Vec<BoundaryEventR
                     record_completeness: RecordCompleteness::Complete,
                     module_id: row.get(12)?,
                     component_id: row.get(13)?,
+                    tool_instance: row.get(14)?,
                     payload: serde_json::Value::Null,
                 },
                 row.get::<_, String>(9)?,
@@ -1056,7 +1037,7 @@ pub fn query_by_run(db: &Database, run_id: &str) -> AppResult<Vec<BoundaryEventR
                 })?;
             event.payload = serde_json::from_str(&payload_json).map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(
-                    14,
+                    15,
                     rusqlite::types::Type::Text,
                     Box::new(error),
                 )

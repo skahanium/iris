@@ -9,6 +9,10 @@ import {
   AssistantRunWebVerificationFailed,
 } from "@/components/ai/AssistantRunCapabilityDegraded";
 
+vi.mock("@/lib/ipc", () => ({
+  assistantRunDiagnose: vi.fn(),
+}));
+
 describe("AssistantRunCapabilityDegraded", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -74,15 +78,21 @@ describe("AssistantRunCapabilityDegraded", () => {
           retrying={false}
           onRetry={retry}
           onCheckConfiguration={openSettings}
+          session={{ domain: "normal", sessionKey: "session-web" }}
         />,
       );
     });
     const alert = host.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain("run-web-1");
-    const buttons = host.querySelectorAll("button");
-    (buttons[0] as HTMLButtonElement).click();
+    expect(alert?.textContent).toContain("查看诊断");
+    expect(alert?.textContent).not.toContain("诊断编号");
+    const buttons = [...host.querySelectorAll("button")];
+    buttons
+      .find((button) => button.textContent?.includes("重试联网核实"))
+      ?.click();
     expect(retry).toHaveBeenCalledOnce();
-    (buttons[1] as HTMLButtonElement).click();
+    buttons
+      .find((button) => button.textContent?.includes("检查联网配置"))
+      ?.click();
     expect(openSettings).toHaveBeenCalledOnce();
   });
 
@@ -163,5 +173,7 @@ describe("AssistantRunCapabilityDegraded", () => {
     expect(source).toContain("AssistantRunCapabilityDegraded");
     expect(source).toContain("eventState?.capabilityDegradation");
     expect(source).toContain("<AssistantRunCapabilityDegraded");
+    expect(source).toContain("AssistantRunWebVerificationFailed");
+    expect(source).toContain("session={runSession}");
   });
 });

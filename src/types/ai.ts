@@ -702,6 +702,74 @@ export interface AssistantRunGetRequest {
   runId?: string;
 }
 
+export interface AssistantRunDiagnoseRequest {
+  session: AssistantSessionRef;
+  /** Required. Taken from the current answer or failure; not a latest-active lookup. */
+  runId: string;
+}
+
+export type AttributionStatus =
+  | "unattributed"
+  | "suspected"
+  | "confirmed"
+  | "multiple-causes";
+
+export type RecordCompleteness =
+  | "complete"
+  | "missing-events"
+  | "broken-correlation"
+  | "persist-failed"
+  | "outcome-unknown";
+
+export type DiagnosticIssueClass =
+  | "internal-contract"
+  | "external-service"
+  | "tool-execution"
+  | "model-behavior"
+  | "expected-restriction"
+  | "diagnostic-gap";
+
+export interface DiagnosticDiscoveryRef {
+  module: string;
+  component: string;
+  toolInstance?: string | null;
+  callId: string;
+  attemptId: string;
+  modelTurn: number;
+}
+
+export interface DiagnosticFinding {
+  statement: string;
+  discovery: DiagnosticDiscoveryRef;
+  issueClass: DiagnosticIssueClass;
+  confirmedSource?: string;
+}
+
+export interface DiagnosticAuditHealth {
+  persistFailed: boolean;
+}
+
+export interface DiagnosticReport {
+  schemaVersion: number;
+  runId: string;
+  inputRevision: string | null;
+  parentRunId: string | null;
+  childRunId: string | null;
+  recordCompleteness: RecordCompleteness;
+  attributionStatus: AttributionStatus;
+  auditHealth: DiagnosticAuditHealth;
+  headline: string;
+  impact: string;
+  recoveryState: string;
+  knownFacts: DiagnosticFinding[];
+  directFailures: DiagnosticFinding[];
+  recoveryResults: DiagnosticFinding[];
+  pendingRootCauses: DiagnosticFinding[];
+  expectedRestrictions: DiagnosticFinding[];
+  evidenceGaps: DiagnosticFinding[];
+  path: DiagnosticDiscoveryRef[];
+}
+
 export interface AssistantRunRetryRequest {
   session: AssistantSessionRef;
   sourceRunId: string;

@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::ai_runtime::agent_tool_loop::ToolLoopProvider;
+use crate::ai_runtime::diagnostic_query::{diagnose_run, DiagnosticReport};
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent, AssistantRunGetRequest,
-    AssistantRunGetResponse, AssistantRunRetryRequest, AssistantRunStartRequest,
-    AssistantSessionRef, Effect, Effort, SafeRunErrorCode, SecurityDomain,
+    AssistantRunAccepted, AssistantRunControlRequest, AssistantRunDiagnoseRequest,
+    AssistantRunEvent, AssistantRunGetRequest, AssistantRunGetResponse, AssistantRunRetryRequest,
+    AssistantRunStartRequest, AssistantSessionRef, Effect, Effort, SafeRunErrorCode,
+    SecurityDomain,
 };
 use crate::ai_runtime::run_engine::{
     ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink, TauriRunEventSink,
@@ -612,6 +614,15 @@ pub async fn assistant_run_get(
             None => Ok(None),
         },
     }
+}
+
+/// Explain one Run from C26 records. Query failure is an error, not an empty pass.
+#[tauri::command]
+pub async fn assistant_run_diagnose(
+    state: State<'_, Arc<AppState>>,
+    request: AssistantRunDiagnoseRequest,
+) -> AppResult<DiagnosticReport> {
+    diagnose_run(&state.db, &request.session, &request.run_id)
 }
 
 /// Mint a short-lived capability for the currently open classified document.

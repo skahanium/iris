@@ -512,6 +512,8 @@ export function UnifiedAssistantPanel({
       {assistantRun.eventState?.capabilityDegradation ? (
         <AssistantRunCapabilityDegraded
           degradation={assistantRun.eventState.capabilityDegradation}
+          session={runSession}
+          runId={assistantRun.eventState.runId}
         />
       ) : null}
       {assistantRun.eventState?.webVerificationFailure ? (
@@ -520,6 +522,7 @@ export function UnifiedAssistantPanel({
           retrying={retryingWebVerification}
           onRetry={handleWebRetry}
           onCheckConfiguration={onOpenWebVerificationSettings}
+          session={runSession}
         />
       ) : null}
       {assistantRun.pendingConfirmation ? (
@@ -570,6 +573,7 @@ export function UnifiedAssistantPanel({
           key={conversationViewKey}
           messages={messages}
           streaming={streaming}
+          session={runSession}
           pendingInput={
             assistantRun.pendingInput && assistantRun.eventState
               ? {

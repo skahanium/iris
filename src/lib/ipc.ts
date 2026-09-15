@@ -7,6 +7,7 @@ import type { AssistantPresentationEvent } from "@/lib/assistant-presentation";
 import type {
   AssistantRunAccepted,
   AssistantRunControlRequest,
+  AssistantRunDiagnoseRequest,
   AssistantRunEvent,
   AssistantRunGetRequest,
   AssistantRunGetResponse,
@@ -14,6 +15,7 @@ import type {
   AssistantRunStartRequest,
   ClassifiedDocumentContext,
   ClassifiedRunResultRequest,
+  DiagnosticReport,
   AssistantSessionListRequest,
   AssistantSessionLoadRequest,
   AssistantSessionMessage,
@@ -26,11 +28,13 @@ import type {
 export type {
   AssistantRunAccepted,
   AssistantRunControlRequest,
+  AssistantRunDiagnoseRequest,
   AssistantRunEvent,
   AssistantRunGetRequest,
   AssistantRunGetResponse,
   AssistantRunRetryRequest,
   AssistantRunStartRequest,
+  DiagnosticReport,
   ExternalToolGrantRef,
   RunRecoveryKind,
   ClassifiedDocumentContext,
@@ -1146,6 +1150,12 @@ export async function assistantRunGet(
   return invoke<AssistantRunGetResponse | null>("assistant_run_get", {
     request,
   });
+}
+
+export async function assistantRunDiagnose(
+  request: AssistantRunDiagnoseRequest,
+): Promise<DiagnosticReport> {
+  return invoke<DiagnosticReport>("assistant_run_diagnose", { request });
 }
 
 export async function assistantClassifiedContextOpen(
