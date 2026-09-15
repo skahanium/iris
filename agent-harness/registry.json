@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 21,
+  "registryRevision": 22,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-15T07:26:44.337Z"
+    "recordedAt": "2026-09-15T07:42:40.870Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -54,7 +54,7 @@
     "README.md": {
       "container": "P01",
       "registration": "P01#file",
-      "fingerprint": "e11ac546e5dde015dd701d7023971332"
+      "fingerprint": "c23cf95d20e2c755f184f9f6f1d4a0a4"
     },
     "contracts/K01-request-identity.md": {
       "container": "K01",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "e3a3af4493352c531f8d63d178f8c7ac"
+      "fingerprint": "004b9f8b2d9ca58c9b5fa60ef0861847"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -304,7 +304,7 @@
     "rules/objects.md": {
       "container": "P02",
       "registration": "P02#file",
-      "fingerprint": "0210d63e060af77ea65ba7ffb0e59d1f"
+      "fingerprint": "46aa1aa502de68a9d88b137f14cecbf8"
     },
     "testing/acceptance-matrix.md": {
       "container": "V03",
@@ -6154,13 +6154,13 @@
       "title": "X02 检查器负例自测",
       "owner": "P03",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X02",
         "line": 229,
-        "endLine": 237,
-        "fingerprint": "4c842f2a8182e09f8f86c31412d0b2b5"
+        "endLine": 243,
+        "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd"
       },
       "implementation": {
         "state": "unknown"
@@ -6192,8 +6192,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X03",
-        "line": 239,
-        "endLine": 252,
+        "line": 245,
+        "endLine": 258,
         "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc"
       },
       "implementation": {
@@ -6211,7 +6211,8 @@
           "P03",
           "P04",
           "P05",
-          "P06"
+          "P06",
+          "P07"
         ]
       },
       "note": "身份、定义位置、修订与指纹、类型化关系、决定与复核记录；由 --reconcile 写入计算结果"
@@ -6225,9 +6226,9 @@
       "command": "npm run agent-harness:check",
       "environment": "local / Windows 10 / node v24.14.1",
       "fingerprint": "a351d9b85535d8e91447a82853ba9346",
-      "at": "2026-09-15T07:27:51Z",
+      "at": "2026-09-15T07:42:40Z",
       "applicability": "current",
-      "note": "registryRevision 21：检查器纳入标题并比对对象指纹后重新绑定；本机 npm run agent-harness:check 退出码 0。"
+      "note": "registryRevision 22：本机 npm run agent-harness:check 退出码 0。X01 定义指纹未变；检查器删除了未使用的 containerForFile。"
     },
     {
       "object": "X02",
@@ -6235,10 +6236,10 @@
       "testPath": "scripts/agent-harness-check.test.mjs",
       "command": "npm run agent-harness:test",
       "environment": "local / Windows 10 / node v24.14.1",
-      "fingerprint": "4c842f2a8182e09f8f86c31412d0b2b5",
-      "at": "2026-09-15T07:27:51Z",
+      "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd",
+      "at": "2026-09-15T07:42:40Z",
       "applicability": "current",
-      "note": "本机 npm run agent-harness:test：18 条负例全部通过（exit 0）。不声称覆盖 document.md §5 的全部检查器测试清单。"
+      "note": "registryRevision 22：本机 npm run agent-harness:test：22 条负例全部通过（exit 0）。覆盖范围以 X02 正文为准，不声称 document.md §5 全覆盖。"
     }
   ],
   "changes": [
@@ -18014,6 +18015,23 @@
           "fingerprintTo": "70cf50054be59679e7de7fa11c65cae3"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-15-14",
+      "at": "2026-09-15T07:42:40.870Z",
+      "author": "skahanium",
+      "classification": "refinement",
+      "reason": "更正规则计数并降级 X02 覆盖声明",
+      "review": null,
+      "objects": [
+        {
+          "id": "X02",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "4c842f2a8182e09f8f86c31412d0b2b5",
+          "fingerprintTo": "968d91c3d0251a4f3b76199b1e2d00dd"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18044,8 +18062,8 @@
         },
         {
           "id": "X02",
-          "revision": 11,
-          "fingerprint": "4c842f2a8182e09f8f86c31412d0b2b5"
+          "revision": 12,
+          "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd"
         },
         {
           "id": "X03",
@@ -18136,6 +18154,7 @@
     "verify[] 是本仓库当前可复现的证据记录；其 fingerprint 对应各对象在本文件中的定义指纹。",
     "建立期的 changes 批次把登记、容器方案、对象补充与格式化合并为批量写入并统一标为 refinement；其中的治理性改变单独登记为 CHG-2026-09-15-GOV1 并由 REV-2026-09-15-GOV1 复核。此后每次变化必须单独分类。",
     "CHG-2026-09-15-13 是检查器改按 objects.md §3.1 把标题计入对象指纹、并开始比对 objects[].definition.fingerprint 后的算法重绑，不是 187 次语义修订。REV-2026-09-15-GOV1 绑定指纹随算法重绑更新，结论仍是当时的 synchronized，不构成新的治理复核。",
-    "本文件最后一次写入：2026-09-15T07:27:51Z。"
+    "CHG-2026-09-15-14 是规则计数更正与 X02 覆盖声明降级；REV-2026-09-15-GOV1 的 X02 绑定指纹随该次定义重写更新，结论仍是当时的 synchronized，不构成新的治理复核。",
+    "本文件最后一次写入：2026-09-15T07:42:40Z。"
   ]
 }

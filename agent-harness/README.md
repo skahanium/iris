@@ -39,21 +39,21 @@
 
 ## 三、对象计数
 
-| 种类         | ID 范围     | 数量 | 正式定义位置                          |
-| ------------ | ----------- | ---: | ------------------------------------- |
-| 运行时模块   | `M01`–`M09` |    9 | `modules/`                            |
-| 运行时组件   | `C01`–`C27` |   27 | `modules/`                            |
-| 评测系统组件 | `E01`–`E03` |    3 | `modules/eval-system.md`              |
-| 内置业务工具 | `T01`–`T39` |   39 | `tools/`                              |
-| 共享合同     | `K01`–`K18` |   18 | `contracts/`                          |
-| 链路         | `L01`–`L06` |    6 | `flows/`                              |
-| 证据与判据   | `V01`–`V08` |    8 | `testing/`                            |
-| 工作包       | `D01`–`D06` |    6 | `implementation/`、`tests/`           |
-| 决定记录     | `R01`–`R10` |   10 | `decisions/`                          |
-| 规则         | `P01`–`P06` |    6 | 本文件、`rules/`、`requirements/`     |
-| 检查器与测试 | `X01`–`X03` |    3 | `scripts/`、`tests/`、`registry.json` |
-| 未决问题     | `Q01`–`Q19` |   19 | `requirements/current-baseline.md`    |
-| 缺口         | `G01`–`G05` |    5 | `requirements/open-items.md`          |
+| 种类         | ID 范围     | 数量 | 正式定义位置                                |
+| ------------ | ----------- | ---: | ------------------------------------------- |
+| 运行时模块   | `M01`–`M09` |    9 | `modules/`                                  |
+| 运行时组件   | `C01`–`C27` |   27 | `modules/`                                  |
+| 评测系统组件 | `E01`–`E03` |    3 | `modules/eval-system.md`                    |
+| 内置业务工具 | `T01`–`T39` |   39 | `tools/`                                    |
+| 共享合同     | `K01`–`K18` |   18 | `contracts/`                                |
+| 链路         | `L01`–`L06` |    6 | `flows/`                                    |
+| 证据与判据   | `V01`–`V08` |    8 | `testing/`                                  |
+| 工作包       | `D01`–`D06` |    6 | `implementation/`、`tests/`                 |
+| 决定记录     | `R01`–`R10` |   10 | `decisions/`                                |
+| 规则         | `P01`–`P07` |    7 | 本文件、`rules/`、`requirements/`、`tools/` |
+| 检查器与测试 | `X01`–`X03` |    3 | `scripts/`、`tests/`、`registry.json`       |
+| 未决问题     | `Q01`–`Q19` |   19 | `requirements/current-baseline.md`          |
+| 缺口         | `G01`–`G05` |    5 | `requirements/open-items.md`                |
 
 计数规则与 ID 分配见 [rules/objects.md](./rules/objects.md) §1。**计数不代表成熟度**：`M*`、`C*`、`T*` 当前多为 `draft`（已有正式定义、仍在修订），`draft` 不能支持施工依赖。
 

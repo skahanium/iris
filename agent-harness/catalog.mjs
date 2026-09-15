@@ -1595,7 +1595,7 @@ export const objects = {
     owner: "P03",
     maturity: "defined",
     definition: { file: "rules/governance.md", anchor: "X03" },
-    consumes: ["P01", "P02", "P03", "P04", "P05", "P06"],
+    consumes: ["P01", "P02", "P03", "P04", "P05", "P06", "P07"],
     note: "身份、定义位置、修订与指纹、类型化关系、决定与复核记录；由 --reconcile 写入计算结果",
   },
 };

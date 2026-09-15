@@ -602,12 +602,6 @@ async function loadCatalog() {
   }
 }
 
-/** 由文件相对路径推导容器 ID（与 catalog.mjs 的 files 映射同一规则）。 */
-function containerForFile(rel) {
-  const base = rel.split("/").pop() ?? rel;
-  return `${CONTAINER_PREFIX}${base.replace(/\.md$/, "").toUpperCase()}`;
-}
-
 function normalizeText(text) {
   return text.replace(/\r\n?/g, "\n").replace(/\n+$/, "\n");
 }

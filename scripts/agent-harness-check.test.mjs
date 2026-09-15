@@ -1,9 +1,18 @@
 /**
  * Agent Harness 检查器负例自测（X02）
  *
- * 覆盖 document.md §5 要求的检查器测试清单。每个用例在系统临时目录里生成一份
- * 最小夹具仓库（catalog.mjs + agent-harness/*），再以子进程运行真实检查器，
- * 断言退出码与违规类别。**夹具不写入仓库。**
+ * 覆盖检查器当前已实现的阻断，而不是 document.md §5 的全部愿望清单。
+ * 每个用例在系统临时目录里生成一份最小夹具仓库（catalog.mjs + agent-harness/*），
+ * 再以子进程运行真实检查器，断言退出码与违规类别。**夹具不写入仓库。**
+ *
+ * 已覆盖：多消费者共享合同；登记/定义缺失/标记损坏/对象移动/外围正文；
+ * 对象正文与标题变化；无关对象不被误报；问题关闭留另一阻断；只有登记不能施工；
+ * 架构缺复核者拒绝写入；reconcile 不得自签；作者自签 synchronized 不能解封；
+ * 独立复核后可解封；复核缺少理由或绑定旧指纹不能解封；历史通过过期；
+ * 注册表损坏与文件缺失；关系成环。
+ *
+ * 尚未机械覆盖：implements/consumes/verifies 沿边进入复核；C20 等消费者因被消费
+ * 对象变化而进入复核；缺少反例、证据类型不匹配、空分母作为本检查器的验收阻断。
  *
  * 运行：npm run agent-harness:test（node --test）
  */
@@ -1332,6 +1341,157 @@ test("架构变更的 reconcile 不得自签已完成复核", () => {
       released.exitCode,
       0,
       JSON.stringify(released.report.violations),
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("合同正文变化只阻断该对象，不误报无关模块", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    writeFileSync(
+      path.join(fixture.harness, "contracts", "K01.md"),
+      K01_BODY.replace(
+        "不变量：冻结确认绑定版本。",
+        "不变量：冻结确认绑定版本（已修订）。",
+      ),
+    );
+    const { exitCode, report } = runCheck(fixture.root);
+    assert.notEqual(exitCode, 0, "对象正文变化后必须报未接受的指纹变化");
+    const fingerprints = violationMessages(report, "fingerprint");
+    assert.ok(fingerprints.includes("K01"), fingerprints);
+    assert.equal(
+      fingerprints.includes("M01"),
+      false,
+      `无关模块不应出现在指纹违规里：${fingerprints}`,
+    );
+    const propagation = violationMessages(report, "propagation");
+    assert.equal(
+      propagation.includes("M01"),
+      false,
+      `无关模块不应进入外围传播复核：${propagation}`,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("作者自签 synchronized 不能解封架构变更", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    writeFileSync(
+      path.join(fixture.harness, "contracts", "K01.md"),
+      K01_BODY.replace(
+        "不变量：冻结确认绑定版本。",
+        "不变量：冻结确认绑定版本（架构变更夹具）。",
+      ),
+    );
+    assert.equal(
+      reconcileFixture(fixture.root, "architecture"),
+      0,
+      "指定 --reviewer 后 reconcile 应能写入",
+    );
+    const registry = loadRegistry(fixture.harness);
+    const change = [...(registry.changes ?? [])].find(
+      (entry) => entry.classification === "architecture",
+    );
+    const review = (registry.reviews ?? []).find(
+      (entry) => entry.id === change.review,
+    );
+    review.conclusion = "synchronized";
+    review.evidence = "夹具独立复核材料";
+    review.reason = "夹具确认无额外影响";
+    review.author = change.author;
+    saveRegistry(fixture.harness, registry);
+
+    const { exitCode, report } = runCheck(fixture.root);
+    assert.equal(exitCode, 1, "作者自签不能解封");
+    assert.ok(
+      violationMessages(report, "reviews").includes("作者"),
+      JSON.stringify(report.violations),
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("架构复核缺少理由不能解封", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    writeFileSync(
+      path.join(fixture.harness, "contracts", "K01.md"),
+      K01_BODY.replace(
+        "不变量：冻结确认绑定版本。",
+        "不变量：冻结确认绑定版本（架构变更夹具）。",
+      ),
+    );
+    assert.equal(
+      reconcileFixture(fixture.root, "architecture"),
+      0,
+      "指定 --reviewer 后 reconcile 应能写入",
+    );
+    const registry = loadRegistry(fixture.harness);
+    const change = [...(registry.changes ?? [])].find(
+      (entry) => entry.classification === "architecture",
+    );
+    const review = (registry.reviews ?? []).find(
+      (entry) => entry.id === change.review,
+    );
+    review.conclusion = "synchronized";
+    review.evidence = "夹具独立复核材料";
+    review.reason = "";
+    saveRegistry(fixture.harness, registry);
+
+    const { exitCode, report } = runCheck(fixture.root);
+    assert.equal(exitCode, 1, "缺少理由不能解封");
+    assert.ok(
+      violationMessages(report, "reviews").includes("理由"),
+      JSON.stringify(report.violations),
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("架构复核绑定旧指纹不能解封", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    writeFileSync(
+      path.join(fixture.harness, "contracts", "K01.md"),
+      K01_BODY.replace(
+        "不变量：冻结确认绑定版本。",
+        "不变量：冻结确认绑定版本（架构变更夹具）。",
+      ),
+    );
+    assert.equal(
+      reconcileFixture(fixture.root, "architecture"),
+      0,
+      "指定 --reviewer 后 reconcile 应能写入",
+    );
+    const registry = loadRegistry(fixture.harness);
+    const change = [...(registry.changes ?? [])].find(
+      (entry) => entry.classification === "architecture",
+    );
+    const review = (registry.reviews ?? []).find(
+      (entry) => entry.id === change.review,
+    );
+    review.conclusion = "synchronized";
+    review.evidence = "夹具独立复核材料";
+    review.reason = "夹具确认无额外影响";
+    assert.ok(review.objects?.[0], "复核必须绑定对象指纹");
+    review.objects[0].fingerprint = "deadbeefdeadbeefdeadbeefdeadbeef";
+    saveRegistry(fixture.harness, registry);
+
+    const { exitCode, report } = runCheck(fixture.root);
+    assert.equal(exitCode, 1, "绑定旧指纹不能解封");
+    assert.ok(
+      violationMessages(report, "reviews").includes("旧指纹"),
+      JSON.stringify(report.violations),
     );
   } finally {
     fixture.cleanup();
