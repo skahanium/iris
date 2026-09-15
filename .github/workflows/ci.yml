@@ -38,6 +38,12 @@ jobs:
       - name: Check document facts
         run: npm run docs:check
 
+      - name: Check Agent Harness document system
+        run: npm run agent-harness:check
+
+      - name: Test Agent Harness checker
+        run: npm run agent-harness:test
+
       - name: Check first-party file size budget
         run: npm run size:check
 

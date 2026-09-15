@@ -373,26 +373,38 @@ function checkAgentHarnessDocumentation() {
     }
   }
 
-  // While the replacement system is undefined the active root must hold no
-  // construction document. A reappearing file means a second source of truth
-  // is being created outside the archive.
-  const strayActive = [
-    activeHarnessRoot,
-    path.join(activeHarnessRoot, "appendices"),
-  ]
-    .filter(existsSync)
-    .flatMap((directory) =>
-      readdirSync(directory)
-        .map((entry) => path.join(directory, entry))
-        .filter(
-          (entryPath) =>
-            statSync(entryPath).isFile() && entryPath.endsWith(".md"),
-        ),
-    );
-  for (const filePath of strayActive) {
-    fail(
-      `active Agent Harness document exists while the replacement system is undefined: ${path.relative(root, filePath)}`,
-    );
+  // The replacement documentation system is now defined (agent-harness/README.md,
+  // catalog.mjs, registry.json, rules/). Its structure gate is
+  // `npm run agent-harness:check`; here we only require the entry points to exist
+  // and the archive to stay registered and reachable from the index.
+  for (const required of [
+    path.join(activeHarnessRoot, "README.md"),
+    path.join(activeHarnessRoot, "catalog.mjs"),
+    path.join(activeHarnessRoot, "registry.json"),
+    path.join(activeHarnessRoot, "rules", "governance.md"),
+    path.join(activeHarnessRoot, "rules", "objects.md"),
+    path.join(activeHarnessRoot, "requirements", "current-baseline.md"),
+  ]) {
+    if (!existsSync(required)) {
+      fail(
+        `Agent Harness documentation system is incomplete: ${path.relative(root, required)} is missing`,
+      );
+    }
+  }
+
+  const harnessIndex = path.join(activeHarnessRoot, "README.md");
+  if (existsSync(harnessIndex)) {
+    const content = readFileSync(harnessIndex, "utf8");
+    for (const archived of [
+      "archive/2026-08-pre-unification/MANIFEST.md",
+      "archive/2026-09-15-pre-reform/MANIFEST.md",
+    ]) {
+      if (!content.includes(archived)) {
+        fail(
+          `agent-harness/README.md must register the archive entry ${archived}`,
+        );
+      }
+    }
   }
 }
 

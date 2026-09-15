@@ -43,6 +43,8 @@
     "version:set": "node scripts/set-version.mjs",
     "version:check": "node scripts/set-version.mjs --check",
     "docs:check": "node scripts/docs-facts-check.mjs",
+    "agent-harness:check": "node scripts/agent-harness-check.mjs",
+    "agent-harness:test": "node --test scripts/agent-harness-check.test.mjs",
     "size:check": "node scripts/file-size-budget.mjs",
     "diagnose:web-degradation": "node scripts/diagnose-web-capability-degradation.mjs"
   },

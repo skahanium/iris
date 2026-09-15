@@ -8,21 +8,22 @@
 
 ## 现行规范
 
-| 文档                                                                     | 用途                                 |
-| ------------------------------------------------------------------------ | ------------------------------------ |
-| [README.md](../README.md)                                                | 产品边界、快速开始与开发入口         |
-| [ROADMAP.md](../ROADMAP.md)                                              | 唯一版本排期与当前里程碑             |
-| [ARCHITECTURE.md](../ARCHITECTURE.md)                                    | 当前模块、数据流、单向兼容与安全边界 |
-| [ipc-api-reference.md](./ipc-api-reference.md)                           | 当前 Tauri IPC 契约                  |
-| [design-system.md](./design-system.md)                                   | 界面 token、组件规范与人工验收       |
-| [design-system/brand.md](./design-system/brand.md)                       | 品牌色、印记与视觉资产               |
-| [adaptive-workspace.md](./adaptive-workspace.md)                         | v1.2.19 自适应工作区状态与交互契约   |
-| [rss-subscription-library.md](./rss-subscription-library.md)             | RSS 订阅资料库产品、数据与安全契约   |
-| [markdown-export.md](./markdown-export.md)                               | 编辑器 Markdown 往返与保留节点语义   |
-| [markdown-indexing-contract.md](./markdown-indexing-contract.md)         | 编辑器与索引器的当前解析边界         |
-| [llm-routing.md](./llm-routing.md)                                       | LLM 配置、连通性与联网证据           |
-| [ops/performance-guide.md](./ops/performance-guide.md)                   | 性能预算、测量方法与调优入口         |
-| [ops/web-capability-degradation.md](./ops/web-capability-degradation.md) | 联网能力降级的用户可见行为与诊断     |
+| 文档                                                                     | 用途                                  |
+| ------------------------------------------------------------------------ | ------------------------------------- |
+| [README.md](../README.md)                                                | 产品边界、快速开始与开发入口          |
+| [agent-harness/README.md](../agent-harness/README.md)                    | Agent／Harness 详细规范与施工依据入口 |
+| [ROADMAP.md](../ROADMAP.md)                                              | 唯一版本排期与当前里程碑              |
+| [ARCHITECTURE.md](../ARCHITECTURE.md)                                    | 当前模块、数据流、单向兼容与安全边界  |
+| [ipc-api-reference.md](./ipc-api-reference.md)                           | 当前 Tauri IPC 契约                   |
+| [design-system.md](./design-system.md)                                   | 界面 token、组件规范与人工验收        |
+| [design-system/brand.md](./design-system/brand.md)                       | 品牌色、印记与视觉资产                |
+| [adaptive-workspace.md](./adaptive-workspace.md)                         | v1.2.19 自适应工作区状态与交互契约    |
+| [rss-subscription-library.md](./rss-subscription-library.md)             | RSS 订阅资料库产品、数据与安全契约    |
+| [markdown-export.md](./markdown-export.md)                               | 编辑器 Markdown 往返与保留节点语义    |
+| [markdown-indexing-contract.md](./markdown-indexing-contract.md)         | 编辑器与索引器的当前解析边界          |
+| [llm-routing.md](./llm-routing.md)                                       | LLM 配置、连通性与联网证据            |
+| [ops/performance-guide.md](./ops/performance-guide.md)                   | 性能预算、测量方法与调优入口          |
+| [ops/web-capability-degradation.md](./ops/web-capability-degradation.md) | 联网能力降级的用户可见行为与诊断      |
 
 ## 设计与讨论
 
@@ -53,7 +54,7 @@
 
 ## 施工计划
 
-在飞计划只描述任务分解与当时的核验记录，**不自行声明完成度**。版本状态以 [ROADMAP.md](../ROADMAP.md) 为准；Agent Harness 阶段状态的现行归属待文档体系重建后确定，旧体系见[归档清单](../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)。
+在飞计划只描述任务分解与当时的核验记录，**不自行声明完成度**。版本状态以 [ROADMAP.md](../ROADMAP.md) 为准；Agent／Harness 的阶段状态与工作包就绪由 [agent-harness/](../agent-harness/README.md) 承载（D01–D06），旧体系见[归档清单](../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)。
 
 | 文档                                                                                                   | 用途                                                    |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |

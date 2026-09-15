@@ -212,6 +212,7 @@ Closes #42
 - **版本排期唯一来源**：[ROADMAP.md](./ROADMAP.md)
 - **界面 token 与组件规范**：[docs/design-system.md](./docs/design-system.md)
 - **文档索引**：[docs/README.md](./docs/README.md)
+- **Agent／Harness 规范与施工**：[agent-harness/README.md](./agent-harness/README.md)；对象身份、状态与复核规则见 `agent-harness/rules/`，`npm run agent-harness:check` 与 `npm run agent-harness:test` 是文档门（CI 与 `docs:check` 一同执行，不允许忽略失败）
 - **归档约定**：`docs/archive/` 与 `agent-harness/archive/` 只作对照，现行文档不得把归档材料作为依据引用；新增归档文件必须在对应 `MANIFEST.md` 登记（`npm run docs:check` 强制校验登记完整性与引用方向）
 - 修改 UI：先 design-system + ROADMAP 对应节，再 `src/styles/globals.css` 与组件
 - 勿在 `ARCHITECTURE.md` 中新增与 ROADMAP 冲突的版本承诺

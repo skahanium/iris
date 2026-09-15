@@ -59,7 +59,7 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 - 图片资源接入同一文档生命周期边界：创建不覆盖旧资源；迟到的粘贴／下载不得进入重新加载的文档，普通编辑期间保持发起选区，不重复派发原剪贴板下载。
 - 历史保护纳入同一笔记集成验收：版本身份不得依赖可重建索引行存活；旧版无法证明的归属保持未知，并通过显式选择目标恢复。版本面板异步响应必须绑定笔记库与文档会话，恢复途中产生的新编辑不得被迟到响应覆盖。
 
-Agent Harness 的问题审计、目标合同与 `HR-0` 至 `HR-8` 重构路线**曾以 [Agent Harness 建设文档](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md) 为唯一入口；该体系已于 2026-09-15 整体归档，现行阶段状态待文档体系重建后确定**，本节只记录版本范围内已交付的能力。本版本撤回此前将 Web 专用研究、六类领域 operation 和普通事实严格结构化终局作为核心架构的方向，改为 Provider-neutral 的通用有界工具循环；目标能力只有在对应 HR 阶段取得当前证据后才能写作已交付。
+Agent Harness 的问题审计、目标合同与 `HR-0` 至 `HR-8` 重构路线**曾以 [Agent Harness 建设文档](./agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md) 为唯一入口；该体系已于 2026-09-15 整体归档。现行的模块、组件、工具、链路规范与 D01–D06 工作包就绪以 [agent-harness/](./agent-harness/README.md) 为入口，本路线图不重复其状态**，本节只记录版本范围内已交付的能力。本版本撤回此前将 Web 专用研究、六类领域 operation 和普通事实严格结构化终局作为核心架构的方向，改为 Provider-neutral 的通用有界工具循环；目标能力只有在对应 HR 阶段取得当前证据后才能写作已交付。
 
 - 用户主动选区与 `@` 文档是独立的 `UserAuthorizedMaterial` 通道：通过安全校验后必须进入最终 Prompt，不按文件路径或 corpus 归类，也不受自动检索的 authority/exemplar/reference/lookup 筛选影响；这些角色只适用于系统自动召回材料。来源摘要显示“授权材料”，当前 user message 保持纯文本，选区正文不新增持久化。
 
