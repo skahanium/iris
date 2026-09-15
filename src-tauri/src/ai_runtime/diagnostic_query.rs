@@ -11,7 +11,7 @@ use super::boundary_events::{
     RecordCompleteness,
 };
 use super::run_contract::{AssistantSessionRef, SafeRunErrorCode, SecurityDomain};
-use super::tool_name_origin::{explain_proposal, hops_from_payload, NameOrigin};
+use super::tool_name_origin::{explain_proposal, hops_from_payload, NameOrigin, ParsedNameHop};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -335,7 +335,15 @@ pub(crate) fn interpret_events(
         std::collections::BTreeMap::new();
     let parse_hops = events
         .iter()
-        .flat_map(|event| hops_from_payload(&event.payload))
+        .flat_map(|event| {
+            hops_from_payload(&event.payload)
+                .into_iter()
+                .map(|mut hop| {
+                    hop.model_turn = event.model_turn;
+                    hop.tool_surface_version = event.tool_surface_version.clone();
+                    hop
+                })
+        })
         .collect::<Vec<_>>();
 
     for event in events {
@@ -396,7 +404,15 @@ pub(crate) fn interpret_events(
             }
             BoundaryEventKind::LoopEvent => match payload_event(event) {
                 Some("proposal") => {
-                    let explanation = explain_proposal(&event.payload, &parse_hops);
+                    let matching: Vec<ParsedNameHop> = parse_hops
+                        .iter()
+                        .filter(|hop| {
+                            hop.model_turn == event.model_turn
+                                && hop.tool_surface_version == event.tool_surface_version
+                        })
+                        .cloned()
+                        .collect();
+                    let explanation = explain_proposal(&event.payload, &matching);
                     known_facts.push(finding(
                         event,
                         explanation.known_fact,
@@ -1330,6 +1346,82 @@ mod tests {
     }
 
     #[test]
+    fn catalog_accept_without_parse_hop_is_not_a_clean_pass() {
+        let proposal = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            crate::ai_runtime::tool_name_origin::proposal_payload(
+                "web_search",
+                &["web_search"],
+                &["web_search"],
+                false,
+                "accepted",
+                1,
+            ),
+        );
+        let report = interpret_events("run-1", std::slice::from_ref(&proposal), false);
+        assert!(
+            report.evidence_gaps.iter().any(|gap| {
+                gap.issue_class == IssueClass::DiagnosticGap
+                    && gap.statement.contains("缺少网关解析 hop")
+            }),
+            "missing C11 hop on an accepted catalog tool must be a gap: {:?}",
+            report.evidence_gaps
+        );
+        assert!(!report
+            .pending_root_causes
+            .iter()
+            .any(|item| item.issue_class == IssueClass::ModelBehavior));
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
+    fn name_origin_does_not_reuse_parse_hop_from_another_model_turn() {
+        let mut hop = record(
+            BoundaryEventKind::OutboundWitness,
+            BoundaryLayer::ProviderReturned,
+            RecordCompleteness::Complete,
+            crate::ai_runtime::tool_name_origin::handshake_payload(
+                crate::ai_runtime::tool_name_origin::ParsePath::OpenAiToolCalls,
+                ["web_search"],
+                ["unknown_search"],
+                false,
+            ),
+        );
+        hop.model_turn = 1;
+        hop.component_id = "C11".into();
+        let mut proposal = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            crate::ai_runtime::tool_name_origin::proposal_payload(
+                "unknown_search",
+                &[],
+                &["web_search"],
+                false,
+                "tool_not_in_run_surface",
+                2,
+            ),
+        );
+        proposal.model_turn = 2;
+        let report = interpret_events("run-1", &[hop, proposal], false);
+        assert!(
+            report.evidence_gaps.iter().any(|gap| {
+                gap.issue_class == IssueClass::DiagnosticGap
+                    && gap.statement.contains("缺少网关解析 hop")
+            }),
+            "a later turn must not inherit an earlier C11 hop: {:?}",
+            report
+        );
+        assert!(!report
+            .pending_root_causes
+            .iter()
+            .any(|item| item.issue_class == IssueClass::ModelBehavior));
+        assert_not_clean_pass(&report);
+    }
+
+    #[test]
     fn name_origin_mapped_name_is_not_model() {
         let hop = crate::ai_runtime::tool_name_origin::handshake_payload(
             crate::ai_runtime::tool_name_origin::ParsePath::OpenAiToolCalls,
@@ -1364,6 +1456,7 @@ mod tests {
             .pending_root_causes
             .iter()
             .any(|item| item.issue_class == IssueClass::ModelBehavior));
+        assert_not_clean_pass(&report);
     }
 
     #[test]
@@ -1395,8 +1488,7 @@ mod tests {
         );
         let report = interpret_events("run-1", &[parsed, proposal], false);
         assert!(report.pending_root_causes.iter().any(|item| {
-            item.issue_class == IssueClass::InternalContract
-                && (item.statement.contains("提示约定") || item.statement.contains("工具面"))
+            item.issue_class == IssueClass::InternalContract && item.statement.contains("提示约定")
         }));
         assert!(!report
             .pending_root_causes

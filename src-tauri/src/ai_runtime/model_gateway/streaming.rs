@@ -916,17 +916,19 @@ fn note_boundary_success(request: &GatewayRequest, response: &GatewayResponse) {
             finish_reason_class: Some(finish_reason_class(&response.finish_reason)),
         },
     );
-    slot.note_name_origin(
-        crate::ai_runtime::tool_name_origin::handshake_payload_for_turn(
-            &request.provider.name,
-            slot.correlation().protocol_adapter.as_str(),
-            request.tools.iter().map(|tool| tool.function.name.as_str()),
-            response
-                .tool_calls
-                .iter()
-                .map(|call| call.function.name.as_str()),
-        ),
-    );
+    if !slot.has_name_origin() {
+        slot.note_name_origin(
+            crate::ai_runtime::tool_name_origin::handshake_payload_from_calls(
+                slot.correlation().protocol_adapter.as_str(),
+                request.tools.iter().map(|tool| tool.function.name.as_str()),
+                response
+                    .tool_calls
+                    .iter()
+                    .map(|call| call.function.name.as_str()),
+                std::iter::empty::<&str>(),
+            ),
+        );
+    }
     slot.note_handshake_end(crate::ai_runtime::boundary_events::RecordCompleteness::Complete);
 }
 
@@ -1642,6 +1644,18 @@ pub async fn send_streaming_request_to_observer(
             })
         })
         .collect();
+    if let Some(slot) = &request.boundary {
+        slot.note_name_origin(
+            crate::ai_runtime::tool_name_origin::handshake_payload_from_calls(
+                slot.correlation().protocol_adapter.as_str(),
+                request.tools.iter().map(|tool| tool.function.name.as_str()),
+                tool_calls.iter().map(|call| call.function.name.as_str()),
+                minimax_content_tool_calls
+                    .iter()
+                    .map(|call| call.function.name.as_str()),
+            ),
+        );
+    }
     tool_calls.extend(minimax_content_tool_calls);
 
     // Emit tool call events for each assembled call

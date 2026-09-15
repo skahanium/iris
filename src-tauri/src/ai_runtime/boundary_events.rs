@@ -343,6 +343,21 @@ impl BoundaryAuditSlot {
         }
     }
 
+    pub(crate) fn has_name_origin(&self) -> bool {
+        self.inner
+            .lock()
+            .ok()
+            .is_some_and(|trace| trace.name_origin.is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn recorded_name_origin(&self) -> Option<serde_json::Value> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|trace| trace.name_origin.clone())
+    }
+
     /// Record that the HTTP request left the process.
     pub fn note_request_sent(&self) {
         if let Ok(mut trace) = self.inner.lock() {
@@ -825,6 +840,7 @@ fn sanitize_loop_event(event: &serde_json::Value) -> serde_json::Value {
         "tool",
         "reason",
         "modelTurns",
+        "toolSurfaceVersion",
         "toolCalls",
         "success",
         "noProgressRounds",
@@ -1504,6 +1520,37 @@ mod tests {
         assert!(returned.payload["declaredNameFingerprints"]
             .as_array()
             .is_some_and(|names| !names.is_empty()));
+    }
+
+    #[test]
+    fn proposal_loop_event_copies_model_turns_into_correlation() {
+        let db = Database::open_in_memory().expect("db");
+        let run_id = accept_run(&db, "c26-proposal-turns");
+        let correlation = closed_correlation(&run_id);
+        record_loop_event(
+            &db,
+            &correlation,
+            &crate::ai_runtime::tool_name_origin::proposal_payload(
+                "web_search",
+                &["web_search"],
+                &["web_search"],
+                false,
+                "accepted",
+                2,
+            ),
+        )
+        .expect("loop");
+        let events = query_by_run(&db, &run_id).expect("query");
+        let proposal = events
+            .iter()
+            .find(|event| event.event_kind == BoundaryEventKind::LoopEvent)
+            .expect("proposal");
+        assert_eq!(proposal.model_turn, 2);
+        assert_eq!(
+            proposal.payload["toolSurfaceVersion"],
+            crate::ai_runtime::boundary_events::tool_surface_version(["web_search"])
+        );
+        assert!(proposal.payload.get("modelTurn").is_none());
     }
 
     #[test]

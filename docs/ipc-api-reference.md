@@ -40,7 +40,7 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 - normal-domain 生命周期事件只有 `assistant:run_event`。事件先持久化再发送；前端断流后使用 `assistant_run_get` 回放，不订阅 `llm:*`、`ai:*`、Harness 或工具确认事件。回放日志不包含工具参数或原始输出，只返回安全快照和受限过程展示。
 - `assistant_run_control` 以预期 state version 进行幂等控制；取消、确认和恢复不使用平行的 task/harness API。
 - `assistant_run_get` 的断流回放不是进程级执行恢复：Direct 与 ToolLoop 不支持进程级续跑，进程中断后不能由事件重新发起模型或工具。Durable Run 的暂停与检查点仅在其冻结计划、用户确认和内容 hash 复核均满足时才可进入恢复路径。
-- `assistant_run_diagnose` 按会话与显式 `runId` 读取 C26 事件并返回 C27 解释：已知事实、直接失败、恢复结果、待证根因、归因状态与记录完整性。入口必须从当前回答或失败提示进入，无需复制 Run ID。查询失败返回稳定错误码，不得伪装成「未发现可证实的故障」。证据缺口、握手未结束、关联断裂或待证根因同样不得使用空成功标题。`auditHealth.persistFailed` 是独立健康信号。`recovery_exhausted` 只出现在恢复结果中，不是根因。工具名来源链关联「网关解析指纹 → 工具面 → 派发结果」；缺 C11 解析 hop 或名称来自映射／协议改写／表面错位时不得归因于模型，未知工具名只以指纹进入记录。涉密 Run 不持久化诊断记录，查询结果必须报告缺口而不是空成功，也不读取进程内易失状态冒充完整记录。
+- `assistant_run_diagnose` 按会话与显式 `runId` 读取 C26 事件并返回 C27 解释：已知事实、直接失败、恢复结果、待证根因、归因状态与记录完整性。入口必须从当前回答或失败提示进入，无需复制 Run ID。查询失败返回稳定错误码，不得伪装成「未发现可证实的故障」。证据缺口、握手未结束、关联断裂或待证根因同样不得使用空成功标题。`auditHealth.persistFailed` 是独立健康信号。`recovery_exhausted` 只出现在恢复结果中，不是根因。工具名来源链关联「模型提议名称 → 网关解析指纹 → 工具面版本 → 派发结果」；缺 C11 解析 hop、跨回合误借 hop，或名称来自映射／协议改写／表面错位时不得归因于模型，未知工具名只以指纹进入记录。MiniMax 内容通道抽取记为协议解析，不得仅因供应商名把标准 `tool_calls` 标成内容抽取。涉密 Run 不持久化诊断记录，查询结果必须报告缺口而不是空成功，也不读取进程内易失状态冒充完整记录。
 - 涉密 Run 仅在当前进程内易失执行。`assistant_run_get` 只接受显式 `runId`，按该 ID 读取无正文的易失快照与安全事件；不支持省略 `runId` 的“最近活动 Run”查询、持久化断流回放或进程级恢复。它不持久化事件、prompt 或模型输出；完成内容只能经 `assistant_classified_run_take_result` 在有效文档上下文中一次性读取，进程退出或易失状态清理后即失效。
 - 会话 ID 对前端是不透明的 `AssistantSessionRef`，不能用数据库主键、文档路径或涉密文件路径寻址。
 - 已移除 `assistant_execute`、`ai_send_message`、`context_assemble`、`tool_confirm`、`session_*`、`agent_task_*`、`harness_*` 以及独立 writing/citation/organize/chapter/document/research 执行入口；不得恢复兼容封装。

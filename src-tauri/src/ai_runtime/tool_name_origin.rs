@@ -1,6 +1,8 @@
-//! Q01／Q12 工具名来源链：关联「模型提议 → 网关解析 → 工具面 → 派发结果」。
+//! Q01／Q12 工具名来源链：关联「模型提议 → 网关解析 → 工具面版本 → 派发结果」。
 //!
 //! 未知工具名只以指纹进入记录，不回显原文。缺 C11 解析 hop 时不得归因于模型。
+
+use std::collections::HashSet;
 
 use serde_json::{json, Value};
 
@@ -65,6 +67,9 @@ pub(crate) struct ParsedNameHop {
     pub catalog_known: bool,
     pub parse_path: ParsePath,
     pub rewritten: bool,
+    pub model_turn: u32,
+    pub tool_surface_version: String,
+    pub declared_this_turn: bool,
 }
 
 /// Facts recorded at C17 for one proposal, before joining the C11 hop.
@@ -81,6 +86,7 @@ pub(crate) struct ProposalNameFacts {
 pub(crate) struct OriginInputs {
     pub parse_hop_present: bool,
     pub rewritten: bool,
+    pub parse_path: Option<ParsePath>,
     pub facts: ProposalNameFacts,
 }
 
@@ -101,10 +107,7 @@ pub(crate) fn name_fingerprint(name: &str) -> String {
     format!("sha256:{}", &hex::encode(digest)[..16])
 }
 
-pub(crate) fn parse_path_for(provider_name: &str, protocol_adapter: &str) -> ParsePath {
-    if provider_name.eq_ignore_ascii_case("minimax") {
-        return ParsePath::MinimaxContent;
-    }
+pub(crate) fn parse_path_for(_provider_name: &str, protocol_adapter: &str) -> ParsePath {
     match protocol_adapter {
         "anthropic_messages" => ParsePath::AnthropicToolUse,
         "openai_responses" => ParsePath::OpenAiResponses,
@@ -116,13 +119,13 @@ pub(crate) fn infer_origin(input: OriginInputs) -> NameOrigin {
     if !input.parse_hop_present {
         return NameOrigin::Unattributed;
     }
-    if input.rewritten {
+    if input.rewritten || matches!(input.parse_path, Some(ParsePath::MinimaxContent)) {
         return NameOrigin::ProtocolParsed;
     }
-    if input.facts.mapping_applied {
+    if input.facts.mapping_applied || (input.facts.surface_known && !input.facts.catalog_known) {
         return NameOrigin::NameMapped;
     }
-    if input.facts.catalog_known && !input.facts.surface_known {
+    if input.facts.catalog_known && (!input.facts.surface_known || !input.facts.prompt_declared) {
         return NameOrigin::PromptConvention;
     }
     if !input.facts.catalog_known && !input.facts.surface_known {
@@ -179,11 +182,13 @@ pub(crate) fn proposal_payload(
         "mappingApplied": facts.mapping_applied,
         "nameFingerprint": name_fingerprint(parsed_name),
         "reason": dispatch_result,
-        "modelTurn": model_turn,
+        "modelTurns": model_turn,
+        "toolSurfaceVersion": super::boundary_events::tool_surface_version(surface_names.iter().copied()),
     })
 }
 
 /// C11 handshake extras: declared and parsed fingerprints, never raw unknown names.
+#[cfg(test)]
 pub(crate) fn handshake_payload(
     parse_path: ParsePath,
     declared_names: impl IntoIterator<Item = impl AsRef<str>>,
@@ -212,29 +217,60 @@ pub(crate) fn handshake_payload(
     })
 }
 
-pub(crate) fn handshake_payload_for_turn(
-    provider_name: &str,
+/// C11 hops for one turn: structured `tool_calls` stay on the adapter path;
+/// MiniMax content extraction is a protocol rewrite.
+pub(crate) fn handshake_payload_from_calls(
     protocol_adapter: &str,
     declared_names: impl IntoIterator<Item = impl AsRef<str>>,
-    parsed_names: impl IntoIterator<Item = impl AsRef<str>>,
+    structured_names: impl IntoIterator<Item = impl AsRef<str>>,
+    content_extracted_names: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Value {
-    handshake_payload(
-        parse_path_for(provider_name, protocol_adapter),
-        declared_names,
-        parsed_names,
-        false,
-    )
+    let declared: Vec<String> = declared_names
+        .into_iter()
+        .map(|name| name_fingerprint(name.as_ref()))
+        .collect();
+    let adapter_path = parse_path_for("", protocol_adapter);
+    let mut parsed = Vec::new();
+    for name in structured_names {
+        let name = name.as_ref();
+        parsed.push(json!({
+            "fingerprint": name_fingerprint(name),
+            "catalogKnown": catalog_find(name).is_some(),
+            "parsePath": adapter_path.as_str(),
+            "rewritten": false,
+        }));
+    }
+    for name in content_extracted_names {
+        let name = name.as_ref();
+        parsed.push(json!({
+            "fingerprint": name_fingerprint(name),
+            "catalogKnown": catalog_find(name).is_some(),
+            "parsePath": ParsePath::MinimaxContent.as_str(),
+            "rewritten": true,
+        }));
+    }
+    json!({
+        "declaredNameFingerprints": declared,
+        "parsedToolNames": parsed,
+    })
 }
 
 pub(crate) fn hops_from_payload(payload: &Value) -> Vec<ParsedNameHop> {
+    let declared: HashSet<&str> = payload
+        .get("declaredNameFingerprints")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
     payload
         .get("parsedToolNames")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|item| {
+            let fingerprint = item.get("fingerprint")?.as_str()?.to_string();
             Some(ParsedNameHop {
-                fingerprint: item.get("fingerprint")?.as_str()?.to_string(),
                 catalog_known: item
                     .get("catalogKnown")
                     .and_then(Value::as_bool)
@@ -244,6 +280,10 @@ pub(crate) fn hops_from_payload(payload: &Value) -> Vec<ParsedNameHop> {
                     .get("rewritten")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                declared_this_turn: declared.contains(fingerprint.as_str()),
+                fingerprint,
+                model_turn: 0,
+                tool_surface_version: String::new(),
             })
         })
         .collect()
@@ -263,7 +303,7 @@ fn payload_str<'a>(payload: &'a Value, key: &str) -> Option<&'a str> {
 
 /// Explain a C17 proposal after joining C11 parse hops for the same fingerprint.
 pub(crate) fn explain_proposal(payload: &Value, hops: &[ParsedNameHop]) -> ProposalExplanation {
-    let facts = ProposalNameFacts {
+    let mut facts = ProposalNameFacts {
         catalog_known: payload_flag(payload, "catalogKnown"),
         surface_known: payload_flag(payload, "surfaceKnown"),
         prompt_declared: payload_flag(payload, "promptDeclared"),
@@ -271,9 +311,13 @@ pub(crate) fn explain_proposal(payload: &Value, hops: &[ParsedNameHop]) -> Propo
     };
     let fingerprint = payload_str(payload, "nameFingerprint").unwrap_or("");
     let hop = hop_for(fingerprint, hops);
+    if let Some(hop) = hop {
+        facts.prompt_declared = hop.declared_this_turn;
+    }
     let origin = infer_origin(OriginInputs {
         parse_hop_present: hop.is_some(),
         rewritten: hop.is_some_and(|hop| hop.rewritten),
+        parse_path: hop.map(|hop| hop.parse_path),
         facts,
     });
     let display_tool = if facts.catalog_known {
@@ -291,45 +335,46 @@ pub(crate) fn explain_proposal(payload: &Value, hops: &[ParsedNameHop]) -> Propo
     };
     let dispatch = payload_str(payload, "reason").unwrap_or("unknown");
     let parse_path = hop.map(|hop| hop.parse_path.as_str()).unwrap_or("missing");
+    let surface_version = payload_str(payload, "toolSurfaceVersion").unwrap_or("missing");
     let chain = format!(
-        "C11 解析({parse_path}) → C16 表面({}) → C17 派发({dispatch})",
+        "C11 解析({parse_path}) → C16 表面({surface_version}, {}) → C17 派发({dispatch})",
         if facts.surface_known {
             "包含"
         } else {
             "未包含"
         }
     );
-    let known_fact = format!(
-        "工具提议 {display_tool} 来源链：{chain}（{}）",
-        origin.as_str()
-    );
-    let rejected = dispatch != "accepted";
-    let pending_statement = if matches!(
-        origin,
-        NameOrigin::Unattributed
-            | NameOrigin::ModelGenerated
-            | NameOrigin::ProtocolParsed
-            | NameOrigin::PromptConvention
-    ) || (origin == NameOrigin::NameMapped && rejected)
+    let known_fact = if origin == NameOrigin::Unattributed
+        && hop.is_some()
+        && facts.catalog_known
+        && facts.surface_known
     {
-        match origin {
-            NameOrigin::Unattributed if facts.catalog_known && facts.surface_known => None,
-            NameOrigin::Unattributed => {
-                Some("工具名来源链缺少网关解析 hop，不能归因于模型".to_string())
-            }
-            NameOrigin::ModelGenerated => Some(format!(
-                "未登记工具的来源为模型生成（疑似），不能证实为模型故障；{chain}"
-            )),
-            NameOrigin::ProtocolParsed => Some(format!(
-                "未登记工具可能来自协议解析改写，不能归因于模型；{chain}"
-            )),
-            NameOrigin::NameMapped => Some(format!("工具名经过名称映射，不能归因于模型；{chain}")),
-            NameOrigin::PromptConvention => Some(format!(
-                "目录内名称未出现在本次工具面，属提示约定或表面错位，不能归因于模型；{chain}"
-            )),
-        }
+        format!("工具提议 {display_tool} 来源链：{chain}")
     } else {
-        None
+        format!(
+            "工具提议 {display_tool} 来源链：{chain}（{}）",
+            origin.as_str()
+        )
+    };
+    let rejected = dispatch != "accepted";
+    let pending_statement = match origin {
+        NameOrigin::Unattributed if hop.is_none() => {
+            Some("工具名来源链缺少网关解析 hop，不能归因于模型".to_string())
+        }
+        NameOrigin::Unattributed => None,
+        NameOrigin::ModelGenerated => Some(format!(
+            "未登记工具的来源为模型生成（疑似），不能证实为模型故障；{chain}"
+        )),
+        NameOrigin::ProtocolParsed => Some(format!(
+            "未登记工具可能来自协议解析改写，不能归因于模型；{chain}"
+        )),
+        NameOrigin::NameMapped if rejected => {
+            Some(format!("工具名经过名称映射，不能归因于模型；{chain}"))
+        }
+        NameOrigin::NameMapped => None,
+        NameOrigin::PromptConvention => Some(format!(
+            "目录内名称未出现在本次工具面，属提示约定或表面错位，不能归因于模型；{chain}"
+        )),
     };
     ProposalExplanation {
         origin,
@@ -368,6 +413,7 @@ mod tests {
             infer_origin(OriginInputs {
                 parse_hop_present: false,
                 rewritten: false,
+                parse_path: None,
                 facts: facts(false, false, false),
             }),
             NameOrigin::Unattributed
@@ -380,6 +426,7 @@ mod tests {
             infer_origin(OriginInputs {
                 parse_hop_present: true,
                 rewritten: false,
+                parse_path: None,
                 facts: facts(false, false, false),
             }),
             NameOrigin::ModelGenerated
@@ -392,6 +439,7 @@ mod tests {
             infer_origin(OriginInputs {
                 parse_hop_present: true,
                 rewritten: true,
+                parse_path: None,
                 facts: facts(false, false, false),
             }),
             NameOrigin::ProtocolParsed
@@ -404,6 +452,7 @@ mod tests {
             infer_origin(OriginInputs {
                 parse_hop_present: true,
                 rewritten: false,
+                parse_path: None,
                 facts: facts(false, true, true),
             }),
             NameOrigin::NameMapped
@@ -416,9 +465,41 @@ mod tests {
             infer_origin(OriginInputs {
                 parse_hop_present: true,
                 rewritten: false,
+                parse_path: None,
                 facts: facts(true, false, false),
             }),
             NameOrigin::PromptConvention
+        );
+    }
+
+    #[test]
+    fn catalog_on_surface_but_not_declared_is_prompt_convention() {
+        assert_eq!(
+            infer_origin(OriginInputs {
+                parse_hop_present: true,
+                rewritten: false,
+                parse_path: None,
+                facts: ProposalNameFacts {
+                    catalog_known: true,
+                    surface_known: true,
+                    prompt_declared: false,
+                    mapping_applied: false,
+                },
+            }),
+            NameOrigin::PromptConvention
+        );
+    }
+
+    #[test]
+    fn surface_external_name_without_mapping_flag_is_name_mapped() {
+        assert_eq!(
+            infer_origin(OriginInputs {
+                parse_hop_present: true,
+                rewritten: false,
+                parse_path: None,
+                facts: facts(false, true, false),
+            }),
+            NameOrigin::NameMapped
         );
     }
 
@@ -531,14 +612,146 @@ mod tests {
     }
 
     #[test]
-    fn parse_path_prefers_minimax_content_markers() {
+    fn parse_path_follows_adapter_not_vendor_name() {
         assert_eq!(
             parse_path_for("MiniMax", "openai_chat_completions"),
-            ParsePath::MinimaxContent
+            ParsePath::OpenAiToolCalls
         );
         assert_eq!(
             parse_path_for("openai", "anthropic_messages"),
             ParsePath::AnthropicToolUse
         );
+        assert_eq!(
+            parse_path_for("openai", "openai_responses"),
+            ParsePath::OpenAiResponses
+        );
+    }
+
+    #[test]
+    fn proposal_payload_records_model_turns_and_surface_version() {
+        let payload = proposal_payload(
+            "web_search",
+            &["web_search"],
+            &["web_search"],
+            false,
+            "accepted",
+            2,
+        );
+        assert_eq!(payload["modelTurns"], 2);
+        assert!(payload.get("modelTurn").is_none());
+        assert_eq!(
+            payload["toolSurfaceVersion"],
+            crate::ai_runtime::boundary_events::tool_surface_version(["web_search"])
+        );
+        assert!(!payload["toolSurfaceVersion"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty());
+    }
+
+    #[test]
+    fn explain_proposal_missing_hop_on_catalog_accept_is_a_gap() {
+        let proposal = proposal_payload(
+            "web_search",
+            &["web_search"],
+            &["web_search"],
+            false,
+            "accepted",
+            1,
+        );
+        let explanation = explain_proposal(&proposal, &[]);
+        assert_eq!(explanation.origin, NameOrigin::Unattributed);
+        assert_eq!(explanation.display_tool, "web_search");
+        assert!(
+            explanation
+                .pending_statement
+                .as_deref()
+                .is_some_and(
+                    |text| text.contains("缺少网关解析 hop") && text.contains("不能归因于模型")
+                ),
+            "catalog accept without a C11 hop must not look complete: {:?}",
+            explanation.pending_statement
+        );
+        assert!(explanation.known_fact.contains("C16 表面"));
+        assert!(explanation.known_fact.contains(
+            crate::ai_runtime::boundary_events::tool_surface_version(["web_search"]).as_str()
+        ));
+    }
+
+    #[test]
+    fn explain_proposal_minimax_content_path_is_protocol_parsed_even_if_not_flagged_rewritten() {
+        let proposal = proposal_payload(
+            "unknown_search",
+            &[],
+            &["web_search"],
+            false,
+            "tool_not_in_run_surface",
+            1,
+        );
+        let hops = hops_from_payload(&handshake_payload(
+            ParsePath::MinimaxContent,
+            ["web_search"],
+            ["unknown_search"],
+            false,
+        ));
+        let explanation = explain_proposal(&proposal, &hops);
+        assert_eq!(explanation.origin, NameOrigin::ProtocolParsed);
+        assert!(explanation
+            .pending_statement
+            .as_deref()
+            .is_some_and(|text| text.contains("协议解析") && text.contains("不能归因于模型")));
+        assert!(!explanation
+            .pending_statement
+            .as_deref()
+            .is_some_and(|text| text.contains("模型生成")));
+    }
+
+    #[test]
+    fn explain_proposal_does_not_claim_missing_hop_when_hop_exists() {
+        let proposal = proposal_payload(
+            "weather_lookup",
+            &["weather_lookup"],
+            &["weather_lookup"],
+            false,
+            "accepted",
+            1,
+        );
+        let hops = hops_from_payload(&handshake_payload(
+            ParsePath::OpenAiToolCalls,
+            ["weather_lookup"],
+            ["weather_lookup"],
+            false,
+        ));
+        let explanation = explain_proposal(&proposal, &hops);
+        assert_eq!(explanation.origin, NameOrigin::NameMapped);
+        assert!(explanation
+            .pending_statement
+            .as_deref()
+            .is_none_or(|text| !text.contains("缺少网关解析 hop")));
+    }
+
+    #[test]
+    fn handshake_payload_from_calls_marks_only_content_extraction_rewritten() {
+        let payload = handshake_payload_from_calls(
+            "openai_chat_completions",
+            ["web_search"],
+            ["web_search"],
+            ["unknown_search"],
+        );
+        let hops = hops_from_payload(&payload);
+        assert_eq!(hops.len(), 2);
+        let structured = hops
+            .iter()
+            .find(|hop| hop.fingerprint == name_fingerprint("web_search"))
+            .expect("structured hop");
+        assert_eq!(structured.parse_path, ParsePath::OpenAiToolCalls);
+        assert!(!structured.rewritten);
+        let extracted = hops
+            .iter()
+            .find(|hop| hop.fingerprint == name_fingerprint("unknown_search"))
+            .expect("content hop");
+        assert_eq!(extracted.parse_path, ParsePath::MinimaxContent);
+        assert!(extracted.rewritten);
+        assert!(!payload.to_string().contains("unknown_search"));
     }
 }
