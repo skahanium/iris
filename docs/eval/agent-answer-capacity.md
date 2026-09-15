@@ -59,7 +59,8 @@ v1.2.15 的确定性结果属于 `headless_deterministic`。确定性矩阵使�
   确定性报告使用 `schemaVersion` `agent-capacity-report-v3`，并内嵌封闭
   `baselineIdentity`（提交、工作树、`CARGO_PKG_VERSION`、评分 schema、场景集合
   哈希、夹具哈希、os／arch）。`comparable=true` 当且仅当工作树干净且身份字段合法；
-  脏树仍可写出报告，但不得当作冻结基线或 product-gate 输入。冻结的
+  脏树仍可写出报告，但不得当作冻结基线或 product-gate 输入。D01 同期 v3 smoke 记录为
+  `docs/eval/results/v1.3.0-d01-trustworthy-baseline.json`；冻结的
   `docs/eval/results/v1.2.15-agent-capacity.json` 仍为 v1 旧口径，不得回写。
   夹具或场景集合哈希对不上时整次运行无效，不是把某个案例记成失败。
 - `performance`：模型耗时与 TTFT 的 p50/p95、轮数与工具调用计数；
@@ -333,7 +334,8 @@ IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
 `agent:eval:contract` 执行完整核心矩阵（当前 52 题，为基础问题表的成对变体）并分开统计正常回答、
 预期安全拒绝与意外失败，同时执行逐层五次压力、
 硬边界、安全轨和组合终端；`agent:eval` 是额外产品门，不能由 contract 单独满足。
-安全案例失败会写入 `securityGate=false`，不会阻止报告生成。版本化确定性结果见
+安全案例失败会写入 `securityGate=false`，不会阻止报告生成。D01 同期确定性 smoke（v3 summary、`comparable=true`）见
+`docs/eval/results/v1.3.0-d01-trustworthy-baseline.json`；v1 旧口径对照见
 `docs/eval/results/v1.2.15-agent-capacity.json`。`agent:eval:live -- preflight`
 只生成被 Git 忽略的 `target/agent-eval/live-preflight.json`；它不是 live
 测试结果，也不会绕过后续批准与费用 checkpoint。Pilot 的严格白名单结果写入

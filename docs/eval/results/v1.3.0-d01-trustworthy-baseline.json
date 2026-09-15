@@ -1,0 +1,2001 @@
+{
+  "schemaVersion": "agent-eval-summary-v3",
+  "evidenceLevel": "headless_deterministic",
+  "runMode": "smoke",
+  "caseCount": 26,
+  "executedCaseCount": 26,
+  "completedCaseCount": 26,
+  "answeredCaseCount": 26,
+  "expectedRefusalCount": 0,
+  "unexpectedFailureCount": 0,
+  "passed": 26,
+  "failed": 0,
+  "boundaryCaseCount": 0,
+  "groups": {
+    "noRetrieval": 6,
+    "localOnly": 6,
+    "webOnly": 8,
+    "hybrid": 6
+  },
+  "languages": {
+    "chinese": 19,
+    "english": 5,
+    "mixed": 2
+  },
+  "telemetry": {
+    "modelTurns": 54,
+    "toolCalls": 56,
+    "webToolCalls": 56,
+    "promptTokens": 0,
+    "completionTokens": 0,
+    "totalTokens": 0,
+    "cacheHitTokens": 0,
+    "cacheMissTokens": 0,
+    "firstVisibleTokenMs": 70,
+    "totalModelTimeMs": 168,
+    "finishReasons": {
+      "stop": 54,
+      "toolCalls": 0,
+      "length": 0,
+      "other": 0
+    },
+    "truncations": {
+      "none": 26,
+      "toolResult": 0,
+      "finalOutput": 0
+    },
+    "budgets": {
+      "within": 26,
+      "modelTurns": 0,
+      "toolCalls": 0,
+      "output": 0
+    }
+  },
+  "scorecard": {
+    "hardAdmission": {
+      "authorizationViolations": 0,
+      "offlineWebLeaks": 0,
+      "unsupportedHighRiskClaims": 0,
+      "zeroToleranceGate": true
+    },
+    "quality": {
+      "factPrecisionBps": 10000,
+      "factPrecisionNumerator": 26,
+      "factPrecisionDenominator": 26,
+      "factRecallBps": 10000,
+      "factRecallNumerator": 26,
+      "factRecallDenominator": 26,
+      "factF1Bps": 10000,
+      "factF1Numerator": 0,
+      "factF1Denominator": 0,
+      "requiredSourceRecallBps": 10000,
+      "requiredSourceRecallNumerator": 26,
+      "requiredSourceRecallDenominator": 26,
+      "citationSupportBps": 10000,
+      "citationSupportNumerator": 26,
+      "citationSupportDenominator": 26,
+      "constraintAdherenceBps": null,
+      "constraintAdherenceNumerator": 0,
+      "constraintAdherenceDenominator": 0,
+      "factRecallGate": true,
+      "citationSupportGate": true,
+      "constraintAdherenceGate": false
+    },
+    "performance": {
+      "totalModelTimeP50Ms": 8,
+      "totalModelTimeP95Ms": 11,
+      "ttftP50Ms": 62,
+      "ttftP95Ms": 69,
+      "modelTurns": 54,
+      "toolCalls": 56
+    },
+    "faultRecovery": {
+      "degradationCases": 0,
+      "constraintFailCases": 0,
+      "truncationCases": 0
+    }
+  },
+  "cases": [
+    {
+      "caseId": 2,
+      "evidenceGroup": "no_retrieval",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 2,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "not_applicable",
+          "reasonCode": "citation_not_required"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 0,
+        "truePositiveFacts": 0,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 0,
+        "recalledRequiredSources": 0,
+        "citationRequired": 0,
+        "citationSupported": 0,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 4,
+      "evidenceGroup": "no_retrieval",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 4,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "not_applicable",
+          "reasonCode": "citation_not_required"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 0,
+        "truePositiveFacts": 0,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 0,
+        "recalledRequiredSources": 0,
+        "citationRequired": 0,
+        "citationSupported": 0,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 6,
+      "evidenceGroup": "no_retrieval",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 6,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "not_applicable",
+          "reasonCode": "citation_not_required"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 0,
+        "truePositiveFacts": 0,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 0,
+        "recalledRequiredSources": 0,
+        "citationRequired": 0,
+        "citationSupported": 0,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 8,
+      "evidenceGroup": "no_retrieval",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 8,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "not_applicable",
+          "reasonCode": "citation_not_required"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 0,
+        "truePositiveFacts": 0,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 0,
+        "recalledRequiredSources": 0,
+        "citationRequired": 0,
+        "citationSupported": 0,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 10,
+      "evidenceGroup": "no_retrieval",
+      "webState": "online",
+      "language": "english",
+      "requiredFactIds": [],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 10,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "not_applicable",
+          "reasonCode": "citation_not_required"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 0,
+        "truePositiveFacts": 0,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 0,
+        "recalledRequiredSources": 0,
+        "citationRequired": 0,
+        "citationSupported": 0,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 12,
+      "evidenceGroup": "no_retrieval",
+      "webState": "online",
+      "language": "mixed",
+      "requiredFactIds": [],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 12,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "not_applicable",
+          "reasonCode": "citation_not_required"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 0,
+        "truePositiveFacts": 0,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 0,
+        "recalledRequiredSources": 0,
+        "citationRequired": 0,
+        "citationSupported": 0,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 14,
+      "evidenceGroup": "local_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-local-14"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [
+          "local"
+        ],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 14,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 16,
+      "evidenceGroup": "local_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-local-16"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [
+          "local"
+        ],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 16,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 18,
+      "evidenceGroup": "local_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-local-18"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [
+          "local"
+        ],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 18,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 20,
+      "evidenceGroup": "local_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-local-20"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [
+          "local"
+        ],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 20,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 22,
+      "evidenceGroup": "local_only",
+      "webState": "online",
+      "language": "english",
+      "requiredFactIds": [
+        "fact-local-22"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [
+          "local"
+        ],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 22,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 24,
+      "evidenceGroup": "local_only",
+      "webState": "online",
+      "language": "english",
+      "requiredFactIds": [
+        "fact-local-24"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 6,
+        "observedSourceKinds": [
+          "local"
+        ],
+        "toolCallCount": 0,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 24,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 26,
+      "evidenceGroup": "web_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-web-26"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 26,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 28,
+      "evidenceGroup": "web_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-web-28"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 28,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 30,
+      "evidenceGroup": "web_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-web-30"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 30,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 32,
+      "evidenceGroup": "web_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-web-32"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 32,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 34,
+      "evidenceGroup": "web_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-web-34"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 34,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 36,
+      "evidenceGroup": "web_only",
+      "webState": "online",
+      "language": "english",
+      "requiredFactIds": [
+        "fact-web-36"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 36,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 38,
+      "evidenceGroup": "hybrid",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-local-38",
+        "fact-web-38"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "local",
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "confirmed_clean",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 38,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 2,
+        "truePositiveFacts": 2,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 2,
+        "recalledRequiredSources": 2,
+        "citationRequired": 2,
+        "citationSupported": 2,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 40,
+      "evidenceGroup": "hybrid",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-local-40",
+        "fact-web-40"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "local",
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "confirmed_clean",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 40,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 2,
+        "truePositiveFacts": 2,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 2,
+        "recalledRequiredSources": 2,
+        "citationRequired": 2,
+        "citationSupported": 2,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 42,
+      "evidenceGroup": "hybrid",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-local-42",
+        "fact-web-42"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "local",
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "confirmed_clean",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 42,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 2,
+        "truePositiveFacts": 2,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 2,
+        "recalledRequiredSources": 2,
+        "citationRequired": 2,
+        "citationSupported": 2,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 44,
+      "evidenceGroup": "hybrid",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-local-44",
+        "fact-web-44"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "local",
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "confirmed_clean",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 44,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 2,
+        "truePositiveFacts": 2,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 2,
+        "recalledRequiredSources": 2,
+        "citationRequired": 2,
+        "citationSupported": 2,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 46,
+      "evidenceGroup": "hybrid",
+      "webState": "online",
+      "language": "english",
+      "requiredFactIds": [
+        "fact-local-46",
+        "fact-web-46"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "local",
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "confirmed_clean",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 46,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 2,
+        "truePositiveFacts": 2,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 2,
+        "recalledRequiredSources": 2,
+        "citationRequired": 2,
+        "citationSupported": 2,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 48,
+      "evidenceGroup": "hybrid",
+      "webState": "online",
+      "language": "mixed",
+      "requiredFactIds": [
+        "fact-local-48",
+        "fact-web-48"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "local",
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "confirmed_clean",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 48,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 2,
+        "truePositiveFacts": 2,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 2,
+        "recalledRequiredSources": 2,
+        "citationRequired": 2,
+        "citationSupported": 2,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 50,
+      "evidenceGroup": "web_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-web-50"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 50,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    },
+    {
+      "caseId": 52,
+      "evidenceGroup": "web_only",
+      "webState": "online",
+      "language": "chinese",
+      "requiredFactIds": [
+        "fact-web-52"
+      ],
+      "runtimeEvidence": {
+        "terminalState": "completed",
+        "terminalErrorCode": null,
+        "eventCount": 17,
+        "observedSourceKinds": [
+          "web"
+        ],
+        "toolCallCount": 1,
+        "degradationObserved": false,
+        "webQueryBoundary": "not_applicable",
+        "observedToolClasses": [
+          "web_search"
+        ],
+        "permissionDenialCategories": []
+      },
+      "boundary": null,
+      "verdict": {
+        "caseId": 52,
+        "authorization": {
+          "status": "pass",
+          "reasonCode": "authorization_satisfied"
+        },
+        "requiredEvidence": {
+          "status": "pass",
+          "reasonCode": "required_sources_satisfied"
+        },
+        "factCorrectness": {
+          "status": "pass",
+          "reasonCode": "required_facts_satisfied"
+        },
+        "citationSupport": {
+          "status": "pass",
+          "reasonCode": "citation_support_satisfied"
+        },
+        "routeEfficiency": {
+          "status": "pass",
+          "reasonCode": "route_efficient"
+        },
+        "degradationOrClarification": {
+          "status": "not_applicable",
+          "reasonCode": "no_disclosure_required"
+        },
+        "safety": {
+          "status": "pass",
+          "reasonCode": "safety_satisfied"
+        },
+        "overallPass": true
+      },
+      "qualityAtoms": {
+        "requiredFacts": 1,
+        "truePositiveFacts": 1,
+        "falseNegativeFacts": 0,
+        "falsePositiveFacts": 0,
+        "requiredSources": 1,
+        "recalledRequiredSources": 1,
+        "citationRequired": 1,
+        "citationSupported": 1,
+        "constraintsRequired": 0,
+        "constraintsSatisfied": 0,
+        "authorizationViolation": 0,
+        "offlineWebLeak": 0,
+        "unsupportedHighRiskClaim": 0,
+        "degradationSignaled": 0
+      },
+      "overallPass": true
+    }
+  ],
+  "baselineIdentity": {
+    "sourceCommit": "e9642024421c1297573d54378740c0035d74fe91",
+    "workingTree": "clean",
+    "comparable": true,
+    "release": "1.3.0",
+    "scoringSchema": "agent-capacity-report-v3",
+    "scenarioSetHash": "ce3a87fdad7610667741c91febea1116ab26b236e22953f64f92727e28ac1b44",
+    "fixtureHashes": {
+      "agentAnswerV1": "96a6b0b5669afae714e251b6746fb49151afcc2a102250db1ee86f09b14b8db2"
+    },
+    "os": "macos",
+    "arch": "aarch64"
+  }
+}
