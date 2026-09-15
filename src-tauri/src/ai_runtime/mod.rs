@@ -38,6 +38,7 @@ mod agent_tool_loop_payload_tests;
 mod agent_tool_loop_tests;
 #[cfg(test)]
 mod agent_verification_tests;
+pub(crate) mod boundary_events;
 pub mod capability_resolver;
 pub mod circuit_breaker;
 pub(crate) mod citation_linkify;

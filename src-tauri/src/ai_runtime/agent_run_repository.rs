@@ -1068,6 +1068,10 @@ impl AgentRunRepository {
                 Ok(())
             });
         }
+        if result.is_ok() {
+            let _ =
+                crate::ai_runtime::boundary_events::close_open_handshakes(db, &diagnostic_run_id);
+        }
         result
     }
 

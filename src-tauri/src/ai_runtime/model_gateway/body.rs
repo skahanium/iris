@@ -44,6 +44,8 @@ pub struct GatewayRequest {
     pub continuation: Option<ProviderContinuation>,
     /// Tool call IDs still awaiting user confirmation - must not receive error stubs.
     pub skip_stub_ids: Vec<String>,
+    /// Optional C26 handshake slot filled by the live send path.
+    pub boundary: Option<crate::ai_runtime::boundary_events::BoundaryAuditSlot>,
 }
 
 fn messages_need_tool_prep(messages: &[LlmMessage], tools: &[LlmToolDef]) -> bool {
@@ -763,6 +765,7 @@ mod phase3_adapter_contract_tests {
             reasoning: ResolvedReasoningRequest::disabled(),
             continuation: None,
             skip_stub_ids: vec![],
+            boundary: None,
         }
     }
 
@@ -842,6 +845,7 @@ mod phase3_adapter_contract_tests {
             reasoning: ResolvedReasoningRequest::disabled(),
             continuation: None,
             skip_stub_ids: vec![],
+            boundary: None,
         };
 
         let body = build_llm_api_body(&request).unwrap();

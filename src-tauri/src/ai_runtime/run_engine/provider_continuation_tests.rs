@@ -445,6 +445,7 @@ async fn live_follow_up_continuation_probe() {
             reasoning: dispatch.reasoning,
             continuation: None,
             skip_stub_ids: vec![],
+            boundary: None,
         };
         let mut iris_body =
             crate::ai_runtime::model_gateway::build_chat_completions_body(&gateway_request);

@@ -19,6 +19,7 @@ pub(crate) struct ModelGatewayStreamingDirectAnswerProvider<'a> {
     thinking: bool,
     reasoning: crate::ai_types::ResolvedReasoningRequest,
     continuation: Option<crate::ai_runtime::model_gateway::ProviderContinuation>,
+    boundary: Option<crate::ai_runtime::boundary_events::BoundaryAuditSlot>,
 }
 
 impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
@@ -38,6 +39,7 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
             thinking: false,
             reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             continuation: None,
+            boundary: None,
         })
     }
 
@@ -56,6 +58,7 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
             thinking: dispatch.thinking,
             reasoning: dispatch.reasoning,
             continuation: None,
+            boundary: None,
         })
     }
 
@@ -74,6 +77,34 @@ fn classify_failover_failure(
     error: &AppError,
 ) -> crate::ai_runtime::provider_router::ProviderFailure {
     crate::ai_runtime::provider_router::classify_provider_failure_from_app_error(error)
+}
+
+fn protocol_family_of(
+    provider: &crate::ai_types::ProviderConfig,
+    reasoning: &crate::ai_types::ResolvedReasoningRequest,
+) -> crate::ai_runtime::boundary_events::ProtocolFamily {
+    use crate::ai_types::{EndpointFamily, ReasoningAdapter};
+    if provider.endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
+        && reasoning.adapter == ReasoningAdapter::OpenAiResponses
+    {
+        crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiResponses
+    } else if provider.endpoint_family == EndpointFamily::AnthropicMessages {
+        crate::ai_runtime::boundary_events::ProtocolFamily::AnthropicMessages
+    } else {
+        crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiChatCompletions
+    }
+}
+
+fn input_revision_for_run(db: &Database, run_id: &str) -> String {
+    db.with_read_conn(|conn| {
+        conn.query_row(
+            "SELECT turn_id FROM agent_runs WHERE run_id = ?1",
+            [run_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(Into::into)
+    })
+    .unwrap_or_else(|_| run_id.to_string())
 }
 
 fn failover_reason(failure: crate::ai_runtime::provider_router::ProviderFailure) -> &'static str {
@@ -482,6 +513,7 @@ pub(crate) fn gateway_request_for_messages(
         reasoning,
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     }
 }
 
@@ -510,6 +542,7 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
         );
         apply_model_turn_budget(&mut request, budget);
         request.continuation = self.continuation.clone();
+        request.boundary = self.boundary.clone();
         Box::pin(async move {
             self.gateway
                 .send_streaming_request_to_observer(run_id, request, observer)
@@ -662,12 +695,50 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                     crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![dispatch
                         .provider
                         .clone()])?;
-                let provider =
+                let mut provider =
                     ModelGatewayStreamingDirectAnswerProvider::from_dispatch_with_continuation(
                         &gateway,
                         dispatch,
                         continuation.clone(),
                     )?;
+                let child_run_id =
+                    (parent_run_id != provider_state_key).then(|| provider_state_key.to_string());
+                let input_revision = input_revision_for_run(self.db, parent_run_id);
+                let protocol_family = protocol_family_of(&provider.provider, &provider.reasoning);
+                let slot = crate::ai_runtime::boundary_events::BoundaryAuditSlot::new(
+                    crate::ai_runtime::boundary_events::BoundaryCorrelation {
+                        run_id: parent_run_id.to_string(),
+                        input_revision,
+                        parent_run_id: child_run_id.as_ref().map(|_| parent_run_id.to_string()),
+                        child_run_id,
+                        model_turn: crate::ai_runtime::boundary_events::next_handshake_turn(
+                            self.db,
+                            parent_run_id,
+                        ),
+                        call_id: format!("model-{dispatch_attempt}"),
+                        attempt_id: format!("{provider_state_key}:{dispatch_attempt}"),
+                        tool_surface_version:
+                            crate::ai_runtime::boundary_events::tool_surface_version(
+                                tools.iter().map(|tool| tool.name.as_str()),
+                            ),
+                        protocol_adapter:
+                            crate::ai_runtime::boundary_events::protocol_adapter_name(
+                                protocol_family,
+                            )
+                            .to_string(),
+                    },
+                );
+                slot.note_generated(
+                    messages,
+                    u32::try_from(tools.len()).unwrap_or(u32::MAX),
+                    true,
+                );
+                let _ = crate::ai_runtime::boundary_events::record_handshake_start(self.db, &slot);
+                let _persist = crate::ai_runtime::boundary_events::BoundaryPersistGuard::new(
+                    self.db,
+                    slot.clone(),
+                );
+                provider.boundary = Some(slot);
                 let attempt = provider
                     .answer_turn(provider_state_key, messages, tools, budget, observer)
                     .await;

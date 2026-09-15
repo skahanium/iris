@@ -731,8 +731,13 @@ fn should_emit_stream_error(
     emit_error_event || has_visible_partial(surface, token_index)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "C26 notes the same stream failure that the observer already receives; a param struct would only wrap these flags"
+)]
 fn finish_stream_with_error(
     observer: &mut dyn StreamEventObserver,
+    request: &GatewayRequest,
     request_id: &str,
     message: impl Into<String>,
     classified: bool,
@@ -741,6 +746,7 @@ fn finish_stream_with_error(
     emit_error_event: bool,
 ) -> AppError {
     let message = message.into();
+    note_boundary_unsuccessful(request, &message);
     let sanitized = sanitize_stream_error_message(&message);
     let visible_partial = has_visible_partial(surface, token_index);
     if should_emit_stream_error(emit_error_event, surface, token_index) {
@@ -849,6 +855,112 @@ fn emit_visible_token_delta(
     )
 }
 
+fn note_boundary_serialized(request: &GatewayRequest, body: &serde_json::Value) {
+    let Some(slot) = &request.boundary else {
+        return;
+    };
+    slot.note_generated(
+        &request.messages,
+        u32::try_from(request.tools.len()).unwrap_or(u32::MAX),
+        !request.provider.model.is_empty(),
+    );
+    let family = if uses_openai_responses(request) {
+        crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiResponses
+    } else {
+        match request.provider.endpoint_family {
+            EndpointFamily::AnthropicMessages => {
+                crate::ai_runtime::boundary_events::ProtocolFamily::AnthropicMessages
+            }
+            _ => crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiChatCompletions,
+        }
+    };
+    slot.note_serialized(family, body, &request.messages);
+}
+
+fn note_boundary_sent(request: &GatewayRequest) {
+    if let Some(slot) = &request.boundary {
+        slot.note_request_sent();
+    }
+}
+
+fn finish_reason_class(reason: &str) -> &'static str {
+    match reason {
+        "stop" | "end_turn" => "stop",
+        "tool_calls" | "tool_use" => "tool_calls",
+        "length" | "max_tokens" => "length",
+        _ => "other",
+    }
+}
+
+fn http_status_class(status: u16) -> &'static str {
+    match status {
+        200..=299 => "2xx",
+        400..=499 => "4xx",
+        500..=599 => "5xx",
+        _ => "other",
+    }
+}
+
+fn note_boundary_success(request: &GatewayRequest, response: &GatewayResponse) {
+    let Some(slot) = &request.boundary else {
+        return;
+    };
+    slot.note_provider_returned(
+        crate::ai_runtime::boundary_events::ProviderReturnStructure {
+            http_status_class: Some("2xx"),
+            has_content: response
+                .content
+                .as_deref()
+                .is_some_and(|content| !content.is_empty()),
+            tool_call_count: u32::try_from(response.tool_calls.len()).unwrap_or(u32::MAX),
+            finish_reason_class: Some(finish_reason_class(&response.finish_reason)),
+        },
+    );
+    slot.note_handshake_end(crate::ai_runtime::boundary_events::RecordCompleteness::Complete);
+}
+
+fn note_boundary_http_failure(request: &GatewayRequest, status: u16) {
+    let Some(slot) = &request.boundary else {
+        return;
+    };
+    slot.note_request_sent();
+    slot.note_provider_returned(
+        crate::ai_runtime::boundary_events::ProviderReturnStructure {
+            http_status_class: Some(http_status_class(status)),
+            has_content: false,
+            tool_call_count: 0,
+            finish_reason_class: Some("error"),
+        },
+    );
+    slot.note_handshake_end(crate::ai_runtime::boundary_events::RecordCompleteness::Complete);
+}
+
+fn stream_failure_reason_class(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("request aborted") {
+        "aborted"
+    } else if lower.contains("timeout") {
+        "timeout"
+    } else if lower.contains("llm streaming request failed") || lower.contains("stream read error")
+    {
+        "transport"
+    } else {
+        "error"
+    }
+}
+
+fn note_boundary_unsuccessful(request: &GatewayRequest, message: &str) {
+    let Some(slot) = &request.boundary else {
+        return;
+    };
+    slot.note_known_failure(stream_failure_reason_class(message));
+}
+
+fn complete_boundary(request: &GatewayRequest, response: GatewayResponse) -> GatewayResponse {
+    note_boundary_success(request, &response);
+    response
+}
+
 /// Send a streaming request and deliver each lifecycle event to an observer.
 pub async fn send_streaming_request_to_observer(
     _client: &Client,
@@ -862,6 +974,7 @@ pub async fn send_streaming_request_to_observer(
     if is_abort_requested(request_id) {
         return Err(finish_stream_with_error(
             observer,
+            &request,
             request_id,
             "request aborted",
             classified,
@@ -890,6 +1003,7 @@ pub async fn send_streaming_request_to_observer(
     let mut body = build_llm_api_body(&request).map_err(|e| {
         finish_stream_with_error(
             observer,
+            &request,
             request_id,
             e.to_string(),
             classified,
@@ -898,6 +1012,7 @@ pub async fn send_streaming_request_to_observer(
             emit_error_event,
         )
     })?;
+    note_boundary_serialized(&request, &body);
     body["stream"] = serde_json::json!(true);
 
     // Production always builds the dedicated HTTPS-only streaming client. The
@@ -909,6 +1024,7 @@ pub async fn send_streaming_request_to_observer(
         crate::network::cert_pinning::create_streaming_https_client().map_err(|e| {
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 e.to_string(),
                 classified,
@@ -937,6 +1053,7 @@ pub async fn send_streaming_request_to_observer(
         result = &mut send => result.map_err(|e| {
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 format!("LLM streaming request failed: {e}"),
                 classified,
@@ -947,6 +1064,7 @@ pub async fn send_streaming_request_to_observer(
         }),
         _ = &mut first_response_deadline => Err(finish_stream_with_error(
             observer,
+            &request,
             request_id,
             "llm_stream_first_response_timeout",
             classified,
@@ -956,6 +1074,7 @@ pub async fn send_streaming_request_to_observer(
         )),
         _ = &mut abort_wait => Err(finish_stream_with_error(
             observer,
+            &request,
             request_id,
             "request aborted",
             classified,
@@ -964,13 +1083,16 @@ pub async fn send_streaming_request_to_observer(
             true,
         )),
     }?;
+    note_boundary_sent(&request);
 
     if !response.status().is_success() {
         let status = response.status();
+        note_boundary_http_failure(&request, status.as_u16());
         let text = response.text().await.unwrap_or_default();
         let message = format_llm_http_error(status, &text);
         let _ = finish_stream_with_error(
             observer,
+            &request,
             request_id,
             message.clone(),
             classified,
@@ -1051,6 +1173,7 @@ pub async fn send_streaming_request_to_observer(
                 if is_abort_requested(request_id) {
                     return Err(finish_stream_with_error(
                         observer,
+                        &request,
                         request_id,
                         "request aborted",
                         classified,
@@ -1071,6 +1194,7 @@ pub async fn send_streaming_request_to_observer(
         if is_abort_requested(request_id) {
             return Err(finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 "request aborted",
                 classified,
@@ -1104,6 +1228,7 @@ pub async fn send_streaming_request_to_observer(
             );
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 format!("Stream read error: {e}"),
                 classified,
@@ -1170,6 +1295,7 @@ pub async fn send_streaming_request_to_observer(
                 Err(err) => {
                     return Err(finish_stream_with_error(
                         observer,
+                        &request,
                         request_id,
                         err.to_string(),
                         classified,
@@ -1185,6 +1311,7 @@ pub async fn send_streaming_request_to_observer(
                 if let Some(delta) = anthropic_state.apply_event_json(&json).map_err(|e| {
                     finish_stream_with_error(
                         observer,
+                        &request,
                         request_id,
                         e.to_string(),
                         classified,
@@ -1305,6 +1432,7 @@ pub async fn send_streaming_request_to_observer(
                         Err(err) => {
                             return Err(finish_stream_with_error(
                                 observer,
+                                &request,
                                 request_id,
                                 err.to_string(),
                                 classified,
@@ -1318,27 +1446,31 @@ pub async fn send_streaming_request_to_observer(
                             &request.provider.name,
                             &full_content,
                         );
-                        return Ok(GatewayResponse {
-                            content: (!content.is_empty()).then_some(content),
-                            tool_calls: vec![],
-                            usage,
-                            finish_reason: "stop".into(),
-                            reasoning_content: if is_minimax {
-                                minimax_reasoning_continuation(
-                                    minimax_reasoning_details,
-                                    full_reasoning,
-                                )
-                            } else {
-                                (!full_reasoning.is_empty()).then_some(full_reasoning)
+                        return Ok(complete_boundary(
+                            &request,
+                            GatewayResponse {
+                                content: (!content.is_empty()).then_some(content),
+                                tool_calls: vec![],
+                                usage,
+                                finish_reason: "stop".into(),
+                                reasoning_content: if is_minimax {
+                                    minimax_reasoning_continuation(
+                                        minimax_reasoning_details,
+                                        full_reasoning,
+                                    )
+                                } else {
+                                    (!full_reasoning.is_empty()).then_some(full_reasoning)
+                                },
+                                continuation: None,
                             },
-                            continuation: None,
-                        });
+                        ));
                     };
                     if endpoint_family == EndpointFamily::AnthropicMessages {
                         if let Some(delta) =
                             anthropic_state.apply_event_json(&json).map_err(|e| {
                                 finish_stream_with_error(
                                     observer,
+                                    &request,
                                     request_id,
                                     e.to_string(),
                                     classified,
@@ -1379,7 +1511,10 @@ pub async fn send_streaming_request_to_observer(
                             observer.observe(&event, token_index)?;
                         }
                         clear_abort(request_id);
-                        return Ok(anthropic_state.into_gateway_response());
+                        return Ok(complete_boundary(
+                            &request,
+                            anthropic_state.into_gateway_response(),
+                        ));
                     }
 
                     if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
@@ -1461,7 +1596,7 @@ pub async fn send_streaming_request_to_observer(
             observer.observe(&event, token_index)?;
         }
         clear_abort(request_id);
-        return Ok(response);
+        return Ok(complete_boundary(&request, response));
     }
 
     // Flush any remaining MiniMax content that is safe to show, and collect
@@ -1513,28 +1648,31 @@ pub async fn send_streaming_request_to_observer(
     }
 
     clear_abort(request_id);
-    Ok(GatewayResponse {
-        content: if full_content.is_empty() {
-            None
-        } else {
-            Some(
-                crate::ai_runtime::text_support::sanitize_provider_visible_content(
-                    &provider_id,
-                    &full_content,
-                ),
-            )
-            .filter(|content| !content.is_empty())
+    Ok(complete_boundary(
+        &request,
+        GatewayResponse {
+            content: if full_content.is_empty() {
+                None
+            } else {
+                Some(
+                    crate::ai_runtime::text_support::sanitize_provider_visible_content(
+                        &provider_id,
+                        &full_content,
+                    ),
+                )
+                .filter(|content| !content.is_empty())
+            },
+            tool_calls,
+            usage,
+            finish_reason: "stop".to_string(),
+            reasoning_content: if is_minimax {
+                minimax_reasoning_continuation(minimax_reasoning_details, full_reasoning)
+            } else {
+                (!full_reasoning.is_empty()).then_some(full_reasoning)
+            },
+            continuation: None,
         },
-        tool_calls,
-        usage,
-        finish_reason: "stop".to_string(),
-        reasoning_content: if is_minimax {
-            minimax_reasoning_continuation(minimax_reasoning_details, full_reasoning)
-        } else {
-            (!full_reasoning.is_empty()).then_some(full_reasoning)
-        },
-        continuation: None,
-    })
+    ))
 }
 
 fn responses_endpoint_url(base_url: &str) -> String {
@@ -1561,6 +1699,7 @@ async fn send_openai_responses_stream(
     let mut body = build_llm_api_body(&request).map_err(|error| {
         finish_stream_with_error(
             observer,
+            &request,
             request_id,
             error.to_string(),
             classified,
@@ -1569,12 +1708,14 @@ async fn send_openai_responses_stream(
             emit_error_event,
         )
     })?;
+    note_boundary_serialized(&request, &body);
     body["stream"] = serde_json::json!(true);
 
     let streaming_client =
         crate::network::cert_pinning::create_streaming_https_client().map_err(|error| {
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 error.to_string(),
                 classified,
@@ -1604,23 +1745,26 @@ async fn send_openai_responses_stream(
     tokio::pin!(abort_wait);
     let response = tokio::select! {
         result = &mut send => result.map_err(|error| finish_stream_with_error(
-            observer, request_id, format!("LLM streaming request failed: {error}"),
+            observer, &request, request_id, format!("LLM streaming request failed: {error}"),
             classified, surface, 0, emit_error_event,
         )),
         _ = &mut first_response_deadline => Err(finish_stream_with_error(
-            observer, request_id, "llm_stream_first_response_timeout",
+            observer, &request, request_id, "llm_stream_first_response_timeout",
             classified, surface, 0, emit_error_event,
         )),
         _ = &mut abort_wait => Err(finish_stream_with_error(
-            observer, request_id, "request aborted", classified, surface, 0, true,
+            observer, &request, request_id, "request aborted", classified, surface, 0, true,
         )),
     }?;
+    note_boundary_sent(&request);
     if !response.status().is_success() {
         let status = response.status();
+        note_boundary_http_failure(&request, status.as_u16());
         let text = response.text().await.unwrap_or_default();
         let message = format_llm_http_error(status, &text);
         let _ = finish_stream_with_error(
             observer,
+            &request,
             request_id,
             message.clone(),
             classified,
@@ -1650,6 +1794,7 @@ async fn send_openai_responses_stream(
                 if is_abort_requested(request_id) {
                     return Err(finish_stream_with_error(
                         observer,
+                        &request,
                         request_id,
                         "request aborted",
                         classified,
@@ -1664,6 +1809,7 @@ async fn send_openai_responses_stream(
         if is_abort_requested(request_id) {
             return Err(finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 "request aborted",
                 classified,
@@ -1675,6 +1821,7 @@ async fn send_openai_responses_stream(
         let chunk = chunk.map_err(|error| {
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 format!("Stream read error: {error}"),
                 classified,
@@ -1701,6 +1848,7 @@ async fn send_openai_responses_stream(
             let Some(json) = tracker.parse_data(request_id, data).map_err(|error| {
                 finish_stream_with_error(
                     observer,
+                    &request,
                     request_id,
                     error.to_string(),
                     classified,
@@ -1716,6 +1864,7 @@ async fn send_openai_responses_stream(
             for delta in state.apply_event_json(&json).map_err(|error| {
                 finish_stream_with_error(
                     observer,
+                    &request,
                     request_id,
                     error.to_string(),
                     classified,
@@ -1759,6 +1908,7 @@ async fn send_openai_responses_stream(
     if !completed {
         return Err(finish_stream_with_error(
             observer,
+            &request,
             request_id,
             "responses_stream_incomplete",
             classified,
@@ -1804,7 +1954,7 @@ async fn send_openai_responses_stream(
         token_index,
     )?;
     clear_abort(request_id);
-    Ok(gateway_response)
+    Ok(complete_boundary(&request, gateway_response))
 }
 
 async fn wait_for_abort_signal(request_id: &str) {

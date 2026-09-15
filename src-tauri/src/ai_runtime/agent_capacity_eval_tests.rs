@@ -1515,6 +1515,7 @@ fn request(provider: ProviderConfig) -> GatewayRequest {
         reasoning: ResolvedReasoningRequest::disabled(),
         continuation: None,
         skip_stub_ids: Vec::new(),
+        boundary: None,
     }
 }
 

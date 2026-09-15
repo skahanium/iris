@@ -246,6 +246,24 @@ impl ModelGateway {
         let url = llm_endpoint_url(&request);
 
         let body = build_llm_api_body(&request)?;
+        if let Some(slot) = &request.boundary {
+            slot.note_generated(
+                &request.messages,
+                u32::try_from(request.tools.len()).unwrap_or(u32::MAX),
+                !request.provider.model.is_empty(),
+            );
+            let family = if uses_openai_responses(&request) {
+                crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiResponses
+            } else {
+                match request.provider.endpoint_family {
+                    EndpointFamily::AnthropicMessages => {
+                        crate::ai_runtime::boundary_events::ProtocolFamily::AnthropicMessages
+                    }
+                    _ => crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiChatCompletions,
+                }
+            };
+            slot.note_serialized(family, &body, &request.messages);
+        }
 
         let mut req_builder = self
             .client
@@ -257,14 +275,31 @@ impl ModelGateway {
                 apply_auth_headers(req_builder, request.provider.endpoint_family, api_key);
         }
 
-        let response = req_builder
-            .json(&body)
-            .send()
-            .await
-            .map_err(AppError::from_reqwest_transport)?;
+        let response = req_builder.json(&body).send().await.map_err(|error| {
+            if let Some(slot) = &request.boundary {
+                slot.note_known_failure("transport");
+            }
+            AppError::from_reqwest_transport(error)
+        })?;
+        if let Some(slot) = &request.boundary {
+            slot.note_request_sent();
+        }
 
         if !response.status().is_success() {
             let status = response.status();
+            if let Some(slot) = &request.boundary {
+                slot.note_provider_returned(
+                    crate::ai_runtime::boundary_events::ProviderReturnStructure {
+                        http_status_class: Some(if status.as_u16() < 500 { "4xx" } else { "5xx" }),
+                        has_content: false,
+                        tool_call_count: 0,
+                        finish_reason_class: Some("error"),
+                    },
+                );
+                slot.note_handshake_end(
+                    crate::ai_runtime::boundary_events::RecordCompleteness::Complete,
+                );
+            }
             let text = response.text().await.unwrap_or_default();
             return Err(AppError::from_llm_http_status(
                 status,
@@ -272,14 +307,46 @@ impl ModelGateway {
             ));
         }
 
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| AppError::msg(format!("Failed to read LLM response body: {}", e)))?;
+        let response_text = response.text().await.map_err(|e| {
+            if let Some(slot) = &request.boundary {
+                slot.note_known_failure("transport");
+            }
+            AppError::msg(format!("Failed to read LLM response body: {}", e))
+        })?;
 
-        let json = parse_gateway_json(&response_text)?;
+        let json = match parse_gateway_json(&response_text) {
+            Ok(json) => json,
+            Err(error) => {
+                if let Some(slot) = &request.boundary {
+                    slot.note_known_failure("protocol");
+                }
+                return Err(error);
+            }
+        };
 
-        Ok(parse_gateway_response(&request, &json))
+        let parsed = parse_gateway_response(&request, &json);
+        if let Some(slot) = &request.boundary {
+            slot.note_provider_returned(
+                crate::ai_runtime::boundary_events::ProviderReturnStructure {
+                    http_status_class: Some("2xx"),
+                    has_content: parsed
+                        .content
+                        .as_deref()
+                        .is_some_and(|content| !content.is_empty()),
+                    tool_call_count: u32::try_from(parsed.tool_calls.len()).unwrap_or(u32::MAX),
+                    finish_reason_class: Some(match parsed.finish_reason.as_str() {
+                        "stop" | "end_turn" => "stop",
+                        "tool_calls" | "tool_use" => "tool_calls",
+                        "length" | "max_tokens" => "length",
+                        _ => "other",
+                    }),
+                },
+            );
+            slot.note_handshake_end(
+                crate::ai_runtime::boundary_events::RecordCompleteness::Complete,
+            );
+        }
+        Ok(parsed)
     }
 
     /// Send a streaming request to a caller-owned observer without Tauri event emission.

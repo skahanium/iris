@@ -84,6 +84,7 @@ fn bench_llm_message_serialization(c: &mut Criterion) {
         reasoning: iris_lib::ai_types::ResolvedReasoningRequest::disabled(),
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     };
 
     c.bench_function("messages_for_api_long_tool_history", |b| {

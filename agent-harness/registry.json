@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 24,
+  "registryRevision": 26,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-15T09:28:29.258Z"
+    "recordedAt": "2026-09-15T11:19:15.321Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -139,7 +139,7 @@
     "contracts/K17-audit-events.md": {
       "container": "K17",
       "registration": "K17#file",
-      "fingerprint": "8966d0e93ff9b34362df1cf2aa0e6933"
+      "fingerprint": "a75bd282fa0e561fb01adf219af21109"
     },
     "contracts/K18-mcp-transport.md": {
       "container": "K18",
@@ -194,7 +194,7 @@
     "implementation/D01-trustworthy-baseline.md": {
       "container": "D01",
       "registration": "D01#file",
-      "fingerprint": "865367213c8af75e372ac3a20b95fd1a"
+      "fingerprint": "64ffd0e1b2fd25265704f83435356e6c"
     },
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
@@ -254,7 +254,7 @@
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05#file",
-      "fingerprint": "131f8380a25a6c68524fba035678ab40"
+      "fingerprint": "84ebe61102585daf696b73f3b8a4c901"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
@@ -274,12 +274,12 @@
     "modules/m09-audit-and-diagnostics.md": {
       "container": "M09",
       "registration": "M09#file",
-      "fingerprint": "ed0130e8981eb0a7233afc0c3a68fdf7"
+      "fingerprint": "b5c31e0e83478ac35f16fcd4e5a779b9"
     },
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "5db5d4899d9187d1eab71aa9413cba4a"
+      "fingerprint": "44924c632306cafa27401470c9e13217"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1332,13 +1332,13 @@
       "title": "C26 安全边界事件",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 13,
       "definition": {
         "file": "modules/m09-audit-and-diagnostics.md",
         "anchor": "C26",
         "line": 157,
         "endLine": 197,
-        "fingerprint": "5a9fb259b370b2e83106ca01b01aa6fc"
+        "fingerprint": "d5e50095a5bce274340e96a5017210e3"
       },
       "implementation": {
         "state": "partial"
@@ -1956,13 +1956,13 @@
       "title": "出站结构诊断与完整关联",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G04",
         "line": 52,
         "endLine": 62,
-        "fingerprint": "0a6457af5632366867f508ca3f78b599"
+        "fingerprint": "1362e6e5d66985ada9877add1a564e1b"
       },
       "implementation": {
         "state": "unknown"
@@ -2595,13 +2595,13 @@
       "title": "L01 对话与修订链路",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "flows/L01-conversation-and-revision.md",
         "anchor": "L01",
         "line": 11,
         "endLine": 100,
-        "fingerprint": "f9f57857906651cee63289a9e61bb28b"
+        "fingerprint": "5dd146b8554224e3e1c4ec1ed7dbb5d7"
       },
       "implementation": {
         "state": "unknown"
@@ -4080,13 +4080,13 @@
       "title": "诊断关联不完整",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q09",
         "line": 135,
         "endLine": 144,
-        "fingerprint": "57996658a8f5396480973e8bee4fca3e"
+        "fingerprint": "6704c93678519facb35d5d8348a3794f"
       },
       "implementation": {
         "state": "unknown"
@@ -4372,13 +4372,13 @@
       "title": "缺少出站请求的安全结构证据",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
         "line": 234,
         "endLine": 243,
-        "fingerprint": "b001de0bd62f6c0f02d817bcbe873e30"
+        "fingerprint": "c9e840cad7fd78e678dac515b8c58f4a"
       },
       "implementation": {
         "state": "unknown"
@@ -5949,13 +5949,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 14,
+      "revision": 16,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 75,
-        "fingerprint": "54f311535d8d7da715b2dee43347216a"
+        "endLine": 79,
+        "fingerprint": "ba5764e435210f60396413cfaf87d879"
       },
       "implementation": {
         "state": "unknown"
@@ -6103,8 +6103,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 77,
-        "endLine": 99,
+        "line": 81,
+        "endLine": 103,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": {
@@ -6273,6 +6273,28 @@
       "at": "2026-09-15T09:30:00Z",
       "applicability": "current",
       "note": "registryRevision 24：机械负例覆盖 scoringSchema 进入身份且 summary schema 为 v3。历史 v1.2.15 仍为旧口径。不证明语义质量，也不把 E03 verification 标为通过。"
+    },
+    {
+      "object": "C26",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/boundary_events.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib boundary_events",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "d5e50095a5bce274340e96a5017210e3",
+      "at": "2026-09-15T11:40:00Z",
+      "applicability": "current",
+      "note": "registryRevision 26：机械负例覆盖出站见证不含正文或密钥、缺握手结束不得成功、已知取消不得标 missing_end、循环恢复事件不被挤掉、四层记录可分。不证明 C27 视图或 V07 演练，也不把 C26/D01/G04 verification 标为通过。"
+    },
+    {
+      "object": "V02",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/boundary_events.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib known_abort_is_recorded_complete_not_missing_end",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "ba5764e435210f60396413cfaf87d879",
+      "at": "2026-09-15T11:40:00Z",
+      "applicability": "current",
+      "note": "registryRevision 26：为 C26 四条不变量补了对应测试名。不把 V02 verification 标为通过。"
     }
   ],
   "changes": [
@@ -18132,6 +18154,82 @@
           "revisionTo": 14,
           "fingerprintFrom": "a574edf21e8aa275eedb2515da574fb6",
           "fingerprintTo": "54f311535d8d7da715b2dee43347216a"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-15-17",
+      "at": "2026-09-15T11:00:27.023Z",
+      "author": "skahanium",
+      "classification": "refinement",
+      "reason": "C26 记录路径落地后同步源码事实，不关闭 G04/Q18/Q09",
+      "review": null,
+      "objects": [
+        {
+          "id": "C26",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "5a9fb259b370b2e83106ca01b01aa6fc",
+          "fingerprintTo": "304cde1bebc0d970c112e4d3e9c8f072"
+        },
+        {
+          "id": "L01",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "f9f57857906651cee63289a9e61bb28b",
+          "fingerprintTo": "5dd146b8554224e3e1c4ec1ed7dbb5d7"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 14,
+          "revisionTo": 15,
+          "fingerprintFrom": "54f311535d8d7da715b2dee43347216a",
+          "fingerprintTo": "82c171cd8f421165fa24f66a6089eed4"
+        },
+        {
+          "id": "Q09",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "57996658a8f5396480973e8bee4fca3e",
+          "fingerprintTo": "6704c93678519facb35d5d8348a3794f"
+        },
+        {
+          "id": "Q18",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "b001de0bd62f6c0f02d817bcbe873e30",
+          "fingerprintTo": "c9e840cad7fd78e678dac515b8c58f4a"
+        },
+        {
+          "id": "G04",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "0a6457af5632366867f508ca3f78b599",
+          "fingerprintTo": "1362e6e5d66985ada9877add1a564e1b"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-15-18",
+      "at": "2026-09-15T11:19:15.321Z",
+      "author": "skahanium",
+      "classification": "refinement",
+      "reason": "C26 self-review: known abort is handshake_end not missing_end",
+      "review": null,
+      "objects": [
+        {
+          "id": "C26",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "304cde1bebc0d970c112e4d3e9c8f072",
+          "fingerprintTo": "d5e50095a5bce274340e96a5017210e3"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "82c171cd8f421165fa24f66a6089eed4",
+          "fingerprintTo": "ba5764e435210f60396413cfaf87d879"
         }
       ]
     }

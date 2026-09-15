@@ -196,6 +196,7 @@ fn ordinary_openai_compatible_tool_continuation_never_replays_reasoning_content(
         },
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     });
 
     assert!(body["messages"][0].get("reasoning_content").is_none());
@@ -247,6 +248,7 @@ fn mimo_tool_turn_disables_thinking_and_replays_same_provider_reasoning_content(
         },
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     });
 
     assert_eq!(body["thinking"]["type"], "disabled");
@@ -301,6 +303,7 @@ fn deepseek_tool_continuation_preserves_reasoning_content_and_provider_control()
         },
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     });
     assert_eq!(
         body["messages"][0]["reasoning_content"],
@@ -356,6 +359,7 @@ fn minimax_m3_tool_continuation_preserves_reasoning_details_and_uses_native_cont
         },
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     });
 
     assert_eq!(body["thinking"]["type"], "adaptive");
@@ -387,6 +391,7 @@ fn minimax_response_keeps_private_reasoning_details_out_of_visible_content() {
         reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     };
     let response = super::parse_gateway_response(
         &request,
@@ -434,6 +439,7 @@ fn minimax_content_embedded_tool_calls_are_parsed_and_hidden_from_visible_conten
         reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     };
     let response = super::parse_gateway_response(
         &request,

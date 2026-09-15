@@ -1604,6 +1604,36 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn record_tool_loop_diagnostic(&self, event: serde_json::Value) {
+        let parent_run_id = crate::ai_runtime::agent_tool_loop::parent_run_id_for_provider_scope(
+            &self.accepted.run_id,
+        );
+        let child_run_id = self.child_event_scope.clone();
+        let correlation = crate::ai_runtime::boundary_events::BoundaryCorrelation {
+            run_id: parent_run_id.to_string(),
+            input_revision: self.accepted.turn_id.clone(),
+            parent_run_id: child_run_id.as_ref().map(|_| parent_run_id.to_string()),
+            child_run_id,
+            model_turn: event
+                .get("modelTurns")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or(0),
+            call_id: event
+                .get("tool")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("loop")
+                .to_string(),
+            attempt_id: "loop".into(),
+            tool_surface_version: crate::ai_runtime::boundary_events::tool_surface_version(
+                self.allowed_tool_names.iter(),
+            ),
+            protocol_adapter: "tool_loop".into(),
+        };
+        let _ = crate::ai_runtime::boundary_events::record_loop_event(
+            &self.state.db,
+            &correlation,
+            &event,
+        );
         if self.subagent_depth != 0 {
             return;
         }
