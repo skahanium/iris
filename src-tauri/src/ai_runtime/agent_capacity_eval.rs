@@ -14,10 +14,10 @@ use tool_class::evaluation_local_read_tool_names;
 mod verdict;
 #[cfg(test)]
 pub(crate) use contract::{
-    AnswerObservation, CaseManifest, CheckStatus, CitationObservation, EvidenceGroup,
-    FactSupportObservation, ImplicitVaultExpectation, ObservedSource, RequiredFact, RequiredSource,
-    SafetyViolation, SourceKind, VerdictReason, WebAnswerContamination, WebQueryBoundary,
-    WebSearchPolicy, WebState, ONLINE_WEB_DEGRADATION_DISCLOSURE,
+    AnswerObservation, CaseManifest, CheckStatus, CitationExpectation, CitationObservation,
+    EvidenceGroup, FactSupportObservation, ImplicitVaultExpectation, ObservedSource, RequiredFact,
+    RequiredSource, SafetyViolation, SourceKind, VerdictReason, WebAnswerContamination,
+    WebQueryBoundary, WebSearchPolicy, WebState, ONLINE_WEB_DEGRADATION_DISCLOSURE,
 };
 #[cfg(test)]
 pub(crate) use telemetry::EvalRunMode;
@@ -1279,6 +1279,60 @@ fn exact_bool(value: Option<&serde_json::Value>) -> Result<bool, EvalContractErr
         .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))
 }
 
+fn optional_quality_bps(
+    quality: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Option<u64>, EvalContractError> {
+    match quality.get(key) {
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => bounded_u64(Some(value), 10_000).map(Some),
+        None => Err(EvalContractError::new("evaluation_summary_shape_invalid")),
+    }
+}
+
+fn validate_quality_ratio(
+    quality: &serde_json::Map<String, serde_json::Value>,
+    bps_key: &str,
+    numerator_key: &str,
+    denominator_key: &str,
+    gate_key: Option<&str>,
+    threshold: u64,
+) -> Result<(), EvalContractError> {
+    let bps = optional_quality_bps(quality, bps_key)?;
+    bounded_u64(quality.get(numerator_key), 1_000_000)?;
+    let denominator = bounded_u64(quality.get(denominator_key), 1_000_000)?;
+    if denominator == 0 {
+        if bps.is_some() {
+            return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+        }
+        if let Some(gate_key) = gate_key {
+            if quality.get(gate_key) != Some(&serde_json::Value::Bool(false)) {
+                return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+            }
+        }
+        return Ok(());
+    }
+    let bps = bps.ok_or_else(|| EvalContractError::new("evaluation_summary_value_invalid"))?;
+    if let Some(gate_key) = gate_key {
+        let gate = exact_bool(quality.get(gate_key))?;
+        if gate != (bps >= threshold) {
+            return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_quality_f1(
+    quality: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), EvalContractError> {
+    optional_quality_bps(quality, "factF1Bps")?;
+    bounded_u64(quality.get("factF1Numerator"), 1_000_000)?;
+    if bounded_u64(quality.get("factF1Denominator"), 1_000_000)? != 0 {
+        return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+    }
+    Ok(())
+}
+
 fn validate_group_counts(
     value: Option<&serde_json::Value>,
     case_count: u64,
@@ -1503,29 +1557,69 @@ fn validate_capacity_scorecard(value: Option<&serde_json::Value>) -> Result<(), 
             .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
         &[
             "factPrecisionBps",
+            "factPrecisionNumerator",
+            "factPrecisionDenominator",
             "factRecallBps",
+            "factRecallNumerator",
+            "factRecallDenominator",
             "factF1Bps",
+            "factF1Numerator",
+            "factF1Denominator",
             "requiredSourceRecallBps",
+            "requiredSourceRecallNumerator",
+            "requiredSourceRecallDenominator",
             "citationSupportBps",
+            "citationSupportNumerator",
+            "citationSupportDenominator",
             "constraintAdherenceBps",
+            "constraintAdherenceNumerator",
+            "constraintAdherenceDenominator",
             "factRecallGate",
             "citationSupportGate",
             "constraintAdherenceGate",
         ],
     )?;
-    for key in [
+    validate_quality_ratio(
+        quality,
         "factPrecisionBps",
+        "factPrecisionNumerator",
+        "factPrecisionDenominator",
+        None,
+        0,
+    )?;
+    validate_quality_ratio(
+        quality,
         "factRecallBps",
-        "factF1Bps",
+        "factRecallNumerator",
+        "factRecallDenominator",
+        Some("factRecallGate"),
+        9_000,
+    )?;
+    validate_quality_f1(quality)?;
+    validate_quality_ratio(
+        quality,
         "requiredSourceRecallBps",
+        "requiredSourceRecallNumerator",
+        "requiredSourceRecallDenominator",
+        None,
+        0,
+    )?;
+    validate_quality_ratio(
+        quality,
         "citationSupportBps",
+        "citationSupportNumerator",
+        "citationSupportDenominator",
+        Some("citationSupportGate"),
+        9_500,
+    )?;
+    validate_quality_ratio(
+        quality,
         "constraintAdherenceBps",
-    ] {
-        bounded_u64(quality.get(key), 10_000)?;
-    }
-    exact_bool(quality.get("factRecallGate"))?;
-    exact_bool(quality.get("citationSupportGate"))?;
-    exact_bool(quality.get("constraintAdherenceGate"))?;
+        "constraintAdherenceNumerator",
+        "constraintAdherenceDenominator",
+        Some("constraintAdherenceGate"),
+        9_500,
+    )?;
     let performance = exact_object(
         object
             .get("performance")

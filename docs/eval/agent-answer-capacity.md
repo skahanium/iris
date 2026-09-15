@@ -51,7 +51,13 @@ v1.2.15 的确定性结果属于 `headless_deterministic`。确定性矩阵使�
 
 - `hardAdmission`：授权违规、Offline Web 泄漏、高风险无依据主张（零容忍）；
 - `quality`：事实 Precision/Recall/F1、全部必需来源召回、引用支持、约束遵循，
-  以及 90%/95%/95% 门槛布尔位（以 basis points 存储）；
+  以及 90%/95%/95% 门槛布尔位（以 basis points 存储）。整组样本汇总后，某维
+  分母为 0 时该维 `*Bps` 为 JSON `null`（未覆盖），对应 `*Gate` 必须为 `false`，
+  不得当作质量证据放行；分母大于 0 时 `*Bps` 为 0–10000，门槛不变（召回 90%、
+  引用/约束 95%）。报告同时给出各维 `*Numerator` / `*Denominator`。F1 没有独立
+  计数分母：Precision 或 Recall 任一未覆盖则 `factF1Bps` 为 `null`。新生成的
+  确定性报告使用 `schemaVersion` `agent-capacity-report-v2`；冻结的
+  `docs/eval/results/v1.2.15-agent-capacity.json` 仍为 v1 旧口径，不得回写。
 - `performance`：模型耗时与 TTFT 的 p50/p95、轮数与工具调用计数；
 - `faultRecovery`：降级、约束失败与截断计数。
 

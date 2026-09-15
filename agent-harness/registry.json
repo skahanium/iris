@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 22,
+  "registryRevision": 23,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-15T07:42:40.870Z"
+    "recordedAt": "2026-09-15T08:54:51.846Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -229,7 +229,7 @@
     "modules/eval-system.md": {
       "container": "FILE-EVAL-SYSTEM",
       "registration": "FILE-EVAL-SYSTEM#file",
-      "fingerprint": "6fdc6fa53de6b6752e95e7bf786d46fb"
+      "fingerprint": "a2360aa571fc7d32f1417e060cad71c8"
     },
     "modules/m01-session-and-run.md": {
       "container": "M01",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "004b9f8b2d9ca58c9b5fa60ef0861847"
+      "fingerprint": "e84dfc2334aa35e8089dbf3f76206b7c"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1746,13 +1746,13 @@
       "title": "E03 评分与校准",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/eval-system.md",
         "anchor": "E03",
         "line": 114,
         "endLine": 154,
-        "fingerprint": "0a04e4e99c2c6856e86a0ea2d34fd8d0"
+        "fingerprint": "e7059b148ccc64395fae8b52213a279e"
       },
       "implementation": {
         "state": "partial"
@@ -3707,8 +3707,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 255,
-        "endLine": 268,
+        "line": 256,
+        "endLine": 269,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": {
@@ -3884,13 +3884,13 @@
       "title": "评测空分母被记为满分",
       "owner": "E03",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q03",
         "line": 68,
-        "endLine": 77,
-        "fingerprint": "95d414df1eef8a36bf00c68cfaedbaf4"
+        "endLine": 78,
+        "fingerprint": "4529e0f687301d751d596d8c204e647f"
       },
       "implementation": {
         "state": "unknown"
@@ -3924,8 +3924,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q04",
-        "line": 79,
-        "endLine": 88,
+        "line": 80,
+        "endLine": 89,
         "fingerprint": "6fb3315525dddd0766de0c9e64067958"
       },
       "implementation": {
@@ -3956,8 +3956,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q05",
-        "line": 90,
-        "endLine": 99,
+        "line": 91,
+        "endLine": 100,
         "fingerprint": "a5da417706fc9b514dab65dbcc0a8223"
       },
       "implementation": {
@@ -3988,8 +3988,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q06",
-        "line": 101,
-        "endLine": 110,
+        "line": 102,
+        "endLine": 111,
         "fingerprint": "cc701424e395c94c887aab555656a2f8"
       },
       "implementation": {
@@ -4020,8 +4020,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q07",
-        "line": 112,
-        "endLine": 121,
+        "line": 113,
+        "endLine": 122,
         "fingerprint": "b5520ca814a1c858c44ab7cde7906f9b"
       },
       "implementation": {
@@ -4052,8 +4052,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q08",
-        "line": 123,
-        "endLine": 132,
+        "line": 124,
+        "endLine": 133,
         "fingerprint": "96cd6a36e82f49c1cd20d656df887851"
       },
       "implementation": {
@@ -4084,8 +4084,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q09",
-        "line": 134,
-        "endLine": 143,
+        "line": 135,
+        "endLine": 144,
         "fingerprint": "57996658a8f5396480973e8bee4fca3e"
       },
       "implementation": {
@@ -4116,8 +4116,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q10",
-        "line": 145,
-        "endLine": 154,
+        "line": 146,
+        "endLine": 155,
         "fingerprint": "b7509a7f335ff8a10a09baa4b7257c7c"
       },
       "implementation": {
@@ -4148,8 +4148,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q11",
-        "line": 156,
-        "endLine": 165,
+        "line": 157,
+        "endLine": 166,
         "fingerprint": "76f601fcae343c394fc2059f7721f81b"
       },
       "implementation": {
@@ -4184,8 +4184,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q12",
-        "line": 167,
-        "endLine": 176,
+        "line": 168,
+        "endLine": 177,
         "fingerprint": "f94ce35a946871fd3b442d2961c96f32"
       },
       "implementation": {
@@ -4216,8 +4216,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
-        "line": 178,
-        "endLine": 187,
+        "line": 179,
+        "endLine": 188,
         "fingerprint": "d616c25c613e433cce26324da8e6c1f4"
       },
       "implementation": {
@@ -4248,8 +4248,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
-        "line": 189,
-        "endLine": 198,
+        "line": 190,
+        "endLine": 199,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": {
@@ -4280,8 +4280,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 200,
-        "endLine": 209,
+        "line": 201,
+        "endLine": 210,
         "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
       "implementation": {
@@ -4312,8 +4312,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 211,
-        "endLine": 220,
+        "line": 212,
+        "endLine": 221,
         "fingerprint": "44e2c0b7263f747b8836de0478fa8f7c"
       },
       "implementation": {
@@ -4344,8 +4344,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 222,
-        "endLine": 231,
+        "line": 223,
+        "endLine": 232,
         "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
       "implementation": {
@@ -4376,8 +4376,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 233,
-        "endLine": 242,
+        "line": 234,
+        "endLine": 243,
         "fingerprint": "b001de0bd62f6c0f02d817bcbe873e30"
       },
       "implementation": {
@@ -4408,8 +4408,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 244,
-        "endLine": 253,
+        "line": 245,
+        "endLine": 254,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": {
@@ -5949,13 +5949,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 73,
-        "fingerprint": "aa27361e22a3139689c849a94d1b3823"
+        "fingerprint": "a574edf21e8aa275eedb2515da574fb6"
       },
       "implementation": {
         "state": "unknown"
@@ -18032,6 +18032,37 @@
           "fingerprintTo": "968d91c3d0251a4f3b76199b1e2d00dd"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-15-15",
+      "at": "2026-09-15T08:54:51.846Z",
+      "author": "skahanium",
+      "classification": "refinement",
+      "reason": "记录 Q03 空分母未覆盖口径并关闭该问题",
+      "review": null,
+      "objects": [
+        {
+          "id": "E03",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "0a04e4e99c2c6856e86a0ea2d34fd8d0",
+          "fingerprintTo": "e7059b148ccc64395fae8b52213a279e"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "aa27361e22a3139689c849a94d1b3823",
+          "fingerprintTo": "a574edf21e8aa275eedb2515da574fb6"
+        },
+        {
+          "id": "Q03",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "95d414df1eef8a36bf00c68cfaedbaf4",
+          "fingerprintTo": "4529e0f687301d751d596d8c204e647f"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18082,7 +18113,7 @@
       "state": "open"
     },
     "Q03": {
-      "state": "open"
+      "state": "closed"
     },
     "Q04": {
       "state": "open"

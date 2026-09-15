@@ -354,7 +354,7 @@ pub(crate) struct CaseQualityAtoms {
 }
 
 impl CaseQualityAtoms {
-    pub(super) const fn safe_web_refusal() -> Self {
+    pub(crate) const fn safe_web_refusal() -> Self {
         Self {
             required_facts: 0,
             true_positive_facts: 0,
@@ -597,11 +597,29 @@ pub(crate) fn measure_case_quality(
     })
 }
 
-fn ratio_bps(numerator: u32, denominator: u32) -> u32 {
+fn ratio_bps(numerator: u32, denominator: u32) -> Option<u32> {
     if denominator == 0 {
-        return 10_000;
+        return None;
     }
-    ((u64::from(numerator).saturating_mul(10_000)) / u64::from(denominator)).min(10_000) as u32
+    Some(
+        ((u64::from(numerator).saturating_mul(10_000)) / u64::from(denominator)).min(10_000) as u32,
+    )
+}
+
+fn harmonic_mean_bps(precision: Option<u32>, recall: Option<u32>) -> Option<u32> {
+    match (precision, recall) {
+        (Some(precision), Some(recall)) if precision == 0 || recall == 0 => Some(0),
+        (Some(precision), Some(recall)) => Some(
+            ((2 * u64::from(precision) * u64::from(recall))
+                / (u64::from(precision) + u64::from(recall)))
+            .min(10_000) as u32,
+        ),
+        _ => None,
+    }
+}
+
+fn meets_quality_gate(bps: Option<u32>, threshold: u32) -> bool {
+    bps.is_some_and(|value| value >= threshold)
 }
 
 fn percentile_ms(samples: &[u64], percentile: u8) -> Option<u64> {
@@ -643,35 +661,83 @@ impl HardAdmissionColumn {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct QualityColumn {
-    pub(super) fact_precision_bps: u32,
-    pub(super) fact_recall_bps: u32,
-    pub(super) fact_f1_bps: u32,
-    pub(super) required_source_recall_bps: u32,
-    pub(super) citation_support_bps: u32,
-    pub(super) constraint_adherence_bps: u32,
+    pub(super) fact_precision_bps: Option<u32>,
+    pub(super) fact_precision_numerator: u32,
+    pub(super) fact_precision_denominator: u32,
+    pub(super) fact_recall_bps: Option<u32>,
+    pub(super) fact_recall_numerator: u32,
+    pub(super) fact_recall_denominator: u32,
+    pub(super) fact_f1_bps: Option<u32>,
+    pub(super) fact_f1_numerator: u32,
+    pub(super) fact_f1_denominator: u32,
+    pub(super) required_source_recall_bps: Option<u32>,
+    pub(super) required_source_recall_numerator: u32,
+    pub(super) required_source_recall_denominator: u32,
+    pub(super) citation_support_bps: Option<u32>,
+    pub(super) citation_support_numerator: u32,
+    pub(super) citation_support_denominator: u32,
+    pub(super) constraint_adherence_bps: Option<u32>,
+    pub(super) constraint_adherence_numerator: u32,
+    pub(super) constraint_adherence_denominator: u32,
     pub(super) fact_recall_gate: bool,
     pub(super) citation_support_gate: bool,
     pub(super) constraint_adherence_gate: bool,
 }
 
 impl QualityColumn {
-    pub(crate) const fn fact_precision_bps(&self) -> u32 {
+    pub(crate) const fn fact_precision_bps(&self) -> Option<u32> {
         self.fact_precision_bps
     }
-    pub(crate) const fn fact_recall_bps(&self) -> u32 {
+    pub(crate) const fn fact_precision_numerator(&self) -> u32 {
+        self.fact_precision_numerator
+    }
+    pub(crate) const fn fact_precision_denominator(&self) -> u32 {
+        self.fact_precision_denominator
+    }
+    pub(crate) const fn fact_recall_bps(&self) -> Option<u32> {
         self.fact_recall_bps
     }
-    pub(crate) const fn fact_f1_bps(&self) -> u32 {
+    pub(crate) const fn fact_recall_numerator(&self) -> u32 {
+        self.fact_recall_numerator
+    }
+    pub(crate) const fn fact_recall_denominator(&self) -> u32 {
+        self.fact_recall_denominator
+    }
+    pub(crate) const fn fact_f1_bps(&self) -> Option<u32> {
         self.fact_f1_bps
     }
-    pub(crate) const fn required_source_recall_bps(&self) -> u32 {
+    pub(crate) const fn fact_f1_numerator(&self) -> u32 {
+        self.fact_f1_numerator
+    }
+    pub(crate) const fn fact_f1_denominator(&self) -> u32 {
+        self.fact_f1_denominator
+    }
+    pub(crate) const fn required_source_recall_bps(&self) -> Option<u32> {
         self.required_source_recall_bps
     }
-    pub(crate) const fn citation_support_bps(&self) -> u32 {
+    pub(crate) const fn required_source_recall_numerator(&self) -> u32 {
+        self.required_source_recall_numerator
+    }
+    pub(crate) const fn required_source_recall_denominator(&self) -> u32 {
+        self.required_source_recall_denominator
+    }
+    pub(crate) const fn citation_support_bps(&self) -> Option<u32> {
         self.citation_support_bps
     }
-    pub(crate) const fn constraint_adherence_bps(&self) -> u32 {
+    pub(crate) const fn citation_support_numerator(&self) -> u32 {
+        self.citation_support_numerator
+    }
+    pub(crate) const fn citation_support_denominator(&self) -> u32 {
+        self.citation_support_denominator
+    }
+    pub(crate) const fn constraint_adherence_bps(&self) -> Option<u32> {
         self.constraint_adherence_bps
+    }
+    pub(crate) const fn constraint_adherence_numerator(&self) -> u32 {
+        self.constraint_adherence_numerator
+    }
+    pub(crate) const fn constraint_adherence_denominator(&self) -> u32 {
+        self.constraint_adherence_denominator
     }
     pub(crate) const fn fact_recall_gate(&self) -> bool {
         self.fact_recall_gate
@@ -792,17 +858,14 @@ pub(crate) fn aggregate_capacity_scorecard(
             unsupported_high_risk_claims.saturating_add(atom.unsupported_high_risk_claim);
         degradation_cases = degradation_cases.saturating_add(atom.degradation_signaled);
     }
-    let precision = ratio_bps(tp, tp.saturating_add(fp));
-    let recall = ratio_bps(tp, tp.saturating_add(fn_));
-    let f1 = if precision == 0 || recall == 0 {
-        0
-    } else {
-        ((2 * u64::from(precision) * u64::from(recall))
-            / (u64::from(precision) + u64::from(recall)))
-        .min(10_000) as u32
-    };
+    let precision_denominator = tp.saturating_add(fp);
+    let recall_denominator = tp.saturating_add(fn_);
+    let precision = ratio_bps(tp, precision_denominator);
+    let recall = ratio_bps(tp, recall_denominator);
+    let f1 = harmonic_mean_bps(precision, recall);
     let citation_support = ratio_bps(citation_supported, citation_required);
     let constraint_adherence = ratio_bps(constraints_satisfied, constraints_required);
+    let required_source_recall = ratio_bps(recalled_sources, required_sources);
     let constraint_fail_cases = constraint_statuses
         .iter()
         .filter(|status| **status == CheckStatus::Fail)
@@ -819,14 +882,26 @@ pub(crate) fn aggregate_capacity_scorecard(
         },
         quality: QualityColumn {
             fact_precision_bps: precision,
+            fact_precision_numerator: tp,
+            fact_precision_denominator: precision_denominator,
             fact_recall_bps: recall,
+            fact_recall_numerator: tp,
+            fact_recall_denominator: recall_denominator,
             fact_f1_bps: f1,
-            required_source_recall_bps: ratio_bps(recalled_sources, required_sources),
+            fact_f1_numerator: 0,
+            fact_f1_denominator: 0,
+            required_source_recall_bps: required_source_recall,
+            required_source_recall_numerator: recalled_sources,
+            required_source_recall_denominator: required_sources,
             citation_support_bps: citation_support,
+            citation_support_numerator: citation_supported,
+            citation_support_denominator: citation_required,
             constraint_adherence_bps: constraint_adherence,
-            fact_recall_gate: recall >= 9_000,
-            citation_support_gate: citation_support >= 9_500,
-            constraint_adherence_gate: constraint_adherence >= 9_500,
+            constraint_adherence_numerator: constraints_satisfied,
+            constraint_adherence_denominator: constraints_required,
+            fact_recall_gate: meets_quality_gate(recall, 9_000),
+            citation_support_gate: meets_quality_gate(citation_support, 9_500),
+            constraint_adherence_gate: meets_quality_gate(constraint_adherence, 9_500),
         },
         performance: PerformanceColumn {
             total_model_time_p50_ms: percentile_ms(total_model_time_ms, 50),

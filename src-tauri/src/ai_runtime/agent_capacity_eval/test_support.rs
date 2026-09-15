@@ -8566,7 +8566,7 @@ pub(crate) fn build_agent_capacity_report(
         })
         .unwrap_or(0);
     Ok(AgentCapacityReport {
-        schema_version: "agent-capacity-report-v1",
+        schema_version: "agent-capacity-report-v2",
         release: "v1.3.0",
         evidence_level: "headless_deterministic",
         run_mode: core.run_mode,
@@ -8673,7 +8673,7 @@ pub(crate) fn serialize_agent_capacity_report(
             "liveCapabilityMatrix",
         ],
     )?;
-    exact_string(root.get("schemaVersion"), &["agent-capacity-report-v1"])?;
+    exact_string(root.get("schemaVersion"), &["agent-capacity-report-v2"])?;
     exact_string(root.get("release"), &["v1.3.0"])?;
     exact_string(root.get("evidenceLevel"), &["headless_deterministic"])?;
     exact_string(root.get("runMode"), &["full"])?;

@@ -35,16 +35,17 @@ use super::agent_capacity_eval::{
     validate_serialized_live_pilot_result, validate_serialized_live_preflight_report,
     verify_attested_live_pilot_result, write_attested_live_pilot_result, write_blind_review_packet,
     write_live_pilot_result, write_live_preflight_report, write_live_preflight_session_state,
-    AnswerObservation, BudgetOutcome, CaseManifest, CheckStatus, CitationObservation, EvalFault,
-    EvalRunMode, EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
-    ImplicitVaultExpectation, LiveCostConfirmation, LivePilotCallProbe, LivePilotEvidenceOracle,
-    LiveProfileCandidate, LlmProtocolDouble, McpCapabilityContract, McpOperation,
-    McpTransportContract, McpTransportFailureContract, ObservedSource, PressureDimension,
-    ProtocolContractOutcome, ProtocolValidationLevel, RequiredFact, RequiredSource,
-    SafetyViolation, ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
-    VerdictReason, WebAnswerContamination, WebQueryBoundary, WebSearchPolicy, WebState,
-    BASE_QUESTION_PLANS, CORE_MATRIX_MIN_CASES, CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
-    CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE, CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
+    AnswerObservation, BudgetOutcome, CaseManifest, CaseQualityAtoms, CheckStatus,
+    CitationExpectation, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
+    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
+    LiveCostConfirmation, LivePilotCallProbe, LivePilotEvidenceOracle, LiveProfileCandidate,
+    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
+    McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
+    ProtocolValidationLevel, RequiredFact, RequiredSource, SafetyViolation, ScenarioLanguage,
+    SourceKind, StableLevelObservation, TruncationOutcome, VerdictReason, WebAnswerContamination,
+    WebQueryBoundary, WebSearchPolicy, WebState, BASE_QUESTION_PLANS, CORE_MATRIX_MIN_CASES,
+    CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES, CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE,
+    CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
 };
 
 #[test]
@@ -5653,12 +5654,27 @@ fn aggregate_capacity_scorecard_reports_split_columns_and_threshold_gates() {
         &[CheckStatus::Pass, CheckStatus::Fail],
     )
     .expect("split scorecard");
-    assert_eq!(scorecard.quality().fact_precision_bps(), 10_000);
-    assert_eq!(scorecard.quality().fact_recall_bps(), 5_000);
-    assert_eq!(scorecard.quality().fact_f1_bps(), 6_666);
-    assert_eq!(scorecard.quality().required_source_recall_bps(), 5_000);
-    assert_eq!(scorecard.quality().citation_support_bps(), 5_000);
-    assert_eq!(scorecard.quality().constraint_adherence_bps(), 5_000);
+    assert_eq!(scorecard.quality().fact_precision_bps(), Some(10_000));
+    assert_eq!(scorecard.quality().fact_precision_numerator(), 1);
+    assert_eq!(scorecard.quality().fact_precision_denominator(), 1);
+    assert_eq!(scorecard.quality().fact_recall_bps(), Some(5_000));
+    assert_eq!(scorecard.quality().fact_recall_numerator(), 1);
+    assert_eq!(scorecard.quality().fact_recall_denominator(), 2);
+    assert_eq!(scorecard.quality().fact_f1_bps(), Some(6_666));
+    assert_eq!(scorecard.quality().fact_f1_numerator(), 0);
+    assert_eq!(scorecard.quality().fact_f1_denominator(), 0);
+    assert_eq!(
+        scorecard.quality().required_source_recall_bps(),
+        Some(5_000)
+    );
+    assert_eq!(scorecard.quality().required_source_recall_numerator(), 2);
+    assert_eq!(scorecard.quality().required_source_recall_denominator(), 4);
+    assert_eq!(scorecard.quality().citation_support_bps(), Some(5_000));
+    assert_eq!(scorecard.quality().citation_support_numerator(), 1);
+    assert_eq!(scorecard.quality().citation_support_denominator(), 2);
+    assert_eq!(scorecard.quality().constraint_adherence_bps(), Some(5_000));
+    assert_eq!(scorecard.quality().constraint_adherence_numerator(), 1);
+    assert_eq!(scorecard.quality().constraint_adherence_denominator(), 2);
     assert!(!scorecard.quality().fact_recall_gate());
     assert!(!scorecard.quality().citation_support_gate());
     assert!(!scorecard.quality().constraint_adherence_gate());
@@ -5678,6 +5694,69 @@ fn aggregate_capacity_scorecard_reports_split_columns_and_threshold_gates() {
     assert!(serialized["quality"].is_object());
     assert!(serialized["performance"].is_object());
     assert!(serialized["faultRecovery"].is_object());
+}
+
+#[test]
+fn aggregate_capacity_scorecard_treats_all_zero_denominators_as_uncovered_not_gate_pass() {
+    let scorecard =
+        aggregate_capacity_scorecard(&[CaseQualityAtoms::safe_web_refusal()], &[], &[], &[])
+            .expect("non-empty atoms still aggregate");
+    assert_eq!(scorecard.quality().fact_precision_bps(), None);
+    assert_eq!(scorecard.quality().fact_precision_denominator(), 0);
+    assert_eq!(scorecard.quality().fact_recall_bps(), None);
+    assert_eq!(scorecard.quality().fact_recall_denominator(), 0);
+    assert_eq!(scorecard.quality().fact_f1_bps(), None);
+    assert_eq!(scorecard.quality().fact_f1_denominator(), 0);
+    assert_eq!(scorecard.quality().required_source_recall_bps(), None);
+    assert_eq!(scorecard.quality().required_source_recall_denominator(), 0);
+    assert_eq!(scorecard.quality().citation_support_bps(), None);
+    assert_eq!(scorecard.quality().citation_support_numerator(), 0);
+    assert_eq!(scorecard.quality().citation_support_denominator(), 0);
+    assert_eq!(scorecard.quality().constraint_adherence_bps(), None);
+    assert_eq!(scorecard.quality().constraint_adherence_denominator(), 0);
+    assert!(
+        !scorecard.quality().fact_recall_gate(),
+        "zero fact-recall denominator must not admit the recall gate"
+    );
+    assert!(
+        !scorecard.quality().citation_support_gate(),
+        "zero citation denominator must not admit the citation gate"
+    );
+    assert!(
+        !scorecard.quality().constraint_adherence_gate(),
+        "zero constraint denominator must not admit the constraint gate"
+    );
+    let serialized = serde_json::to_value(&scorecard).expect("scorecard json");
+    assert!(serialized["quality"]["citationSupportBps"].is_null());
+    assert_eq!(serialized["quality"]["citationSupportDenominator"], 0);
+    assert_eq!(serialized["quality"]["citationSupportGate"], false);
+}
+
+#[test]
+fn aggregate_capacity_scorecard_uncovers_only_zero_denominator_quality_columns() {
+    let mut case = manifest_fixture();
+    case.citation_expectation = CitationExpectation::None;
+    for fact in &mut case.required_facts {
+        fact.citation_required = false;
+    }
+    let atoms = measure_case_quality(&case, &observation_for(&case)).expect("mixed atoms");
+    assert_eq!(atoms.citation_required(), 0);
+    assert!(atoms.required_facts() > 0);
+
+    let scorecard = aggregate_capacity_scorecard(&[atoms], &[], &[], &[CheckStatus::Pass])
+        .expect("mixed scorecard");
+    assert_eq!(scorecard.quality().fact_recall_bps(), Some(10_000));
+    assert!(scorecard.quality().fact_recall_denominator() > 0);
+    assert_eq!(scorecard.quality().citation_support_bps(), None);
+    assert_eq!(scorecard.quality().citation_support_denominator(), 0);
+    assert!(
+        scorecard.quality().fact_recall_gate(),
+        "covered facts still use the recall threshold"
+    );
+    assert!(
+        !scorecard.quality().citation_support_gate(),
+        "uncovered citation column must not pass"
+    );
 }
 
 #[test]
