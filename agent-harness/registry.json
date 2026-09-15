@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 19,
+  "registryRevision": 20,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-15T05:46:28.451Z"
+    "recordedAt": "2026-09-15T07:14:11.842Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -54,472 +54,472 @@
     "README.md": {
       "container": "P01",
       "registration": "P01#file",
-      "fingerprint": "353e422bd27b43e48b8e238f5a4ce23c"
+      "fingerprint": "e11ac546e5dde015dd701d7023971332"
     },
     "contracts/K01-request-identity.md": {
       "container": "K01",
       "registration": "K01#file",
-      "fingerprint": "f3110043ad995acd8ee9d99dd3a72042"
+      "fingerprint": "9b133c2ec2e8c663b4b2d94cd10ffdd4"
     },
     "contracts/K02-run-lifecycle.md": {
       "container": "K02",
       "registration": "K02#file",
-      "fingerprint": "58bdfdf79190b1ca413ef0c964c5adf8"
+      "fingerprint": "ab6eab052fd129c6657f776aa326a0b5"
     },
     "contracts/K03-instruction-revision.md": {
       "container": "K03",
       "registration": "K03#file",
-      "fingerprint": "e3ed3cec7a907808d59fb2151c835591"
+      "fingerprint": "3c61d8b59f813f6628ca8804bb56949d"
     },
     "contracts/K04-provider-capability.md": {
       "container": "K04",
       "registration": "K04#file",
-      "fingerprint": "815e79de0fb9d3382a7bdfd171786d36"
+      "fingerprint": "475295e2ad08fc0ce4110ef08dd0b9bb"
     },
     "contracts/K05-authorization-and-confirmation.md": {
       "container": "K05",
       "registration": "K05#file",
-      "fingerprint": "0d5be5cb2a0e634c18b4747068944c57"
+      "fingerprint": "586dbf02c24e8bccc53e793d42587a31"
     },
     "contracts/K06-budget-ledger.md": {
       "container": "K06",
       "registration": "K06#file",
-      "fingerprint": "a0fabf2ccaf18d3eb16ba7ff0704dfbb"
+      "fingerprint": "1dd8d897cd164f2d6cc58826f73c3110"
     },
     "contracts/K07-context-assembly.md": {
       "container": "K07",
       "registration": "K07#file",
-      "fingerprint": "d296d0483e610e2d13deedf8ceac6a3f"
+      "fingerprint": "f6cfef1f54f9489c0301e3095d6049be"
     },
     "contracts/K08-compaction-and-memory.md": {
       "container": "K08",
       "registration": "K08#file",
-      "fingerprint": "cef96b2a968ed5ace8bf4712d8db7013"
+      "fingerprint": "4efc098556787703d88a28fe9d6fc067"
     },
     "contracts/K09-web-authorization.md": {
       "container": "K09",
       "registration": "K09#file",
-      "fingerprint": "9c08fce5937d5a940a716abd103dc5d4"
+      "fingerprint": "d978b4ba137095c1e2216e680f680ac4"
     },
     "contracts/K10-tool-surface.md": {
       "container": "K10",
       "registration": "K10#file",
-      "fingerprint": "c3e2ae8b38f3cffd7283f966ead36d97"
+      "fingerprint": "765155f242dbfc11d793a364284d8e82"
     },
     "contracts/K11-dual-path-search.md": {
       "container": "K11",
       "registration": "K11#file",
-      "fingerprint": "4fe58a477494503356a81b0035f2f353"
+      "fingerprint": "dcf2fa682c95f1b847831e33c7436eb9"
     },
     "contracts/K12-native-search-subrequest.md": {
       "container": "K12",
       "registration": "K12#file",
-      "fingerprint": "1fa9b4c3001da66ab818c3e264dc4aa3"
+      "fingerprint": "596e18a0a3f3747628b0d54a37d22899"
     },
     "contracts/K13-web-reading-window.md": {
       "container": "K13",
       "registration": "K13#file",
-      "fingerprint": "5b2939fe3ad58fec5790dd0ee95cef85"
+      "fingerprint": "3689896f9880d1e6c1815d71981c8be1"
     },
     "contracts/K14-evidence-and-provenance.md": {
       "container": "K14",
       "registration": "K14#file",
-      "fingerprint": "16b858be578d6b1e44b6f838ac0d24ce"
+      "fingerprint": "dc7609d64f7e4c59feae4465c542bc22"
     },
     "contracts/K15-delivery-result.md": {
       "container": "K15",
       "registration": "K15#file",
-      "fingerprint": "f0a471afa73d0088a1bc0b661041dda3"
+      "fingerprint": "bc62ebef4443f500c11a6407e02f86fa"
     },
     "contracts/K16-verification-report.md": {
       "container": "K16",
       "registration": "K16#file",
-      "fingerprint": "ad1ce0179286373dbee6193a98876551"
+      "fingerprint": "e2587b8d5d6f952fcc1c8a0eb052e4cc"
     },
     "contracts/K17-audit-events.md": {
       "container": "K17",
       "registration": "K17#file",
-      "fingerprint": "757fc7ea29a7904ed3b90ee4fb4ce46d"
+      "fingerprint": "8966d0e93ff9b34362df1cf2aa0e6933"
     },
     "contracts/K18-mcp-transport.md": {
       "container": "K18",
       "registration": "K18#file",
-      "fingerprint": "6bdbf080eff8abd3300244fc27297d8c"
+      "fingerprint": "9b3e3fe62ef2ffc5c10658f19a7e3c4d"
     },
     "contracts/README.md": {
       "container": "README-CONTRACTS",
       "registration": "README-CONTRACTS#file",
-      "fingerprint": "1a7861b845db4839d834e98f5731d0d0"
+      "fingerprint": "3dea6be6441957fd310ded9c1210f73f"
     },
     "decisions/README.md": {
       "container": "FILE-DECISIONS",
       "registration": "FILE-DECISIONS#file",
-      "fingerprint": "7d4709239b3b2e13d5647c0e216fec1a"
+      "fingerprint": "e8862cbb4563bc89e9b347535e726bec"
     },
     "flows/L01-conversation-and-revision.md": {
       "container": "L01",
       "registration": "L01#file",
-      "fingerprint": "16e25604c13e02d7ec4176b34ab37e73"
+      "fingerprint": "741237eca32dc81a8ae4537454da7f80"
     },
     "flows/L02-web-retrieval.md": {
       "container": "L02",
       "registration": "L02#file",
-      "fingerprint": "909023b6284df3cd72530213621091d4"
+      "fingerprint": "8bba7228e0e43ea3c1be6f50a9a4658e"
     },
     "flows/L03-editing-and-application.md": {
       "container": "L03",
       "registration": "L03#file",
-      "fingerprint": "8a47eeb79ad8b6f36a9522038a434fc5"
+      "fingerprint": "46281429c9e468de3244da750095e6cc"
     },
     "flows/L04-format-preservation.md": {
       "container": "L04",
       "registration": "L04#file",
-      "fingerprint": "8a642c50e69f122e460f74634fb80e36"
+      "fingerprint": "a5f76f0efe305fd633128beb15233633"
     },
     "flows/L05-context-and-memory.md": {
       "container": "L05",
       "registration": "L05#file",
-      "fingerprint": "e53f979253ffa0436ebbec76a9eebc22"
+      "fingerprint": "05ae8431fd851b9deb72edde40e3115a"
     },
     "flows/L06-delegation.md": {
       "container": "L06",
       "registration": "L06#file",
-      "fingerprint": "ce4681eaeff183f57a5c6f97dad9e228"
+      "fingerprint": "a437c33e7787e48219ecaa591d35ac1a"
     },
     "flows/README.md": {
       "container": "README-FLOWS",
       "registration": "README-FLOWS#file",
-      "fingerprint": "763fdb929bdc3b8cd07b779b3ce38b04"
+      "fingerprint": "3dae4938c46cf413cf1d23fbcf6b7ddf"
     },
     "implementation/D01-trustworthy-baseline.md": {
       "container": "D01",
       "registration": "D01#file",
-      "fingerprint": "7eae160996d737aa8372f72b973adb84"
+      "fingerprint": "865367213c8af75e372ac3a20b95fd1a"
     },
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "44027aae75d4697b5763e1efcf560c10"
+      "fingerprint": "c575af39b32c12f267abc1c4b1886e79"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
       "registration": "D03#file",
-      "fingerprint": "9f1faa4555f42f616a248563ffc5b67a"
+      "fingerprint": "1a9e3b1ed748266ae531c6471ced891b"
     },
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "47bedb7441a268072efa4ea0cd0e4fd9"
+      "fingerprint": "95c3abd423ad343897a89995ecf69715"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "ed130faa373101e37ee926ac5250dbe8"
+      "fingerprint": "bcb1eec66fe043a4da387172d1763069"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
       "registration": "FILE-IMPLEMENTATION#file",
-      "fingerprint": "4217207327332bb252a68b125ace00c9"
+      "fingerprint": "b5366f463f1ba06acfd19f6bab7e77fd"
     },
     "modules/README.md": {
       "container": "README-MODULES",
       "registration": "README-MODULES#file",
-      "fingerprint": "f737b6922d7d81c7345f631d6ce679f0"
+      "fingerprint": "71f2fcbf9d9ac1a626a8325e10a6011a"
     },
     "modules/eval-system.md": {
       "container": "FILE-EVAL-SYSTEM",
       "registration": "FILE-EVAL-SYSTEM#file",
-      "fingerprint": "46068eb251079c64cf1789f00d23e53c"
+      "fingerprint": "6fdc6fa53de6b6752e95e7bf786d46fb"
     },
     "modules/m01-session-and-run.md": {
       "container": "M01",
       "registration": "M01#file",
-      "fingerprint": "86a42d66926dad2fdf89f2b0660ea529"
+      "fingerprint": "5a64c2adba7617ea0b10c693566a81ff"
     },
     "modules/m02-permission-and-side-effects.md": {
       "container": "M02",
       "registration": "M02#file",
-      "fingerprint": "d63244fc4885dfbb46e6c467b5205155"
+      "fingerprint": "2c91d0526ad1158d371b37261833850c"
     },
     "modules/m03-context-and-memory.md": {
       "container": "M03",
       "registration": "M03#file",
-      "fingerprint": "753a126df5dcfc75e4c13fb07d87636e"
+      "fingerprint": "003bbfe2c953c1b5ad2b5648e485c292"
     },
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04#file",
-      "fingerprint": "581e7283b22084fe23be8ccb02690f46"
+      "fingerprint": "f8a0262b689e89fda64f6c73cbf25c58"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05#file",
-      "fingerprint": "18886842fad36c2446c13c46436bcbf8"
+      "fingerprint": "131f8380a25a6c68524fba035678ab40"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
       "registration": "M06#file",
-      "fingerprint": "cc6f5cfb575d30aae58c6c05356aee61"
+      "fingerprint": "492358361eb4d7b22fbecf051a980d54"
     },
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
       "registration": "M07#file",
-      "fingerprint": "dd2bf149e6e87ad32eef5273be999945"
+      "fingerprint": "727a127cbfbdd083117e865cf5f02057"
     },
     "modules/m08-verification-and-delivery.md": {
       "container": "M08",
       "registration": "M08#file",
-      "fingerprint": "ecc6abd514a5e9ece56583b2e04721ca"
+      "fingerprint": "89b0d203979686d7a973829dfc056d16"
     },
     "modules/m09-audit-and-diagnostics.md": {
       "container": "M09",
       "registration": "M09#file",
-      "fingerprint": "78f2bac56d5204078a092f80931d56d0"
+      "fingerprint": "ed0130e8981eb0a7233afc0c3a68fdf7"
     },
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "ce24dcc8e1164217cabfe08b3345708f"
+      "fingerprint": "6b944743f1ca41a96ca57184796c7975"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
       "registration": "P04#file",
-      "fingerprint": "cbd097b4ee83ef633e312732fd820fb3"
+      "fingerprint": "c56e438075c706f33f3e0c5f831cc093"
     },
     "requirements/open-items.md": {
       "container": "P05",
       "registration": "P05#file",
-      "fingerprint": "e3ed45ddd0603ed7ad9ec9a3f431f02d"
+      "fingerprint": "b8cc54b27f6c1a760daaf2cbf621c178"
     },
     "requirements/requirements.md": {
       "container": "P06",
       "registration": "P06#file",
-      "fingerprint": "5a4c415578278cf8afb5cdf5de9170a5"
+      "fingerprint": "d817c7278f3406327ebd6a2e7f6f2eb9"
     },
     "rules/governance.md": {
       "container": "P03",
       "registration": "P03#file",
-      "fingerprint": "3bf3e8306589f4dc09ff76f424be34de"
+      "fingerprint": "a3b11b2f0b6d4eb51c6cbc24bf79f220"
     },
     "rules/objects.md": {
       "container": "P02",
       "registration": "P02#file",
-      "fingerprint": "458a79c0109c508fdeb5bd81e695120c"
+      "fingerprint": "cf36c5405fdb7211e0e69dd9a49f1430"
     },
     "testing/acceptance-matrix.md": {
       "container": "V03",
       "registration": "V03#file",
-      "fingerprint": "7b2cdf2cfcef95872991134521855846"
+      "fingerprint": "6bc71569647e814da0d0a101b3b5d392"
     },
     "testing/evidence.md": {
       "container": "V01",
       "registration": "V01#file",
-      "fingerprint": "ec4562bec271b23a32e8c5ac03952698"
+      "fingerprint": "b06cfe85745fc25b2a589da72f508da0"
     },
     "tests/legacy-batch-plan.md": {
       "container": "D06",
       "registration": "D06#file",
-      "fingerprint": "bf524b8a014264b0443479688056ee50"
+      "fingerprint": "c002f3d64923a5d117c745f308893898"
     },
     "tools/README.md": {
       "container": "README-TOOLS",
       "registration": "README-TOOLS#file",
-      "fingerprint": "1a19de58a33b5a657ef3abad1d2d8316"
+      "fingerprint": "b0280b9eb3585167d1fd8d2c6d1776c5"
     },
     "tools/app_context_read.md": {
       "container": "T02",
       "registration": "T02#file",
-      "fingerprint": "7457c35ec630204519ae5ee6d7a4a29e"
+      "fingerprint": "4fd3e84222eb24d0d915a1555fd9d466"
     },
     "tools/capabilities_read.md": {
       "container": "T03",
       "registration": "T03#file",
-      "fingerprint": "699a9b821bcef21cbe904cf4e0313d84"
+      "fingerprint": "377e343d2abe2ec9504a42e3327b4176"
     },
     "tools/doc_extract_citations.md": {
       "container": "T26",
       "registration": "T26#file",
-      "fingerprint": "16f686fd8fadb6af7787cf96b79ca1cc"
+      "fingerprint": "04b3025dcfb59d48a963e72318d46267"
     },
     "tools/doc_normalize_markdown.md": {
       "container": "T25",
       "registration": "T25#file",
-      "fingerprint": "9b9f3c08604f396dc155bb03e03b1f9a"
+      "fingerprint": "32cfa73b5010ec73001c118809f79290"
     },
     "tools/fs_export.md": {
       "container": "T22",
       "registration": "T22#file",
-      "fingerprint": "daad6c3b497acd1d969e952fd4479602"
+      "fingerprint": "82ccc7494e9bb94a07f8562678a9cc49"
     },
     "tools/fs_import_to_vault.md": {
       "container": "T21",
       "registration": "T21#file",
-      "fingerprint": "739e6f23c5cc85643ebf46381d900c0b"
+      "fingerprint": "682ffab51b8815c263a71a9c86c7b3ad"
     },
     "tools/fs_read_authorized_folder.md": {
       "container": "T23",
       "registration": "T23#file",
-      "fingerprint": "9ecf015c4e7934770e1fab5ef2d6b62f"
+      "fingerprint": "6422e862b1b0c708ea91e5810c61d9c1"
     },
     "tools/fs_write_authorized_export.md": {
       "container": "T24",
       "registration": "T24#file",
-      "fingerprint": "7323de35ff8b9909a27154092c53c7e4"
+      "fingerprint": "9bd44e34e6cc543c30ae444e904c0948"
     },
     "tools/get_backlinks.md": {
       "container": "T09",
       "registration": "T09#file",
-      "fingerprint": "ac1e03bf642fc78673d20bf444a46fd7"
+      "fingerprint": "524d770b7f6ca72ec5367bcf5528a842"
     },
     "tools/get_context_packets.md": {
       "container": "T10",
       "registration": "T10#file",
-      "fingerprint": "29331e78d3a56087c30e4638d0b05798"
+      "fingerprint": "ed73653eaa1f3b50cdadd1754fa56b47"
     },
     "tools/get_outline.md": {
       "container": "T08",
       "registration": "T08#file",
-      "fingerprint": "cfa8d8b5c9f2d41555f80cb9e3ebbae8"
+      "fingerprint": "09131bd433bb59168081c7506cb1853e"
     },
     "tools/get_regulation.md": {
       "container": "T30",
       "registration": "T30#file",
-      "fingerprint": "2368d13e0db23f5d6fd3e1d03529cc4e"
+      "fingerprint": "aed6b1504ad4ccd899abdbf21cc9afd3"
     },
     "tools/git_read_diff.md": {
       "container": "T18",
       "registration": "T18#file",
-      "fingerprint": "aa66d1809266b0cd05f2ac000b9c06a5"
+      "fingerprint": "7fa7a72e39dc579214222bfad3849176"
     },
     "tools/git_read_log.md": {
       "container": "T19",
       "registration": "T19#file",
-      "fingerprint": "183bd6cd131ad52746f57e593fde428a"
+      "fingerprint": "28c820c530f3c08038a3f6676037ab30"
     },
     "tools/git_read_status.md": {
       "container": "T17",
       "registration": "T17#file",
-      "fingerprint": "f309db74501fd9f8d422c578b3dfa489"
+      "fingerprint": "3fe23fa13c9c9eb5c83ee799e77700cb"
     },
     "tools/git_write_commit.md": {
       "container": "T27",
       "registration": "T27#file",
-      "fingerprint": "588dc19ea1bd92b6d0f34ea934d0de08"
+      "fingerprint": "3f35fb50ed599fda5b99987b5922c24f"
     },
     "tools/insert_text_at_cursor.md": {
       "container": "T15",
       "registration": "T15#file",
-      "fingerprint": "81e92953209f0ee60c15a0d4bc71b1e1"
+      "fingerprint": "6588407ea5f7c9a5b37b908f8e87d6ae"
     },
     "tools/list_vault.md": {
       "container": "T07",
       "registration": "T07#file",
-      "fingerprint": "5d45e945c0eeab7adeca8bd91fdd4214"
+      "fingerprint": "3097d107679e67651bd918e843f2f0a0"
     },
     "tools/memory_read.md": {
       "container": "T13",
       "registration": "T13#file",
-      "fingerprint": "9e21b0d72c7bb351829da7e2aa5544df"
+      "fingerprint": "afd9328c8295e5a1bfc2e2e740a11d8e"
     },
     "tools/memory_write.md": {
       "container": "T14",
       "registration": "T14#file",
-      "fingerprint": "607f200d5e2c196145032b669601746d"
+      "fingerprint": "f88590475de1dd1899a115fe5de012aa"
     },
     "tools/read_note.md": {
       "container": "T06",
       "registration": "T06#file",
-      "fingerprint": "6ebf1c527efa54f4b44203f288dbced8"
+      "fingerprint": "e03139a7e32b497f6a2b4ed833f3070d"
     },
     "tools/replace_selection.md": {
       "container": "T16",
       "registration": "T16#file",
-      "fingerprint": "4018d420edc849ae406bcf1f93921e46"
+      "fingerprint": "56084ecc6f4a14c1ba1cd58662d815ae"
     },
     "tools/scheduled_task_create.md": {
       "container": "T32",
       "registration": "T32#file",
-      "fingerprint": "c6d94b4a3880a9f6583941f6f78168f5"
+      "fingerprint": "f00e9aedaef9d2f28d53edc51f32f606"
     },
     "tools/scheduled_task_delete.md": {
       "container": "T34",
       "registration": "T34#file",
-      "fingerprint": "7c8d4f17ecfb10efbad9e7ddc0cd06f1"
+      "fingerprint": "913bf070d379a0787e578f3ed1d6be06"
     },
     "tools/scheduled_task_list.md": {
       "container": "T33",
       "registration": "T33#file",
-      "fingerprint": "82895f20b17b39267876c24ac39202d3"
+      "fingerprint": "d54bdea43ac91cc9d8aba99cb37b08dd"
     },
     "tools/search_hybrid.md": {
       "container": "T05",
       "registration": "T05#file",
-      "fingerprint": "a2cd9d17f3e294791f4f50d4d0eb665c"
+      "fingerprint": "89b0e6a580eb62aed49b593794f2d4e7"
     },
     "tools/search_keyword.md": {
       "container": "T29",
       "registration": "T29#file",
-      "fingerprint": "32bb70bf044f29f13a89a15beead1630"
+      "fingerprint": "f00139781eb2e99e765add815d033d64"
     },
     "tools/search_semantic.md": {
       "container": "T28",
       "registration": "T28#file",
-      "fingerprint": "5f860fc38da502504f78aa9afc7c8de0"
+      "fingerprint": "5d91b7d4738b85e338232fbd2dd75bc7"
     },
     "tools/secret_exists.md": {
       "container": "T20",
       "registration": "T20#file",
-      "fingerprint": "70d1ed9fa09e7a91e50e6c8400356e1e"
+      "fingerprint": "178b58103656eaa9cb348f889eb7fde7"
     },
     "tools/skills_list.md": {
       "container": "T04",
       "registration": "T04#file",
-      "fingerprint": "880a79f16ccca38b1a3665189f747371"
+      "fingerprint": "fa7a6e482dd4d316793e75d4932e875c"
     },
     "tools/spawn_subagent.md": {
       "container": "T31",
       "registration": "T31#file",
-      "fingerprint": "0c6177a011a7d7a635950a68a6e67b3e"
+      "fingerprint": "859c4b9f3499fa92279e432113192239"
     },
     "tools/system_time_now.md": {
       "container": "T01",
       "registration": "T01#file",
-      "fingerprint": "ec564b24872c0b13ee14e38491645ada"
+      "fingerprint": "8fedd563fffbe633fca4056cda540723"
     },
     "tools/vault_asset_write.md": {
       "container": "T38",
       "registration": "T38#file",
-      "fingerprint": "61b290c299300785e92e6419d96b148d"
+      "fingerprint": "fda18f0709e198ef83651a0b6610bacb"
     },
     "tools/vault_create_note.md": {
       "container": "T35",
       "registration": "T35#file",
-      "fingerprint": "2fdac5d243bd2f7d4fe61c85aa97172c"
+      "fingerprint": "eb48efce0ed52ef6b2c284b0d68b4681"
     },
     "tools/vault_delete_to_trash.md": {
       "container": "T37",
       "registration": "T37#file",
-      "fingerprint": "03681892cde2c35991c21c5a3fde08fe"
+      "fingerprint": "18d0e60afab654fe77aad56ac779cf68"
     },
     "tools/vault_rename_move.md": {
       "container": "T36",
       "registration": "T36#file",
-      "fingerprint": "b3c119d75c25d679a7be63a0c00d2ed2"
+      "fingerprint": "bea15b3a979ccdf23e702dcb7de85150"
     },
     "tools/vault_version_list.md": {
       "container": "T39",
       "registration": "T39#file",
-      "fingerprint": "47e24da343a82b6009834a2490bdce0d"
+      "fingerprint": "14c6dc7c9b589fb4794f72953635bf1b"
     },
     "tools/web_fetch.md": {
       "container": "T12",
       "registration": "T12#file",
-      "fingerprint": "d8291b506d9b5d9ab6e895d09e519091"
+      "fingerprint": "6f9ddf761b02e02e20467169cf234c61"
     },
     "tools/web_search.md": {
       "container": "T11",
       "registration": "T11#file",
-      "fingerprint": "3cecf54116f487584c464de10811711a"
+      "fingerprint": "c0e11a308115b6d64c35e5b0fdcf7f0b"
     }
   },
   "objects": {
@@ -6223,22 +6223,22 @@
       "kind": "V03",
       "testPath": "scripts/agent-harness-check.mjs",
       "command": "npm run agent-harness:check",
-      "environment": "local / macOS / node v26.0.0",
+      "environment": "local / Windows 10 / node v24.14.1",
       "fingerprint": "3a736d3f7570d16eacfa10524a5b7b6d",
-      "at": "2026-09-15T05:44:40Z",
+      "at": "2026-09-15T07:15:30Z",
       "applicability": "current",
-      "note": "结构、指纹、关系、就绪、复核、证据、归档、索引八组检查在本仓库全量通过（格式化后按当前定义指纹重新绑定）"
+      "note": "registryRevision 20：Prettier 重排 Markdown 表格后重新绑定文件级指纹；本机 npm run agent-harness:check 退出码 0。不沿用 macOS / node v26.0.0 的旧环境声明。"
     },
     {
       "object": "X02",
       "kind": "V03",
       "testPath": "scripts/agent-harness-check.test.mjs",
       "command": "npm run agent-harness:test",
-      "environment": "local / macOS / node v26.0.0",
+      "environment": "local / Windows 10 / node v24.14.1",
       "fingerprint": "cfb6f82088b19ab07f69de70663bfe01",
-      "at": "2026-09-15T05:44:40Z",
+      "at": "2026-09-15T07:15:30Z",
       "applicability": "current",
-      "note": "15 条负例全部通过：未登记对象、标记未闭合、跨文件重复、定义缺失、对象移动、外围正文传播、只有登记不能施工、必备要素缺失、阻断不解封、架构变更缺复核、历史通过过期、注册表损坏、文件缺失、关系成环（格式化后按当前定义指纹重新绑定）"
+      "note": "本机 npm run agent-harness:test：15 条负例全部通过（exit 0）。不声称覆盖 document.md §5 的全部检查器测试清单。"
     }
   ],
   "changes": [
@@ -16816,6 +16816,6 @@
     "revision > 1 且 changes 中同一批 187 个对象全部变化，是建立期指纹比对缺陷（比较字段层级不一致）造成的假变化，不是 187 次真实修订；该缺陷已修复，此后无内容变化时 reconcile 不再产生变更记录。",
     "verify[] 是本仓库当前可复现的证据记录；其 fingerprint 对应各对象在本文件中的定义指纹。",
     "建立期的 changes 批次把登记、容器方案、对象补充与格式化合并为批量写入并统一标为 refinement；其中的治理性改变单独登记为 CHG-2026-09-15-GOV1 并由 REV-2026-09-15-GOV1 复核。此后每次变化必须单独分类。",
-    "本文件最后一次写入：2026-09-15T05:46:20Z。"
+    "本文件最后一次写入：2026-09-15T07:15:30Z。registryRevision 20 只接受 Prettier 引起的文件级指纹变化，未产生新的对象变更记录；verify[] 已改为本机可复现的环境与结论。"
   ]
 }
