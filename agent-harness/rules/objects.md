@@ -19,7 +19,7 @@
 
 | 前缀 | 种类             | 编号范围    | 数量 | 权威定义位置                                     |
 | ---- | ---------------- | ----------- | ---: | ------------------------------------------------ |
-| `N`  | 需求条目         | `N01`–`N20` |   20 | `requirements/requirements.md`                   |
+| `N`  | 需求条目         | `N01`–`N23` |   23 | `requirements/requirements.md`                   |
 | `M`  | 运行时模块       | `M01`–`M09` |    9 | `modules/`                                       |
 | `C`  | 运行时组件       | `C01`–`C27` |   27 | `modules/`（所属模块文件内）                     |
 | `E`  | 评测系统组件     | `E01`–`E03` |    3 | `modules/eval-system.md`                         |
@@ -28,11 +28,11 @@
 | `L`  | 链路（交接顺序） | `L01`–`L06` |    6 | `flows/`                                         |
 | `V`  | 证据与验收判据   | `V01`–`V08` |    8 | `testing/`                                       |
 | `D`  | 依赖单元与工作包 | `D01`–`D06` |    6 | `implementation/`、`tests/`                      |
-| `R`  | 决定记录         | `R01`–`R10` |   10 | `decisions/`                                     |
+| `R`  | 决定记录         | `R01`–`R11` |   11 | `decisions/`                                     |
 | `P`  | 体系规则         | `P01`–`P07` |    7 | `README.md`、`rules/`、`requirements/`、`tools/` |
 | `X`  | 检查器与其测试   | `X01`–`X03` |    3 | `scripts/`、`tests/`、`registry.json`            |
 | `Q`  | 未决问题         | `Q01`–`Q19` |   19 | `requirements/current-baseline.md`               |
-| `G`  | 缺口             | `G01`–`G05` |    5 | `requirements/open-items.md`                     |
+| `G`  | 缺口             | `G01`–`G06` |    6 | `requirements/open-items.md`                     |
 
 前缀表是**封闭清单**：新增前缀须先修改本文件并按治理变更复核。检查器遇到未知前缀直接失败，不静默忽略。
 

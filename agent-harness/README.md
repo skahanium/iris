@@ -23,7 +23,7 @@
 | 区域                               | 职责                                                                                                                                                       |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 入口与维护规则                     | 本文件（阅读路径、体系总览）与 [`rules/`](./rules/governance.md)（权威、状态、复核、变更、归档规则）                                                       |
-| `requirements/`                    | [需求条目 N01–N20](./requirements/requirements.md)、[当前基线与未决问题 Q\*](./requirements/current-baseline.md)、[缺口 G\*](./requirements/open-items.md) |
+| `requirements/`                    | [需求条目 N01–N23](./requirements/requirements.md)、[当前基线与未决问题 Q\*](./requirements/current-baseline.md)、[缺口 G\*](./requirements/open-items.md) |
 | `modules/`                         | 9 份模块规范，逐项展开 [`C01`–`C27`](./modules/README.md)；另有[评测系统 E01–E03](./modules/eval-system.md)                                                |
 | `contracts/`                       | 共享接口、状态转换、不变量及异常合同（[`K01`–`K18`](./contracts/README.md)）                                                                               |
 | `tools/`                           | [39 个业务工具的独立卡片](./tools/README.md)，以及协议入口、Planned 与外部 MCP 的区别                                                                      |
@@ -49,11 +49,11 @@
 | 链路         | `L01`–`L06` |    6 | `flows/`                                    |
 | 证据与判据   | `V01`–`V08` |    8 | `testing/`                                  |
 | 工作包       | `D01`–`D06` |    6 | `implementation/`、`tests/`                 |
-| 决定记录     | `R01`–`R10` |   10 | `decisions/`                                |
+| 决定记录     | `R01`–`R11` |   11 | `decisions/`                                |
 | 规则         | `P01`–`P07` |    7 | 本文件、`rules/`、`requirements/`、`tools/` |
 | 检查器与测试 | `X01`–`X03` |    3 | `scripts/`、`tests/`、`registry.json`       |
 | 未决问题     | `Q01`–`Q19` |   19 | `requirements/current-baseline.md`          |
-| 缺口         | `G01`–`G05` |    5 | `requirements/open-items.md`                |
+| 缺口         | `G01`–`G06` |    6 | `requirements/open-items.md`                |
 
 计数规则与 ID 分配见 [rules/objects.md](./rules/objects.md) §1。**计数不代表成熟度**：`M*`、`C*`、`T*` 当前多为 `draft`（已有正式定义、仍在修订），`draft` 不能支持施工依赖。
 

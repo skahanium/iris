@@ -339,7 +339,7 @@ export const objects = {
     owner: "P06",
     maturity: "defined",
     definition: { file: "requirements/requirements.md", anchor: "P06" },
-    note: "N01–N20 需求身份；工作包作用域引用的来源",
+    note: "N01–N23 需求身份；工作包作用域引用的来源",
   },
 
   P07: {
@@ -1214,13 +1214,16 @@ export const objects = {
       "N16",
       "N17",
       "N20",
+      "N21",
       "Q04",
       "Q10",
       "Q13",
       "Q16",
       "G05",
+      "G06",
     ],
     depends_on: ["D01", "K04", "K06", "K10", "K15", "K16"],
+    closes: ["Q04", "Q10", "G06"],
   },
   D03: {
     kind: "work",
@@ -1233,7 +1236,18 @@ export const objects = {
       anchor: "D03",
     },
     work: { state: "planned" },
-    scope: ["N05", "N12", "N13", "N14", "Q02", "Q08", "Q15", "G01", "G05"],
+    scope: [
+      "N05",
+      "N12",
+      "N13",
+      "N14",
+      "N22",
+      "Q02",
+      "Q08",
+      "Q15",
+      "G01",
+      "G05",
+    ],
     depends_on: ["D01", "K01", "K03", "K05", "K07", "K08"],
     closes: ["Q08", "G05"],
   },
@@ -1276,7 +1290,7 @@ export const objects = {
       anchor: "D05",
     },
     work: { state: "planned" },
-    scope: ["N02", "N03", "N04", "N11", "Q14"],
+    scope: ["N02", "N03", "N04", "N11", "N23", "Q14"],
     depends_on: ["D02", "D03", "K05", "K15", "K16", "L03", "L04"],
   },
   D06: {
@@ -1291,7 +1305,7 @@ export const objects = {
     depends_on: ["D04", "D05", "V06", "E03"],
   },
 
-  // ── R01–R10 决定记录 ───────────────────────────────────────
+  // ── R01–R11 决定记录 ───────────────────────────────────────
   R01: {
     kind: "decision",
     name: "adopt-architecture-definition",
@@ -1372,8 +1386,16 @@ export const objects = {
     maturity: "defined",
     definition: { file: "decisions/README.md", anchor: "R10" },
   },
+  R11: {
+    kind: "decision",
+    name: "constraint-layers-model-owns-next-action",
+    title: "R11 约束分不变量／信封／配方，模型拥有下一步",
+    owner: "M05",
+    maturity: "defined",
+    definition: { file: "decisions/README.md", anchor: "R11" },
+  },
 
-  // ── Q01–Q19 / G01–G05 未决问题与缺口 ──────────────────────
+  // ── Q01–Q19 / G01–G06 未决问题与缺口 ──────────────────────
   Q01: {
     kind: "issue",
     title: "历史未知工具提议无法事后唯一归因",
@@ -1566,6 +1588,14 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G05" },
     blocks: blocks("acceptance", ["D03"]),
+  },
+  G06: {
+    kind: "issue",
+    title: "Host 用配方当第二规划器",
+    owner: "M05",
+    maturity: "draft",
+    definition: { file: "requirements/open-items.md", anchor: "G06" },
+    blocks: blocks("acceptance", ["D02"]),
   },
 
   // ── X01–X03 检查器与基础设施 ──────────────────────────────
@@ -1782,7 +1812,7 @@ const toolContracts = {
 };
 
 /**
- * 需求对象 N01–N20（见 requirements/requirements.md）。
+ * 需求对象 N01–N23（见 requirements/requirements.md）。
  * 需求是「要求」而不是实现：它们被实现对象 implements／被测试 verifies，
  * 工作包用 scope 引用它们证明自己有需求依据。
  */
@@ -1807,6 +1837,18 @@ const requirementPlacement = {
   N18: { title: "审计覆盖模块、组件、工具与模型行为并可定位", owner: "M09" },
   N19: { title: "免费工具与自付费服务并存", owner: "M06" },
   N20: { title: "MiniMax／DeepSeek 为主模型并兼顾国产模型", owner: "M04" },
+  N21: {
+    title: "观察后信封允许时模型仍可再提议；多步是语义不是清单",
+    owner: "M05",
+  },
+  N22: {
+    title: "普通研究 Run 不承诺进程续跑；仅 Durable 有检查点",
+    owner: "M01",
+  },
+  N23: {
+    title: "撤回已发布答案不等于 Host 在循环内重规划",
+    owner: "M08",
+  },
 };
 
 for (const [id, entry] of Object.entries(requirementPlacement)) {

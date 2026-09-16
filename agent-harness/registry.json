@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 41,
+  "registryRevision": 42,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T03:16:18.996Z"
+    "recordedAt": "2026-09-16T03:38:44.843Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -29,7 +29,7 @@
         "P02",
         "P03"
       ],
-      "fingerprint": "8ec62b368f2df18602b6bb40b526d011"
+      "fingerprint": "107d6e725fb1192858c486ab12d16ea5"
     },
     "SRC-ARCH-REPO": {
       "path": "ARCHITECTURE.md",
@@ -54,7 +54,7 @@
     "README.md": {
       "container": "P01",
       "registration": "P01#file",
-      "fingerprint": "c39b645f05cf0cf50c5c8b9d825acdaa"
+      "fingerprint": "edf66ced7512878bc218ccbedaa6e0e4"
     },
     "contracts/K01-request-identity.md": {
       "container": "K01",
@@ -154,7 +154,7 @@
     "decisions/README.md": {
       "container": "FILE-DECISIONS",
       "registration": "FILE-DECISIONS#file",
-      "fingerprint": "7d4709239b3b2e13d5647c0e216fec1a"
+      "fingerprint": "caa98c77f178c6b02d3c00e763d6149b"
     },
     "flows/L01-conversation-and-revision.md": {
       "container": "L01",
@@ -199,27 +199,27 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "44027aae75d4697b5763e1efcf560c10"
+      "fingerprint": "c4b0b97db8a59f8089a25c394b37f9bb"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
       "registration": "D03#file",
-      "fingerprint": "9f1faa4555f42f616a248563ffc5b67a"
+      "fingerprint": "c9aa22bf09c587fd380a0b37f4914182"
     },
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "47bedb7441a268072efa4ea0cd0e4fd9"
+      "fingerprint": "253de78849c05f947fe6a7e21244e477"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "ed130faa373101e37ee926ac5250dbe8"
+      "fingerprint": "b2f40ce6614c67a8fd7894cb1af5c8c0"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
       "registration": "FILE-IMPLEMENTATION#file",
-      "fingerprint": "c1b431c083eaac925535d843ffd8f909"
+      "fingerprint": "965a9ec692562b5ed55f3d2d340ea535"
     },
     "modules/README.md": {
       "container": "README-MODULES",
@@ -254,12 +254,12 @@
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05#file",
-      "fingerprint": "a6d97dd479a27d89c68190b3ec355597"
+      "fingerprint": "1ce698ed446099c19a9af5313c80b2f1"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
       "registration": "M06#file",
-      "fingerprint": "cc6f5cfb575d30aae58c6c05356aee61"
+      "fingerprint": "0bcba3af91980f08b31e05a12703e2fa"
     },
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "ba59ccf3cf56b07f973946515aafef17"
+      "fingerprint": "0326ff68500662ae3f9c9d8e35de61b1"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -289,12 +289,12 @@
     "requirements/open-items.md": {
       "container": "P05",
       "registration": "P05#file",
-      "fingerprint": "e3ed45ddd0603ed7ad9ec9a3f431f02d"
+      "fingerprint": "c0cda77892bee67005467da25a1be32d"
     },
     "requirements/requirements.md": {
       "container": "P06",
       "registration": "P06#file",
-      "fingerprint": "5a4c415578278cf8afb5cdf5de9170a5"
+      "fingerprint": "6b62b8f9faeb8a082b850ab5f97d0cb1"
     },
     "rules/governance.md": {
       "container": "P03",
@@ -304,7 +304,7 @@
     "rules/objects.md": {
       "container": "P02",
       "registration": "P02#file",
-      "fingerprint": "10e7b35fd9a963abdfa2808a98359336"
+      "fingerprint": "95227b38793716a7a6e8aec9c98e3c8c"
     },
     "testing/acceptance-matrix.md": {
       "container": "V03",
@@ -319,7 +319,7 @@
     "tests/legacy-batch-plan.md": {
       "container": "D06",
       "registration": "D06#file",
-      "fingerprint": "bf524b8a014264b0443479688056ee50"
+      "fingerprint": "516cabcee0a8870a1b91a1d60ae00b13"
     },
     "tools/README.md": {
       "container": "README-TOOLS",
@@ -905,13 +905,13 @@
       "title": "C13 循环状态与预算",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C13",
         "line": 150,
         "endLine": 190,
-        "fingerprint": "b485a81f7a39c8b00b0e6e93885c0675"
+        "fingerprint": "6065a04f3df3aac94c02dc154338d813"
       },
       "implementation": {
         "state": "partial"
@@ -934,13 +934,13 @@
       "title": "C14 行动与恢复协调",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C14",
         "line": 192,
         "endLine": 232,
-        "fingerprint": "945a21c757ef1aa04c8077fc2ef5fc97"
+        "fingerprint": "51d2ba827b15d1558a4ce068ef5642f4"
       },
       "implementation": {
         "state": "partial"
@@ -1446,13 +1446,13 @@
       "title": "D02 修正协议与有界纠偏",
       "owner": "C14",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "implementation/D02-protocol-and-recovery.md",
         "anchor": "D02",
-        "line": 64,
-        "endLine": 77,
-        "fingerprint": "8b599b00a16e291502d013cd2f2c2918"
+        "line": 72,
+        "endLine": 85,
+        "fingerprint": "6fb03bf70b3bc5a99e9cf2afcfa86fe6"
       },
       "implementation": {
         "state": "unknown"
@@ -1469,11 +1469,13 @@
         "N16",
         "N17",
         "N20",
+        "N21",
         "Q04",
         "Q10",
         "Q13",
         "Q16",
-        "G05"
+        "G05",
+        "G06"
       ],
       "relations": {
         "depends_on": [
@@ -1483,6 +1485,11 @@
           "K10",
           "K15",
           "K16"
+        ],
+        "closes": [
+          "Q04",
+          "Q10",
+          "G06"
         ]
       },
       "note": null
@@ -1497,8 +1504,8 @@
       "definition": {
         "file": "implementation/D03-session-permission-context.md",
         "anchor": "D03",
-        "line": 67,
-        "endLine": 80,
+        "line": 68,
+        "endLine": 81,
         "fingerprint": "e77e1c00915e96a6b2dd3c1203e75dec"
       },
       "implementation": {
@@ -1515,6 +1522,7 @@
         "N12",
         "N13",
         "N14",
+        "N22",
         "Q02",
         "Q08",
         "Q15",
@@ -1605,8 +1613,8 @@
       "definition": {
         "file": "implementation/D05-document-tasks-and-delivery.md",
         "anchor": "D05",
-        "line": 70,
-        "endLine": 83,
+        "line": 71,
+        "endLine": 84,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
       "implementation": {
@@ -1623,6 +1631,7 @@
         "N03",
         "N04",
         "N11",
+        "N23",
         "Q14"
       ],
       "relations": {
@@ -1648,8 +1657,8 @@
       "definition": {
         "file": "tests/legacy-batch-plan.md",
         "anchor": "D06",
-        "line": 45,
-        "endLine": 58,
+        "line": 46,
+        "endLine": 59,
         "fingerprint": "1ef0e3f3adfdd9f347eebbefe4e583c2"
       },
       "implementation": {
@@ -1782,13 +1791,13 @@
       "title": "decisions/README.md 的文件级容器",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "FILE-DECISIONS",
-        "line": 49,
-        "endLine": 57,
-        "fingerprint": "b6e34ecfb5534c962d91bf02bf6a2e00"
+        "line": 50,
+        "endLine": 58,
+        "fingerprint": "d527aca7d12a8406d992de0f0b8553f0"
       },
       "implementation": {
         "state": "unknown"
@@ -2009,6 +2018,38 @@
         "blocks": [
           {
             "id": "D03",
+            "at": "acceptance"
+          }
+        ]
+      },
+      "note": null
+    },
+    "G06": {
+      "kind": "issue",
+      "name": null,
+      "title": "Host 用配方当第二规划器",
+      "owner": "M05",
+      "maturity": "draft",
+      "revision": 1,
+      "definition": {
+        "file": "requirements/open-items.md",
+        "anchor": "G06",
+        "line": 77,
+        "endLine": 87,
+        "fingerprint": "5c6683d9e4339b574f6e7ddf2d6d25c5"
+      },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": null,
+      "scope": [],
+      "relations": {
+        "blocks": [
+          {
+            "id": "D02",
             "at": "acceptance"
           }
         ]
@@ -2953,13 +2994,13 @@
       "title": "M5 Agent 执行控制",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "M05",
         "line": 132,
         "endLine": 148,
-        "fingerprint": "e6c79986f06b2b0e55e0597cfc652a1a"
+        "fingerprint": "509c4dbf3d72a991feb959e1c391bc96"
       },
       "implementation": {
         "state": "partial"
@@ -3133,8 +3174,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N01",
-        "line": 52,
-        "endLine": 60,
+        "line": 55,
+        "endLine": 63,
         "fingerprint": "613fcea6a35035ca8dda04f70406a315"
       },
       "implementation": {
@@ -3158,8 +3199,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N02",
-        "line": 62,
-        "endLine": 70,
+        "line": 65,
+        "endLine": 73,
         "fingerprint": "9878237a75e3a6977f844ac5f102e031"
       },
       "implementation": {
@@ -3183,8 +3224,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N03",
-        "line": 72,
-        "endLine": 80,
+        "line": 75,
+        "endLine": 83,
         "fingerprint": "7277548ae92676fe6ae4e73cafeab176"
       },
       "implementation": {
@@ -3208,8 +3249,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N04",
-        "line": 82,
-        "endLine": 90,
+        "line": 85,
+        "endLine": 93,
         "fingerprint": "eccc6334d3654a54e643c9104cf5399d"
       },
       "implementation": {
@@ -3233,8 +3274,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N05",
-        "line": 92,
-        "endLine": 100,
+        "line": 95,
+        "endLine": 103,
         "fingerprint": "4432bbaac03469ab31e72fd6310c980f"
       },
       "implementation": {
@@ -3258,8 +3299,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N06",
-        "line": 102,
-        "endLine": 110,
+        "line": 105,
+        "endLine": 113,
         "fingerprint": "6d94fe205205c5ea7d14d01d94e374c9"
       },
       "implementation": {
@@ -3283,8 +3324,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N07",
-        "line": 112,
-        "endLine": 120,
+        "line": 115,
+        "endLine": 123,
         "fingerprint": "5ef40b6290ab02465383f288fd425dc4"
       },
       "implementation": {
@@ -3308,8 +3349,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N08",
-        "line": 122,
-        "endLine": 130,
+        "line": 125,
+        "endLine": 133,
         "fingerprint": "deb19650085c0c49d74d16c589d6648c"
       },
       "implementation": {
@@ -3333,8 +3374,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N09",
-        "line": 132,
-        "endLine": 140,
+        "line": 135,
+        "endLine": 143,
         "fingerprint": "8b55037d43c6eae5bf9b3b415293c756"
       },
       "implementation": {
@@ -3358,8 +3399,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N10",
-        "line": 142,
-        "endLine": 150,
+        "line": 145,
+        "endLine": 153,
         "fingerprint": "20c5d69a98e7395e25c36b918f426877"
       },
       "implementation": {
@@ -3383,8 +3424,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N11",
-        "line": 152,
-        "endLine": 160,
+        "line": 155,
+        "endLine": 163,
         "fingerprint": "c15a7ffbf739918652714f53832b9c60"
       },
       "implementation": {
@@ -3408,8 +3449,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N12",
-        "line": 162,
-        "endLine": 170,
+        "line": 165,
+        "endLine": 173,
         "fingerprint": "203687baa5683366bed9e2403d2620e5"
       },
       "implementation": {
@@ -3433,8 +3474,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N13",
-        "line": 172,
-        "endLine": 180,
+        "line": 175,
+        "endLine": 183,
         "fingerprint": "74644674b060b344c51238c1124f1797"
       },
       "implementation": {
@@ -3458,8 +3499,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N14",
-        "line": 182,
-        "endLine": 190,
+        "line": 185,
+        "endLine": 193,
         "fingerprint": "2fa475f1786556e17fe6df68488984df"
       },
       "implementation": {
@@ -3479,13 +3520,13 @@
       "title": "LOOP：持续行动、验证、纠错直到完成",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N15",
-        "line": 192,
-        "endLine": 200,
-        "fingerprint": "2f3d5d8944ea0707e5ba4cf61ae53983"
+        "line": 195,
+        "endLine": 203,
+        "fingerprint": "1afbd90e37824c5c3379dec056781b51"
       },
       "implementation": {
         "state": "unknown"
@@ -3508,8 +3549,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N16",
-        "line": 202,
-        "endLine": 210,
+        "line": 205,
+        "endLine": 213,
         "fingerprint": "7dcb82a0b089a15f8e411e3a4d720a14"
       },
       "implementation": {
@@ -3533,8 +3574,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N17",
-        "line": 212,
-        "endLine": 220,
+        "line": 215,
+        "endLine": 223,
         "fingerprint": "1e7b1b450e63fca7e2cbc3e18fba6bbd"
       },
       "implementation": {
@@ -3558,8 +3599,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N18",
-        "line": 222,
-        "endLine": 230,
+        "line": 225,
+        "endLine": 233,
         "fingerprint": "cd1d6969eb69409310f473b7b2bad5e6"
       },
       "implementation": {
@@ -3583,8 +3624,8 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N19",
-        "line": 232,
-        "endLine": 240,
+        "line": 235,
+        "endLine": 243,
         "fingerprint": "a531375937e1633b4f735f2e09ebbec0"
       },
       "implementation": {
@@ -3608,9 +3649,84 @@
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N20",
-        "line": 242,
-        "endLine": 250,
+        "line": 245,
+        "endLine": 253,
         "fingerprint": "7f795c751e1680797beaf2880e71f91c"
+      },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": null,
+      "scope": [],
+      "relations": {},
+      "note": "需求条目；来源与承接对象见 requirements/requirements.md"
+    },
+    "N21": {
+      "kind": "requirement",
+      "name": "N21",
+      "title": "观察后信封允许时模型仍可再提议；多步是语义不是清单",
+      "owner": "M05",
+      "maturity": "draft",
+      "revision": 1,
+      "definition": {
+        "file": "requirements/requirements.md",
+        "anchor": "N21",
+        "line": 255,
+        "endLine": 263,
+        "fingerprint": "733a1c8156e7cab033010c491b562c4f"
+      },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": null,
+      "scope": [],
+      "relations": {},
+      "note": "需求条目；来源与承接对象见 requirements/requirements.md"
+    },
+    "N22": {
+      "kind": "requirement",
+      "name": "N22",
+      "title": "普通研究 Run 不承诺进程续跑；仅 Durable 有检查点",
+      "owner": "M01",
+      "maturity": "draft",
+      "revision": 1,
+      "definition": {
+        "file": "requirements/requirements.md",
+        "anchor": "N22",
+        "line": 265,
+        "endLine": 273,
+        "fingerprint": "f40ea878daaeaad7f36f17770969f2e0"
+      },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": null,
+      "scope": [],
+      "relations": {},
+      "note": "需求条目；来源与承接对象见 requirements/requirements.md"
+    },
+    "N23": {
+      "kind": "requirement",
+      "name": "N23",
+      "title": "撤回已发布答案不等于 Host 在循环内重规划",
+      "owner": "M08",
+      "maturity": "draft",
+      "revision": 1,
+      "definition": {
+        "file": "requirements/requirements.md",
+        "anchor": "N23",
+        "line": 275,
+        "endLine": 283,
+        "fingerprint": "ac6bd2e346f7db1cec0e968fc8399317"
       },
       "implementation": {
         "state": "unknown"
@@ -3737,8 +3853,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "P05",
-        "line": 77,
-        "endLine": 91,
+        "line": 89,
+        "endLine": 103,
         "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
       "implementation": {
@@ -3758,13 +3874,13 @@
       "title": "需求与边界",
       "owner": "P06",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "P06",
-        "line": 36,
-        "endLine": 50,
-        "fingerprint": "253a18e99117b13032854f8d14327a56"
+        "line": 39,
+        "endLine": 53,
+        "fingerprint": "6ad314659b015a4ca8656b93ad4fb386"
       },
       "implementation": {
         "state": "unknown"
@@ -3775,7 +3891,7 @@
       "work": null,
       "scope": [],
       "relations": {},
-      "note": "N01–N20 需求身份；工作包作用域引用的来源"
+      "note": "N01–N23 需求身份；工作包作用域引用的来源"
     },
     "P07": {
       "kind": "rules",
@@ -4437,8 +4553,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R01",
-        "line": 59,
-        "endLine": 79,
+        "line": 60,
+        "endLine": 80,
         "fingerprint": "0f83e37bea339e70b4fb3660ab96b9b7"
       },
       "implementation": {
@@ -4462,8 +4578,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R02",
-        "line": 81,
-        "endLine": 101,
+        "line": 82,
+        "endLine": 102,
         "fingerprint": "ce298478f741d2c69345dda2a443b402"
       },
       "implementation": {
@@ -4487,8 +4603,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R03",
-        "line": 103,
-        "endLine": 123,
+        "line": 104,
+        "endLine": 124,
         "fingerprint": "24c06e85f6e7b29877dfd8f5863a4825"
       },
       "implementation": {
@@ -4512,8 +4628,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R04",
-        "line": 125,
-        "endLine": 145,
+        "line": 126,
+        "endLine": 146,
         "fingerprint": "c8b613cdf98521dcb8f2b367b050a515"
       },
       "implementation": {
@@ -4537,8 +4653,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R05",
-        "line": 147,
-        "endLine": 167,
+        "line": 148,
+        "endLine": 168,
         "fingerprint": "e69c32bbaa7fa7048e6a01cbb39ee2aa"
       },
       "implementation": {
@@ -4562,8 +4678,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R06",
-        "line": 169,
-        "endLine": 189,
+        "line": 170,
+        "endLine": 190,
         "fingerprint": "18d5085c59639a35d81313dccc0d6b33"
       },
       "implementation": {
@@ -4587,8 +4703,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R07",
-        "line": 191,
-        "endLine": 211,
+        "line": 192,
+        "endLine": 212,
         "fingerprint": "f991597da8f2577109135fba88fe72e5"
       },
       "implementation": {
@@ -4612,8 +4728,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R08",
-        "line": 213,
-        "endLine": 233,
+        "line": 214,
+        "endLine": 234,
         "fingerprint": "9497dacb90ed0d106a4398de547977f2"
       },
       "implementation": {
@@ -4637,8 +4753,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R09",
-        "line": 235,
-        "endLine": 255,
+        "line": 236,
+        "endLine": 256,
         "fingerprint": "0143db6a2b4c154c3294c0224a6a271b"
       },
       "implementation": {
@@ -4662,9 +4778,34 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R10",
-        "line": 257,
-        "endLine": 277,
+        "line": 258,
+        "endLine": 278,
         "fingerprint": "52d9ec8de59718033291d3088789e519"
+      },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": null,
+      "scope": [],
+      "relations": {},
+      "note": null
+    },
+    "R11": {
+      "kind": "decision",
+      "name": "constraint-layers-model-owns-next-action",
+      "title": "R11 约束分不变量／信封／配方，模型拥有下一步",
+      "owner": "M05",
+      "maturity": "defined",
+      "revision": 1,
+      "definition": {
+        "file": "decisions/README.md",
+        "anchor": "R11",
+        "line": 280,
+        "endLine": 306,
+        "fingerprint": "f0476edb6fe7ad55ff1d713d01518946"
       },
       "implementation": {
         "state": "unknown"
@@ -18462,6 +18603,65 @@
           "fingerprintTo": "dd85c6176ec4acb041710e3b22b4aaeb"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-16-24",
+      "at": "2026-09-16T03:38:44.843Z",
+      "author": "Cursor Grok 4.6 (R11 docs)",
+      "classification": "architecture",
+      "reason": "R11 约束分层与 M5 决定权；N15 扩写不改变 D01 关闭项；新增 N21–N23 与 G06（at=acceptance）。前缀表只扩号段、不新增前缀。不改变授权模型、不新开 request_tools 缺口、不把配方写入检查器。",
+      "review": "REV-2026-09-16-24",
+      "objects": [
+        {
+          "id": "P06",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "253a18e99117b13032854f8d14327a56",
+          "fingerprintTo": "6ad314659b015a4ca8656b93ad4fb386"
+        },
+        {
+          "id": "M05",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "e6c79986f06b2b0e55e0597cfc652a1a",
+          "fingerprintTo": "509c4dbf3d72a991feb959e1c391bc96"
+        },
+        {
+          "id": "C13",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "b485a81f7a39c8b00b0e6e93885c0675",
+          "fingerprintTo": "6065a04f3df3aac94c02dc154338d813"
+        },
+        {
+          "id": "C14",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "945a21c757ef1aa04c8077fc2ef5fc97",
+          "fingerprintTo": "51d2ba827b15d1558a4ce068ef5642f4"
+        },
+        {
+          "id": "D02",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "8b599b00a16e291502d013cd2f2c2918",
+          "fingerprintTo": "6fb03bf70b3bc5a99e9cf2afcfa86fe6"
+        },
+        {
+          "id": "N15",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "2f3d5d8944ea0707e5ba4cf61ae53983",
+          "fingerprintTo": "1afbd90e37824c5c3379dec056781b51"
+        },
+        {
+          "id": "FILE-DECISIONS",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "b6e34ecfb5534c962d91bf02bf6a2e00",
+          "fingerprintTo": "d527aca7d12a8406d992de0f0b8553f0"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18556,6 +18756,78 @@
           "fingerprint": "0767ce792634a56cd54f1f82190cd319"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-16-24",
+      "change": "CHG-2026-09-16-24",
+      "at": "2026-09-16T03:38:44.843Z",
+      "author": "用户（确认 R11 为决定）",
+      "reviewer": "Cursor Grok 4.6 (R11 docs)",
+      "conclusion": "synchronized",
+      "reason": "用户已确认 R11 为决定。三层约束与模型拥有下一步写入架构 §3 M5／C13／C14；N15 扩写钉明不改变 D01 关闭项；G06 仅 at=acceptance 阻断 D02。未新开 request_tools 缺口，未把配方写入检查器。",
+      "evidence": "2026-09-16 用户确认 R11 为决定；docs/agent-architecture.md §3 M5、§7.4、§10.3、§11；agent-harness/decisions/README.md R11；agent-harness/implementation/D02-protocol-and-recovery.md 过早收束负例清单",
+      "objects": [
+        {
+          "id": "P06",
+          "revision": 12,
+          "fingerprint": "6ad314659b015a4ca8656b93ad4fb386"
+        },
+        {
+          "id": "M05",
+          "revision": 12,
+          "fingerprint": "509c4dbf3d72a991feb959e1c391bc96"
+        },
+        {
+          "id": "C13",
+          "revision": 12,
+          "fingerprint": "6065a04f3df3aac94c02dc154338d813"
+        },
+        {
+          "id": "C14",
+          "revision": 12,
+          "fingerprint": "51d2ba827b15d1558a4ce068ef5642f4"
+        },
+        {
+          "id": "D02",
+          "revision": 12,
+          "fingerprint": "6fb03bf70b3bc5a99e9cf2afcfa86fe6"
+        },
+        {
+          "id": "N15",
+          "revision": 12,
+          "fingerprint": "1afbd90e37824c5c3379dec056781b51"
+        },
+        {
+          "id": "FILE-DECISIONS",
+          "revision": 12,
+          "fingerprint": "d527aca7d12a8406d992de0f0b8553f0"
+        },
+        {
+          "id": "R11",
+          "revision": 1,
+          "fingerprint": "f0476edb6fe7ad55ff1d713d01518946"
+        },
+        {
+          "id": "N21",
+          "revision": 1,
+          "fingerprint": "733a1c8156e7cab033010c491b562c4f"
+        },
+        {
+          "id": "N22",
+          "revision": 1,
+          "fingerprint": "f40ea878daaeaad7f36f17770969f2e0"
+        },
+        {
+          "id": "N23",
+          "revision": 1,
+          "fingerprint": "ac6bd2e346f7db1cec0e968fc8399317"
+        },
+        {
+          "id": "G06",
+          "revision": 1,
+          "fingerprint": "5c6683d9e4339b574f6e7ddf2d6d25c5"
+        }
+      ]
     }
   ],
   "issues": {
@@ -18629,6 +18901,9 @@
       "state": "closed"
     },
     "G05": {
+      "state": "open"
+    },
+    "G06": {
       "state": "open"
     }
   },

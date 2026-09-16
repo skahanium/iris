@@ -74,6 +74,18 @@
 
 <!-- iris:end G05 -->
 
+<!-- iris:object G06 kind=issue owner=M05 -->
+
+### G06 Host 用配方当第二规划器
+
+- **目标**：`C14` 不再因无进展身份、两轮拒绝或 token 预留，在任务未完成且信封仍允许时强制 `synthesis_required`。观察之后下一步由模型提议（`R11`、`N15`、`N21`）。
+- **现状**：`agent_tool_loop.rs` 在剩余 completion 接近预留（约 867–876 行）、`rejected_rounds >= 2`（约 1419–1436 行）、`no_progress_rounds >= 2` 或 `failed_service_rounds >= 2`（约 1601–1606 行）时关工具面。进展身份由 `agent_tool_loop/observations.rs` 的 `safe_progress_identities` 定义：有 span 时为 `[resource, revision, start, end, span_kind]`；搜索结果常无 span，退化成 URL／hash，换查询撞同一 URL 会被记为无进展。
+- **差异**：配方启发式被当成循环控制真理；Host 在当第二规划器。
+- **阻断门槛**：`at=acceptance`（只阻断 `D02` 验收，不阻断开始）。
+- **所需证据**：`D02` 工作包登记的过早收束负例（进展身份、观察后再提议、已反馈的未知工具不得强制综合）。本缺口关闭前不要求已实现这些负例。
+
+<!-- iris:end G06 -->
+
 <!-- iris:object P05 kind=rules -->
 
 ### P05 正式定义
@@ -99,6 +111,7 @@
 | G03  | D04                                | D01             |
 | G04  | D01（可信基线与最小诊断）          | 无（D0 是入口） |
 | G05  | D03                                | D01             |
+| G06  | D02（协议与有界纠偏）              | D01             |
 
 ## 三、尚未确定、因此不写成任务的事项
 

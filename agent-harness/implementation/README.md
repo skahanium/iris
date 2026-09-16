@@ -36,7 +36,7 @@
 
 正式定义位置：`D01`–`D05` 在本目录各自的文件内，文件级对象即工作包本体；`D06` 的定义位置登记为 [tests/legacy-batch-plan.md](../tests/legacy-batch-plan.md)，沿用该文件的批次命名，不改动其内容边界。
 
-工作包的作用域以登记表为准：需求条目（`N01`–`N20`）见 [requirements.md](../requirements/requirements.md)，源码事实与未决问题（`Q*`）见 [current-baseline.md](../requirements/current-baseline.md)，缺口（`G*`）见 [open-items.md](../requirements/open-items.md)。`D01`–`D05` 各自在“前置条件”一节内重述自己的作用域、前置与关闭项。
+工作包的作用域以登记表为准：需求条目（`N01`–`N23`）见 [requirements.md](../requirements/requirements.md)，源码事实与未决问题（`Q*`）见 [current-baseline.md](../requirements/current-baseline.md)，缺口（`G*`）见 [open-items.md](../requirements/open-items.md)。`D01`–`D05` 各自在“前置条件”一节内重述自己的作用域、前置与关闭项。
 
 本目录只登记依赖边界与工作包内容，不复制证据仓库：证据用途与组合要求见 [evidence.md](../testing/evidence.md)，验收矩阵见 [acceptance-matrix.md](../testing/acceptance-matrix.md)。
 
