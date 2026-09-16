@@ -21,6 +21,10 @@ pub use crate::ai_types::*;
 )]
 pub(crate) mod agent_capacity_eval;
 #[cfg(test)]
+mod agent_capacity_eval_core_tests;
+#[cfg(test)]
+mod agent_capacity_eval_test_support;
+#[cfg(test)]
 mod agent_capacity_eval_tests;
 pub(crate) mod agent_evidence_repository;
 #[cfg(test)]

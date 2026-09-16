@@ -143,7 +143,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   const showTabStrip = !isSplash;
 
   const customWindowControls = isDesktop && showCustomWindowControls();
-  /** Win/Linux 自定义三键时不要在 header 根上设 drag-region，否则 WebView2 会吞掉最小化/最大化点击。 */
+  /** Windows 自绘三键时不要在 header 根上设 drag-region，否则 WebView2 会吞掉最小化/最大化点击。 */
   const headerNativeDragRegion = isDesktop && !customWindowControls;
 
   const onDragMouseDown = useMemo(() => {

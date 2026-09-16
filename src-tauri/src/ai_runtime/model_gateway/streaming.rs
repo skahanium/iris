@@ -10,6 +10,14 @@ use crate::ai_runtime::text_support::sanitize_provider_visible_content;
 use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult, ProviderErrorKind};
 
+use super::streaming_reasoning::{
+    append_minimax_reasoning_details, minimax_reasoning_continuation,
+    withhold_partial_provider_control_suffix, withhold_partial_reasoning_open_suffix,
+};
+use super::streaming_witness::{
+    complete_boundary, note_boundary_http_failure, note_boundary_sent, note_boundary_serialized,
+    note_boundary_unsuccessful,
+};
 use super::{
     abort_impl::{clear_abort, is_abort_requested},
     body_impl::{build_llm_api_body, uses_openai_responses, GatewayRequest},
@@ -517,144 +525,6 @@ fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool, provider_id:
     normalized
 }
 
-fn withhold_partial_provider_control_suffix(visible: &str, provider_id: &str) -> String {
-    if !provider_id.eq_ignore_ascii_case("minimax") {
-        return visible.to_string();
-    }
-    const CONTROL: &str = "<|minimax|>";
-    let mut keep_len = visible.len();
-    for prefix_len in 1..CONTROL.len() {
-        if visible.ends_with(&CONTROL[..prefix_len]) {
-            keep_len = keep_len.min(visible.len().saturating_sub(prefix_len));
-        }
-    }
-    visible[..keep_len].to_string()
-}
-
-fn append_minimax_reasoning_details(
-    value: &serde_json::Value,
-    details: &mut Vec<serde_json::Value>,
-) {
-    let incoming = match value {
-        serde_json::Value::Array(items) => items.iter().collect::<Vec<_>>(),
-        serde_json::Value::Object(_) => vec![value],
-        _ => return,
-    };
-
-    for (position, item) in incoming.into_iter().enumerate() {
-        let Some(item_object) = item.as_object() else {
-            continue;
-        };
-        let matching_index = details
-            .iter()
-            .position(|existing| minimax_reasoning_detail_stably_matches(existing, item))
-            .or_else(|| {
-                details
-                    .get(position)
-                    .filter(|existing| minimax_reasoning_detail_position_matches(existing, item))
-                    .map(|_| position)
-            });
-        let Some(matching_index) = matching_index else {
-            details.push(item.clone());
-            continue;
-        };
-        let Some(existing_object) = details[matching_index].as_object_mut() else {
-            details[matching_index] = item.clone();
-            continue;
-        };
-
-        let merged_text = match (
-            existing_object
-                .get("text")
-                .and_then(serde_json::Value::as_str),
-            item_object.get("text").and_then(serde_json::Value::as_str),
-        ) {
-            (Some(existing), Some(incoming)) if incoming.starts_with(existing) => {
-                Some(incoming.to_string())
-            }
-            (Some(existing), Some(incoming)) if existing.starts_with(incoming) => {
-                Some(existing.to_string())
-            }
-            (Some(existing), Some(incoming)) => Some(format!("{existing}{incoming}")),
-            (None, Some(incoming)) => Some(incoming.to_string()),
-            _ => None,
-        };
-        for (key, value) in item_object {
-            if key != "text" {
-                existing_object.insert(key.clone(), value.clone());
-            }
-        }
-        if let Some(text) = merged_text {
-            existing_object.insert("text".to_string(), serde_json::Value::String(text));
-        }
-    }
-}
-
-fn minimax_reasoning_detail_stably_matches(
-    existing: &serde_json::Value,
-    incoming: &serde_json::Value,
-) -> bool {
-    let (Some(existing), Some(incoming)) = (existing.as_object(), incoming.as_object()) else {
-        return false;
-    };
-    if let Some(id) = incoming.get("id") {
-        return existing.get("id") == Some(id);
-    }
-    if let Some(index) = incoming.get("index") {
-        return existing.get("index") == Some(index)
-            && existing.get("type") == incoming.get("type");
-    }
-    false
-}
-
-fn minimax_reasoning_detail_position_matches(
-    existing: &serde_json::Value,
-    incoming: &serde_json::Value,
-) -> bool {
-    let (Some(existing), Some(incoming)) = (existing.as_object(), incoming.as_object()) else {
-        return false;
-    };
-    existing.get("id").is_none()
-        && existing.get("index").is_none()
-        && incoming.get("id").is_none()
-        && incoming.get("index").is_none()
-        && existing.get("type").is_some()
-        && existing.get("type") == incoming.get("type")
-}
-
-fn minimax_reasoning_continuation(
-    details: Vec<serde_json::Value>,
-    fallback_reasoning: String,
-) -> Option<String> {
-    if !details.is_empty() {
-        return serde_json::to_string(&details).ok();
-    }
-    // `reasoning_split` should yield structured details. Some compatible
-    // gateways still stream only a dedicated text delta; preserve it in the
-    // documented details envelope rather than dropping a tool continuation.
-    (!fallback_reasoning.is_empty()).then(|| {
-        serde_json::json!([{
-            "type": "reasoning.text",
-            "text": fallback_reasoning,
-        }])
-        .to_string()
-    })
-}
-
-fn withhold_partial_reasoning_open_suffix(visible: &str) -> String {
-    const OPEN_TAGS: [&str; 3] = ["<thinking>", "<think>", "<reasoning>"];
-    let lower = visible.to_ascii_lowercase();
-    let mut keep_len = visible.len();
-    for tag in OPEN_TAGS {
-        for prefix_len in 1..tag.len() {
-            if lower.ends_with(&tag[..prefix_len]) {
-                keep_len = keep_len.min(visible.len().saturating_sub(prefix_len));
-            }
-        }
-    }
-    visible[..keep_len].to_string()
-}
-
 fn stream_error_event(
     request_id: &str,
     message: &str,
@@ -853,125 +723,6 @@ fn emit_visible_token_delta(
         classified,
         token_index,
     )
-}
-
-fn note_boundary_serialized(request: &GatewayRequest, body: &serde_json::Value) {
-    let Some(slot) = &request.boundary else {
-        return;
-    };
-    slot.note_generated(
-        &request.messages,
-        u32::try_from(request.tools.len()).unwrap_or(u32::MAX),
-        !request.provider.model.is_empty(),
-    );
-    let family = if uses_openai_responses(request) {
-        crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiResponses
-    } else {
-        match request.provider.endpoint_family {
-            EndpointFamily::AnthropicMessages => {
-                crate::ai_runtime::boundary_events::ProtocolFamily::AnthropicMessages
-            }
-            _ => crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiChatCompletions,
-        }
-    };
-    slot.note_serialized(family, body, &request.messages);
-}
-
-fn note_boundary_sent(request: &GatewayRequest) {
-    if let Some(slot) = &request.boundary {
-        slot.note_request_sent();
-    }
-}
-
-fn finish_reason_class(reason: &str) -> &'static str {
-    match reason {
-        "stop" | "end_turn" => "stop",
-        "tool_calls" | "tool_use" => "tool_calls",
-        "length" | "max_tokens" => "length",
-        _ => "other",
-    }
-}
-
-fn http_status_class(status: u16) -> &'static str {
-    match status {
-        200..=299 => "2xx",
-        400..=499 => "4xx",
-        500..=599 => "5xx",
-        _ => "other",
-    }
-}
-
-fn note_boundary_success(request: &GatewayRequest, response: &GatewayResponse) {
-    let Some(slot) = &request.boundary else {
-        return;
-    };
-    slot.note_provider_returned(
-        crate::ai_runtime::boundary_events::ProviderReturnStructure {
-            http_status_class: Some("2xx"),
-            has_content: response
-                .content
-                .as_deref()
-                .is_some_and(|content| !content.is_empty()),
-            tool_call_count: u32::try_from(response.tool_calls.len()).unwrap_or(u32::MAX),
-            finish_reason_class: Some(finish_reason_class(&response.finish_reason)),
-        },
-    );
-    if !slot.has_name_origin() {
-        slot.note_name_origin(
-            crate::ai_runtime::tool_name_origin::handshake_payload_from_calls(
-                slot.correlation().protocol_adapter.as_str(),
-                request.tools.iter().map(|tool| tool.function.name.as_str()),
-                response
-                    .tool_calls
-                    .iter()
-                    .map(|call| call.function.name.as_str()),
-                std::iter::empty::<&str>(),
-            ),
-        );
-    }
-    slot.note_handshake_end(crate::ai_runtime::boundary_events::RecordCompleteness::Complete);
-}
-
-fn note_boundary_http_failure(request: &GatewayRequest, status: u16) {
-    let Some(slot) = &request.boundary else {
-        return;
-    };
-    slot.note_request_sent();
-    slot.note_provider_returned(
-        crate::ai_runtime::boundary_events::ProviderReturnStructure {
-            http_status_class: Some(http_status_class(status)),
-            has_content: false,
-            tool_call_count: 0,
-            finish_reason_class: Some("error"),
-        },
-    );
-    slot.note_handshake_end(crate::ai_runtime::boundary_events::RecordCompleteness::Complete);
-}
-
-fn stream_failure_reason_class(message: &str) -> &'static str {
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("request aborted") {
-        "aborted"
-    } else if lower.contains("timeout") {
-        "timeout"
-    } else if lower.contains("llm streaming request failed") || lower.contains("stream read error")
-    {
-        "transport"
-    } else {
-        "error"
-    }
-}
-
-fn note_boundary_unsuccessful(request: &GatewayRequest, message: &str) {
-    let Some(slot) = &request.boundary else {
-        return;
-    };
-    slot.note_known_failure(stream_failure_reason_class(message));
-}
-
-fn complete_boundary(request: &GatewayRequest, response: GatewayResponse) -> GatewayResponse {
-    note_boundary_success(request, &response);
-    response
 }
 
 /// Send a streaming request and deliver each lifecycle event to an observer.

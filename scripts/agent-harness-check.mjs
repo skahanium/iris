@@ -611,7 +611,7 @@ function normalizeText(text) {
  *
  * `path.relative` 在 Windows 返回反斜杠、在 POSIX 返回正斜杠；文件级指纹把这个
  * 路径拼进哈希输入，若直接用平台结果，同一份内容会在不同平台算出不同指纹，
- * 于是「Windows 上全红、Linux 上全绿」。登记表只在一种平台上生成，因此这里固定
+ * 于是「Windows 上全红、macOS 上全绿」。登记表只在一种平台上生成，因此这里固定
  * 分隔符，使指纹与运行平台无关。对象指纹不含路径，本来就不受此影响。
  */
 function relativePosix(from, to) {

@@ -1,7 +1,7 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 35,
+  "registryRevision": 36,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
@@ -6235,11 +6235,11 @@
       "kind": "V03",
       "testPath": "scripts/agent-harness-check.test.mjs",
       "command": "npm run agent-harness:test",
-      "environment": "CI ubuntu-24.04 / node --test（本机 Windows 未运行）",
+      "environment": "自动化检查（本机 Windows 未运行；由仓库质量门在受支持平台上执行）",
       "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd",
       "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 30：22 条负例覆盖范围以 X02 正文为准。本机无法运行：本会话沙箱禁止管道 stdio，node --test 的文件级 spawn 与检查器子进程均返回 EPERM（在我的检查器路径修复前后各跑一次，均为 45 项失败、原因同为 spawn EPERM），故本条绑定 CI 运行，未声称本机已执行。"
+      "note": "registryRevision 30：22 条负例覆盖范围以 X02 正文为准。本机无法运行：本会话沙箱禁止管道 stdio，node --test 的文件级 spawn 与检查器子进程均返回 EPERM（在我的检查器路径修复前后各跑一次，均为 45 项失败、原因同为 spawn EPERM），故本条绑定仓库质量门运行，未声称本机已执行。"
     },
     {
       "object": "C26",
@@ -6290,11 +6290,11 @@
       "kind": "V07",
       "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
       "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
-      "environment": "CI ubuntu-24.04 / node + vitest（本机 Windows 未运行）",
+      "environment": "自动化检查（本机 Windows 未运行；由仓库质量门在受支持平台上执行）",
       "fingerprint": "7ee436d9210c6e024c6b8a2238b74d76",
       "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 30：八类故障界面投影（内部合同错误／外部失败／正常限制／失败后恢复／多路部分成功／多故障并存／事件缺失／审计存储失败），断言含定位对象、错误分类、归因、恢复与影响、关联路径与敏感信息隔离。本机无法运行：沙箱下 esbuild 需要管道 stdio，spawn 返回 EPERM；本条绑定 CI 运行，未声称本机已执行。不把付费实网或语义质量标为通过。"
+      "note": "registryRevision 30：八类故障界面投影（内部合同错误／外部失败／正常限制／失败后恢复／多路部分成功／多故障并存／事件缺失／审计存储失败），断言含定位对象、错误分类、归因、恢复与影响、关联路径与敏感信息隔离。本机无法运行：沙箱下 esbuild 需要管道 stdio，spawn 返回 EPERM；本条绑定仓库质量门运行，未声称本机已执行。不把付费实网或语义质量标为通过。"
     },
     {
       "object": "D01",
@@ -18365,7 +18365,7 @@
       "at": "2026-09-16T02:35:00Z",
       "author": "DSH Agent (D01 收尾)",
       "classification": "refinement",
-      "reason": "D01 收尾：① 证据 2 指向新增的诊断演练记录；② 检查器文件级指纹改用固定 POSIX 分隔符（此前 Windows 上 94 个托管文件全部误报，Linux CI 不受影响，属跨平台缺陷修正而非内容变化）；③ 登记表 verify 拆分为可分别证伪的入口并重绑本机复现结果。不改变任何对象合同、责任归属或用户承诺。",
+      "reason": "D01 收尾：① 证据 2 指向新增的诊断演练记录；② 检查器文件级指纹改用固定 POSIX 分隔符（此前 Windows 上 94 个托管文件全部误报，POSIX 平台不受影响，属跨平台缺陷修正而非内容变化）；③ 登记表 verify 拆分为可分别证伪的入口并重绑本机复现结果。不改变任何对象合同、责任归属或用户承诺。",
       "review": null,
       "objects": [],
       "files": [

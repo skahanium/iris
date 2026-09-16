@@ -22,6 +22,10 @@ mod minimax_tool_call_impl;
 mod responses_impl;
 #[path = "model_gateway/streaming.rs"]
 mod streaming_impl;
+#[path = "model_gateway/streaming_reasoning.rs"]
+mod streaming_reasoning;
+#[path = "model_gateway/streaming_witness.rs"]
+mod streaming_witness;
 #[path = "model_gateway/usage.rs"]
 mod usage_impl;
 

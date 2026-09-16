@@ -1,8 +1,9 @@
 //! 主窗口在各平台的标题壳层。
 //!
+//! Iris 只支持 Windows 与 macOS 两个桌面平台。
+//!
 //! - **Windows 11**：`transparent: false` + `shadow: true` → DWM 原生圆角（勿与 transparent 同开）。
 //! - **macOS**：`titleBarStyle: Overlay` + `decorations: true` + 系统原生红黄绿；内部 title 设为 Iris。
-//! - **Linux**：透明 WebView + 前端 CSS 裁切（尽力而为）。
 
 use tauri::WebviewWindow;
 

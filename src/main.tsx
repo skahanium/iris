@@ -21,7 +21,7 @@ bootstrapStoredTheme();
 
 if (isTauriRuntime()) {
   document.documentElement.dataset.irisDesktop = "";
-  // Windows/macOS 使用系统非透明窗口；Linux 用透明 WebView + CSS 裁切。
+  // Windows/macOS 使用系统非透明窗口；两者之外的宿主用透明 WebView + CSS 裁切。
   if (
     !/Windows/i.test(navigator.userAgent) &&
     !/Mac/i.test(navigator.userAgent)

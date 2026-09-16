@@ -57,7 +57,7 @@ function closedBaselineIdentity(overrides = {}) {
       agentAnswerV1: "c".repeat(64),
       ...fixtureHashes,
     },
-    os: "linux",
+    os: "windows",
     arch: "x64",
     ...rest,
   };
@@ -279,7 +279,7 @@ test("credential metadata uses POSIX ownership and mode checks only on POSIX", (
   const metadata = { mode: 0o100666, uid: 1001 };
 
   assert.equal(hasUnsafeCredentialMetadata(metadata, "win32", 1000), false);
-  assert.equal(hasUnsafeCredentialMetadata(metadata, "linux", 1000), true);
+  assert.equal(hasUnsafeCredentialMetadata(metadata, "darwin", 1001), true);
   assert.equal(
     hasUnsafeCredentialMetadata({ mode: 0o100600, uid: 1000 }, "darwin", 1000),
     false,
