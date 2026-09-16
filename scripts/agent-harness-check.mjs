@@ -406,7 +406,7 @@ function parseObjects(filePath, fileText) {
     fileObject.body = normalized(withPlaceholders);
     fileObject.fingerprint = createHash("sha256")
       .update(
-        `iris-file-v1\n${path.relative(options.root, filePath)}\n${fileObject.body}`,
+        `iris-file-v1\n${relativePosix(options.root, filePath)}\n${fileObject.body}`,
       )
       .digest("hex")
       .slice(0, 32);
@@ -503,7 +503,7 @@ function discoverManagedFiles(catalogFiles) {
   }
   for (const file of walk(harnessRoot)) {
     if (file.startsWith(`${archiveRoot}${path.sep}`)) continue;
-    discovered.add(path.relative(harnessRoot, file).split(path.sep).join("/"));
+    discovered.add(relativePosix(harnessRoot, file));
   }
   for (const rel of Object.keys(catalogFiles)) discovered.add(rel);
   return discovered;
@@ -604,6 +604,18 @@ async function loadCatalog() {
 
 function normalizeText(text) {
   return text.replace(/\r\n?/g, "\n").replace(/\n+$/, "\n");
+}
+
+/**
+ * 托管文件的相对路径一律以 **POSIX 分隔符** 表示。
+ *
+ * `path.relative` 在 Windows 返回反斜杠、在 POSIX 返回正斜杠；文件级指纹把这个
+ * 路径拼进哈希输入，若直接用平台结果，同一份内容会在不同平台算出不同指纹，
+ * 于是「Windows 上全红、Linux 上全绿」。登记表只在一种平台上生成，因此这里固定
+ * 分隔符，使指纹与运行平台无关。对象指纹不含路径，本来就不受此影响。
+ */
+function relativePosix(from, to) {
+  return path.relative(from, to).split(path.sep).join("/");
 }
 
 /**
@@ -1032,7 +1044,7 @@ function checkArchive() {
     ].map((match) => match[1].replace(/\/$/, ""));
     for (const file of walk(batchDir)) {
       if (file === manifestPath) continue;
-      const rel = path.relative(batchDir, file).split(path.sep).join("/");
+      const rel = relativePosix(batchDir, file);
       const coveredBySubtree = subtreePatterns.some(
         (prefix) => rel === prefix || rel.startsWith(`${prefix}/`),
       );

@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 29,
+  "registryRevision": 35,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-15T16:06:17.446Z"
+    "recordedAt": "2026-09-16T00:51:24.298Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -194,7 +194,7 @@
     "implementation/D01-trustworthy-baseline.md": {
       "container": "D01",
       "registration": "D01#file",
-      "fingerprint": "b3209faabf4b611cc56ea6dc0467478d"
+      "fingerprint": "993805b604be2fc48662027f5adf5ca2"
     },
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "95bc854ed9210657c6aa92063ae82ac0"
+      "fingerprint": "01a84bc2b48e4af88cbaeea5f9887e08"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1397,8 +1397,8 @@
       "definition": {
         "file": "implementation/D01-trustworthy-baseline.md",
         "anchor": "D01",
-        "line": 63,
-        "endLine": 76,
+        "line": 80,
+        "endLine": 93,
         "fingerprint": "44ad7c11457beef2f48b762dad178874"
       },
       "implementation": {
@@ -6226,119 +6226,108 @@
       "command": "npm run agent-harness:check",
       "environment": "local / Windows 10 / node v24.14.1",
       "fingerprint": "a351d9b85535d8e91447a82853ba9346",
-      "at": "2026-09-15T07:42:40Z",
+      "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 22：本机 npm run agent-harness:check 退出码 0。X01 定义指纹未变；检查器删除了未使用的 containerForFile。"
+      "note": "registryRevision 30：本机退出码 0（95 个托管文件、187 个已定义对象、187 个登记对象）。本机以 path.relative 的 Windows 分隔符计算文件级指纹会让 94 个托管文件全部误报；检查器已改为固定 POSIX 分隔符（对象指纹不含路径，本来不受影响）。X01 指纹绑定 rules/governance.md 中的定义，检查器代码变化不改变它。"
     },
     {
       "object": "X02",
       "kind": "V03",
       "testPath": "scripts/agent-harness-check.test.mjs",
       "command": "npm run agent-harness:test",
-      "environment": "local / Windows 10 / node v24.14.1",
+      "environment": "CI ubuntu-24.04 / node --test（本机 Windows 未运行）",
       "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd",
-      "at": "2026-09-15T07:42:40Z",
+      "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 22：本机 npm run agent-harness:test：22 条负例全部通过（exit 0）。覆盖范围以 X02 正文为准，不声称 document.md §5 全覆盖。"
-    },
-    {
-      "object": "E01",
-      "kind": "V03",
-      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
-      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib evaluation_summary_requires_baseline_identity_object",
-      "environment": "local / Windows 10 / cargo test",
-      "fingerprint": "884ecb3c7b4d83937aa67abd567961e8",
-      "at": "2026-09-15T09:30:00Z",
-      "applicability": "current",
-      "note": "registryRevision 24：机械负例覆盖封闭 baselineIdentity 与夹具哈希；整次运行无效而非个案失败。不证明语义质量，也不把 D01 或 E01 verification 标为通过。"
-    },
-    {
-      "object": "E02",
-      "kind": "V03",
-      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
-      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib baseline_identity_marks_dirty_tree_not_comparable",
-      "environment": "local / Windows 10 / cargo test",
-      "fingerprint": "d2d1b0b6e629ea7c0e2f60344153dfcc",
-      "at": "2026-09-15T09:30:00Z",
-      "applicability": "current",
-      "note": "registryRevision 24：机械负例覆盖脏工作树 comparable=false 与测试注入身份。不证明 live 质量，也不把 E02 verification 标为通过。"
-    },
-    {
-      "object": "E03",
-      "kind": "V03",
-      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
-      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib headless_smoke_summary_exposes_only_the_closed_contract",
-      "environment": "local / Windows 10 / cargo test",
-      "fingerprint": "5e7399bdb840f642ae74f5f89cde62ce",
-      "at": "2026-09-15T09:30:00Z",
-      "applicability": "current",
-      "note": "registryRevision 24：机械负例覆盖 scoringSchema 进入身份且 summary schema 为 v3。历史 v1.2.15 仍为旧口径。不证明语义质量，也不把 E03 verification 标为通过。"
+      "note": "registryRevision 30：22 条负例覆盖范围以 X02 正文为准。本机无法运行：本会话沙箱禁止管道 stdio，node --test 的文件级 spawn 与检查器子进程均返回 EPERM（在我的检查器路径修复前后各跑一次，均为 45 项失败、原因同为 spawn EPERM），故本条绑定 CI 运行，未声称本机已执行。"
     },
     {
       "object": "C26",
       "kind": "V03",
       "testPath": "src-tauri/src/ai_runtime/boundary_events.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib boundary_events",
-      "environment": "local / macOS / cargo test",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "48e1a8c40e3430e47b34ba3b69fcfce8",
-      "at": "2026-09-15T15:47:14Z",
+      "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 27：机械负例覆盖出站见证不含正文或密钥、缺握手结束不得成功、已知取消不得标 missing_end、循环恢复事件不被挤掉、四层记录可分。不把 C26 verification 标为通过。"
+      "note": "registryRevision 30：本机 11 passed / 0 failed（--target-dir target/verify）。覆盖出站见证不含正文或密钥、缺握手结束不得成功、已知取消不得标 missing_end、循环恢复事件不被挤掉、四层记录可分。不把 C26 verification 标为通过。"
     },
     {
-      "object": "V02",
+      "object": "C26",
       "kind": "V03",
       "testPath": "src-tauri/src/ai_runtime/boundary_events.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib known_abort_is_recorded_complete_not_missing_end",
-      "environment": "local / macOS / cargo test",
-      "fingerprint": "7d2817dfe119391fd501365c599358c1",
-      "at": "2026-09-15T15:47:14Z",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "48e1a8c40e3430e47b34ba3b69fcfce8",
+      "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 27：V02 表补 V07 八类故障投影测试名。不把 V02 verification 标为通过。"
+      "note": "registryRevision 30：本机 1 passed / 0 failed。V02 登记的不变量「已知终止不得标成缺失结束」的绑定证据。"
     },
     {
       "object": "C27",
       "kind": "V03",
       "testPath": "src-tauri/src/ai_runtime/diagnostic_query.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostic_query",
-      "environment": "local / macOS / cargo test",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "4384d82dd344640c3634247994e0c3c8",
-      "at": "2026-09-15T15:47:14Z",
+      "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 27：C27 查询合同覆盖八类故障解释、缺 hop 不得归因、查询失败不得空成功。不把 C27 verification 标为通过。"
+      "note": "registryRevision 30：本机 28 passed / 0 failed。覆盖八类故障解释、缺 hop 不得归因于模型、恢复耗尽不是根因、查询失败与持久化失败不得空成功。不把 C27 verification 标为通过。"
     },
     {
       "object": "C27",
-      "kind": "V07",
-      "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
-      "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
-      "environment": "local / macOS / vitest",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_name_origin.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib tool_name_origin",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "4384d82dd344640c3634247994e0c3c8",
-      "at": "2026-09-15T15:47:14Z",
+      "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 27：V07 八类故障界面投影：定位对象、错误分类、归因、恢复与影响、关联路径、敏感信息隔离。不证明完整诊断工作台。"
+      "note": "registryRevision 30：本机 19 passed / 0 failed。工具名来源五分类（unattributed／model-generated／protocol-parsed／name-mapped／prompt-convention）的判据证据，供 Q01／Q12。"
     },
     {
       "object": "V07",
       "kind": "V07",
       "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
       "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
-      "environment": "local / macOS / vitest",
+      "environment": "CI ubuntu-24.04 / node + vitest（本机 Windows 未运行）",
       "fingerprint": "7ee436d9210c6e024c6b8a2238b74d76",
-      "at": "2026-09-15T15:47:14Z",
+      "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 27：D01 最小诊断的 V07 八类故障投影已运行。不把付费实网或语义质量标为通过。"
+      "note": "registryRevision 30：八类故障界面投影（内部合同错误／外部失败／正常限制／失败后恢复／多路部分成功／多故障并存／事件缺失／审计存储失败），断言含定位对象、错误分类、归因、恢复与影响、关联路径与敏感信息隔离。本机无法运行：沙箱下 esbuild 需要管道 stdio，spawn 返回 EPERM；本条绑定 CI 运行，未声称本机已执行。不把付费实网或语义质量标为通过。"
     },
     {
       "object": "D01",
       "kind": "V07",
-      "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
-      "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx && cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostic_query -- --test-threads=1 && cargo test --manifest-path src-tauri/Cargo.toml --lib headless_smoke_summary_exposes_only_the_closed_contract -- --test-threads=1",
-      "environment": "local / macOS / vitest + cargo test",
+      "testPath": "src-tauri/src/ai_runtime/diagnostic_query.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostic_query",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "44ad7c11457beef2f48b762dad178874",
-      "at": "2026-09-15T15:47:14Z",
+      "at": "2026-09-16T02:30:00Z",
       "applicability": "current",
-      "note": "registryRevision 27：D01 最小诊断可定位性与 v3 机械评测口径已有绑定证据。不把 D01 verification 标为语义或 live 通过。"
+      "note": "registryRevision 30：本机 28 passed / 0 failed。证明 C27 对已知故障给出发现位置、直接失败、恢复结果与待证根因的解释合同。界面投影由 V07 与 C27 的两条独立记录绑定；不证明端到端重放，也不把 D01 verification 标为语义或 live 通过。"
+    },
+    {
+      "object": "D01",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib headless_smoke_summary_exposes_only_the_closed_contract",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "44ad7c11457beef2f48b762dad178874",
+      "at": "2026-09-16T02:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 30：本机 1 passed / 0 failed。v3 机械评测口径与封闭 baselineIdentity 的出口证据，对应 D01 证据 1 与证据 3。"
+    },
+    {
+      "object": "D01",
+      "kind": "V07",
+      "testPath": "docs/eval/results/2026-09-14-diagnostic-drill.md",
+      "command": "人工复核记录，不是可执行测试入口",
+      "environment": "本地文档",
+      "fingerprint": "44ad7c11457beef2f48b762dad178874",
+      "at": "2026-09-16T02:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 30：D01 证据 2「一次已知故障的诊断演练」的可复核记录（发现位置／触发机制／恢复结果／待证根因／未做到的事）。记录明确本轮**未**做端到端重放：2026-09-14 的 dev 库早于 migration 075，无 audit_boundary_events 表。不把 D01 verification 标为通过。"
     }
   ],
   "changes": [
@@ -18369,6 +18358,32 @@
           "fingerprintFrom": "1362e6e5d66985ada9877add1a564e1b",
           "fingerprintTo": "e266f35bd09c892a8a8d8df299b9ae62"
         }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-20",
+      "at": "2026-09-16T02:35:00Z",
+      "author": "DSH Agent (D01 收尾)",
+      "classification": "refinement",
+      "reason": "D01 收尾：① 证据 2 指向新增的诊断演练记录；② 检查器文件级指纹改用固定 POSIX 分隔符（此前 Windows 上 94 个托管文件全部误报，Linux CI 不受影响，属跨平台缺陷修正而非内容变化）；③ 登记表 verify 拆分为可分别证伪的入口并重绑本机复现结果。不改变任何对象合同、责任归属或用户承诺。",
+      "review": null,
+      "objects": [],
+      "files": [
+        "implementation/D01-trustworthy-baseline.md",
+        "scripts/agent-harness-check.mjs",
+        "docs/eval/results/2026-09-14-diagnostic-drill.md"
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-21",
+      "at": "2026-09-16T02:50:00Z",
+      "author": "DSH Agent (D01 收尾)",
+      "classification": "refinement",
+      "reason": "D01 文件内登记本轮状态与证据时点：说明 work.state=done 早于证据 1 的登记，并列明本轮已绑定与「已绑定但未端到端」的边界。只补说明文字与指针，不改变 D01 的改动范围、证据要求、回退条件或任何用户承诺，故为细化。",
+      "review": null,
+      "objects": [],
+      "files": [
+        "implementation/D01-trustworthy-baseline.md"
       ]
     }
   ],
