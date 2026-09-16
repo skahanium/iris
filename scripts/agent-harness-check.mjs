@@ -890,6 +890,8 @@ function checkReviews(catalog, registry, definitions, currentFingerprints) {
     }
     if (!change.author) violation("changes", `变更 ${change.id} 缺少 author`);
     for (const object of change.objects ?? []) {
+      // 文件级容器在权威 JSON 里以 `<ID>#file` 记录，它不是 catalog.objects 条目。
+      if (isContainerRegistration(object.id)) continue;
       if (!catalog.objects[object.id]) {
         violation("changes", `变更 ${change.id} 涉及未登记对象 ${object.id}`);
       }
@@ -953,6 +955,7 @@ function checkReviews(catalog, registry, definitions, currentFingerprints) {
           violation("reviews", `复核 ${review.id} 引用未登记对象 ${object.id}`);
           continue;
         }
+        if (!object.fingerprint) continue;
         if (object.fingerprint !== recorded.fingerprint) {
           violation(
             "reviews",
@@ -1511,6 +1514,26 @@ if (catalog && !infrastructure.length) {
     const now = new Date().toISOString();
     const changed = [];
     const objectsOut = {};
+    // 文件级容器也必须进入变更记录：容器指纹变化会让该文件内全部子对象进入复核
+    // （见 rules/objects.md §2.4），静默吸收它等于把一次影响面记录抹掉。
+    for (const [rel, recorded] of Object.entries(registry.files ?? {})) {
+      // 登记表自身是自指的：写入就会改变它自己的容器指纹，不能据此制造变更记录。
+      if (rel === "registry.json") continue;
+      const current = fileEntries[rel];
+      if (!current) continue;
+      if (recorded.fingerprint === current.fingerprint) continue;
+      const baseId = recorded.registration ?? recorded.container ?? rel;
+      const containerId = isContainerRegistration(baseId)
+        ? baseId
+        : `${baseId}${FILE_OBJECT_SUFFIX}`;
+      changed.push({
+        id: containerId,
+        from: 0,
+        to: 0,
+        fingerprintFrom: recorded.fingerprint,
+        fingerprintTo: current.fingerprint,
+      });
+    }
     for (const [id, entry] of Object.entries(catalog.objects)) {
       const found = definitions.get(id);
       const previous = registry.objects?.[id];

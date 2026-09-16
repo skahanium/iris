@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 49,
+  "registryRevision": 56,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T08:51:23.630Z"
+    "recordedAt": "2026-09-16T14:06:19.000Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -199,12 +199,12 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "5f0bc3d6ea825b8f4b1003c63f3e1b99"
+      "fingerprint": "02de22b88f9fa1ff97be1a9958d92831"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
       "registration": "D03#file",
-      "fingerprint": "c9aa22bf09c587fd380a0b37f4914182"
+      "fingerprint": "c4c1afc6603842244e10ac1f09e035bf"
     },
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
@@ -249,7 +249,7 @@
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04#file",
-      "fingerprint": "0bb8d82ecfb448524d7a6a9c9cf3d786"
+      "fingerprint": "5c4ed4e1133eef8a09730b479bd61dd3"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "7a1ca741a26770e7c08e5580d4d5d76e"
+      "fingerprint": "5405841bcfbe71e531548fadb872f0b5"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1450,8 +1450,8 @@
       "definition": {
         "file": "implementation/D02-protocol-and-recovery.md",
         "anchor": "D02",
-        "line": 73,
-        "endLine": 86,
+        "line": 75,
+        "endLine": 88,
         "fingerprint": "6fb03bf70b3bc5a99e9cf2afcfa86fe6"
       },
       "implementation": {
@@ -1473,8 +1473,6 @@
         "Q04",
         "Q10",
         "Q13",
-        "Q16",
-        "G05",
         "G06"
       ],
       "relations": {
@@ -1526,6 +1524,7 @@
         "Q02",
         "Q08",
         "Q15",
+        "Q16",
         "G01",
         "G05"
       ],
@@ -3824,8 +3823,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 263,
-        "endLine": 276,
+        "line": 264,
+        "endLine": 277,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": {
@@ -4421,13 +4420,13 @@
       "title": "运行中追加／修改指令的交互未确定",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
         "line": 218,
-        "endLine": 227,
-        "fingerprint": "44e2c0b7263f747b8836de0478fa8f7c"
+        "endLine": 228,
+        "fingerprint": "a83fa39367eb8f9b575a46e6886015f3"
       },
       "implementation": {
         "state": "unknown"
@@ -4440,7 +4439,7 @@
       "relations": {
         "blocks": [
           {
-            "id": "D02",
+            "id": "D03",
             "at": "acceptance"
           }
         ]
@@ -4457,8 +4456,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 229,
-        "endLine": 238,
+        "line": 230,
+        "endLine": 239,
         "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
       "implementation": {
@@ -4489,8 +4488,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 240,
-        "endLine": 250,
+        "line": 241,
+        "endLine": 251,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": {
@@ -4521,8 +4520,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 252,
-        "endLine": 261,
+        "line": 253,
+        "endLine": 262,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": {
@@ -6087,13 +6086,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 20,
+      "revision": 21,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 81,
-        "fingerprint": "b7e26f379f399938b5b0c15fd3a1d6e5"
+        "fingerprint": "fa68fe092a714ce31d6762fcc460b4a5"
       },
       "implementation": {
         "state": "unknown"
@@ -18990,6 +18989,47 @@
           "fingerprintTo": "26a1f09d9acb99c95b7ea43f1dfd8fb6"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-16-30",
+      "at": "2026-09-16T14:01:12.032Z",
+      "author": "DSH Agent（会话内治理修复）",
+      "classification": "governance",
+      "reason": "治理修复：Q16 的归属与阻断从 D02 迁到 D03（scope、blocks、正文一致），并把 G05 移出 D02 scope。Q16 的交互形态仍未确定，改动只修正虚假归属与验收门槛算术，不改变任何合同语义。按 P03 §4.1 属治理变更。",
+      "review": "REV-2026-09-16-30",
+      "objects": [
+        {
+          "id": "Q16",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "44e2c0b7263f747b8836de0478fa8f7c",
+          "fingerprintTo": "a83fa39367eb8f9b575a46e6886015f3"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-31",
+      "at": "2026-09-16T14:05:22.839Z",
+      "author": "DSH Agent",
+      "classification": "refinement",
+      "reason": "按仓库 Prettier 规则对齐两处表格排版（仅排版，无合同语义变化）",
+      "review": null,
+      "objects": [
+        {
+          "id": "M04#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "0bb8d82ecfb448524d7a6a9c9cf3d786",
+          "fingerprintTo": "5c4ed4e1133eef8a09730b479bd61dd3"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 20,
+          "revisionTo": 21,
+          "fingerprintFrom": "b7e26f379f399938b5b0c15fd3a1d6e5",
+          "fingerprintTo": "fa68fe092a714ce31d6762fcc460b4a5"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19156,6 +19196,30 @@
           "fingerprint": "5c6683d9e4339b574f6e7ddf2d6d25c5"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-16-30",
+      "change": "CHG-2026-09-16-30",
+      "at": "2026-09-16T14:03:03Z",
+      "author": "用户（会话内确认执行第 2 项治理修复）",
+      "reviewer": "DSH Agent（会话内治理修复）",
+      "conclusion": "synchronized",
+      "reason": "归属与阻断边已按会话决定一致落地：Q16 移出 D02 scope、blocks 改指 D03、并写入 D03 scope 与其正文；G05 移出 D02 scope（其 blocks 原本已在 D03）。本变更只改归属、阻断边与说明文字，未改任何合同语义或实现，因此无现行验证结论失效。",
+      "evidence": "可追溯评审记录：本会话关于 D02 归属缺陷的核对结论；落地证据为 `node scripts/agent-harness-check.mjs` 的就绪计算——D02 的验收阻断由「Q13＋Q16」收敛为仅 `Q13`，Q16 的阻断转移到 D03（与 P03 §2.5 一致）。",
+      "objects": [
+        {
+          "id": "Q16",
+          "revision": 12,
+          "fingerprint": "a83fa39367eb8f9b575a46e6886015f3"
+        }
+      ],
+      "reverification_required": [
+        {
+          "item": "Q16 的交互形态尚未确定：D03 施工时必须补上「旧修订不覆盖新要求、取消不启动新副作用」的可验证证据",
+          "owner": "D03",
+          "status": "open"
+        }
+      ]
     }
   ],
   "issues": {
@@ -19242,6 +19306,7 @@
     "建立期的 changes 批次把登记、容器方案、对象补充与格式化合并为批量写入并统一标为 refinement；其中的治理性改变单独登记为 CHG-2026-09-15-GOV1 并由 REV-2026-09-15-GOV1 复核。此后每次变化必须单独分类。",
     "CHG-2026-09-15-13 是检查器改按 objects.md §3.1 把标题计入对象指纹、并开始比对 objects[].definition.fingerprint 后的算法重绑，不是 187 次语义修订。REV-2026-09-15-GOV1 绑定指纹随算法重绑更新，结论仍是当时的 synchronized，不构成新的治理复核。",
     "CHG-2026-09-15-14 是规则计数更正与 X02 覆盖声明降级；REV-2026-09-15-GOV1 的 X02 绑定指纹随该次定义重写更新，结论仍是当时的 synchronized，不构成新的治理复核。",
-    "本文件最后一次写入：2026-09-15T07:42:40Z。"
+    "本文件最后一次写入：2026-09-15T07:42:40Z。",
+    "2026-09-16：`--reconcile` 的变更检测补上文件级容器指纹（登记为 `<ID>#file`）。此前 reconcile 会静默吸收容器正文变化（不产生 changes 记录），与 check 模式的 propagation 阻断口径不一致；该缺陷已修复。"
   ]
 }
