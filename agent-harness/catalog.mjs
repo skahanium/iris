@@ -1180,6 +1180,8 @@ export const objects = {
       anchor: "D01",
     },
     work: { state: "done" },
+    implementation: { state: "present" },
+    verification: { state: "passed" },
     scope: [
       "N01",
       "N15",
@@ -1193,7 +1195,7 @@ export const objects = {
       "G04",
     ],
     depends_on: ["P01", "P02", "P03", "P06", "K17", "V01", "V08"],
-    closes: ["G04", "Q18"],
+    closes: ["G04", "Q18", "Q01"],
   },
   D02: {
     kind: "work",
@@ -1374,12 +1376,12 @@ export const objects = {
   // ── Q01–Q19 / G01–G05 未决问题与缺口 ──────────────────────
   Q01: {
     kind: "issue",
-    title: "历史未知工具提议的唯一根因未确定",
+    title: "历史未知工具提议无法事后唯一归因",
     owner: "M09",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q01" },
-    blocks: blocks("acceptance", ["D01", "D02"]),
-    note: "缺历史证据，只能靠 D01 的诊断合同把同类现象变成可定位；不阻断修复类工作包开始",
+    blocks: blocks("acceptance", ["D01"]),
+    note: "调查结论：2026-09-14 那次无法唯一归因；同类现象的可定位性由 D01 交付。不阻断 D02。",
   },
   Q02: {
     kind: "issue",

@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 38,
+  "registryRevision": 41,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T02:50:12.562Z"
+    "recordedAt": "2026-09-16T03:16:18.996Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -194,7 +194,7 @@
     "implementation/D01-trustworthy-baseline.md": {
       "container": "D01",
       "registration": "D01#file",
-      "fingerprint": "993805b604be2fc48662027f5adf5ca2"
+      "fingerprint": "f49f234b4c5fbdd0536f7e68ce083feb"
     },
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "0f117d20316bf9b7f8c2a13c23636a88"
+      "fingerprint": "ba59ccf3cf56b07f973946515aafef17"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1393,19 +1393,19 @@
       "title": "D01 建立可信基线与最小诊断",
       "owner": "M09",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "implementation/D01-trustworthy-baseline.md",
         "anchor": "D01",
-        "line": 80,
-        "endLine": 93,
-        "fingerprint": "44ad7c11457beef2f48b762dad178874"
+        "line": 82,
+        "endLine": 95,
+        "fingerprint": "0767ce792634a56cd54f1f82190cd319"
       },
       "implementation": {
-        "state": "unknown"
+        "state": "present"
       },
       "verification": {
-        "state": "none"
+        "state": "passed"
       },
       "work": {
         "state": "done"
@@ -1434,7 +1434,8 @@
         ],
         "closes": [
           "G04",
-          "Q18"
+          "Q18",
+          "Q01"
         ]
       },
       "note": null
@@ -3809,16 +3810,16 @@
     "Q01": {
       "kind": "issue",
       "name": null,
-      "title": "历史未知工具提议的唯一根因未确定",
+      "title": "历史未知工具提议无法事后唯一归因",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q01",
         "line": 46,
         "endLine": 56,
-        "fingerprint": "744d610614d0de3716dcb1496066b8c6"
+        "fingerprint": "cdf338350dff64cd26178cac55314bdf"
       },
       "implementation": {
         "state": "unknown"
@@ -3833,14 +3834,10 @@
           {
             "id": "D01",
             "at": "acceptance"
-          },
-          {
-            "id": "D02",
-            "at": "acceptance"
           }
         ]
       },
-      "note": "缺历史证据，只能靠 D01 的诊断合同把同类现象变成可定位；不阻断修复类工作包开始"
+      "note": "调查结论：2026-09-14 那次无法唯一归因；同类现象的可定位性由 D01 交付。不阻断 D02。"
     },
     "Q02": {
       "kind": "issue",
@@ -4180,13 +4177,13 @@
       "title": "历史诊断不足以区分工具名来源",
       "owner": "M09",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q12",
         "line": 171,
         "endLine": 181,
-        "fingerprint": "1fd09ca6c8ef12588e6d7926d8e470fa"
+        "fingerprint": "dd85c6176ec4acb041710e3b22b4aaeb"
       },
       "implementation": {
         "state": "unknown"
@@ -6290,11 +6287,11 @@
       "kind": "V07",
       "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
       "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
-      "environment": "自动化检查（本机 Windows 未运行；由仓库质量门在受支持平台上执行）",
+      "environment": "local / Windows 10 / node v24.14.1 / npx vitest",
       "fingerprint": "7ee436d9210c6e024c6b8a2238b74d76",
-      "at": "2026-09-16T02:30:00Z",
+      "at": "2026-09-16T03:08:38Z",
       "applicability": "current",
-      "note": "registryRevision 30：八类故障界面投影（内部合同错误／外部失败／正常限制／失败后恢复／多路部分成功／多故障并存／事件缺失／审计存储失败），断言含定位对象、错误分类、归因、恢复与影响、关联路径与敏感信息隔离。本机无法运行：沙箱下 esbuild 需要管道 stdio，spawn 返回 EPERM；本条绑定仓库质量门运行，未声称本机已执行。不把付费实网或语义质量标为通过。"
+      "note": "registryRevision 38：本机 8 passed / 0 failed。八类故障界面投影（内部合同错误／外部失败／正常限制／失败后恢复／多路部分成功／多故障并存／事件缺失／审计存储失败）。不把付费实网或语义质量标为通过。"
     },
     {
       "object": "D01",
@@ -6302,10 +6299,10 @@
       "testPath": "src-tauri/src/ai_runtime/diagnostic_query.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib diagnostic_query",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "44ad7c11457beef2f48b762dad178874",
-      "at": "2026-09-16T02:30:00Z",
+      "fingerprint": "0767ce792634a56cd54f1f82190cd319",
+      "at": "2026-09-16T03:08:13Z",
       "applicability": "current",
-      "note": "registryRevision 30：本机 28 passed / 0 failed。证明 C27 对已知故障给出发现位置、直接失败、恢复结果与待证根因的解释合同。界面投影由 V07 与 C27 的两条独立记录绑定；不证明端到端重放，也不把 D01 verification 标为语义或 live 通过。"
+      "note": "registryRevision 38：本机 29 passed / 0 failed，含 diagnose_run_locates_unknown_tool_two_round_exhaustion_without_attributing_the_model（C26 落库后走与 assistant_run_diagnose 相同的 diagnose_run）。不把付费实网或语义质量标为通过。"
     },
     {
       "object": "D01",
@@ -6313,21 +6310,43 @@
       "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib headless_smoke_summary_exposes_only_the_closed_contract",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "44ad7c11457beef2f48b762dad178874",
-      "at": "2026-09-16T02:30:00Z",
+      "fingerprint": "0767ce792634a56cd54f1f82190cd319",
+      "at": "2026-09-16T03:08:50Z",
       "applicability": "current",
-      "note": "registryRevision 30：本机 1 passed / 0 failed。v3 机械评测口径与封闭 baselineIdentity 的出口证据，对应 D01 证据 1 与证据 3。"
+      "note": "registryRevision 38：本机 1 passed / 0 failed。v3 机械评测口径与封闭 baselineIdentity 的出口证据，对应 D01 证据 1。"
     },
     {
       "object": "D01",
       "kind": "V07",
       "testPath": "docs/eval/results/2026-09-14-diagnostic-drill.md",
-      "command": "人工复核记录，不是可执行测试入口",
-      "environment": "本地文档",
-      "fingerprint": "44ad7c11457beef2f48b762dad178874",
-      "at": "2026-09-16T02:30:00Z",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib diagnose_run_locates_unknown_tool_two_round_exhaustion_without_attributing_the_model",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "0767ce792634a56cd54f1f82190cd319",
+      "at": "2026-09-16T03:08:13Z",
       "applicability": "current",
-      "note": "registryRevision 30：D01 证据 2「一次已知故障的诊断演练」的可复核记录（发现位置／触发机制／恢复结果／待证根因／未做到的事）。记录明确本轮**未**做端到端重放：2026-09-14 的 dev 库早于 migration 075，无 audit_boundary_events 表。不把 D01 verification 标为通过。"
+      "note": "registryRevision 38：D01 证据 2。当前代码端到端：record_loop_event 写入 audit_boundary_events 后 diagnose_run。历史 2026-09-14 Run 不能重放，记入 Q01 调查结论。不把 live 或完整工作台标为通过。"
+    },
+    {
+      "object": "D01",
+      "kind": "V03",
+      "testPath": "scripts/agent-harness-check.test.mjs",
+      "command": "npm run agent-harness:test",
+      "environment": "local / Windows 10 / node v24.14.1",
+      "fingerprint": "0767ce792634a56cd54f1f82190cd319",
+      "at": "2026-09-16T03:08:40Z",
+      "applicability": "current",
+      "note": "registryRevision 38：本机 22 passed / 0 failed。D01 证据 3 的检查器负例（X02）。"
+    },
+    {
+      "object": "D01",
+      "kind": "V07",
+      "testPath": "tests/assistant-run-diagnostic-v07.test.tsx",
+      "command": "npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
+      "environment": "local / Windows 10 / node v24.14.1 / npx vitest",
+      "fingerprint": "0767ce792634a56cd54f1f82190cd319",
+      "at": "2026-09-16T03:08:38Z",
+      "applicability": "current",
+      "note": "registryRevision 38：本机 8 passed / 0 failed。V07 八类故障界面投影，作为 D01 最小诊断呈现证据。"
     }
   ],
   "changes": [
@@ -18272,7 +18291,7 @@
       "author": "skahanium",
       "classification": "refinement",
       "reason": "D01 最小诊断与评测口径落地：绑定 C27/V07 证据并关闭阻断验收的问题",
-      "review": null,
+      "review": "REV-2026-09-16-D01-G04-Q18",
       "objects": [
         {
           "id": "C26",
@@ -18412,6 +18431,37 @@
         "tests/note-title.test.ts",
         "tests/recycle-dates.test.ts"
       ]
+    },
+    {
+      "id": "CHG-2026-09-16-23",
+      "at": "2026-09-16T03:12:17.545Z",
+      "author": "Cursor Grok 4.6 (D01 closeout)",
+      "classification": "refinement",
+      "reason": "D01 收口：补 diagnose_run 端到端演练；将 Q01 改写为调查结论（历史无法唯一归因、现行可定位）并列入 D01 关闭项；解除对 D02 的错误阻断。不改变授权、写入或循环哲学。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D01",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "44ad7c11457beef2f48b762dad178874",
+          "fingerprintTo": "0767ce792634a56cd54f1f82190cd319"
+        },
+        {
+          "id": "Q01",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "744d610614d0de3716dcb1496066b8c6",
+          "fingerprintTo": "cdf338350dff64cd26178cac55314bdf"
+        },
+        {
+          "id": "Q12",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "1fd09ca6c8ef12588e6d7926d8e470fa",
+          "fingerprintTo": "dd85c6176ec4acb041710e3b22b4aaeb"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18452,6 +18502,60 @@
         }
       ],
       "reviewer_was": "用户（会话内确认按 document.md 定稿方案执行）"
+    },
+    {
+      "id": "REV-2026-09-16-D01-G04-Q18",
+      "change": "CHG-2026-09-15-19",
+      "at": "2026-09-16T03:12:17Z",
+      "author": "Cursor Grok 4.6（未编写 CHG-2026-09-15-19）",
+      "reviewer": "skahanium / DSH Agent",
+      "conclusion": "synchronized",
+      "reason": "G04 与 Q18 关闭对应 D01 最小诊断：C26 四层出站见证与完整循环事件、C27 查询、V07 八类投影。完整诊断工作台与付费实网不在缺口范围。本复核不把当时一并关闭 Q01 当作「历史唯一根因已证实」；Q01 由 CHG-2026-09-16-23 改写为调查结论。",
+      "evidence": "docs/eval/results/2026-09-14-diagnostic-drill.md；cargo test --lib diagnostic_query；npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
+      "objects": [
+        {
+          "id": "G04",
+          "revision": 13,
+          "fingerprint": "e266f35bd09c892a8a8d8df299b9ae62"
+        },
+        {
+          "id": "Q18",
+          "revision": 13,
+          "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
+        },
+        {
+          "id": "D01",
+          "revision": 12,
+          "fingerprint": "0767ce792634a56cd54f1f82190cd319"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-16-D01-Q01",
+      "change": "CHG-2026-09-16-23",
+      "at": "2026-09-16T03:12:17Z",
+      "author": "用户委托的 D01 收口复核（CHG-2026-09-16-23 为细化，此条记录关闭口径）",
+      "reviewer": "Cursor Grok 4.6 (D01 closeout)",
+      "conclusion": "synchronized",
+      "reason": "细化：Q01 关闭含义改为「历史无法唯一归因、现行可定位」，不是证实模型故障；D02 不再被 Q01 阻断。证据 2 补 diagnose_run 端到端。verification.passed 仅覆盖 D01 三条回归证据。",
+      "evidence": "agent-harness/requirements/current-baseline.md Q01；docs/eval/results/2026-09-14-diagnostic-drill.md 第三节",
+      "objects": [
+        {
+          "id": "Q01",
+          "revision": 13,
+          "fingerprint": "cdf338350dff64cd26178cac55314bdf"
+        },
+        {
+          "id": "Q12",
+          "revision": 13,
+          "fingerprint": "dd85c6176ec4acb041710e3b22b4aaeb"
+        },
+        {
+          "id": "D01",
+          "revision": 12,
+          "fingerprint": "0767ce792634a56cd54f1f82190cd319"
+        }
+      ]
     }
   ],
   "issues": {

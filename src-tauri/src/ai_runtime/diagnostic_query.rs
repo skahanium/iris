@@ -1668,4 +1668,128 @@ mod tests {
             report.recovery_results.len()
         );
     }
+
+    #[test]
+    fn diagnose_run_locates_unknown_tool_two_round_exhaustion_without_attributing_the_model() {
+        let db = Database::open_in_memory().expect("db");
+        let (session, run_id) = accept_run(&db, "d01-unknown-tool-e2e");
+        let correlation = BoundaryCorrelation {
+            run_id: run_id.clone(),
+            input_revision: "rev-1".into(),
+            parent_run_id: None,
+            child_run_id: None,
+            model_turn: 1,
+            call_id: "loop".into(),
+            attempt_id: "loop".into(),
+            tool_surface_version: crate::ai_runtime::boundary_events::tool_surface_version([
+                "web_search",
+                "web_fetch",
+            ]),
+            protocol_adapter: "tool_loop".into(),
+        };
+        record_loop_event(
+            &db,
+            &correlation,
+            &serde_json::json!({"event":"result","tool":"web_search","success":true}),
+        )
+        .expect("search");
+        record_loop_event(
+            &db,
+            &correlation,
+            &serde_json::json!({"event":"result","tool":"web_fetch","success":true}),
+        )
+        .expect("fetch");
+        record_loop_event(
+            &db,
+            &correlation,
+            &crate::ai_runtime::tool_name_origin::proposal_payload(
+                "unknown_search",
+                &["web_search", "web_fetch"],
+                &["web_search", "web_fetch"],
+                false,
+                "unknown_tool",
+                2,
+            ),
+        )
+        .expect("proposal-2");
+        record_loop_event(
+            &db,
+            &correlation,
+            &serde_json::json!({"event":"repair","round":1,"modelTurns":2}),
+        )
+        .expect("repair-1");
+        record_loop_event(
+            &db,
+            &correlation,
+            &crate::ai_runtime::tool_name_origin::proposal_payload(
+                "unknown_search",
+                &["web_search", "web_fetch"],
+                &["web_search", "web_fetch"],
+                false,
+                "unknown_tool",
+                3,
+            ),
+        )
+        .expect("proposal-3");
+        record_loop_event(
+            &db,
+            &correlation,
+            &serde_json::json!({"event":"repair","round":2,"modelTurns":3}),
+        )
+        .expect("repair-2");
+        record_loop_event(
+            &db,
+            &correlation,
+            &serde_json::json!({"event":"exit","reason":"recovery_exhausted","modelTurns":3}),
+        )
+        .expect("exit");
+
+        let report = diagnose_run(&db, &session, &run_id).expect("assistant_run_diagnose path");
+        assert_eq!(report.run_id, run_id);
+        assert!(!report.path.is_empty());
+        assert!(
+            report.path.iter().any(|step| step.component == "C14"),
+            "discovery must name C14: {:?}",
+            report.path
+        );
+        assert!(
+            report
+                .recovery_results
+                .iter()
+                .any(|item| item.statement.contains("恢复耗尽")),
+            "{:?}",
+            report.recovery_results
+        );
+        assert!(
+            report
+                .recovery_results
+                .iter()
+                .any(|item| item.statement.contains("修复尝试")),
+            "{:?}",
+            report.recovery_results
+        );
+        assert!(
+            report.evidence_gaps.iter().any(|gap| {
+                gap.issue_class == IssueClass::DiagnosticGap && gap.statement.contains("来源链")
+            }),
+            "missing C11 hop must be a gap: {:?}",
+            report.evidence_gaps
+        );
+        assert!(
+            !report
+                .pending_root_causes
+                .iter()
+                .any(|item| item.issue_class == IssueClass::ModelBehavior),
+            "must not confirm a model fault: {:?}",
+            report.pending_root_causes
+        );
+        assert!(
+            report.direct_failures.is_empty(),
+            "rejected unknown tools are not execution failures: {:?}",
+            report.direct_failures
+        );
+        assert_ne!(report.attribution_status, AttributionStatus::Confirmed);
+        assert!(!report.audit_health.persist_failed);
+        assert_not_clean_pass(&report);
+    }
 }
