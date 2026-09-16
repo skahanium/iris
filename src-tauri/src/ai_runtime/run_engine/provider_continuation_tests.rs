@@ -119,7 +119,7 @@ async fn tool_bound_turn_retries_same_model_once_without_replaying_tools() {
     let server = spawn_llm_protocol_double(vec![
         HttpResponseScript::raw(500, r#"{"error":{"message":"synthetic transient"}}"#),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await

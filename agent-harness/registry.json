@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 43,
+  "registryRevision": 48,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T03:45:02.588Z"
+    "recordedAt": "2026-09-16T07:05:53.738Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -134,7 +134,7 @@
     "contracts/K16-verification-report.md": {
       "container": "K16",
       "registration": "K16#file",
-      "fingerprint": "ad1ce0179286373dbee6193a98876551"
+      "fingerprint": "210da012774420be2fd25635b5ea3d8b"
     },
     "contracts/K17-audit-events.md": {
       "container": "K17",
@@ -199,7 +199,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "e992e8644483f1d6c9e8407f8ca4ed11"
+      "fingerprint": "f1c7a96bb64b84922718fc4a134dab06"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -249,7 +249,7 @@
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04#file",
-      "fingerprint": "581e7283b22084fe23be8ccb02690f46"
+      "fingerprint": "f5c163b7bbb0f55eb5ec90a6e47e393b"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "c673c472c2d14416262f12067f3a94b0"
+      "fingerprint": "8ff5b9000676aa5c11b09a23b69a08c4"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -840,13 +840,13 @@
       "title": "C11 协议与续轮适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C11",
         "line": 165,
         "endLine": 205,
-        "fingerprint": "23164cb506b6b33996e71d27dbc4edc2"
+        "fingerprint": "7cd63700f54e166e7872a9321b72527c"
       },
       "implementation": {
         "state": "partial"
@@ -934,7 +934,7 @@
       "title": "C14 行动与恢复协调",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 14,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C14",
@@ -2540,13 +2540,13 @@
       "title": "K16 验证报告与可恢复错误反馈",
       "owner": "C23",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "contracts/K16-verification-report.md",
         "anchor": "K16",
         "line": 13,
         "endLine": 111,
-        "fingerprint": "20c0ba6643b5f5df893a05fec1a2d03a"
+        "fingerprint": "e31c54c0d6a080ebe768b550068a01b4"
       },
       "implementation": {
         "state": "unknown"
@@ -2637,13 +2637,13 @@
       "title": "L01 对话与修订链路",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 14,
+      "revision": 15,
       "definition": {
         "file": "flows/L01-conversation-and-revision.md",
         "anchor": "L01",
         "line": 11,
         "endLine": 100,
-        "fingerprint": "49e5e1a27960d31871254bb6e379f638"
+        "fingerprint": "36a5d197a6832c2e56b9a637ac1d7cfe"
       },
       "implementation": {
         "state": "unknown"
@@ -3824,8 +3824,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 261,
-        "endLine": 274,
+        "line": 262,
+        "endLine": 275,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": {
@@ -4033,13 +4033,13 @@
       "title": "Chat Completions 流式终止原因丢失",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 14,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q04",
         "line": 81,
-        "endLine": 90,
-        "fingerprint": "6fb3315525dddd0766de0c9e64067958"
+        "endLine": 91,
+        "fingerprint": "492c846c0d747386de1d216e607ba797"
       },
       "implementation": {
         "state": "unknown"
@@ -4069,8 +4069,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q05",
-        "line": 92,
-        "endLine": 101,
+        "line": 93,
+        "endLine": 102,
         "fingerprint": "a5da417706fc9b514dab65dbcc0a8223"
       },
       "implementation": {
@@ -4101,8 +4101,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q06",
-        "line": 103,
-        "endLine": 112,
+        "line": 104,
+        "endLine": 113,
         "fingerprint": "cc701424e395c94c887aab555656a2f8"
       },
       "implementation": {
@@ -4133,8 +4133,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q07",
-        "line": 114,
-        "endLine": 123,
+        "line": 115,
+        "endLine": 124,
         "fingerprint": "b5520ca814a1c858c44ab7cde7906f9b"
       },
       "implementation": {
@@ -4165,8 +4165,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q08",
-        "line": 125,
-        "endLine": 134,
+        "line": 126,
+        "endLine": 135,
         "fingerprint": "96cd6a36e82f49c1cd20d656df887851"
       },
       "implementation": {
@@ -4197,8 +4197,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q09",
-        "line": 136,
-        "endLine": 146,
+        "line": 137,
+        "endLine": 147,
         "fingerprint": "9d25a63f3fe8285bff6462ef33cb42d5"
       },
       "implementation": {
@@ -4229,8 +4229,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q10",
-        "line": 148,
-        "endLine": 157,
+        "line": 149,
+        "endLine": 158,
         "fingerprint": "b7509a7f335ff8a10a09baa4b7257c7c"
       },
       "implementation": {
@@ -4261,8 +4261,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q11",
-        "line": 159,
-        "endLine": 169,
+        "line": 160,
+        "endLine": 170,
         "fingerprint": "a29a814ce8718467ddb68e0a0584ed1b"
       },
       "implementation": {
@@ -4297,8 +4297,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q12",
-        "line": 171,
-        "endLine": 181,
+        "line": 172,
+        "endLine": 182,
         "fingerprint": "dd85c6176ec4acb041710e3b22b4aaeb"
       },
       "implementation": {
@@ -4329,8 +4329,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
-        "line": 183,
-        "endLine": 192,
+        "line": 184,
+        "endLine": 193,
         "fingerprint": "d616c25c613e433cce26324da8e6c1f4"
       },
       "implementation": {
@@ -4361,8 +4361,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
-        "line": 194,
-        "endLine": 203,
+        "line": 195,
+        "endLine": 204,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": {
@@ -4393,8 +4393,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 205,
-        "endLine": 214,
+        "line": 206,
+        "endLine": 215,
         "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
       "implementation": {
@@ -4425,8 +4425,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 216,
-        "endLine": 225,
+        "line": 217,
+        "endLine": 226,
         "fingerprint": "44e2c0b7263f747b8836de0478fa8f7c"
       },
       "implementation": {
@@ -4457,8 +4457,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 227,
-        "endLine": 236,
+        "line": 228,
+        "endLine": 237,
         "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
       "implementation": {
@@ -4489,8 +4489,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 238,
-        "endLine": 248,
+        "line": 239,
+        "endLine": 249,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": {
@@ -4521,8 +4521,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 250,
-        "endLine": 259,
+        "line": 251,
+        "endLine": 260,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": {
@@ -6087,13 +6087,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 17,
+      "revision": 19,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 80,
-        "fingerprint": "7d2817dfe119391fd501365c599358c1"
+        "fingerprint": "1f7018d41def7c8e3a4807e7dbeb0679"
       },
       "implementation": {
         "state": "unknown"
@@ -6488,6 +6488,83 @@
       "at": "2026-09-16T03:08:38Z",
       "applicability": "current",
       "note": "registryRevision 38：本机 8 passed / 0 failed。V07 八类故障界面投影，作为 D01 最小诊断呈现证据。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "7cd63700f54e166e7872a9321b72527c",
+      "at": "2026-09-16T08:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过（Anthropic／Responses／Q10／V05 不在范围）。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "7cd63700f54e166e7872a9321b72527c",
+      "at": "2026-09-16T08:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "C14",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_finish_reason",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "51d2ba827b15d1558a4ce068ef5642f4",
+      "at": "2026-09-16T08:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 5 passed / 0 failed。循环纵深：length／unknown 不派发；tool_calls 与 MiniMax 式 stop+工具仍派发；空正文+length 走恢复而非 agent_run_invalid_model_response。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过。"
+    },
+    {
+      "object": "Q04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "492c846c0d747386de1d216e607ba797",
+      "at": "2026-09-16T08:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Q04 五类协议测试中的状态机部分。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不关闭 Q04，不替代逐端点 V05。"
+    },
+    {
+      "object": "Q04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "492c846c0d747386de1d216e607ba797",
+      "at": "2026-09-16T08:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。Q04 长度截断与缺失终止的字节级 SSE。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "Q04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_finish_reason",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "492c846c0d747386de1d216e607ba797",
+      "at": "2026-09-16T08:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 5 passed / 0 failed。Q04 截断工具不得当作完整动作执行；含空正文+length 恢复。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "Q04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/final_answer_integrity.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib final_answer_integrity",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "492c846c0d747386de1d216e607ba797",
+      "at": "2026-09-16T08:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 1 passed / 0 failed。length／unknown／max_tokens 不是正常结束；may_execute_tool_calls 仅放行 tool_calls／tool_use／stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
     }
   ],
   "changes": [
@@ -18660,6 +18737,116 @@
           "revisionTo": 12,
           "fingerprintFrom": "b6e34ecfb5534c962d91bf02bf6a2e00",
           "fingerprintTo": "d527aca7d12a8406d992de0f0b8553f0"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-25",
+      "at": "2026-09-16T04:14:46.578Z",
+      "author": "DSH Agent (Q04 F03)",
+      "classification": "refinement",
+      "reason": "只接受 Q04 覆盖与 V02 测试指针：Chat Completions 流式已保留终止事实、截断工具不派发；不关闭 D02、Q10、G06。",
+      "review": null,
+      "objects": [
+        {
+          "id": "V02",
+          "revisionFrom": 17,
+          "revisionTo": 18,
+          "fingerprintFrom": "7d2817dfe119391fd501365c599358c1",
+          "fingerprintTo": "bd1ae2b6dc6408b3c359304102bb3606"
+        },
+        {
+          "id": "Q04",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "6fb3315525dddd0766de0c9e64067958",
+          "fingerprintTo": "cd3796efebbe501eeb2feb81aac73007"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-26",
+      "at": "2026-09-16T06:37:47.001Z",
+      "author": "DSH Agent (Q04 F03 self-check)",
+      "classification": "refinement",
+      "reason": "自检对齐：补缺失终止与空正文 length 回归；L01/K16/D02 不再把已覆盖的 Chat Completions 流式写死 stop 写成现状；不关闭 D02、Q10、G06。",
+      "review": null,
+      "objects": [
+        {
+          "id": "K16",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "20c0ba6643b5f5df893a05fec1a2d03a",
+          "fingerprintTo": "e31c54c0d6a080ebe768b550068a01b4"
+        },
+        {
+          "id": "L01",
+          "revisionFrom": 14,
+          "revisionTo": 15,
+          "fingerprintFrom": "49e5e1a27960d31871254bb6e379f638",
+          "fingerprintTo": "36a5d197a6832c2e56b9a637ac1d7cfe"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 18,
+          "revisionTo": 19,
+          "fingerprintFrom": "bd1ae2b6dc6408b3c359304102bb3606",
+          "fingerprintTo": "1f7018d41def7c8e3a4807e7dbeb0679"
+        },
+        {
+          "id": "Q04",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "cd3796efebbe501eeb2feb81aac73007",
+          "fingerprintTo": "4c72f51eacae21d5b912d827b8389145"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-27",
+      "at": "2026-09-16T07:03:30.909Z",
+      "author": "DSH Agent (Q04 F03 verify bind)",
+      "classification": "refinement",
+      "reason": "自检收尾：C11／C14／Q04 测试节改为指向即将绑定的 V03 记录，并写明 verification.state 仍为 none；不关闭 D02、Q04、Q10、G06。",
+      "review": null,
+      "objects": [
+        {
+          "id": "C11",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "23164cb506b6b33996e71d27dbc4edc2",
+          "fingerprintTo": "7cd63700f54e166e7872a9321b72527c"
+        },
+        {
+          "id": "C14",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "51d2ba827b15d1558a4ce068ef5642f4",
+          "fingerprintTo": "8edcadf28e3066bc65b97f9530d25dae"
+        },
+        {
+          "id": "Q04",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "4c72f51eacae21d5b912d827b8389145",
+          "fingerprintTo": "492c846c0d747386de1d216e607ba797"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-28",
+      "at": "2026-09-16T07:04:16.980Z",
+      "author": "DSH Agent (Q04 F03 verify bind)",
+      "classification": "refinement",
+      "reason": "自检收尾：C11／Q04 测试节指向即将绑定的 V03 记录，并写明 verification.state 仍为 none；不改 C14 正式定义以免打到 R11 复核指纹；不关闭 D02、Q04、Q10、G06。",
+      "review": null,
+      "objects": [
+        {
+          "id": "C14",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "8edcadf28e3066bc65b97f9530d25dae",
+          "fingerprintTo": "51d2ba827b15d1558a4ce068ef5642f4"
         }
       ]
     }

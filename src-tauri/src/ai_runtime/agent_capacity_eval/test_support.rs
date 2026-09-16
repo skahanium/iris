@@ -5598,7 +5598,8 @@ pub(crate) fn install_headless_eval_mcp(
 pub(crate) fn sse_content(content: &str) -> HttpResponseScript {
     let event = serde_json::json!({
         "choices": [{
-            "delta": { "content": content }
+            "delta": { "content": content },
+            "finish_reason": "stop"
         }]
     });
     HttpResponseScript::sse(&format!("data: {event}\n\ndata: [DONE]\n\n"))
@@ -7347,6 +7348,7 @@ pub(crate) fn sse_tool_call(id: &str, name: &str, arguments: &str) -> HttpRespon
                     },
                 }],
             },
+            "finish_reason": "tool_calls",
         }],
     });
     HttpResponseScript::sse(&format!("data: {event}\n\ndata: [DONE]\n\n"))

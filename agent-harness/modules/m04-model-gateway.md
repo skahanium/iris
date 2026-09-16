@@ -68,11 +68,11 @@
 
 ## 源码落点
 
-| 组件  | 现有落点                                                                                                                                                                                                       | 处置                             |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `C10` | `src-tauri/src/ai_runtime/provider_router.rs`、`src-tauri/src/ai_runtime/capability_resolver.rs`                                                                                                               | 收清 Provider 与工具能力来源     |
-| `C11` | `src-tauri/src/ai_runtime/model_gateway.rs` 及其子文件（`body.rs`、`messages.rs`、`streaming.rs`、`responses.rs`、`anthropic_response.rs`、`usage.rs`、`abort.rs`、`http_backend.rs`、`minimax_tool_call.rs`） | 修正现有合同，原生事件适配需补齐 |
-| `C12` | 网关、`src-tauri/src/ai_runtime/run_engine/providers.rs`、`src-tauri/src/ai_runtime/circuit_breaker.rs`                                                                                                        | 统一执行报告                     |
+| 组件  | 现有落点                                                                                                                                                                                                                                        | 处置                             |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `C10` | `src-tauri/src/ai_runtime/provider_router.rs`、`src-tauri/src/ai_runtime/capability_resolver.rs`                                                                                                                                                | 收清 Provider 与工具能力来源     |
+| `C11` | `src-tauri/src/ai_runtime/model_gateway.rs` 及其子文件（`body.rs`、`messages.rs`、`streaming.rs`、`streaming_chat_completions.rs`、`responses.rs`、`anthropic_response.rs`、`usage.rs`、`abort.rs`、`http_backend.rs`、`minimax_tool_call.rs`） | 修正现有合同，原生事件适配需补齐 |
+| `C12` | 网关、`src-tauri/src/ai_runtime/run_engine/providers.rs`、`src-tauri/src/ai_runtime/circuit_breaker.rs`                                                                                                                                         | 统一执行报告                     |
 
 ## 兼容
 
@@ -83,12 +83,12 @@
 
 ## 测试
 
-| 需求／判据                                                              | 覆盖方式                                                                                |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| MiniMax、DeepSeek 为主模型，兼顾 Gemini Flash 与尽量多国产模型（`N20`） | 逐端点协议测试加对应端点真实调用（`V05`）                                               |
-| 不支持原生搜索是正常配置，不显示能力降级（`N09`）                       | 能力状态表达与用户可见结果投影（`V06`）                                                 |
-| 不得因一次工具错误提示「模型能力降级」（`N17`）                         | 首屏摘要与错误分类检查（`V07`）                                                         |
-| 续轮保真与终止原因保留                                                  | `V02` 已登记不变量「终止原因不被静默改写」，检测位置 `C11`，测试标注「待补充（`D02`）」 |
+| 需求／判据                                                              | 覆盖方式                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MiniMax、DeepSeek 为主模型，兼顾 Gemini Flash 与尽量多国产模型（`N20`） | 逐端点协议测试加对应端点真实调用（`V05`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 不支持原生搜索是正常配置，不显示能力降级（`N09`）                       | 能力状态表达与用户可见结果投影（`V06`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 不得因一次工具错误提示「模型能力降级」（`N17`）                         | 首屏摘要与错误分类检查（`V07`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 续轮保真与终止原因保留                                                  | `V02` 不变量「终止原因不被静默改写」：`length_finish_reason_is_preserved_and_is_not_rewritten_to_stop`、`missing_finish_reason_is_unknown_not_stop`、`missing_finish_reason_does_not_yield_executable_calls`、`length_with_partial_tool_delta_does_not_yield_executable_calls`、`chat_completions_sse_preserves_length_finish_reason`、`chat_completions_sse_missing_finish_reason_is_unknown_not_stop`、`length_finish_reason_does_not_dispatch_truncated_tool_calls`；Anthropic／Responses 与 `Q10` 续轮仍待 `D02` |
 
 `V02` 记录该不变量的合法案例为「`length` 截断到达验证边界」，违例案例为「截断被写成 `stop`」。本模块 `M04`、`C10`、`C11` 当前 `implementation.state=partial`，`C12` 为 `present`，全部 `verification.state=none`。
 
@@ -96,7 +96,7 @@
 
 - 依赖合同：[`K04`](../contracts/K04-provider-capability.md)（`applies_to`：`C10`、`C11`、`C12`、`C20`）、[`K06`](../contracts/K06-budget-ledger.md)、[`K12`](../contracts/K12-native-search-subrequest.md)（`applies_to`：`C20`、`C11`、`C12`）。
 - 相关缺口：`G03`（原生搜索事件的接入与端点适配）主要工作包 `D03`。
-- 相关未决问题：`Q04`（流式终止原因丢失，限定于 Chat Completions 分支）、`Q10`（模型协议字段丢失与续轮保真）、`Q17`（原生搜索端点、混合续轮、费用与权限适配待验证）、`Q18`（缺少出站请求的安全结构证据）、`Q01`／`Q12`（工具名来源无法区分）。
+- 相关未决问题：`Q04`（Chat Completions 流式已有机械覆盖，关闭仍待 `D02`／`V05`）、`Q10`（模型协议字段丢失与续轮保真）、`Q17`（原生搜索端点、混合续轮、费用与权限适配待验证）。
 - `Q04` 的范围限制：同文件 Anthropic 状态机已有停止原因处理，Responses 也走独立路径，不能扩大成所有协议都忽略终止原因。
 - 未确定、因此不写成承诺：具体依赖、支持端点、模型版本及各协议能力矩阵（讨论六、十七）。
 - 版本排期唯一来源是 [ROADMAP.md](../../ROADMAP.md)。
@@ -200,7 +200,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`；本组件当前 `verification.state=none`，没有绑定指纹的证据记录。
+关键不变量与所需证据类别见 `V01`–`V07`。Chat Completions 流式终止原因已有 `V03` 机械记录（`registry.json.verify`，对象 `C11`／`Q04`）；本组件 `verification.state` 仍为 `none`，因为 Anthropic／Responses、`Q10` 续轮与逐端点 `V05` 不在本条范围。
 
 <!-- iris:end C11 -->
 

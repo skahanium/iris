@@ -2116,7 +2116,7 @@ async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary()
     .await
     .unwrap();
     let secondary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .unwrap();
@@ -2175,7 +2175,7 @@ async fn empty_stream_retries_once_then_fails_over_before_any_visible_output() {
     .await
     .unwrap();
     let secondary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered after empty\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered after empty\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .unwrap();
@@ -2253,7 +2253,7 @@ async fn bounded_recovery_retries_only_the_original_route_before_advancing_candi
     .await
     .unwrap();
     let tertiary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"third route recovered\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"third route recovered\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .unwrap();

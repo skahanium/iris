@@ -934,7 +934,7 @@ impl AgentToolLoop {
                 model_turn_budget,
                 observer,
             );
-            let response = match provider_turn.await {
+            let mut response = match provider_turn.await {
                 Ok(response) => response,
                 Err(error) => {
                     let visible_draft = observer.visible_content_snapshot();
@@ -1009,6 +1009,11 @@ impl AgentToolLoop {
             if let Some(telemetry) = telemetry {
                 telemetry.record_model_turn(&response, model_started_at);
             }
+            if !crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity::may_execute_tool_calls(
+                &response.finish_reason,
+            ) {
+                response.tool_calls.clear();
+            }
 
             if incomplete_final_draft.is_some() && !response.tool_calls.is_empty() {
                 // The continuation contract was broken. Publish the Host-authored
@@ -1045,7 +1050,11 @@ impl AgentToolLoop {
                     },
                     None => response_content,
                 };
-                if content.trim().is_empty() {
+                if content.trim().is_empty()
+                    && crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity::has_normal_finish_reason(
+                        &response.finish_reason,
+                    )
+                {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
                 }
                 // A necessary clarification remains a normal completion even

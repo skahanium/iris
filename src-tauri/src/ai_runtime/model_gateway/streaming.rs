@@ -10,6 +10,7 @@ use crate::ai_runtime::text_support::sanitize_provider_visible_content;
 use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult, ProviderErrorKind};
 
+use super::streaming_chat_completions::ChatCompletionsStreamState;
 use super::streaming_reasoning::{
     append_minimax_reasoning_details, minimax_reasoning_continuation,
     withhold_partial_provider_control_suffix, withhold_partial_reasoning_open_suffix,
@@ -892,19 +893,16 @@ pub async fn send_streaming_request_to_observer(
     let mut token_index: u32 = 0;
     let mut anthropic_state = AnthropicStreamState::default();
     let mut json_failure_tracker = SseJsonFailureTracker::default();
+    let mut chat_state = ChatCompletionsStreamState::default();
     let mut visible_sanitizer = if surface.sanitizes_visible_output() {
         Some(VisibleStreamSanitizer::for_provider(&request.provider.name))
     } else {
         None
     };
 
-    // Incremental tool call accumulator: index -> (id, name, args_buf).
     // OpenAI streams tool calls as deltas: id+name arrive first, then
-    // argument fragments across multiple subsequent deltas.
-    let mut tool_call_deltas: std::collections::HashMap<
-        usize,
-        (Option<String>, Option<String>, String),
-    > = std::collections::HashMap::new();
+    // argument fragments across subsequent events. ChatCompletionsStreamState
+    // is the only accumulator for those deltas and for finish_reason.
 
     // Process SSE stream with carry buffer to handle chunks split across TCP boundaries.
     // The outer loop is labeled so the [DONE] / message_stop terminators can break out
@@ -1119,6 +1117,8 @@ pub async fn send_streaming_request_to_observer(
                 continue;
             }
 
+            chat_state.apply_event_json(&json);
+
             // Process content delta
             if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
                 if let Some(parser) = minimax_content_parser.as_mut() {
@@ -1158,26 +1158,6 @@ pub async fn send_streaming_request_to_observer(
                 );
             }
 
-            // Accumulate tool call deltas by index
-            if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
-                for tc_delta in tc_deltas {
-                    let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
-                    let entry = tool_call_deltas
-                        .entry(idx)
-                        .or_insert((None, None, String::new()));
-
-                    if let Some(id) = tc_delta["id"].as_str() {
-                        entry.0 = Some(id.to_string());
-                    }
-                    if let Some(name) = tc_delta["function"]["name"].as_str() {
-                        entry.1 = Some(name.to_string());
-                    }
-                    if let Some(args) = tc_delta["function"]["arguments"].as_str() {
-                        entry.2.push_str(args);
-                    }
-                }
-            }
-
             if json.get("usage").is_some() && json["usage"].get("prompt_tokens").is_some() {
                 usage = parse_usage(&json);
             }
@@ -1191,7 +1171,7 @@ pub async fn send_streaming_request_to_observer(
             if let Some(data) = remainder.strip_prefix("data: ") {
                 let data = data.trim();
                 if data != "[DONE]" {
-                    let Some(json) = (match json_failure_tracker.parse_data(request_id, data) {
+                    let json = match json_failure_tracker.parse_data(request_id, data) {
                         Ok(json) => json,
                         Err(err) => {
                             return Err(finish_stream_with_error(
@@ -1205,140 +1185,104 @@ pub async fn send_streaming_request_to_observer(
                                 emit_error_event,
                             ));
                         }
-                    }) else {
-                        let content = sanitize_provider_visible_content(
-                            &request.provider.name,
-                            &full_content,
-                        );
-                        return Ok(complete_boundary(
-                            &request,
-                            GatewayResponse {
-                                content: (!content.is_empty()).then_some(content),
-                                tool_calls: vec![],
-                                usage,
-                                finish_reason: "stop".into(),
-                                reasoning_content: if is_minimax {
-                                    minimax_reasoning_continuation(
-                                        minimax_reasoning_details,
-                                        full_reasoning,
-                                    )
-                                } else {
-                                    (!full_reasoning.is_empty()).then_some(full_reasoning)
-                                },
-                                continuation: None,
-                            },
-                        ));
                     };
-                    if endpoint_family == EndpointFamily::AnthropicMessages {
-                        if let Some(delta) =
-                            anthropic_state.apply_event_json(&json).map_err(|e| {
-                                finish_stream_with_error(
-                                    observer,
-                                    &request,
-                                    request_id,
-                                    e.to_string(),
-                                    classified,
-                                    surface,
-                                    token_index,
-                                    emit_error_event,
-                                )
-                            })?
-                        {
-                            full_content.push_str(delta.as_str());
-                            emit_visible_token_outcome(
-                                observer,
-                                request_id,
-                                visible_token_delta(&mut visible_sanitizer, &delta),
-                                surface,
-                                classified,
-                                &mut token_index,
-                            )?;
-                        }
-                        if json["type"].as_str() == Some("message_stop") {
-                            emit_visible_token_outcome(
-                                observer,
-                                request_id,
-                                visible_token_finish(&mut visible_sanitizer),
-                                surface,
-                                classified,
-                                &mut token_index,
-                            )?;
-                            let event = StreamEvent {
-                                request_id: request_id.to_string(),
-                                event_type: StreamEventType::Done,
-                                data: StreamEventData::Done {
-                                    usage: Some(anthropic_state.usage.clone()),
-                                },
-                                surface,
-                                classified,
-                            };
-                            observer.observe(&event, token_index)?;
-                        }
-                        clear_abort(request_id);
-                        return Ok(complete_boundary(
-                            &request,
-                            anthropic_state.into_gateway_response(),
-                        ));
-                    }
-
-                    if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
-                        if let Some(parser) = minimax_content_parser.as_mut() {
-                            let (visible_delta, calls) = parser.push(delta);
-                            minimax_content_tool_calls.extend(calls);
-                            if !visible_delta.is_empty() {
-                                full_content.push_str(&visible_delta);
+                    if let Some(json) = json {
+                        if endpoint_family == EndpointFamily::AnthropicMessages {
+                            if let Some(delta) =
+                                anthropic_state.apply_event_json(&json).map_err(|e| {
+                                    finish_stream_with_error(
+                                        observer,
+                                        &request,
+                                        request_id,
+                                        e.to_string(),
+                                        classified,
+                                        surface,
+                                        token_index,
+                                        emit_error_event,
+                                    )
+                                })?
+                            {
+                                full_content.push_str(delta.as_str());
                                 emit_visible_token_outcome(
                                     observer,
                                     request_id,
-                                    visible_token_delta(&mut visible_sanitizer, &visible_delta),
+                                    visible_token_delta(&mut visible_sanitizer, &delta),
                                     surface,
                                     classified,
                                     &mut token_index,
                                 )?;
                             }
-                        } else {
-                            full_content.push_str(delta);
-                            emit_visible_token_outcome(
-                                observer,
-                                request_id,
-                                visible_token_delta(&mut visible_sanitizer, delta),
-                                surface,
-                                classified,
-                                &mut token_index,
-                            )?;
+                            if json["type"].as_str() == Some("message_stop") {
+                                emit_visible_token_outcome(
+                                    observer,
+                                    request_id,
+                                    visible_token_finish(&mut visible_sanitizer),
+                                    surface,
+                                    classified,
+                                    &mut token_index,
+                                )?;
+                                let event = StreamEvent {
+                                    request_id: request_id.to_string(),
+                                    event_type: StreamEventType::Done,
+                                    data: StreamEventData::Done {
+                                        usage: Some(anthropic_state.usage.clone()),
+                                    },
+                                    surface,
+                                    classified,
+                                };
+                                observer.observe(&event, token_index)?;
+                            }
+                            clear_abort(request_id);
+                            return Ok(complete_boundary(
+                                &request,
+                                anthropic_state.into_gateway_response(),
+                            ));
                         }
-                    }
-                    if let Some(reasoning) =
-                        json["choices"][0]["delta"]["reasoning_content"].as_str()
-                    {
-                        full_reasoning.push_str(reasoning);
-                    }
-                    if is_minimax {
-                        append_minimax_reasoning_details(
-                            &json["choices"][0]["delta"]["reasoning_details"],
-                            &mut minimax_reasoning_details,
-                        );
-                    }
-                    if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
-                        for tc_delta in tc_deltas {
-                            let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
-                            let entry =
-                                tool_call_deltas
-                                    .entry(idx)
-                                    .or_insert((None, None, String::new()));
-                            if let Some(id) = tc_delta["id"].as_str() {
-                                entry.0 = Some(id.to_string());
-                            }
-                            if let Some(name) = tc_delta["function"]["name"].as_str() {
-                                entry.1 = Some(name.to_string());
-                            }
-                            if let Some(args) = tc_delta["function"]["arguments"].as_str() {
-                                entry.2.push_str(args);
+
+                        chat_state.apply_event_json(&json);
+                        if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
+                            if let Some(parser) = minimax_content_parser.as_mut() {
+                                let (visible_delta, calls) = parser.push(delta);
+                                minimax_content_tool_calls.extend(calls);
+                                if !visible_delta.is_empty() {
+                                    full_content.push_str(&visible_delta);
+                                    emit_visible_token_outcome(
+                                        observer,
+                                        request_id,
+                                        visible_token_delta(&mut visible_sanitizer, &visible_delta),
+                                        surface,
+                                        classified,
+                                        &mut token_index,
+                                    )?;
+                                }
+                            } else {
+                                full_content.push_str(delta);
+                                emit_visible_token_outcome(
+                                    observer,
+                                    request_id,
+                                    visible_token_delta(&mut visible_sanitizer, delta),
+                                    surface,
+                                    classified,
+                                    &mut token_index,
+                                )?;
                             }
                         }
-                    }
-                    if json.get("usage").is_some() && json["usage"].get("prompt_tokens").is_some() {
-                        usage = parse_usage(&json);
+                        if let Some(reasoning) =
+                            json["choices"][0]["delta"]["reasoning_content"].as_str()
+                        {
+                            full_reasoning.push_str(reasoning);
+                        }
+                        if is_minimax {
+                            append_minimax_reasoning_details(
+                                &json["choices"][0]["delta"]["reasoning_details"],
+                                &mut minimax_reasoning_details,
+                            );
+                        }
+                        if json.get("usage").is_some()
+                            && json["usage"].get("prompt_tokens").is_some()
+                        {
+                            usage = parse_usage(&json);
+                        }
                     }
                 }
             }
@@ -1381,36 +1325,33 @@ pub async fn send_streaming_request_to_observer(
         }
     }
 
-    // Assemble tool calls from accumulated deltas (deduplicated by index)
-    let mut tool_calls: Vec<ToolCall> = tool_call_deltas
-        .into_iter()
-        .filter_map(|(_, (id, name, args))| {
-            Some(ToolCall {
-                id: id?,
-                call_type: "function".into(),
-                function: FunctionCall {
-                    name: name?,
-                    arguments: args,
-                },
-            })
-        })
-        .collect();
     if let Some(slot) = &request.boundary {
+        let proposed_names = chat_state.proposed_tool_names();
         slot.note_name_origin(
             crate::ai_runtime::tool_name_origin::handshake_payload_from_calls(
                 slot.correlation().protocol_adapter.as_str(),
                 request.tools.iter().map(|tool| tool.function.name.as_str()),
-                tool_calls.iter().map(|call| call.function.name.as_str()),
+                proposed_names.iter().map(String::as_str),
                 minimax_content_tool_calls
                     .iter()
                     .map(|call| call.function.name.as_str()),
             ),
         );
     }
-    tool_calls.extend(minimax_content_tool_calls);
+    chat_state.push_completed_tool_calls(minimax_content_tool_calls);
+    let visible_content = sanitize_provider_visible_content(&provider_id, &full_content);
+    chat_state.replace_visible_content(visible_content);
+    let mut response = chat_state.into_gateway_response();
+    response.reasoning_content = if is_minimax {
+        minimax_reasoning_continuation(minimax_reasoning_details, full_reasoning)
+    } else {
+        (!full_reasoning.is_empty()).then_some(full_reasoning)
+    };
+    if response.usage.total_tokens == 0 && usage.total_tokens > 0 {
+        response.usage = usage;
+    }
 
-    // Emit tool call events for each assembled call
-    for tc in &tool_calls {
+    for tc in &response.tool_calls {
         let event = StreamEvent {
             request_id: request_id.to_string(),
             event_type: StreamEventType::ToolCall,
@@ -1424,31 +1365,7 @@ pub async fn send_streaming_request_to_observer(
     }
 
     clear_abort(request_id);
-    Ok(complete_boundary(
-        &request,
-        GatewayResponse {
-            content: if full_content.is_empty() {
-                None
-            } else {
-                Some(
-                    crate::ai_runtime::text_support::sanitize_provider_visible_content(
-                        &provider_id,
-                        &full_content,
-                    ),
-                )
-                .filter(|content| !content.is_empty())
-            },
-            tool_calls,
-            usage,
-            finish_reason: "stop".to_string(),
-            reasoning_content: if is_minimax {
-                minimax_reasoning_continuation(minimax_reasoning_details, full_reasoning)
-            } else {
-                (!full_reasoning.is_empty()).then_some(full_reasoning)
-            },
-            continuation: None,
-        },
-    ))
+    Ok(complete_boundary(&request, response))
 }
 
 fn responses_endpoint_url(base_url: &str) -> String {

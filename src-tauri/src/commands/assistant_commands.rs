@@ -1522,7 +1522,8 @@ mod normal_run_desktop_adapter_tests {
                             "arguments":"{\"query\":\"synthetic\"}"
                         }
                     }]
-                }
+                },
+                "finish_reason": "tool_calls"
             }]
         });
         let first_tool_sse = format!("data: {first_tool_packet}\n\ndata: [DONE]\n\n");
@@ -1538,7 +1539,8 @@ mod normal_run_desktop_adapter_tests {
                             "arguments":"{\"blocks\":[{\"markdown\":\"外部工具事实已核实。\",\"sources\":[\"E1\"]}]}"
                         }
                     }]
-                }
+                },
+                "finish_reason": "tool_calls"
             }]
         });
         let final_submission_sse = format!("data: {final_submission_packet}\n\ndata: [DONE]\n\n");
@@ -1627,7 +1629,7 @@ mod normal_run_desktop_adapter_tests {
             .any(|tool| tool.name == binding.exposed_name));
 
         let bypass_llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"未经工具核实的事实。\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"未经工具核实的事实。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         )])
         .await
         .expect("bypass LLM boundary");
