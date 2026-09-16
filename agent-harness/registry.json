@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 42,
+  "registryRevision": 43,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T03:38:44.843Z"
+    "recordedAt": "2026-09-16T03:45:02.588Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -29,7 +29,7 @@
         "P02",
         "P03"
       ],
-      "fingerprint": "107d6e725fb1192858c486ab12d16ea5"
+      "fingerprint": "c16f9fac787a2e780366d5d1f387ffcf"
     },
     "SRC-ARCH-REPO": {
       "path": "ARCHITECTURE.md",
@@ -54,7 +54,7 @@
     "README.md": {
       "container": "P01",
       "registration": "P01#file",
-      "fingerprint": "edf66ced7512878bc218ccbedaa6e0e4"
+      "fingerprint": "6d7894252d4a7784a5074ac89139c7d0"
     },
     "contracts/K01-request-identity.md": {
       "container": "K01",
@@ -199,7 +199,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "c4b0b97db8a59f8089a25c394b37f9bb"
+      "fingerprint": "e992e8644483f1d6c9e8407f8ca4ed11"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -254,7 +254,7 @@
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05#file",
-      "fingerprint": "1ce698ed446099c19a9af5313c80b2f1"
+      "fingerprint": "91dceb9a8b41ec8bc835bd60642d6134"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "0326ff68500662ae3f9c9d8e35de61b1"
+      "fingerprint": "c673c472c2d14416262f12067f3a94b0"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1450,8 +1450,8 @@
       "definition": {
         "file": "implementation/D02-protocol-and-recovery.md",
         "anchor": "D02",
-        "line": 72,
-        "endLine": 85,
+        "line": 73,
+        "endLine": 86,
         "fingerprint": "6fb03bf70b3bc5a99e9cf2afcfa86fe6"
       },
       "implementation": {
@@ -3749,8 +3749,8 @@
       "definition": {
         "file": "README.md",
         "anchor": "P01",
-        "line": 132,
-        "endLine": 143,
+        "line": 133,
+        "endLine": 144,
         "fingerprint": "1c8b2b9c4372b18427bac502f9e68e50"
       },
       "implementation": {

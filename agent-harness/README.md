@@ -49,6 +49,7 @@
 | 链路         | `L01`–`L06` |    6 | `flows/`                                    |
 | 证据与判据   | `V01`–`V08` |    8 | `testing/`                                  |
 | 工作包       | `D01`–`D06` |    6 | `implementation/`、`tests/`                 |
+| 需求条目     | `N01`–`N23` |   23 | `requirements/requirements.md`              |
 | 决定记录     | `R01`–`R11` |   11 | `decisions/`                                |
 | 规则         | `P01`–`P07` |    7 | 本文件、`rules/`、`requirements/`、`tools/` |
 | 检查器与测试 | `X01`–`X03` |    3 | `scripts/`、`tests/`、`registry.json`       |
