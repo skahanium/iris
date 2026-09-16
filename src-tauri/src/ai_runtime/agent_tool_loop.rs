@@ -49,7 +49,7 @@ const MAX_TOOL_RESULT_CHARS: usize = 8_000;
 /// Internal control-flow signal: a complete immutable change set was persisted
 /// and the Run must wait for its single user confirmation.
 #[path = "agent_tool_loop/prompt_assembly.rs"]
-mod prompt_assembly;
+pub(crate) mod prompt_assembly;
 pub(crate) use prompt_assembly::*;
 
 pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";

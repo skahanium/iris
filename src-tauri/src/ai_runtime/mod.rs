@@ -39,6 +39,8 @@ pub(crate) mod agent_tool_loop;
 #[cfg(test)]
 mod agent_tool_loop_finish_reason_tests;
 #[cfg(test)]
+mod agent_tool_loop_host_authority_tests;
+#[cfg(test)]
 mod agent_tool_loop_payload_tests;
 #[cfg(test)]
 mod agent_tool_loop_tests;
