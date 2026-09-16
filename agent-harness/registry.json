@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 48,
+  "registryRevision": 49,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T07:05:53.738Z"
+    "recordedAt": "2026-09-16T08:51:23.630Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -199,7 +199,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "f1c7a96bb64b84922718fc4a134dab06"
+      "fingerprint": "5f0bc3d6ea825b8f4b1003c63f3e1b99"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -249,7 +249,7 @@
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04#file",
-      "fingerprint": "f5c163b7bbb0f55eb5ec90a6e47e393b"
+      "fingerprint": "0bb8d82ecfb448524d7a6a9c9cf3d786"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "8ff5b9000676aa5c11b09a23b69a08c4"
+      "fingerprint": "7a1ca741a26770e7c08e5580d4d5d76e"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -840,13 +840,13 @@
       "title": "C11 协议与续轮适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C11",
         "line": 165,
         "endLine": 205,
-        "fingerprint": "7cd63700f54e166e7872a9321b72527c"
+        "fingerprint": "6617414d4df6450b1a776688d182f52b"
       },
       "implementation": {
         "state": "partial"
@@ -3824,8 +3824,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 262,
-        "endLine": 275,
+        "line": 263,
+        "endLine": 276,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": {
@@ -4225,13 +4225,13 @@
       "title": "模型协议字段丢失与续轮保真",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q10",
         "line": 149,
-        "endLine": 158,
-        "fingerprint": "b7509a7f335ff8a10a09baa4b7257c7c"
+        "endLine": 159,
+        "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6"
       },
       "implementation": {
         "state": "unknown"
@@ -4261,8 +4261,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q11",
-        "line": 160,
-        "endLine": 170,
+        "line": 161,
+        "endLine": 171,
         "fingerprint": "a29a814ce8718467ddb68e0a0584ed1b"
       },
       "implementation": {
@@ -4297,8 +4297,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q12",
-        "line": 172,
-        "endLine": 182,
+        "line": 173,
+        "endLine": 183,
         "fingerprint": "dd85c6176ec4acb041710e3b22b4aaeb"
       },
       "implementation": {
@@ -4329,8 +4329,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
-        "line": 184,
-        "endLine": 193,
+        "line": 185,
+        "endLine": 194,
         "fingerprint": "d616c25c613e433cce26324da8e6c1f4"
       },
       "implementation": {
@@ -4361,8 +4361,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
-        "line": 195,
-        "endLine": 204,
+        "line": 196,
+        "endLine": 205,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": {
@@ -4393,8 +4393,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 206,
-        "endLine": 215,
+        "line": 207,
+        "endLine": 216,
         "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
       "implementation": {
@@ -4425,8 +4425,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 217,
-        "endLine": 226,
+        "line": 218,
+        "endLine": 227,
         "fingerprint": "44e2c0b7263f747b8836de0478fa8f7c"
       },
       "implementation": {
@@ -4457,8 +4457,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 228,
-        "endLine": 237,
+        "line": 229,
+        "endLine": 238,
         "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
       "implementation": {
@@ -4489,8 +4489,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 239,
-        "endLine": 249,
+        "line": 240,
+        "endLine": 250,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": {
@@ -4521,8 +4521,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 251,
-        "endLine": 260,
+        "line": 252,
+        "endLine": 261,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": {
@@ -6087,13 +6087,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 19,
+      "revision": 20,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 80,
-        "fingerprint": "1f7018d41def7c8e3a4807e7dbeb0679"
+        "endLine": 81,
+        "fingerprint": "b7e26f379f399938b5b0c15fd3a1d6e5"
       },
       "implementation": {
         "state": "unknown"
@@ -6241,8 +6241,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 82,
-        "endLine": 104,
+        "line": 83,
+        "endLine": 105,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": {
@@ -6495,7 +6495,7 @@
       "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "7cd63700f54e166e7872a9321b72527c",
+      "fingerprint": "6617414d4df6450b1a776688d182f52b",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过（Anthropic／Responses／Q10／V05 不在范围）。"
@@ -6506,7 +6506,7 @@
       "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "7cd63700f54e166e7872a9321b72527c",
+      "fingerprint": "6617414d4df6450b1a776688d182f52b",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
@@ -6565,6 +6565,116 @@
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 1 passed / 0 failed。length／unknown／max_tokens 不是正常结束；may_execute_tool_calls 仅放行 tool_calls／tool_use／stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::deepseek_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过（G03／Q17／V05／Anthropic 不在范围）。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib deepseek_tool_continuation_preserves_reasoning_content",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib messages_for_api_does_not_replay_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::responses_",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib responses_double_preserves_instructions_and_host_repair_on_continuation",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::deepseek_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。Q10 事实 2：DeepSeek thinking 写在 HTTP 顶层。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不关闭 Q10／D02／G03／Q17，不替代 V05 live。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib deepseek_tool_continuation_preserves_reasoning_content",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 事实 1：工具续轮回放 reasoning_content。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib messages_for_api_does_not_replay_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 隐私不倒退：无工具历史不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::responses_",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Q10 事实 3：Responses 续轮 instructions 与 Host 修复；无 System 夹具不编造 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib responses_double_preserves_instructions_and_host_repair_on_continuation",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
+      "at": "2026-09-16T09:19:36Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 事实 3 字节级替身。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不关闭 Q10／D02，不替代 V05。"
     }
   ],
   "changes": [
@@ -18847,6 +18957,37 @@
           "revisionTo": 14,
           "fingerprintFrom": "8edcadf28e3066bc65b97f9530d25dae",
           "fingerprintTo": "51d2ba827b15d1558a4ce068ef5642f4"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-29",
+      "at": "2026-09-16T08:51:23.630Z",
+      "author": "DSH Agent (Q10 outbound continuation)",
+      "classification": "refinement",
+      "reason": "只接受 Q10 出站续轮覆盖与 V02 测试指针：DeepSeek 顶层 thinking、工具续轮 reasoning_content、Responses instructions 与 Host 修复；不关闭 D02、Q10、G03、Q17。",
+      "review": null,
+      "objects": [
+        {
+          "id": "C11",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "7cd63700f54e166e7872a9321b72527c",
+          "fingerprintTo": "6617414d4df6450b1a776688d182f52b"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 19,
+          "revisionTo": 20,
+          "fingerprintFrom": "1f7018d41def7c8e3a4807e7dbeb0679",
+          "fingerprintTo": "b7e26f379f399938b5b0c15fd3a1d6e5"
+        },
+        {
+          "id": "Q10",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "b7509a7f335ff8a10a09baa4b7257c7c",
+          "fingerprintTo": "26a1f09d9acb99c95b7ea43f1dfd8fb6"
         }
       ]
     }

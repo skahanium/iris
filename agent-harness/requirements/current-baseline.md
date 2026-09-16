@@ -154,6 +154,7 @@
 - **不能推出**：某一协议的问题推成所有模型均受影响；也不能用「换个更强模型是否能成功」的实验来合理化已知合同错误。
 - **影响边界**：`C11`、`C12`、`M04`。
 - **所需证据**：按协议合同的字段保真测试与出站结构证据（`V05`、`V08`）。
+- **覆盖**：DeepSeek 直发 HTTP 使用顶层 `thinking`（不再写 `extra_body`）；同一 Provider 工具续轮 assistant 回放 `reasoning_content`，普通历史不回放私有推理；Responses 续轮保留稳定 `instructions` 并将 Host System 修复写入 `input`。服务端搜索事件／引用仍不在本条范围。`V03` 机械记录见 `registry.json.verify`；不把 `Q10`／`C11` 的 `verification.state` 标为通过，也不关闭本项、`D02`、`G03`、`Q17`，不替代逐端点 `V05`。
 
 <!-- iris:end Q10 -->
 

@@ -88,7 +88,7 @@
 | MiniMax、DeepSeek 为主模型，兼顾 Gemini Flash 与尽量多国产模型（`N20`） | 逐端点协议测试加对应端点真实调用（`V05`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 不支持原生搜索是正常配置，不显示能力降级（`N09`）                       | 能力状态表达与用户可见结果投影（`V06`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 不得因一次工具错误提示「模型能力降级」（`N17`）                         | 首屏摘要与错误分类检查（`V07`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 续轮保真与终止原因保留                                                  | `V02` 不变量「终止原因不被静默改写」：`length_finish_reason_is_preserved_and_is_not_rewritten_to_stop`、`missing_finish_reason_is_unknown_not_stop`、`missing_finish_reason_does_not_yield_executable_calls`、`length_with_partial_tool_delta_does_not_yield_executable_calls`、`chat_completions_sse_preserves_length_finish_reason`、`chat_completions_sse_missing_finish_reason_is_unknown_not_stop`、`length_finish_reason_does_not_dispatch_truncated_tool_calls`；Anthropic／Responses 与 `Q10` 续轮仍待 `D02` |
+| 续轮保真与终止原因保留                                                  | `V02` 不变量「终止原因不被静默改写」见 `Q04` 测试名；`Q10` 出站续轮：`deepseek_reasoning_sends_thinking_and_high_effort`、`deepseek_tool_continuation_preserves_reasoning_content_and_provider_control`、`messages_for_api_does_not_replay_reasoning_without_a_same_run_tool_continuation`、`responses_continuation_keeps_stable_instructions`、`responses_continuation_includes_host_repair_system_in_input`、`responses_double_preserves_instructions_and_host_repair_on_continuation`。Anthropic 终止原因、服务端搜索事件（`G03`／`Q17`）与逐端点 `V05` 仍待 `D02`／`D04` |
 
 `V02` 记录该不变量的合法案例为「`length` 截断到达验证边界」，违例案例为「截断被写成 `stop`」。本模块 `M04`、`C10`、`C11` 当前 `implementation.state=partial`，`C12` 为 `present`，全部 `verification.state=none`。
 
@@ -200,7 +200,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`。Chat Completions 流式终止原因已有 `V03` 机械记录（`registry.json.verify`，对象 `C11`／`Q04`）；本组件 `verification.state` 仍为 `none`，因为 Anthropic／Responses、`Q10` 续轮与逐端点 `V05` 不在本条范围。
+关键不变量与所需证据类别见 `V01`–`V07`。Chat Completions 流式终止原因已有 `V03` 机械记录（`registry.json.verify`，对象 `C11`／`Q04`）；`Q10` 出站续轮（DeepSeek 顶层 `thinking`、工具续轮 `reasoning_content`、Responses `instructions`／Host 修复）亦有 `V03` 机械记录。本组件 `verification.state` 仍为 `none`，因为服务端搜索事件（`G03`／`Q17`）、Anthropic 终止原因与逐端点 `V05` 不在本条范围。
 
 <!-- iris:end C11 -->
 
