@@ -99,10 +99,10 @@
 
 ## 源码落点
 
-| 组件  | 现有落点                                                                                                                                                                   | 处置                               |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `C26` | `src-tauri/src/ai_runtime/boundary_events.rs`（权威追加）、`tool_audit.rs`、`trace.rs`、循环诊断（`run_tool_loop.rs`／`agent_tool_loop.rs`）；网关发送路径写入四层出站见证 | 记录路径已接入；查询视图仍属 `C27` |
-| `C27` | `src-tauri/src/ai_runtime/diagnostic_query.rs`、`assistant_run_diagnose`、`src/components/ai/AssistantRunDiagnostic.tsx`                                                                 | 查询与呈现已接入；完整诊断工作台可后续扩展 |
+| 组件  | 现有落点                                                                                                                                                                   | 处置                                       |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `C26` | `src-tauri/src/ai_runtime/boundary_events.rs`（权威追加）、`tool_audit.rs`、`trace.rs`、循环诊断（`run_tool_loop.rs`／`agent_tool_loop.rs`）；网关发送路径写入四层出站见证 | 记录路径已接入；查询视图仍属 `C27`         |
+| `C27` | `src-tauri/src/ai_runtime/diagnostic_query.rs`、`assistant_run_diagnose`、`src/components/ai/AssistantRunDiagnostic.tsx`                                                   | 查询与呈现已接入；完整诊断工作台可后续扩展 |
 
 当前实现事实：`C26` 将出站结构见证与循环诊断追加写入 `audit_boundary_events`，关联 Run／输入修订／父子任务／模型回合／调用与尝试／工具面版本；缺握手结束标为 `outcome-unknown`，不得推断成功。`provider_route_summary_json.toolLoop.events` 仍是最近 12 条的界面快照，**不是** C26 权威。`C27` 按会话与显式 `runId` 解释这些事件；`V07` 八类故障的界面投影覆盖定位对象、错误分类、归因、恢复与影响、关联路径和敏感信息隔离。工具审计仍保存运行、步骤、工具、摘要、成功状态与耗时。Run 事件主要服务安全的界面回放。`agent_run_events` 是追加式、安全的过程回放日志，**不是**可据以重建全部 Run 的执行日志：事件不包含工具参数或原始输出，只保存稳定 capability、调用 ID、受限摘要、状态和安全错误码（[ARCHITECTURE.md](../../ARCHITECTURE.md)）。
 

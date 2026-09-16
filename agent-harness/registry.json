@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 36,
+  "registryRevision": 38,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T00:51:24.298Z"
+    "recordedAt": "2026-09-16T02:50:12.562Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -274,12 +274,12 @@
     "modules/m09-audit-and-diagnostics.md": {
       "container": "M09",
       "registration": "M09#file",
-      "fingerprint": "8436ea4435984c6f3376258678e68ec7"
+      "fingerprint": "736baf6428af5136748e252b33d748a5"
     },
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "01a84bc2b48e4af88cbaeea5f9887e08"
+      "fingerprint": "0f117d20316bf9b7f8c2a13c23636a88"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -18384,6 +18384,33 @@
       "objects": [],
       "files": [
         "implementation/D01-trustworthy-baseline.md"
+      ]
+    },
+    {
+      "id": "CHG-2026-09-16-22",
+      "at": "2026-09-16T04:10:00Z",
+      "author": "DSH Agent (格式收口)",
+      "classification": "refinement",
+      "reason": "按仓库 Prettier 规则对齐 m09 源码落点表格列宽；只改排版，不触及任何对象的正式定义正文，故为细化。同步把原先 prettier 未通过的 15 个文件统一到规范格式，使 format:check 由 16 项失败转为全绿。",
+      "review": null,
+      "objects": [],
+      "files": [
+        "modules/m09-audit-and-diagnostics.md",
+        "docs/design-system/brand.md",
+        "scripts/iris-brand-svg.mjs",
+        "scripts/iris-mark-paths.mjs",
+        "scripts/serve-preview.mjs",
+        "scripts/sync-tauri-icons.mjs",
+        "src/components/brand/IrisMark.tsx",
+        "src/components/brand/iris-mark-paths.ts",
+        "src/components/layout/DesktopFrame.tsx",
+        "src/components/layout/MinimalWindowChrome.tsx",
+        "src/hooks/useAutoVaultIndex.ts",
+        "src/lib/note-title.ts",
+        "src/lib/recycle-dates.ts",
+        "tests/editor-canvas-layout.test.ts",
+        "tests/note-title.test.ts",
+        "tests/recycle-dates.test.ts"
       ]
     }
   ],
