@@ -288,14 +288,20 @@ fn build_openai_responses_body_inner(request: &GatewayRequest) -> serde_json::Va
     });
 
     for (index, message) in request.messages.iter().enumerate() {
-        if continuation_tool_start.is_some_and(|start| index < start) {
+        if continuation_tool_start.is_some_and(|start| index < start)
+            && !matches!(message.role, MessageRole::System)
+        {
             continue;
         }
         let text = message.content.text_content();
         match message.role {
-            MessageRole::System if continuation_response_id.is_none() => {
-                system_instructions.push(text)
+            MessageRole::System if continuation_tool_start.is_some_and(|start| index >= start) => {
+                input.push(serde_json::json!({
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": text}],
+                }))
             }
+            MessageRole::System => system_instructions.push(text),
             MessageRole::User if continuation_response_id.is_none() => {
                 input.push(serde_json::json!({
                     "role": "user",
@@ -1121,5 +1127,123 @@ mod phase3_adapter_contract_tests {
         assert_eq!(body["input"][0]["type"], "function_call_output");
         assert_eq!(body["input"][0]["call_id"], "call_2");
         assert!(body.get("instructions").is_none());
+    }
+
+    #[test]
+    fn responses_continuation_keeps_stable_instructions() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Auto,
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+        request.messages.insert(
+            0,
+            LlmMessage {
+                role: MessageRole::System,
+                content: "stable system instructions".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        );
+        request.continuation = Some(ProviderContinuation::OpenAiResponses {
+            response_id: "resp_prior_1".into(),
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![crate::ai_types::ToolCall::new(
+                "call_1",
+                "search_hybrid",
+                r#"{"query":"Iris"}"#,
+            )]),
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"success":true}"#.into(),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        });
+
+        let body = build_llm_api_body(&request).unwrap();
+
+        assert_eq!(body["previous_response_id"], "resp_prior_1");
+        assert_eq!(body["instructions"], "stable system instructions");
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+        assert_eq!(body["input"][0]["type"], "function_call_output");
+        assert_eq!(body["input"][0]["call_id"], "call_1");
+    }
+
+    #[test]
+    fn responses_continuation_includes_host_repair_system_in_input() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Auto,
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+        request.messages.insert(
+            0,
+            LlmMessage {
+                role: MessageRole::System,
+                content: "stable system instructions".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        );
+        request.continuation = Some(ProviderContinuation::OpenAiResponses {
+            response_id: "resp_prior_1".into(),
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![crate::ai_types::ToolCall::new(
+                "call_1",
+                "search_hybrid",
+                r#"{"query":"Iris"}"#,
+            )]),
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"success":true}"#.into(),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::System,
+            content: "Host repair: resubmit a valid tool call.".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        });
+
+        let body = build_llm_api_body(&request).unwrap();
+        let input = body["input"].as_array().expect("input array");
+
+        assert_eq!(body["previous_response_id"], "resp_prior_1");
+        assert_eq!(body["instructions"], "stable system instructions");
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0]["type"], "function_call_output");
+        assert_eq!(input[0]["call_id"], "call_1");
+        assert_eq!(input[1]["role"], "system");
+        assert_eq!(
+            input[1]["content"][0]["text"],
+            "Host repair: resubmit a valid tool call."
+        );
+        assert_eq!(input[1]["content"][0]["type"], "input_text");
     }
 }

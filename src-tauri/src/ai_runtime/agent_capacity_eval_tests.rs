@@ -1721,6 +1721,103 @@ async fn responses_double_preserves_real_continuation_contract() {
     assert_eq!(captures[1].body["input"][0]["type"], "function_call_output");
 }
 
+#[tokio::test]
+async fn responses_double_preserves_instructions_and_host_repair_on_continuation() {
+    let double = spawn_llm_protocol_double(vec![
+        HttpResponseScript::json(serde_json::json!({
+            "id": "response-contract-1",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call-contract-1",
+                "name": "web_search",
+                "arguments": "{\"query\":\"synthetic\"}"
+            }],
+            "usage": {"input_tokens": 2, "output_tokens": 1, "total_tokens": 3}
+        })),
+        HttpResponseScript::json(serde_json::json!({
+            "id": "response-contract-2",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": "continued-ok"}]
+            }],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+        })),
+    ])
+    .await
+    .unwrap();
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let mut first_request = request(provider(
+        &double.base_url,
+        EndpointFamily::OpenAiCompatibleChatCompletions,
+    ));
+    first_request.reasoning = responses_reasoning();
+    first_request.messages.insert(
+        0,
+        LlmMessage {
+            role: MessageRole::System,
+            content: "stable system instructions".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        },
+    );
+    let first = gateway.send_request(first_request.clone()).await.unwrap();
+    let continuation = first.continuation.clone().expect("response id retained");
+
+    first_request.messages.push(LlmMessage {
+        role: MessageRole::Assistant,
+        content: String::new().into(),
+        tool_call_id: None,
+        tool_calls: Some(vec![ToolCall::new(
+            "call-contract-1",
+            "web_search",
+            r#"{"query":"synthetic"}"#,
+        )]),
+        reasoning_content: None,
+    });
+    first_request.messages.push(LlmMessage {
+        role: MessageRole::Tool,
+        content: r#"{"success":true}"#.into(),
+        tool_call_id: Some("call-contract-1".into()),
+        tool_calls: None,
+        reasoning_content: None,
+    });
+    first_request.messages.push(LlmMessage {
+        role: MessageRole::System,
+        content: "Host repair: resubmit a valid tool call.".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    });
+    first_request.continuation = Some(continuation);
+
+    let second = gateway.send_request(first_request).await.unwrap();
+    let captures = double.finish().await.unwrap();
+    let input = captures[1].body["input"]
+        .as_array()
+        .expect("continuation input");
+
+    assert_eq!(second.content.as_deref(), Some("continued-ok"));
+    assert_eq!(captures[1].path, "/v1/responses");
+    assert_eq!(
+        captures[1].body["previous_response_id"],
+        "response-contract-1"
+    );
+    assert_eq!(
+        captures[1].body["instructions"],
+        "stable system instructions"
+    );
+    assert_eq!(input.len(), 2);
+    assert_eq!(input[0]["type"], "function_call_output");
+    assert_eq!(input[1]["role"], "system");
+    assert_eq!(
+        input[1]["content"][0]["text"],
+        "Host repair: resubmit a valid tool call."
+    );
+}
+
 #[test]
 fn mcp_search_only_double_uses_real_mapping_and_normalization_contract() {
     let arguments = super::web_evidence_broker::build_mcp_search_arguments(
