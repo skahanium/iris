@@ -309,7 +309,8 @@ fn deepseek_tool_continuation_preserves_reasoning_content_and_provider_control()
         body["messages"][0]["reasoning_content"],
         "internal chain of thought"
     );
-    assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert!(body.get("extra_body").is_none());
     assert_eq!(body["messages"][1]["role"], "tool");
 }
 

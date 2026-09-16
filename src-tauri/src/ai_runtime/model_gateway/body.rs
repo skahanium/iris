@@ -394,7 +394,7 @@ fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) 
     }
     match reasoning.adapter {
         ReasoningAdapter::DeepSeekReasoningContent => {
-            body["extra_body"]["thinking"] = serde_json::json!({ "type": "enabled" });
+            body["thinking"] = serde_json::json!({ "type": "enabled" });
             body["reasoning_effort"] = serde_json::json!(deepseek_effort_for_mode(reasoning.mode));
         }
         ReasoningAdapter::MiniMaxReasoningDetails => {}
@@ -918,8 +918,9 @@ mod phase3_adapter_contract_tests {
 
         let body = build_chat_completions_body(&request);
 
-        assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("extra_body").is_none());
     }
 
     #[test]
@@ -936,8 +937,9 @@ mod phase3_adapter_contract_tests {
 
         let body = build_chat_completions_body(&request);
 
-        assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["reasoning_effort"], "max");
+        assert!(body.get("extra_body").is_none());
     }
 
     #[test]
