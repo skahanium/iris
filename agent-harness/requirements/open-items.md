@@ -78,9 +78,9 @@
 
 ### G06 Host 用配方当第二规划器
 
-- **目标**：`C14` 不再因无进展身份、两轮拒绝或 token 预留，在任务未完成且信封仍允许时强制 `synthesis_required`。观察之后下一步由模型提议（`R11`、`N15`、`N21`）。
-- **现状**：`agent_tool_loop.rs` 在剩余 completion 接近预留（约 867–876 行）、`rejected_rounds >= 2`（约 1419–1436 行）、`no_progress_rounds >= 2` 或 `failed_service_rounds >= 2`（约 1601–1606 行）时关工具面。进展身份由 `agent_tool_loop/observations.rs` 的 `safe_progress_identities` 定义：有 span 时为 `[resource, revision, start, end, span_kind]`；搜索结果常无 span，退化成 URL／hash，换查询撞同一 URL 会被记为无进展。
-- **差异**：配方启发式被当成循环控制真理；Host 在当第二规划器。
+- **目标**：`C14` 不再因无进展身份或两轮拒绝，在任务未完成且信封仍允许时强制 `synthesis_required`。完成额度预留触达后不提供业务工具属信封（`R12`），不得与无进展关面共用关面指令。观察之后下一步由模型提议（`R11`、`N15`、`N21`）。
+- **现状**：`agent_tool_loop.rs` 在剩余 completion 接近预留（约 867–876 行）时注入关面指令并 `synthesis_required`，与 `rejected_rounds >= 2`（约 1428–1446 行）、`no_progress_rounds >= 2` 或 `failed_service_rounds >= 2`（约 1609–1616 行）共用同一段关面文案。进展身份由 `agent_tool_loop/observations.rs` 的 `safe_progress_identities` 定义：有 span 时为 `[resource, revision, start, end, span_kind]`；搜索结果常无 span，退化成 URL／hash，换查询撞同一 URL 会被记为无进展。
+- **差异**：配方启发式被当成循环控制真理；预留的输出帽（信封）与关面指令（配方）仍绑在同一道闸上。Host 在当第二规划器。
 - **阻断门槛**：`at=acceptance`（只阻断 `D02` 验收，不阻断开始）。
 - **所需证据**：`D02` 工作包登记的过早收束负例（进展身份、观察后再提议、已反馈的未知工具不得强制综合）。本缺口关闭前不要求已实现这些负例。
 

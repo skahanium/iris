@@ -1220,7 +1220,7 @@ export const objects = {
       "Q13",
       "G06",
     ],
-    depends_on: ["D01", "K04", "K06", "K10", "K15", "K16"],
+    depends_on: ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
     closes: ["Q04", "Q10", "G06"],
   },
   D03: {
@@ -1304,7 +1304,7 @@ export const objects = {
     depends_on: ["D04", "D05", "V06", "E03"],
   },
 
-  // ── R01–R11 决定记录 ───────────────────────────────────────
+  // ── R01–R12 决定记录 ───────────────────────────────────────
   R01: {
     kind: "decision",
     name: "adopt-architecture-definition",
@@ -1392,6 +1392,14 @@ export const objects = {
     owner: "M05",
     maturity: "defined",
     definition: { file: "decisions/README.md", anchor: "R11" },
+  },
+  R12: {
+    kind: "decision",
+    name: "completion-reserve-is-output-cap-envelope",
+    title: "R12 完成额度预留是输出帽信封，不是关面配方",
+    owner: "M05",
+    maturity: "defined",
+    definition: { file: "decisions/README.md", anchor: "R12" },
   },
 
   // ── Q01–Q19 / G01–G06 未决问题与缺口 ──────────────────────

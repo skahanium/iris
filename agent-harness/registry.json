@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 56,
+  "registryRevision": 57,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T14:06:19.000Z"
+    "recordedAt": "2026-09-16T15:01:06.422Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -29,7 +29,7 @@
         "P02",
         "P03"
       ],
-      "fingerprint": "c16f9fac787a2e780366d5d1f387ffcf"
+      "fingerprint": "c090b5eea675e4ce9bf76f7f45f32aeb"
     },
     "SRC-ARCH-REPO": {
       "path": "ARCHITECTURE.md",
@@ -54,7 +54,7 @@
     "README.md": {
       "container": "P01",
       "registration": "P01#file",
-      "fingerprint": "6d7894252d4a7784a5074ac89139c7d0"
+      "fingerprint": "e86deb66e4a1c471efd94abf6bb94bf3"
     },
     "contracts/K01-request-identity.md": {
       "container": "K01",
@@ -154,7 +154,7 @@
     "decisions/README.md": {
       "container": "FILE-DECISIONS",
       "registration": "FILE-DECISIONS#file",
-      "fingerprint": "caa98c77f178c6b02d3c00e763d6149b"
+      "fingerprint": "6860295fce37bfba806665b537bdc737"
     },
     "flows/L01-conversation-and-revision.md": {
       "container": "L01",
@@ -199,7 +199,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "02de22b88f9fa1ff97be1a9958d92831"
+      "fingerprint": "dfef0cfd448bf5e319a1b8d80fcd2379"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -254,7 +254,7 @@
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05#file",
-      "fingerprint": "91dceb9a8b41ec8bc835bd60642d6134"
+      "fingerprint": "db0d063d2ef2518f601c4d136cc45cc5"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "5405841bcfbe71e531548fadb872f0b5"
+      "fingerprint": "31a9da8e823492985d666d8dfa880705"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -294,7 +294,7 @@
     "requirements/requirements.md": {
       "container": "P06",
       "registration": "P06#file",
-      "fingerprint": "6b62b8f9faeb8a082b850ab5f97d0cb1"
+      "fingerprint": "24294d94ac8dbeacbb891338b30d37c7"
     },
     "rules/governance.md": {
       "container": "P03",
@@ -304,7 +304,7 @@
     "rules/objects.md": {
       "container": "P02",
       "registration": "P02#file",
-      "fingerprint": "95227b38793716a7a6e8aec9c98e3c8c"
+      "fingerprint": "907ae381f5d3a6344fdd66ca8d8f737f"
     },
     "testing/acceptance-matrix.md": {
       "container": "V03",
@@ -905,13 +905,13 @@
       "title": "C13 循环状态与预算",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C13",
         "line": 150,
         "endLine": 190,
-        "fingerprint": "6065a04f3df3aac94c02dc154338d813"
+        "fingerprint": "f1499c3b8c81fe35d51e6a6ff7ff543e"
       },
       "implementation": {
         "state": "partial"
@@ -934,13 +934,13 @@
       "title": "C14 行动与恢复协调",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 14,
+      "revision": 15,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C14",
         "line": 192,
         "endLine": 232,
-        "fingerprint": "51d2ba827b15d1558a4ce068ef5642f4"
+        "fingerprint": "99e7274969058c538bc28be65d12a88a"
       },
       "implementation": {
         "state": "partial"
@@ -1446,13 +1446,13 @@
       "title": "D02 修正协议与有界纠偏",
       "owner": "C14",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "implementation/D02-protocol-and-recovery.md",
         "anchor": "D02",
-        "line": 75,
-        "endLine": 88,
-        "fingerprint": "6fb03bf70b3bc5a99e9cf2afcfa86fe6"
+        "line": 78,
+        "endLine": 91,
+        "fingerprint": "7d28dc5cddb628eadaff4907d503767b"
       },
       "implementation": {
         "state": "unknown"
@@ -1482,7 +1482,9 @@
           "K06",
           "K10",
           "K15",
-          "K16"
+          "K16",
+          "R11",
+          "R12"
         ],
         "closes": [
           "Q04",
@@ -1790,13 +1792,13 @@
       "title": "decisions/README.md 的文件级容器",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "FILE-DECISIONS",
-        "line": 50,
-        "endLine": 58,
-        "fingerprint": "d527aca7d12a8406d992de0f0b8553f0"
+        "line": 51,
+        "endLine": 59,
+        "fingerprint": "1feaab647b755f53b38fe04279231742"
       },
       "implementation": {
         "state": "unknown"
@@ -2029,13 +2031,13 @@
       "title": "Host 用配方当第二规划器",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 1,
+      "revision": 2,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G06",
         "line": 77,
         "endLine": 87,
-        "fingerprint": "5c6683d9e4339b574f6e7ddf2d6d25c5"
+        "fingerprint": "4f0275e532df3fbaec8abdef6f96a76a"
       },
       "implementation": {
         "state": "unknown"
@@ -3519,13 +3521,13 @@
       "title": "LOOP：持续行动、验证、纠错直到完成",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/requirements.md",
         "anchor": "N15",
         "line": 195,
         "endLine": 203,
-        "fingerprint": "1afbd90e37824c5c3379dec056781b51"
+        "fingerprint": "8b1e2702b53888edfd021a82a04535d5"
       },
       "implementation": {
         "state": "unknown"
@@ -4552,8 +4554,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R01",
-        "line": 60,
-        "endLine": 80,
+        "line": 61,
+        "endLine": 81,
         "fingerprint": "0f83e37bea339e70b4fb3660ab96b9b7"
       },
       "implementation": {
@@ -4577,8 +4579,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R02",
-        "line": 82,
-        "endLine": 102,
+        "line": 83,
+        "endLine": 103,
         "fingerprint": "ce298478f741d2c69345dda2a443b402"
       },
       "implementation": {
@@ -4602,8 +4604,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R03",
-        "line": 104,
-        "endLine": 124,
+        "line": 105,
+        "endLine": 125,
         "fingerprint": "24c06e85f6e7b29877dfd8f5863a4825"
       },
       "implementation": {
@@ -4627,8 +4629,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R04",
-        "line": 126,
-        "endLine": 146,
+        "line": 127,
+        "endLine": 147,
         "fingerprint": "c8b613cdf98521dcb8f2b367b050a515"
       },
       "implementation": {
@@ -4652,8 +4654,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R05",
-        "line": 148,
-        "endLine": 168,
+        "line": 149,
+        "endLine": 169,
         "fingerprint": "e69c32bbaa7fa7048e6a01cbb39ee2aa"
       },
       "implementation": {
@@ -4677,8 +4679,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R06",
-        "line": 170,
-        "endLine": 190,
+        "line": 171,
+        "endLine": 191,
         "fingerprint": "18d5085c59639a35d81313dccc0d6b33"
       },
       "implementation": {
@@ -4702,8 +4704,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R07",
-        "line": 192,
-        "endLine": 212,
+        "line": 193,
+        "endLine": 213,
         "fingerprint": "f991597da8f2577109135fba88fe72e5"
       },
       "implementation": {
@@ -4727,8 +4729,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R08",
-        "line": 214,
-        "endLine": 234,
+        "line": 215,
+        "endLine": 235,
         "fingerprint": "9497dacb90ed0d106a4398de547977f2"
       },
       "implementation": {
@@ -4752,8 +4754,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R09",
-        "line": 236,
-        "endLine": 256,
+        "line": 237,
+        "endLine": 257,
         "fingerprint": "0143db6a2b4c154c3294c0224a6a271b"
       },
       "implementation": {
@@ -4777,8 +4779,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R10",
-        "line": 258,
-        "endLine": 278,
+        "line": 259,
+        "endLine": 279,
         "fingerprint": "52d9ec8de59718033291d3088789e519"
       },
       "implementation": {
@@ -4798,13 +4800,38 @@
       "title": "R11 约束分不变量／信封／配方，模型拥有下一步",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 1,
+      "revision": 2,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R11",
-        "line": 280,
-        "endLine": 306,
-        "fingerprint": "f0476edb6fe7ad55ff1d713d01518946"
+        "line": 281,
+        "endLine": 307,
+        "fingerprint": "1a8c8914c5afa0c9681aaf22b3b4e6f2"
+      },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": null,
+      "scope": [],
+      "relations": {},
+      "note": null
+    },
+    "R12": {
+      "kind": "decision",
+      "name": "completion-reserve-is-output-cap-envelope",
+      "title": "R12 完成额度预留是输出帽信封，不是关面配方",
+      "owner": "M05",
+      "maturity": "defined",
+      "revision": 1,
+      "definition": {
+        "file": "decisions/README.md",
+        "anchor": "R12",
+        "line": 309,
+        "endLine": 334,
+        "fingerprint": "810567ee4bf3309b7b6eb6a94f90300d"
       },
       "implementation": {
         "state": "unknown"
@@ -6516,10 +6543,10 @@
       "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_finish_reason",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "51d2ba827b15d1558a4ce068ef5642f4",
+      "fingerprint": "99e7274969058c538bc28be65d12a88a",
       "at": "2026-09-16T08:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 5 passed / 0 failed。循环纵深：length／unknown 不派发；tool_calls 与 MiniMax 式 stop+工具仍派发；空正文+length 走恢复而非 agent_run_invalid_model_response。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过。"
+      "applicability": "needs-review",
+      "note": "registryRevision 48：本机 5 passed / 0 failed。循环纵深：length／unknown 不派发；tool_calls 与 MiniMax 式 stop+工具仍派发；空正文+length 走恢复而非 agent_run_invalid_model_response。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过。CHG-2026-09-16-32 修订了 C14 决定权（R12 预留不写关面指令）；本记录指纹随定义更新，finish_reason 覆盖仍须在 C14 施工时复核，不构成 G06 关闭证据。"
     },
     {
       "object": "Q04",
@@ -19030,6 +19057,114 @@
           "fingerprintTo": "fa68fe092a714ce31d6762fcc460b4a5"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-16-32",
+      "at": "2026-09-16T15:01:06.422Z",
+      "author": "Cursor Grok 4.6 (R12 docs)",
+      "classification": "architecture",
+      "reason": "R12：完成额度预留是输出帽信封不是关面配方。用户确认方案 B。前缀表只扩号段到 R12。不关闭 D02／Q04／Q10／G06，不改循环实现。",
+      "review": "REV-2026-09-16-32",
+      "objects": [
+        {
+          "id": "P01#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "6d7894252d4a7784a5074ac89139c7d0",
+          "fingerprintTo": "e86deb66e4a1c471efd94abf6bb94bf3"
+        },
+        {
+          "id": "FILE-DECISIONS#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "caa98c77f178c6b02d3c00e763d6149b",
+          "fingerprintTo": "6860295fce37bfba806665b537bdc737"
+        },
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "02de22b88f9fa1ff97be1a9958d92831",
+          "fingerprintTo": "dfef0cfd448bf5e319a1b8d80fcd2379"
+        },
+        {
+          "id": "M05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "91dceb9a8b41ec8bc835bd60642d6134",
+          "fingerprintTo": "db0d063d2ef2518f601c4d136cc45cc5"
+        },
+        {
+          "id": "P06#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "6b62b8f9faeb8a082b850ab5f97d0cb1",
+          "fingerprintTo": "24294d94ac8dbeacbb891338b30d37c7"
+        },
+        {
+          "id": "P02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "95227b38793716a7a6e8aec9c98e3c8c",
+          "fingerprintTo": "907ae381f5d3a6344fdd66ca8d8f737f"
+        },
+        {
+          "id": "C13",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "6065a04f3df3aac94c02dc154338d813",
+          "fingerprintTo": "f1499c3b8c81fe35d51e6a6ff7ff543e"
+        },
+        {
+          "id": "C14",
+          "revisionFrom": 14,
+          "revisionTo": 15,
+          "fingerprintFrom": "51d2ba827b15d1558a4ce068ef5642f4",
+          "fingerprintTo": "99e7274969058c538bc28be65d12a88a"
+        },
+        {
+          "id": "D02",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "6fb03bf70b3bc5a99e9cf2afcfa86fe6",
+          "fingerprintTo": "7d28dc5cddb628eadaff4907d503767b"
+        },
+        {
+          "id": "R11",
+          "revisionFrom": 1,
+          "revisionTo": 2,
+          "fingerprintFrom": "f0476edb6fe7ad55ff1d713d01518946",
+          "fingerprintTo": "1a8c8914c5afa0c9681aaf22b3b4e6f2"
+        },
+        {
+          "id": "G06",
+          "revisionFrom": 1,
+          "revisionTo": 2,
+          "fingerprintFrom": "5c6683d9e4339b574f6e7ddf2d6d25c5",
+          "fingerprintTo": "4f0275e532df3fbaec8abdef6f96a76a"
+        },
+        {
+          "id": "N15",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "1afbd90e37824c5c3379dec056781b51",
+          "fingerprintTo": "8b1e2702b53888edfd021a82a04535d5"
+        },
+        {
+          "id": "FILE-DECISIONS",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "d527aca7d12a8406d992de0f0b8553f0",
+          "fingerprintTo": "1feaab647b755f53b38fe04279231742"
+        },
+        {
+          "id": "R12",
+          "revisionFrom": 0,
+          "revisionTo": 1,
+          "fingerprintFrom": null,
+          "fingerprintTo": "810567ee4bf3309b7b6eb6a94f90300d"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19132,7 +19267,7 @@
       "author": "用户（确认 R11 为决定）",
       "reviewer": "Cursor Grok 4.6 (R11 docs)",
       "conclusion": "synchronized",
-      "reason": "用户已确认 R11 为决定。三层约束与模型拥有下一步写入架构 §3 M5／C13／C14；N15 扩写钉明不改变 D01 关闭项；G06 仅 at=acceptance 阻断 D02。未新开 request_tools 缺口，未把配方写入检查器。",
+      "reason": "用户已确认 R11 为决定。三层约束与模型拥有下一步写入架构 §3 M5／C13／C14；N15 扩写钉明不改变 D01 关闭项；G06 仅 at=acceptance 阻断 D02。未新开 request_tools 缺口，未把配方写入检查器。随后 CHG-2026-09-16-32 把完成额度预留从配方清单拆到 R12；本条仍覆盖 R11 当时的三层约束，预留归类以 CHG-32 为准。",
       "evidence": "2026-09-16 用户确认 R11 为决定；docs/agent-architecture.md §3 M5、§7.4、§10.3、§11；agent-harness/decisions/README.md R11；agent-harness/implementation/D02-protocol-and-recovery.md 过早收束负例清单",
       "objects": [
         {
@@ -19147,33 +19282,33 @@
         },
         {
           "id": "C13",
-          "revision": 12,
-          "fingerprint": "6065a04f3df3aac94c02dc154338d813"
+          "revision": 13,
+          "fingerprint": "f1499c3b8c81fe35d51e6a6ff7ff543e"
         },
         {
           "id": "C14",
-          "revision": 12,
-          "fingerprint": "51d2ba827b15d1558a4ce068ef5642f4"
+          "revision": 15,
+          "fingerprint": "99e7274969058c538bc28be65d12a88a"
         },
         {
           "id": "D02",
-          "revision": 12,
-          "fingerprint": "6fb03bf70b3bc5a99e9cf2afcfa86fe6"
+          "revision": 13,
+          "fingerprint": "7d28dc5cddb628eadaff4907d503767b"
         },
         {
           "id": "N15",
-          "revision": 12,
-          "fingerprint": "1afbd90e37824c5c3379dec056781b51"
+          "revision": 13,
+          "fingerprint": "8b1e2702b53888edfd021a82a04535d5"
         },
         {
           "id": "FILE-DECISIONS",
-          "revision": 12,
-          "fingerprint": "d527aca7d12a8406d992de0f0b8553f0"
+          "revision": 13,
+          "fingerprint": "1feaab647b755f53b38fe04279231742"
         },
         {
           "id": "R11",
-          "revision": 1,
-          "fingerprint": "f0476edb6fe7ad55ff1d713d01518946"
+          "revision": 2,
+          "fingerprint": "1a8c8914c5afa0c9681aaf22b3b4e6f2"
         },
         {
           "id": "N21",
@@ -19192,8 +19327,8 @@
         },
         {
           "id": "G06",
-          "revision": 1,
-          "fingerprint": "5c6683d9e4339b574f6e7ddf2d6d25c5"
+          "revision": 2,
+          "fingerprint": "4f0275e532df3fbaec8abdef6f96a76a"
         }
       ]
     },
@@ -19217,6 +19352,80 @@
         {
           "item": "Q16 的交互形态尚未确定：D03 施工时必须补上「旧修订不覆盖新要求、取消不启动新副作用」的可验证证据",
           "owner": "D03",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-16-32",
+      "change": "CHG-2026-09-16-32",
+      "at": "2026-09-16T15:01:06.422Z",
+      "author": "用户（确认 R12 为决定，采用方案 B）",
+      "reviewer": "Cursor Grok 4.6 (R12 docs)",
+      "conclusion": "synchronized",
+      "reason": "用户已确认 R12 为决定，采用方案 B：完成额度预留是 C13 信封（探索轮输出帽；预留触达后可不提供业务工具并把 remaining 留给表达），不是注入关面指令的配方。R11 配方清单不再把「预留关面」当配方。前缀表只扩号段到 R12。未改循环实现，未关闭 D02／Q04／Q10／G06。",
+      "evidence": "2026-09-16 用户确认 R12 为决定并选择方案 B；docs/agent-architecture.md §3 M5、C13／C14、§11；agent-harness/decisions/README.md R12；agent-harness/implementation/D02-protocol-and-recovery.md §二／§三.5.4–5",
+      "objects": [
+        {
+          "id": "P01#file",
+          "revision": 0,
+          "fingerprint": "e86deb66e4a1c471efd94abf6bb94bf3"
+        },
+        {
+          "id": "FILE-DECISIONS#file",
+          "revision": 0,
+          "fingerprint": "6860295fce37bfba806665b537bdc737"
+        },
+        {
+          "id": "D02#file",
+          "revision": 0,
+          "fingerprint": "dfef0cfd448bf5e319a1b8d80fcd2379"
+        },
+        {
+          "id": "C13",
+          "revision": 13,
+          "fingerprint": "f1499c3b8c81fe35d51e6a6ff7ff543e"
+        },
+        {
+          "id": "C14",
+          "revision": 15,
+          "fingerprint": "99e7274969058c538bc28be65d12a88a"
+        },
+        {
+          "id": "D02",
+          "revision": 13,
+          "fingerprint": "7d28dc5cddb628eadaff4907d503767b"
+        },
+        {
+          "id": "R11",
+          "revision": 2,
+          "fingerprint": "1a8c8914c5afa0c9681aaf22b3b4e6f2"
+        },
+        {
+          "id": "G06",
+          "revision": 2,
+          "fingerprint": "4f0275e532df3fbaec8abdef6f96a76a"
+        },
+        {
+          "id": "N15",
+          "revision": 13,
+          "fingerprint": "8b1e2702b53888edfd021a82a04535d5"
+        },
+        {
+          "id": "FILE-DECISIONS",
+          "revision": 13,
+          "fingerprint": "1feaab647b755f53b38fe04279231742"
+        },
+        {
+          "id": "R12",
+          "revision": 1,
+          "fingerprint": "810567ee4bf3309b7b6eb6a94f90300d"
+        }
+      ],
+      "reverification_required": [
+        {
+          "item": "C14 须拆开完成额度输出帽与关面指令：预留触达后不注入 tool_surface_closed_instruction，并把 remaining 留给表达轮；补强预留测试的工具面与 max_completion_tokens 断言",
+          "owner": "C14",
           "status": "open"
         }
       ]
