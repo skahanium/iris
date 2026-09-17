@@ -1404,13 +1404,13 @@ export const objects = {
 
   R13: {
     kind: "decision",
-    name: "same-schema-budget-drift-prefers-stricter",
-    title: "R13 同版本预算存档的数值漂移取更严格一侧",
+    name: "same-schema-budget-drift-needs-schema-gated-compat",
+    title: "R13 同版本预算漂移必须走 schema 版本门控（待定，尚未采用）",
     owner: "M05",
     maturity: "defined",
     definition: { file: "decisions/README.md", anchor: "R13" },
     consumes: ["K06"],
-    note: "待定：同版本预算漂移必须走 schema 版本门控，尚未采用；记录已否证的路径与两条候选。不解决 Q13。",
+    note: "待定：同版本预算漂移必须走 schema 版本门控，尚未采用；记录已否证的路径与两条候选。不解决 Q13，不解除对 D02 的验收阻断。",
   },
 
   // ── Q01–Q19 / G01–G06 未决问题与缺口 ──────────────────────
@@ -1518,6 +1518,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q13" },
     blocks: blocks("acceptance", ["D02"]),
+    note: "R13 待定（同 schema 取更严格一侧已否证并回退）。仍 open，仍阻断 D02 验收。不得把「风险尚未发生」或误关时的 note 写成已关闭。",
   },
   Q14: {
     kind: "issue",

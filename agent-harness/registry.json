@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 65,
+  "registryRevision": 66,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T05:12:16.570Z"
+    "recordedAt": "2026-09-17T06:19:24.017Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "e70b22eccb78e2730ecb5f40ed7c3c33"
+      "fingerprint": "650edfd429fd9f228b5e33e1e4d2b019"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -4350,7 +4350,7 @@
           }
         ]
       },
-      "note": "由 R13 解决：同版本预算数值漂移取更严格一侧，更宽松仍失败关闭。R13 已落地，故不再阻断 D02 验收。"
+      "note": "R13 待定（同 schema 取更严格一侧已否证并回退）。仍 open，仍阻断 D02 验收。不得把「风险尚未发生」或误关时的 note 写成已关闭。"
     },
     "Q14": {
       "kind": "issue",
@@ -4846,8 +4846,8 @@
     },
     "R13": {
       "kind": "decision",
-      "name": "same-schema-budget-drift-prefers-stricter",
-      "title": "R13 同版本预算存档的数值漂移取更严格一侧",
+      "name": "same-schema-budget-drift-needs-schema-gated-compat",
+      "title": "R13 同版本预算漂移必须走 schema 版本门控（待定，尚未采用）",
       "owner": "M05",
       "maturity": "defined",
       "revision": 2,
@@ -4871,7 +4871,7 @@
           "K06"
         ]
       },
-      "note": "待定：同版本预算漂移必须走 schema 版本门控，尚未采用；记录已否证的路径与两条候选。不解决 Q13。"
+      "note": "待定：同版本预算漂移必须走 schema 版本门控，尚未采用；记录已否证的路径与两条候选。不解决 Q13，不解除对 D02 的验收阻断。"
     },
     "README-CONTRACTS": {
       "kind": "rules",
