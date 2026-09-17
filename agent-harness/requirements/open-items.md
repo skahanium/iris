@@ -80,12 +80,9 @@
 
 - **目标**：`C14` 不再因无进展身份或两轮拒绝，在任务未完成且信封仍允许时强制 `synthesis_required`。完成额度预留触达后不提供业务工具属信封（`R12`），不得与无进展关面共用关面指令。观察之后下一步由模型提议（`R11`、`N15`、`N21`）。
 - **现状**：`agent_tool_loop.rs` 只按信封收窄业务工具面：末轮、`max_tool_calls`、以及 remaining ≤ 完成额度预留（`R12`）。预留触达把 remaining 留给表达轮，不注入 `tool_surface_closed_instruction`。`rejected_rounds`／`no_progress_rounds`／`failed_service_rounds` 仍写入诊断，但不再强制 `synthesis_required`、不再注入关面或「repair is exhausted」指令，也不再仅因 `rejected_rounds >= 2` 把退出标成 `recovery_exhausted`。负例见 `src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`。进展身份仍由 `agent_tool_loop/observations.rs` 的 `safe_progress_identities` 定义：有 span 时为 `[resource, revision, start, end, span_kind]`；搜索结果常无 span，退化成 URL／hash，换查询撞同一 URL 会被记为无进展。
-- **差异**：循环已不再用配方计数当第二规划器（三处闸门与 `recovery_exhausted` 退出分支均已按 `R11`／`R12` 改写，负例见 `agent_tool_loop_host_authority_tests.rs`）。`G06` 仍开的理由是 **`D02` 尚未验收**，而 `D02` 的未完成项中与「主机不再替模型规划下一步」直接相关的还有两处。
-  - **字段级反馈不完整**：`arguments_schema_mismatch` 只把错误码送进反馈，`guardrails::verify_tool_args` 已算出的字段级 `GuardResult::Block` 原因被丢弃；架构定义 §3 M5 要求「返回字段级校验问题、允许类型及必要字段」。现有反馈只给合法工具名与完整 schema，模型需自行比对。
-  - **Anthropic 终止原因缺负例覆盖**：`anthropic_response.rs` 已映射 `stop_reason`→`finish_reason`，但 `agent_tool_loop_finish_reason_tests.rs` 的五类覆盖（正常结束、长度截断、工具结束、尾事件、缺失终止事件）只针对 Chat Completions／Responses；`K04` 要求三个协议各自保真，Anthropic 非正常终止尚无绑定记录。
-  - 与 `G06` **无关**、但同样卡住 `D02` 验收的是 `Q13`（预算存档兼容，见 [current-baseline.md](./current-baseline.md)）。`Q04`／`Q10` 已在 `D02` 的 `closes` 内并有 `V03` 机械覆盖，不构成这里的理由。
+- **差异**：循环已不再用配方计数当第二规划器（三处闸门与 `recovery_exhausted` 退出分支均已按 `R11`／`R12` 改写，负例见 `agent_tool_loop_host_authority_tests.rs`）。本缺口仍 open，随 `D02` 验收关闭（`closes`）；`closes` 豁免不等于已关闭。字段级参数反馈属 `K16`／`C14`，不构成本缺口的关闭条件。Anthropic 五类终止负例属 `C11`／`K04` 后续，不是 `Q04` 本条范围，也不写入本缺口关闭条件。与 Host 规划器无关、但卡住 `D02` 验收的是 `Q13`（预算存档兼容，见 [current-baseline.md](./current-baseline.md)）。
 - **阻断门槛**：`at=acceptance`（只阻断 `D02` 验收，不阻断开始）。
-- **所需证据**：`D02` 工作包登记的过早收束负例已实现并通过（`src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`：两轮已反馈的未知工具不得强制综合、无进展／服务失败计数不得关面、预留触达不得注入关面指令；旧的 `:699`／`:877` 已按新契约改写）。关闭本缺口还需：字段级 mismatch 反馈，以及 Anthropic 终止原因在协议保真证据中的绑定。
+- **所需证据**：`D02` 工作包登记的过早收束负例已实现并通过（`src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`：两轮已反馈的未知工具不得强制综合、无进展／服务失败计数不得关面、预留触达不得注入关面指令；旧的 `:699`／`:877` 已按新契约改写）。关闭本缺口仍待 `D02` 验收，不另要求字段级 mismatch 或 Anthropic 终止绑定。
 
 <!-- iris:end G06 -->
 

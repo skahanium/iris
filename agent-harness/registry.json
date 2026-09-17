@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 66,
+  "registryRevision": 67,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T06:19:24.017Z"
+    "recordedAt": "2026-09-17T08:24:48.981Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -199,7 +199,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "1e68ee021ed96ec81302eabede42066b"
+      "fingerprint": "8307e58f6c9cded30d0027f0f7caeac4"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "650edfd429fd9f228b5e33e1e4d2b019"
+      "fingerprint": "561d080555e052e529c9598e400737d0"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -2031,13 +2031,13 @@
       "title": "Host 用配方当第二规划器",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 4,
+      "revision": 5,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G06",
         "line": 77,
-        "endLine": 90,
-        "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
+        "endLine": 87,
+        "fingerprint": "1a452b52af39caa65ef1db6f3a9a4f72"
       },
       "implementation": {
         "state": "unknown"
@@ -3854,8 +3854,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "P05",
-        "line": 92,
-        "endLine": 106,
+        "line": 89,
+        "endLine": 103,
         "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
       "implementation": {
@@ -4034,13 +4034,13 @@
       "title": "Chat Completions 流式终止原因丢失",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 14,
+      "revision": 15,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q04",
         "line": 81,
         "endLine": 91,
-        "fingerprint": "492c846c0d747386de1d216e607ba797"
+        "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe"
       },
       "implementation": {
         "state": "unknown"
@@ -4846,17 +4846,17 @@
     },
     "R13": {
       "kind": "decision",
-      "name": "same-schema-budget-drift-needs-schema-gated-compat",
-      "title": "R13 同版本预算漂移必须走 schema 版本门控（待定，尚未采用）",
+      "name": "same-schema-budget-drift-compat-undecided",
+      "title": "R13 同版本预算漂移的兼容路径（待定，尚未采用）",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 2,
+      "revision": 3,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R13",
         "line": 336,
         "endLine": 378,
-        "fingerprint": "51b8af05c9ae8d22d17f387b99312d09"
+        "fingerprint": "e8029cb67303bd60a670feb7485e31e9"
       },
       "implementation": {
         "state": "unknown"
@@ -4871,7 +4871,7 @@
           "K06"
         ]
       },
-      "note": "待定：同版本预算漂移必须走 schema 版本门控，尚未采用；记录已否证的路径与两条候选。不解决 Q13，不解除对 D02 的验收阻断。"
+      "note": "待定：同版本预算漂移的兼容路径尚未采用；记录已否证的路径与两条候选。不解决 Q13，不解除对 D02 的验收阻断。"
     },
     "README-CONTRACTS": {
       "kind": "rules",
@@ -6583,7 +6583,7 @@
       "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "492c846c0d747386de1d216e607ba797",
+      "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 9 passed / 0 failed。Q04 五类协议测试中的状态机部分。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不关闭 Q04，不替代逐端点 V05。"
@@ -6594,7 +6594,7 @@
       "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "492c846c0d747386de1d216e607ba797",
+      "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 2 passed / 0 failed。Q04 长度截断与缺失终止的字节级 SSE。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
@@ -6605,7 +6605,7 @@
       "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_finish_reason",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "492c846c0d747386de1d216e607ba797",
+      "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 5 passed / 0 failed。Q04 截断工具不得当作完整动作执行；含空正文+length 恢复。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
@@ -6616,7 +6616,7 @@
       "testPath": "src-tauri/src/ai_runtime/final_answer_integrity.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib final_answer_integrity",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "492c846c0d747386de1d216e607ba797",
+      "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 1 passed / 0 failed。length／unknown／max_tokens 不是正常结束；may_execute_tool_calls 仅放行 tool_calls／tool_use／stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
@@ -19338,6 +19338,44 @@
           "fingerprintTo": "2305b326ac298e8c2127a78c8b97944e"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-42",
+      "at": "2026-09-17T08:24:48.981Z",
+      "author": "Cursor Grok 4.6 (field-level feedback)",
+      "classification": "refinement",
+      "reason": "只改 G06 归属与 R13 待定身份、Q04 范围句与 D02 不承诺：字段级纠偏属 K16/C14，Anthropic 五类负例属 C11/K04；不改 D02 的 blocks、scope、closes，不关闭任何 issue。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "1e68ee021ed96ec81302eabede42066b",
+          "fingerprintTo": "8307e58f6c9cded30d0027f0f7caeac4"
+        },
+        {
+          "id": "R13",
+          "revisionFrom": 2,
+          "revisionTo": 3,
+          "fingerprintFrom": "51b8af05c9ae8d22d17f387b99312d09",
+          "fingerprintTo": "e8029cb67303bd60a670feb7485e31e9"
+        },
+        {
+          "id": "Q04",
+          "revisionFrom": 14,
+          "revisionTo": 15,
+          "fingerprintFrom": "492c846c0d747386de1d216e607ba797",
+          "fingerprintTo": "eaa4eeba39fc59d9dfaac3f3447fc2fe"
+        },
+        {
+          "id": "G06",
+          "revisionFrom": 4,
+          "revisionTo": 5,
+          "fingerprintFrom": "14e5e3a010e0e2e23af6fb403bd70033",
+          "fingerprintTo": "1a452b52af39caa65ef1db6f3a9a4f72"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19501,7 +19539,9 @@
         {
           "id": "G06",
           "revision": 4,
-          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
+          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033",
+          "stale": true,
+          "staleNote": "本对象在本记录写入后被细化（CHG-2026-09-17-42：G06 关闭条件不再含字段级 mismatch 与 Anthropic）；绑定恢复为写入当时的指纹；当前状态需针对新指纹的复核才能解封。"
         }
       ],
       "rebound": "G06 于 CHG-2026-09-17-34 细化后指纹变化；按 REV-2026-09-16-38 的结论重新绑定到当前指纹，原判断不变。"
@@ -19582,7 +19622,9 @@
         {
           "id": "G06",
           "revision": 4,
-          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
+          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033",
+          "stale": true,
+          "staleNote": "本对象在本记录写入后被细化（CHG-2026-09-17-42：G06 关闭条件不再含字段级 mismatch 与 Anthropic）；绑定恢复为写入当时的指纹。"
         },
         {
           "id": "N15",
@@ -19663,12 +19705,16 @@
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "1e68ee021ed96ec81302eabede42066b"
+          "fingerprint": "1e68ee021ed96ec81302eabede42066b",
+          "stale": true,
+          "staleNote": "外围正文在 CHG-2026-09-17-42 细化后变化；绑定停留在写入当时的指纹。"
         },
         {
           "id": "R13",
           "revision": 2,
-          "fingerprint": "51b8af05c9ae8d22d17f387b99312d09"
+          "fingerprint": "51b8af05c9ae8d22d17f387b99312d09",
+          "stale": true,
+          "staleNote": "标题／name 改为待定语气（CHG-2026-09-17-42）；绑定停留在写入当时的指纹。"
         },
         {
           "id": "Q13",

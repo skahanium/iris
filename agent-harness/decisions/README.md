@@ -333,9 +333,9 @@ Iris 已有值得保留的合同；多个关键问题可定位到协议、上下
 
 <!-- iris:end R12 -->
 
-<!-- iris:object R13 kind=decision name=same-schema-budget-drift-needs-schema-gated-compat -->
+<!-- iris:object R13 kind=decision name=same-schema-budget-drift-compat-undecided -->
 
-### R13 同版本预算漂移必须走 schema 版本门控（待定，尚未采用）
+### R13 同版本预算漂移的兼容路径（待定，尚未采用）
 
 ## 决定
 
