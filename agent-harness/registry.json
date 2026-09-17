@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 79,
+  "registryRevision": 80,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T11:08:48.165Z"
+    "recordedAt": "2026-09-17T11:44:07.685Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -236,7 +236,7 @@
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04",
-      "fingerprint": "5c4ed4e1133eef8a09730b479bd61dd3"
+      "fingerprint": "afe614d7639c486cc568c7f0502cd0bd"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "ae31f31d89f7005e23e4b584a7afc843"
+      "fingerprint": "e26fbd255352f5d05b36d7d656bd2838"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -726,13 +726,13 @@
       "title": "C11 协议与续轮适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C11",
         "line": 165,
         "endLine": 205,
-        "fingerprint": "6617414d4df6450b1a776688d182f52b"
+        "fingerprint": "72995acbdc14d252f44796bf0322ec9f"
       },
       "implementation": { "state": "partial" },
       "verification": { "state": "none" },
@@ -1594,13 +1594,13 @@
       "title": "K04 供应商能力状态与续轮保真",
       "owner": "C10",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "contracts/K04-provider-capability.md",
         "anchor": "K04",
         "line": 13,
         "endLine": 96,
-        "fingerprint": "334e9bd2466e744c182b0f55f111a735"
+        "fingerprint": "9089a048ca45699335d62b22baff0c54"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2954,13 +2954,13 @@
       "title": "Chat Completions 流式终止原因丢失",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 15,
+      "revision": 16,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q04",
         "line": 81,
         "endLine": 91,
-        "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe"
+        "fingerprint": "06ff6425c93e01f30ae314209f3af1a0"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4492,13 +4492,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 23,
+      "revision": 24,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 82,
-        "fingerprint": "73e52d57fd3fdd86fbde1ddd2fbd42e1"
+        "fingerprint": "711f7ebd52047f55f46a4d052ffaf72f"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4838,7 +4838,7 @@
       "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过（Anthropic／Responses／Q10／V05 不在范围）。"
@@ -4849,7 +4849,7 @@
       "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
@@ -4863,7 +4863,7 @@
       "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
       "at": "2026-09-17T09:10:00Z",
       "applicability": "current",
-      "note": "CHG-2026-09-17-43：指纹绑到 C14 revision 17。finish_reason 循环纵深仍覆盖；host_authority 负例见 agent_tool_loop_host_authority_tests.rs。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过，不构成 G06／D02 关闭证据。"
+      "note": "CHG-2026-09-17-50：指纹仍绑 C14 当前定义。循环纵深含 Anthropic 词汇 end_turn／tool_use／max_tokens（8 passed）。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过，不构成 G06／D02 关闭证据。"
     },
     {
       "object": "C14",
@@ -4915,7 +4915,7 @@
       "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
+      "fingerprint": "06ff6425c93e01f30ae314209f3af1a0",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 9 passed / 0 failed。Q04 五类协议测试中的状态机部分。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不关闭 Q04，不替代逐端点 V05。"
@@ -4926,7 +4926,7 @@
       "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
+      "fingerprint": "06ff6425c93e01f30ae314209f3af1a0",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 2 passed / 0 failed。Q04 长度截断与缺失终止的字节级 SSE。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
@@ -4937,7 +4937,7 @@
       "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_finish_reason",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
+      "fingerprint": "06ff6425c93e01f30ae314209f3af1a0",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 5 passed / 0 failed。Q04 截断工具不得当作完整动作执行；含空正文+length 恢复。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
@@ -4948,7 +4948,7 @@
       "testPath": "src-tauri/src/ai_runtime/final_answer_integrity.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib final_answer_integrity",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
+      "fingerprint": "06ff6425c93e01f30ae314209f3af1a0",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
       "note": "registryRevision 48：本机 1 passed / 0 failed。length／unknown／max_tokens 不是正常结束；may_execute_tool_calls 仅放行 tool_calls／tool_use／stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
@@ -4959,7 +4959,7 @@
       "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::deepseek_reasoning",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
       "applicability": "current",
       "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过（G03／Q17／V05／Anthropic 不在范围）。"
@@ -4970,7 +4970,7 @@
       "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib deepseek_tool_continuation_preserves_reasoning_content",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
       "applicability": "current",
       "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
@@ -4981,7 +4981,7 @@
       "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib messages_for_api_does_not_replay_reasoning",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
       "applicability": "current",
       "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
@@ -4992,7 +4992,7 @@
       "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::responses_",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
       "applicability": "current",
       "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
@@ -5003,10 +5003,54 @@
       "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib responses_double_preserves_instructions_and_host_repair_on_continuation",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "6617414d4df6450b1a776688d182f52b",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
       "applicability": "current",
       "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_anthropic.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic::tests",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
+      "at": "2026-09-17T11:44:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，不关闭 Q04／D02。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_anthropic_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
+      "at": "2026-09-17T11:44:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 5 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason 为 unknown 而非 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。"
+    },
+    {
+      "object": "K04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_anthropic.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic::tests",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "9089a048ca45699335d62b22baff0c54",
+      "at": "2026-09-17T11:44:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。K04 Messages 流式终止事实保真（缺省 unknown，截断 tool_use 不可执行）。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。verification.state 仍 none，不替代 V05。"
+    },
+    {
+      "object": "K04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_anthropic_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "9089a048ca45699335d62b22baff0c54",
+      "at": "2026-09-17T11:44:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 5 passed / 0 failed。K04 Messages 字节级 SSE 与状态机同一不变量。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。verification.state 仍 none。"
     },
     {
       "object": "Q10",
@@ -17864,6 +17908,51 @@
           "fingerprintTo": "dc9b803108afd1177308fb788524fc19"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-50",
+      "at": "2026-09-17T11:44:07.685Z",
+      "author": "Cursor Grok 4.6 (Package B Anthropic five-class)",
+      "classification": "refinement",
+      "reason": "登记 Anthropic Messages 流式五类终止的测试指针与机械覆盖；不关闭 Q04／Q10／D02／G06，不把 C11 verification 标为通过。",
+      "review": null,
+      "objects": [
+        {
+          "id": "M04",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "5c4ed4e1133eef8a09730b479bd61dd3",
+          "fingerprintTo": "afe614d7639c486cc568c7f0502cd0bd"
+        },
+        {
+          "id": "C11",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "6617414d4df6450b1a776688d182f52b",
+          "fingerprintTo": "72995acbdc14d252f44796bf0322ec9f"
+        },
+        {
+          "id": "K04",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "334e9bd2466e744c182b0f55f111a735",
+          "fingerprintTo": "9089a048ca45699335d62b22baff0c54"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 23,
+          "revisionTo": 24,
+          "fingerprintFrom": "73e52d57fd3fdd86fbde1ddd2fbd42e1",
+          "fingerprintTo": "711f7ebd52047f55f46a4d052ffaf72f"
+        },
+        {
+          "id": "Q04",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "eaa4eeba39fc59d9dfaac3f3447fc2fe",
+          "fingerprintTo": "06ff6425c93e01f30ae314209f3af1a0"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18493,7 +18582,33 @@
     "G05": { "state": "open" },
     "G06": { "state": "open" }
   },
-  "gaps": [],
+  "gaps": [
+    {
+      "review": "REV-2026-09-16-24",
+      "object": "G06",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-16-32",
+      "object": "D02#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-16-32",
+      "object": "G06",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-17-37",
+      "object": "D02#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-17-48",
+      "object": "D02#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    }
+  ],
   "notes": [
     "本登记表由 scripts/agent-harness-check.mjs --reconcile 写入计算值（指纹、行号、修订）；身份、成熟度、关系与作用域在 agent-harness/catalog.mjs 人工维护。",
     "revision > 1 且 changes 中同一批 187 个对象全部变化，是建立期指纹比对缺陷（比较字段层级不一致）造成的假变化，不是 187 次真实修订；该缺陷已修复，此后无内容变化时 reconcile 不再产生变更记录。",

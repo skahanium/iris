@@ -86,7 +86,7 @@
 - **不能推出**：所有协议都忽略终止原因——同文件 Anthropic 状态机已有停止原因处理，Responses 走独立路径。Anthropic 五类终止负例绑定不在本条，也不在 `G06`。本条覆盖不关闭 `D02`／`Q10`／`G06`，也不替代逐端点 `V05`。
 - **影响边界**：`C11`、`C23`、`C14`；对应架构定义 `F03`。
 - **所需证据**：覆盖正常结束、长度截断、工具结束、尾事件与缺失终止事件的协议测试（`V05`）。
-- **覆盖**：Chat Completions 流式已保留供应商终止事实（缺省 `unknown`，不填 `stop`）；截断工具不派发；Anthropic／Responses 仍不在本条范围。`V03` 机械记录见 `registry.json.verify`；不把 `Q04`／`C11` 的 `verification.state` 标为通过，也不关闭本项。
+- **覆盖**：Chat Completions 流式已保留供应商终止事实（缺省 `unknown`，不填 `stop`）；截断工具不派发；Anthropic／Responses 仍不在本条范围。Anthropic Messages 流式五类负例已另绑 `C11`／`K04`，不扩大本条关闭条件。`V03` 机械记录见 `registry.json.verify`；不把 `Q04`／`C11` 的 `verification.state` 标为通过，也不关闭本项。
 
 <!-- iris:end Q04 -->
 
