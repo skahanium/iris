@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 78,
+  "registryRevision": 79,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T10:47:33.410Z"
+    "recordedAt": "2026-09-17T11:08:48.165Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -41,7 +41,7 @@
     "README.md": {
       "container": "P01",
       "registration": "P01#file",
-      "fingerprint": "e86deb66e4a1c471efd94abf6bb94bf3"
+      "fingerprint": "8e5cf807cea5dea36d77aa4eb19e96c9"
     },
     "contracts/K01-request-identity.md": {
       "container": "K01",
@@ -186,7 +186,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "7cfd85337ba9c675c1a8979c68fb2de0"
+      "fingerprint": "dc9b803108afd1177308fb788524fc19"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "a7faf785e87109e2960d2f5303d6a3e6"
+      "fingerprint": "ae31f31d89f7005e23e4b584a7afc843"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1134,8 +1134,8 @@
       "definition": {
         "file": "implementation/D02-protocol-and-recovery.md",
         "anchor": "D02",
-        "line": 78,
-        "endLine": 91,
+        "line": 79,
+        "endLine": 92,
         "fingerprint": "7d28dc5cddb628eadaff4907d503767b"
       },
       "implementation": { "state": "unknown" },
@@ -17840,6 +17840,30 @@
           "fingerprintTo": "bf4770015b45418173a54ce18269972c"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-49",
+      "at": "2026-09-17T11:08:48.165Z",
+      "author": "Cursor Grok 4.6 (Package A follow-up)",
+      "classification": "refinement",
+      "reason": "P01 对象计数与 objects.md／FILE-DECISIONS 对齐为 R01–R13；D02 规则段钉明检查器 acceptanceReady 不等于产品完成。不改 D02 的 closes／work.state／阻断边，不关闭任何 issue。",
+      "review": "REV-2026-09-17-49",
+      "objects": [
+        {
+          "id": "P01#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "e86deb66e4a1c471efd94abf6bb94bf3",
+          "fingerprintTo": "8e5cf807cea5dea36d77aa4eb19e96c9"
+        },
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "7cfd85337ba9c675c1a8979c68fb2de0",
+          "fingerprintTo": "dc9b803108afd1177308fb788524fc19"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18051,7 +18075,9 @@
         {
           "id": "P01#file",
           "revision": 0,
-          "fingerprint": "e86deb66e4a1c471efd94abf6bb94bf3"
+          "fingerprint": "e86deb66e4a1c471efd94abf6bb94bf3",
+          "stale": true,
+          "staleNote": "P01 对象计数由 R01–R12 改为 R01–R13，与 objects.md／FILE-DECISIONS 对齐；绑定停留在写入当时的指纹。"
         },
         {
           "id": "FILE-DECISIONS#file",
@@ -18391,7 +18417,9 @@
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "7cfd85337ba9c675c1a8979c68fb2de0"
+          "fingerprint": "7cfd85337ba9c675c1a8979c68fb2de0",
+          "stale": true,
+          "staleNote": "规则段补写检查器 acceptanceReady 不等于产品完成，并澄清 Q13 仍 open；绑定停留在写入当时的指纹。"
         },
         {
           "id": "R13",
@@ -18412,6 +18440,28 @@
           "id": "FILE-DECISIONS",
           "revision": 14,
           "fingerprint": "bf4770015b45418173a54ce18269972c"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-17-49",
+      "change": "CHG-2026-09-17-49",
+      "at": "2026-09-17T11:08:48.165Z",
+      "author": "用户（会话内要求对照检查完善包A）",
+      "reviewer": "Cursor Grok 4.6 (Package A follow-up)",
+      "conclusion": "no-impact",
+      "reason": "两处都是把现行事实写准：① P01 入口计数从 R01–R12／12 改为 R01–R13／13，与已复核的 objects.md 前缀表及 FILE-DECISIONS 索引一致；② D02 规则段澄清 Q13 仍 open、并钉明检查器因 closes 豁免可能算出 acceptanceReady=true，产品上仍保持 planned／verification=none，不得写成 done 或 ready。未改 D02.closes、work.state、Q13 状态或任何执行语义。",
+      "evidence": "可追溯评审记录：本会话用户要求「完成后自己对照检查完善一轮」。差异为 agent-harness/README.md 对象计数一行，以及 implementation/D02-protocol-and-recovery.md 规则段作用域句与「不作出的承诺」一条。registry.objects.D02 定义指纹仍为 7d28dc5cddb628eadaff4907d503767b，work.state=planned；issues.Q13／Q04／Q10／G06 仍 open。实测：node scripts/agent-harness-check.mjs 退出码 0。",
+      "objects": [
+        {
+          "id": "P01#file",
+          "revision": 0,
+          "fingerprint": "8e5cf807cea5dea36d77aa4eb19e96c9"
+        },
+        {
+          "id": "D02#file",
+          "revision": 0,
+          "fingerprint": "dc9b803108afd1177308fb788524fc19"
         }
       ]
     }

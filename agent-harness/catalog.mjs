@@ -1303,7 +1303,7 @@ export const objects = {
     depends_on: ["D04", "D05", "V06", "E03"],
   },
 
-  // ── R01–R12 决定记录 ───────────────────────────────────────
+  // ── R01–R13 决定记录 ───────────────────────────────────────
   R01: {
     kind: "decision",
     name: "adopt-architecture-definition",
