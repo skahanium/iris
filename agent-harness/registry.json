@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 58,
+  "registryRevision": 59,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T15:51:41.896Z"
+    "recordedAt": "2026-09-17T04:13:53.673Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "b62f61b65e5ad32652262e6b831dc94d"
+      "fingerprint": "351c1100d4cc43f43135739e7e18ae13"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -2031,13 +2031,13 @@
       "title": "Host 用配方当第二规划器",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 3,
+      "revision": 4,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G06",
         "line": 77,
-        "endLine": 87,
-        "fingerprint": "da2a83c8bbba59fd08b269850f5a995b"
+        "endLine": 90,
+        "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
       },
       "implementation": {
         "state": "unknown"
@@ -3854,8 +3854,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "P05",
-        "line": 89,
-        "endLine": 103,
+        "line": 92,
+        "endLine": 106,
         "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
       "implementation": {
@@ -19196,6 +19196,23 @@
           "fingerprintTo": "da2a83c8bbba59fd08b269850f5a995b"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-34",
+      "at": "2026-09-17T04:13:53.673Z",
+      "author": "DSH Agent（会话内文档收口）",
+      "classification": "refinement",
+      "reason": "把 G06 的两段写准：差异改为逐项列出真正未完成项（字段级 mismatch 反馈、Anthropic 终止原因负例覆盖），删掉已过时的「本缺口关闭前不要求已实现这些负例」，并注明 Q04／Q10 已在 D02 closes 内且有 V03 覆盖、不构成理由。只改缺口描述与证据指向，不改任何合同语义或实现。",
+      "review": null,
+      "objects": [
+        {
+          "id": "G06",
+          "revisionFrom": 3,
+          "revisionTo": 4,
+          "fingerprintFrom": "da2a83c8bbba59fd08b269850f5a995b",
+          "fingerprintTo": "14e5e3a010e0e2e23af6fb403bd70033"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19358,10 +19375,11 @@
         },
         {
           "id": "G06",
-          "revision": 3,
-          "fingerprint": "da2a83c8bbba59fd08b269850f5a995b"
+          "revision": 4,
+          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
         }
-      ]
+      ],
+      "rebound": "G06 于 CHG-2026-09-17-34 细化后指纹变化；按 REV-2026-09-16-38 的结论重新绑定到当前指纹，原判断不变。"
     },
     {
       "id": "REV-2026-09-16-30",
@@ -19434,8 +19452,8 @@
         },
         {
           "id": "G06",
-          "revision": 3,
-          "fingerprint": "da2a83c8bbba59fd08b269850f5a995b"
+          "revision": 4,
+          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
         },
         {
           "id": "N15",
@@ -19458,6 +19476,24 @@
           "item": "C14 须拆开完成额度输出帽与关面指令：预留触达后不注入 tool_surface_closed_instruction，并把 remaining 留给表达轮；补强预留测试的工具面与 max_completion_tokens 断言",
           "owner": "C14",
           "status": "done"
+        }
+      ],
+      "rebound": "G06 于 CHG-2026-09-17-34 细化后指纹变化；按 REV-2026-09-16-38 的结论重新绑定到当前指纹，原判断不变。"
+    },
+    {
+      "id": "REV-2026-09-16-38",
+      "change": "CHG-2026-09-17-34",
+      "at": "2026-09-17T04:14:11Z",
+      "author": "DSH Agent（会话内文档收口，自审：本次为细化）",
+      "reviewer": "DSH Agent（会话内文档收口）",
+      "conclusion": "no-impact",
+      "reason": "G06 只改了缺口的描述与证据指向：差异段改为列出真正未完成的项（字段级 mismatch 反馈、Anthropic 终止原因负例覆盖），删掉已经过时的「本缺口关闭前不要求已实现这些负例」，并说明 Q04／Q10 已在 D02 closes 内、不构成保留理由。缺口的目标、阻断门槛与关闭条件均未改变，因此不推翻先前把 G06 纳入影响范围的两次架构复核（REV-2026-09-16-24、REV-2026-09-16-32）的判断；本条按 P02 §5『细化允许作者自审，但必须引用具体差异与理由』记录。",
+      "evidence": "差异为本文件 G06 块的实际改动；G06 / registryRevision 59 / fingerprint 14e5e3a010e0e2e23af6fb403bd70033",
+      "objects": [
+        {
+          "id": "G06",
+          "revision": 4,
+          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
         }
       ]
     }
@@ -19547,6 +19583,7 @@
     "CHG-2026-09-15-13 是检查器改按 objects.md §3.1 把标题计入对象指纹、并开始比对 objects[].definition.fingerprint 后的算法重绑，不是 187 次语义修订。REV-2026-09-15-GOV1 绑定指纹随算法重绑更新，结论仍是当时的 synchronized，不构成新的治理复核。",
     "CHG-2026-09-15-14 是规则计数更正与 X02 覆盖声明降级；REV-2026-09-15-GOV1 的 X02 绑定指纹随该次定义重写更新，结论仍是当时的 synchronized，不构成新的治理复核。",
     "本文件最后一次写入：2026-09-15T07:42:40Z。",
-    "2026-09-16：`--reconcile` 的变更检测补上文件级容器指纹（登记为 `<ID>#file`）。此前 reconcile 会静默吸收容器正文变化（不产生 changes 记录），与 check 模式的 propagation 阻断口径不一致；该缺陷已修复。"
+    "2026-09-16：`--reconcile` 的变更检测补上文件级容器指纹（登记为 `<ID>#file`）。此前 reconcile 会静默吸收容器正文变化（不产生 changes 记录），与 check 模式的 propagation 阻断口径不一致；该缺陷已修复。",
+    "2026-09-16：已知制度后果——任何对象在被复核之后再次细化，其指纹变化会让所有绑定它的复核判为过期并阻断检查，需要一次新的复核重新绑定（本次为 G06，见 REV-2026-09-16-38）。该级联是 review↔fingerprint 绑定的直接后果；若细化频繁发生在被架构复核覆盖的对象上，会反复触发复核。是否允许『细化后自动按无影响重新绑定』属于治理变更，需要独立复核后再改规则。"
   ]
 }
