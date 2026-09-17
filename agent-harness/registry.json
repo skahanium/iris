@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 67,
+  "registryRevision": 68,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T08:24:48.981Z"
+    "recordedAt": "2026-09-17T08:43:36.268Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -199,7 +199,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "8307e58f6c9cded30d0027f0f7caeac4"
+      "fingerprint": "a3d096d3ad4c4f62b75b1876069de5c9"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "561d080555e052e529c9598e400737d0"
+      "fingerprint": "313fd4b528c92f2e452ca38f83b4aa9c"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -934,13 +934,13 @@
       "title": "C14 行动与恢复协调",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 16,
+      "revision": 17,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C14",
         "line": 192,
         "endLine": 232,
-        "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140"
+        "fingerprint": "4cff06c71076865d628dbaf2ecf557c1"
       },
       "implementation": {
         "state": "partial"
@@ -2541,13 +2541,13 @@
       "title": "K16 验证报告与可恢复错误反馈",
       "owner": "C23",
       "maturity": "defined",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "contracts/K16-verification-report.md",
         "anchor": "K16",
         "line": 13,
         "endLine": 111,
-        "fingerprint": "e31c54c0d6a080ebe768b550068a01b4"
+        "fingerprint": "529443fad5105df30206ae266bddd46e"
       },
       "implementation": {
         "state": "unknown"
@@ -6142,13 +6142,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 21,
+      "revision": 22,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 81,
-        "fingerprint": "fa68fe092a714ce31d6762fcc460b4a5"
+        "endLine": 82,
+        "fingerprint": "0350a33d7c9b5e8ffb8e9de605c493a3"
       },
       "implementation": {
         "state": "unknown"
@@ -6296,8 +6296,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 83,
-        "endLine": 105,
+        "line": 84,
+        "endLine": 106,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": {
@@ -6572,10 +6572,54 @@
       "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_finish_reason",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140",
-      "at": "2026-09-16T16:00:00Z",
+      "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
+      "at": "2026-09-17T09:10:00Z",
       "applicability": "current",
-      "note": "CHG-2026-09-16-33：指纹绑到 C14 revision 16（信封关面、配方不再规划下一步）。finish_reason 循环纵深仍覆盖；host_authority 负例见 agent_tool_loop_host_authority_tests.rs。不把 C14 verification 标为通过，不构成 G06 关闭证据。"
+      "note": "CHG-2026-09-17-43：指纹绑到 C14 revision 17。finish_reason 循环纵深仍覆盖；host_authority 负例见 agent_tool_loop_host_authority_tests.rs。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过，不构成 G06／D02 关闭证据。"
+    },
+    {
+      "object": "C14",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_schema_feedback_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib schema_mismatch_feedback",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
+      "at": "2026-09-17T09:10:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-43：本机 3 passed / 0 failed。参数无效时 Host System 反馈同时含 arguments_schema_mismatch 与字段级 Block.reason（必填／类型／枚举）。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过，不关闭 G06／D02。"
+    },
+    {
+      "object": "K16",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_schema_feedback_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib schema_mismatch_feedback",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "529443fad5105df30206ae266bddd46e",
+      "at": "2026-09-17T09:10:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-43：本机 3 passed / 0 failed。K16「工具存在但参数无效」的字段级 Host 反馈机械覆盖。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。verification.state 仍 none，不等于 D02 可验收，不关闭 G06。"
+    },
+    {
+      "object": "K16",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_execution_pipeline.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib malformed_arguments_never_reach_dispatch",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "529443fad5105df30206ae266bddd46e",
+      "at": "2026-09-17T09:10:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-43：本机 1 passed / 0 failed。同一 verify_tool_args 闸门的 pipeline 结果保留 error=tool_arguments_invalid 并带字段级 reason。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。verification.state 仍 none。"
+    },
+    {
+      "object": "C14",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/guardrails.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib tool_argument_validation",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
+      "at": "2026-09-17T09:10:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-43：本机 2 passed / 0 failed。guardrails Block.reason 点出必填路径、允许类型，枚举失败列出合法取值。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过。"
     },
     {
       "object": "Q04",
@@ -19376,6 +19420,44 @@
           "fingerprintTo": "1a452b52af39caa65ef1db6f3a9a4f72"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-43",
+      "at": "2026-09-17T08:43:36.268Z",
+      "author": "Cursor Grok 4.6 (field-level feedback)",
+      "classification": "refinement",
+      "reason": "只登记字段级纠偏机械覆盖：V02 行、C14/K16 测试指针；verification.state 仍 none；不改 D02 的 blocks、scope、closes，不关闭任何 issue。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "8307e58f6c9cded30d0027f0f7caeac4",
+          "fingerprintTo": "a3d096d3ad4c4f62b75b1876069de5c9"
+        },
+        {
+          "id": "C14",
+          "revisionFrom": 16,
+          "revisionTo": 17,
+          "fingerprintFrom": "d8e95a7751c09cd1fa9d7f67a5a76140",
+          "fingerprintTo": "4cff06c71076865d628dbaf2ecf557c1"
+        },
+        {
+          "id": "K16",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "e31c54c0d6a080ebe768b550068a01b4",
+          "fingerprintTo": "529443fad5105df30206ae266bddd46e"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 21,
+          "revisionTo": 22,
+          "fingerprintFrom": "fa68fe092a714ce31d6762fcc460b4a5",
+          "fingerprintTo": "0350a33d7c9b5e8ffb8e9de605c493a3"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19499,7 +19581,9 @@
         {
           "id": "C14",
           "revision": 16,
-          "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140"
+          "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140",
+          "stale": true,
+          "staleNote": "测试节增补字段级纠偏指针（决定权正文未改）；绑定停留在写入当时的指纹。"
         },
         {
           "id": "D02",
@@ -19607,7 +19691,9 @@
         {
           "id": "C14",
           "revision": 16,
-          "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140"
+          "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140",
+          "stale": true,
+          "staleNote": "测试节增补字段级纠偏指针（决定权正文未改）；绑定停留在写入当时的指纹。"
         },
         {
           "id": "D02",
@@ -19878,6 +19964,16 @@
   },
   "gaps": [
     {
+      "review": "REV-2026-09-16-24",
+      "object": "C14",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-16-24",
+      "object": "G06",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
       "review": "REV-2026-09-16-32",
       "object": "FILE-DECISIONS#file",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
@@ -19885,6 +19981,26 @@
     {
       "review": "REV-2026-09-16-32",
       "object": "D02#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-16-32",
+      "object": "C14",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-16-32",
+      "object": "G06",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-17-37",
+      "object": "D02#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-17-37",
+      "object": "R13",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     }
   ],

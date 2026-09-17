@@ -227,7 +227,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`。信封关面与配方负例见 `src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`；终止原因循环纵深见 `src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs`。本组件当前 `verification.state=none`，已绑定指纹的证据记录不构成合同已通过，也不关闭 `G06`。
+关键不变量与所需证据类别见 `V01`–`V07`。信封关面与配方负例见 `src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`；终止原因循环纵深见 `src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs`。字段级参数纠偏见 `src-tauri/src/ai_runtime/agent_tool_loop_schema_feedback_tests.rs`（`schema_mismatch_feedback_*`）与 `guardrails` 枚举取值断言；`registry.json.verify` 对象 `C14`／`K16`。本组件当前 `verification.state=none`，已绑定指纹的证据记录不构成合同已通过，也不关闭 `G06`／`D02`。
 
 <!-- iris:end C14 -->
 

@@ -106,6 +106,6 @@
 | `V05` | 部分适用：终止原因与错误分类的协议保真需要逐端点证据（`Q04`、`Q17`）；该证据证明字段与事件被保真处理，不证明语义理解                                                                   |
 | `V02` | 登记关联：本合同的机械不变量须在 [evidence.md](../testing/evidence.md) 登记合法案例、违例案例、检测位置、恢复行为与对应测试                                                            |
 
-`V03`–`V07` 当前状态一律为「未运行」或「待执行」（见 [acceptance-matrix.md](../testing/acceptance-matrix.md)）；引用它们不表示本合同已通过验收，也不表示容错纠偏能力已经可用。
+`V03`–`V07` 当前状态一律为「未运行」或「待执行」（见 [acceptance-matrix.md](../testing/acceptance-matrix.md)）；引用它们不表示本合同已通过验收，也不表示容错纠偏能力已经可用。字段级 Host 反馈的机械负例见 `agent_tool_loop_schema_feedback_tests.rs` 与 `malformed_arguments_never_reach_dispatch`；`registry.json.verify` 绑 `C14`／`K16`。本合同 `verification.state` 仍为 none，该覆盖不等于 `D02` 可验收，也不关闭 `G06`。
 
 <!-- iris:end K16 -->
