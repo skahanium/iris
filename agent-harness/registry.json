@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 68,
+  "registryRevision": 72,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T08:43:36.268Z"
+    "recordedAt": "2026-09-17T10:02:47.820Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "313fd4b528c92f2e452ca38f83b4aa9c"
+      "fingerprint": "34760d80a5c70e762fe1bbaa4fbf19c4"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -299,7 +299,7 @@
     "rules/governance.md": {
       "container": "P03",
       "registration": "P03#file",
-      "fingerprint": "2305b326ac298e8c2127a78c8b97944e"
+      "fingerprint": "0e2620777b3fa206ebb05ddd5d16a5dc"
     },
     "rules/objects.md": {
       "container": "P02",
@@ -3800,8 +3800,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "P03",
-        "line": 185,
-        "endLine": 205,
+        "line": 186,
+        "endLine": 206,
         "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
       },
       "implementation": {
@@ -6321,8 +6321,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X01",
-        "line": 207,
-        "endLine": 229,
+        "line": 208,
+        "endLine": 230,
         "fingerprint": "a351d9b85535d8e91447a82853ba9346"
       },
       "implementation": {
@@ -6351,8 +6351,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X02",
-        "line": 231,
-        "endLine": 245,
+        "line": 232,
+        "endLine": 246,
         "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd"
       },
       "implementation": {
@@ -6385,8 +6385,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X03",
-        "line": 247,
-        "endLine": 260,
+        "line": 248,
+        "endLine": 261,
         "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc"
       },
       "implementation": {
@@ -19458,6 +19458,23 @@
           "fingerprintTo": "0350a33d7c9b5e8ffb8e9de605c493a3"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-45",
+      "at": "2026-09-17T10:02:47.820Z",
+      "author": "DSH Agent (陈旧复核解封)",
+      "classification": "governance",
+      "reason": "§5.2 增补第 8 条：复核随变更同批交付，台账只登记仍未解封的条目；检查器据此收敛 gaps，避免永久告警名单",
+      "review": "REV-2026-09-17-45",
+      "objects": [
+        {
+          "id": "P03#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "2305b326ac298e8c2127a78c8b97944e",
+          "fingerprintTo": "0e2620777b3fa206ebb05ddd5d16a5dc"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19883,6 +19900,87 @@
       "reason": "治理规则 §5.2 增补第 6、7 条，与检查器实现一致：陈旧绑定保留原指纹并标记 stale，报告为缺口而不阻断检查；解封须由针对当前指纹的新复核完成；陈旧只影响被改动的对象。 ｜ 编号更正：原为自动分配时与手工新增复核重号，已改为 41。",
       "evidence": "差异：rules/governance.md §5.2 第 6、7 条；scripts/agent-harness-check.mjs 的 checkReviews 陈旧分支与 gaps 输出。实测：agent-harness:check PASSED 并输出 2 项陈旧绑定缺口。",
       "objects": []
+    },
+    {
+      "id": "REV-2026-09-17-42",
+      "change": "CHG-2026-09-17-43",
+      "at": "2026-09-17T09:30:00Z",
+      "author": "用户（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）",
+      "reviewer": "Cursor Grok 4.6 (field-level feedback)",
+      "conclusion": "no-impact",
+      "reason": "唯一差异是 C14「测试」一节新增字段级参数纠偏的证据指针（agent_tool_loop_schema_feedback_tests.rs、guardrails 枚举取值断言、registry.json.verify 的 C14／K16 记录）并把范围句写作「不关闭 G06／D02」。逐行比对复核当时（CHG-2026-09-16-33 之后的 d8e95a77…）与当前正文：除该节外零差异；组件责任、输入输出、决定权、不变量、异常、审计与源码落点均未改动，也未新增或放宽任何权限与副作用。按 P03 §4.1 属细化。",
+      "evidence": "差异：modules/m05-agent-execution.md 的 C14 对象块「## 测试」段（复核时 39 行 vs 当前 39 行，仅 1 行被替换）。原判断见 REV-2026-09-16-24／REV-2026-09-16-32；本轮不改写其指纹。",
+      "objects": [
+        {
+          "id": "C14",
+          "revision": 17,
+          "fingerprint": "4cff06c71076865d628dbaf2ecf557c1"
+        }
+      ],
+      "supersedesNote": "本条按 governance §5.2 第 6 条新增：旧复核记录保留写入当时的指纹并标记 stale，不改写其指纹；解封由本条针对当前指纹的复核完成。"
+    },
+    {
+      "id": "REV-2026-09-17-43",
+      "change": "CHG-2026-09-17-42",
+      "at": "2026-09-17T09:30:00Z",
+      "author": "用户（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）",
+      "reviewer": "Cursor Grok 4.6 (field-level feedback)",
+      "conclusion": "no-impact",
+      "reason": "三处差异都只在归属与措辞：① G06「差异」段把字段级反馈与 Anthropic 五类负例改为声明为 K16／C14 与 C11／K04 的后续事项，并写明「closes 豁免不等于已关闭」，「所需证据」同步删去这两项作为关闭条件；② D02 文件「不作出的承诺」段新增一句，明确这两项不作为 G06 关闭条件、也不等于本工作包可验收；③ R13 只改标题与 name（「必须走 schema 版本门控」→「兼容路径（待定，尚未采用）」，R13 的决定／依据／已否证路径／未确定事项四段正文逐字未变，rev 2→3 仅标题行）。逐行比对复核当时（G06 34→42 前为 14e5a3a0…，D02#file／R13 为 REV-2026-09-17-37 绑定的 1e68ee02…／51b8af05…）与当前正文：G06 的目标与 at=acceptance 阻断门槛未变、仍 open；D02 的 scope、closes 与 Q13 的 at=acceptance 阻断边未变、work.state 仍 planned；R13 未从「待定」转为「已采用」。三者都不改变责任归属、输入输出语义、决定权、不变量、权限、副作用或兼容承诺，按 P03 §4.1 属细化。",
+      "evidence": "差异：requirements/open-items.md 的 G06 对象块（12→9 行，两处重述）；implementation/D02-protocol-and-recovery.md 的文件级外围正文（92 行，1 行替换）；decisions/README.md 的 R13 对象块（41 行，仅标题行替换）。",
+      "objects": [
+        {
+          "id": "G06",
+          "revision": 5,
+          "fingerprint": "1a452b52af39caa65ef1db6f3a9a4f72"
+        },
+        {
+          "id": "D02#file",
+          "revision": 13,
+          "fingerprint": "a3d096d3ad4c4f62b75b1876069de5c9"
+        },
+        {
+          "id": "R13",
+          "revision": 3,
+          "fingerprint": "e8029cb67303bd60a670feb7485e31e9"
+        }
+      ],
+      "supersedesNote": "本条按 governance §5.2 第 6 条新增：旧复核记录保留写入当时的指纹并标记 stale，不改写其指纹；解封由本条针对当前指纹的复核完成。"
+    },
+    {
+      "id": "REV-2026-09-17-44",
+      "change": "CHG-2026-09-17-35",
+      "at": "2026-09-17T09:30:00Z",
+      "author": "用户（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）",
+      "reviewer": "DSH Agent（会话内 Q13 收口）",
+      "conclusion": "no-impact",
+      "reason": "文件级差异只有一处：容器外围正文新增 `[[child:R13]]` 占位与其后的一个空行（按检查器的容器正文构造逐行比对，3116→3131 字符，delta 恰为 2 行）。即 decisions/README.md 的容器指纹变化仅来自「新增一条决定子对象」，容器自身的索引与说明文字未改。新增子对象 R13 的正文已由 REV-2026-09-17-37 在同一次变更内绑定并复核（当前指纹 e8029cb6… 与 REV-37 所绑 51b8af05… 之间的差异是标题改为待定语气，已在 REV-2026-09-17-43 复核）。因此容器层属细化，不推翻 REV-2026-09-16-32 对 R12 索引与容器说明的判断。",
+      "evidence": "差异：decisions/README.md 的容器正文（child 占位 13→14）。构造方式与 scripts/agent-harness-check.mjs 的 fileObject 指纹一致（子对象块替换为 [[child:ID]]）。",
+      "objects": [
+        {
+          "id": "FILE-DECISIONS#file",
+          "revision": 13,
+          "fingerprint": "7a8c63d15194050096b33058991e02ed"
+        }
+      ],
+      "supersedesNote": "本条按 governance §5.2 第 6 条新增：旧复核记录保留写入当时的指纹并标记 stale，不改写其指纹；解封由本条针对当前指纹的复核完成。"
+    },
+    {
+      "id": "REV-2026-09-17-45",
+      "change": "CHG-2026-09-17-45",
+      "at": "2026-09-17T10:02:47.820Z",
+      "author": "用户（2026-09-17 确认：解封由新增复核完成，不改写旧记录）",
+      "reviewer": "DSH Agent (陈旧复核解封)",
+      "conclusion": "synchronized",
+      "reason": "治理规则 §5.2 增补第 8 条（复核随变更同批交付；台账只登记仍未解封的条目），并让检查器按同一条语义收敛 gaps：报告层只列出尚无当前指纹复核的陈旧绑定。为解封此前 8 条陈旧绑定，已新增三条针对当前指纹的复核（REV-2026-09-17-42 → C14；REV-2026-09-17-43 → G06／D02#file／R13；REV-2026-09-17-44 → FILE-DECISIONS#file），旧记录一律保留写入当时的指纹并标 stale，未改写。行为影响限于报告与台账，不改变任何合同、权限或执行语义。",
+      "evidence": "差异：rules/governance.md §5.2 第 8 条；scripts/agent-harness-check.mjs 新增 openStaleBindings()，并让 check 输出与 gaps 台账共用该结果。实测：agent-harness:check PASSED，陈旧复核绑定警告由 8 项降为 0 项；registry.gaps 由 8 条变为 []。三条新复核绑定的指纹与对象当前定义逐条相等（REV-42：4cff06c7…；REV-43：1a452b52…／a3d096d3…／e8029cb6…；REV-44：7a8c63d1…）。",
+      "objects": [
+        {
+          "id": "P03",
+          "revision": 11,
+          "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
+        }
+      ]
     }
   ],
   "issues": {
@@ -19962,48 +20060,7 @@
       "state": "open"
     }
   },
-  "gaps": [
-    {
-      "review": "REV-2026-09-16-24",
-      "object": "C14",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-16-24",
-      "object": "G06",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-16-32",
-      "object": "FILE-DECISIONS#file",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-16-32",
-      "object": "D02#file",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-16-32",
-      "object": "C14",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-16-32",
-      "object": "G06",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-17-37",
-      "object": "D02#file",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-17-37",
-      "object": "R13",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    }
-  ],
+  "gaps": [],
   "notes": [
     "本登记表由 scripts/agent-harness-check.mjs --reconcile 写入计算值（指纹、行号、修订）；身份、成熟度、关系与作用域在 agent-harness/catalog.mjs 人工维护。",
     "revision > 1 且 changes 中同一批 187 个对象全部变化，是建立期指纹比对缺陷（比较字段层级不一致）造成的假变化，不是 187 次真实修订；该缺陷已修复，此后无内容变化时 reconcile 不再产生变更记录。",

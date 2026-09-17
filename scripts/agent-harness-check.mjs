@@ -99,6 +99,8 @@ const warnings = [];
 const reports = [];
 // 陈旧绑定（历史记录，不阻断检查；仍需一条针对当前指纹的复核才能谈解封）
 const staleBindings = [];
+/** 尚未被当前指纹的新复核解封的陈旧绑定；由检查循环填充。 */
+let openStale = [];
 
 const violation = (check, message) => violations.push({ check, message });
 const broken = (check, message) => infrastructure.push({ check, message });
@@ -870,6 +872,29 @@ function computeReadiness(
   return result;
 }
 
+/**
+ * 台账里的陈旧条目只保留**仍未解封**的那些。
+ *
+ * governance §5.2 第 6 条要求解封必须由一条针对当前指纹的新复核完成；因此当同一
+ * 对象已有复核绑定到当前指纹时，旧绑定就不再是缺口。若把历史条目的存在本身当成
+ * 缺口，台账只会单调增长、永远清不掉，最后所有人都学会无视它——那是永久豁免名单
+ * 的翻版，只是换成了永久告警名单。历史记录本身照旧保留在 reviews[] 里，不改写。
+ */
+function openStaleBindings(staleBindings, registry, currentFingerprints) {
+  const sealed = new Set();
+  for (const review of registry.reviews ?? []) {
+    for (const object of review.objects ?? []) {
+      const recorded = currentFingerprints.get(object.id);
+      if (recorded && object.fingerprint === recorded.fingerprint) {
+        sealed.add(object.id);
+      }
+    }
+  }
+  return staleBindings
+    .filter((gap) => !sealed.has(gap.object))
+    .map((gap) => ({ ...gap }));
+}
+
 function checkReviews(
   catalog,
   registry,
@@ -1528,6 +1553,8 @@ if (catalog && !infrastructure.length) {
     currentFingerprints,
     staleBindings,
   );
+  // 仍欠复核的陈旧条目（已被当前指纹的新复核覆盖的不再计入）。
+  openStale = openStaleBindings(staleBindings, registry, currentFingerprints);
   checkArchive();
   checkDocsIndex();
   checkSources(catalog, registry);
@@ -1680,7 +1707,7 @@ if (catalog && !infrastructure.length) {
       verify: registry.verify ?? [],
       changes: registry.changes ?? [],
       reviews: registry.reviews ?? [],
-      gaps: staleBindings.map((gap) => ({ ...gap })),
+      gaps: openStaleBindings(staleBindings, registry, currentFingerprints),
       issues: Object.fromEntries(
         Object.entries(catalog.objects)
           .filter(([, entry]) => entry.kind === "issue")
@@ -1776,7 +1803,7 @@ if (catalog && !infrastructure.length) {
     violations,
     infrastructure,
     warnings,
-    gaps: staleBindings,
+    gaps: openStale,
   };
 
   reports.push(report);
@@ -1809,7 +1836,7 @@ if (options.json) {
         infrastructure,
         violations,
         warnings,
-        gaps: staleBindings,
+        gaps: openStale,
         readiness: reports[0]?.readiness ?? {},
         blocked: reports[0]?.blocked ?? {},
         checks: reports[0]?.checks ?? {},
@@ -1821,13 +1848,16 @@ if (options.json) {
 } else {
   for (const warning of warnings) process.stdout.write(`  ! ${warning}\n`);
   if (staleBindings.length > 0 && !options.json) {
-    process.stdout.write(
-      `  ! 陈旧复核绑定 ${staleBindings.length} 项（不阻断检查，但相关对象需一条针对当前指纹的复核才能解封）:\n`,
-    );
-    for (const gap of staleBindings) {
+    // 只报告仍未解封的条目：已有针对当前指纹的新复核时，该对象不再欠复核。
+    if (openStale.length > 0) {
       process.stdout.write(
-        `      ${gap.review} → ${gap.object}：${gap.reason}\n`,
+        `  ! 陈旧复核绑定 ${openStale.length} 项（不阻断检查，但相关对象需一条针对当前指纹的复核才能解封）:\n`,
       );
+      for (const gap of openStale) {
+        process.stdout.write(
+          `      ${gap.review} → ${gap.object}：${gap.reason}\n`,
+        );
+      }
     }
   }
   if (violations.length > 0) {
