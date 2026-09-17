@@ -37,6 +37,8 @@ pub(crate) mod agent_run_repository;
 mod agent_run_repository_tests;
 pub(crate) mod agent_tool_loop;
 #[cfg(test)]
+mod agent_tool_loop_anthropic_finish_reason_tests;
+#[cfg(test)]
 mod agent_tool_loop_finish_reason_tests;
 #[cfg(test)]
 mod agent_tool_loop_host_authority_tests;

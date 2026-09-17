@@ -4841,7 +4841,7 @@
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T08:20:00Z",
       "applicability": "current",
-      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过（Anthropic／Responses／Q10／V05 不在范围）。"
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。"
     },
     {
       "object": "C11",
@@ -4863,7 +4863,7 @@
       "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
       "at": "2026-09-17T09:10:00Z",
       "applicability": "current",
-      "note": "CHG-2026-09-17-50：指纹仍绑 C14 当前定义。循环纵深含 Anthropic 词汇 end_turn／tool_use／max_tokens（8 passed）。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过，不构成 G06／D02 关闭证据。"
+      "note": "CHG-2026-09-17-43：指纹绑到 C14 revision 17。Chat Completions 循环纵深 5 passed；Anthropic 词汇另见 agent_tool_loop_anthropic_finish_reason_tests.rs。host_authority 负例见 agent_tool_loop_host_authority_tests.rs。不把 C14 verification 标为通过，不构成 G06／D02 关闭证据。"
     },
     {
       "object": "C14",
@@ -4962,7 +4962,7 @@
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
       "applicability": "current",
-      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过（G03／Q17／V05／Anthropic 不在范围）。"
+      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。"
     },
     {
       "object": "C11",
@@ -5028,7 +5028,7 @@
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-17T11:44:00Z",
       "applicability": "current",
-      "note": "CHG-2026-09-17-50：本机 5 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason 为 unknown 而非 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。"
+      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。"
     },
     {
       "object": "K04",
@@ -5050,7 +5050,40 @@
       "fingerprint": "9089a048ca45699335d62b22baff0c54",
       "at": "2026-09-17T11:44:00Z",
       "applicability": "current",
-      "note": "CHG-2026-09-17-50：本机 5 passed / 0 failed。K04 Messages 字节级 SSE 与状态机同一不变量。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。verification.state 仍 none。"
+      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。K04 Messages 字节级 SSE 与状态机同一不变量。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。verification.state 仍 none。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_anthropic_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_anthropic_finish_reason",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
+      "at": "2026-09-17T12:00:00Z",
+      "applicability": "current",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，不关闭 Q04／D02。"
+    },
+    {
+      "object": "K04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_anthropic_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_anthropic_finish_reason",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "9089a048ca45699335d62b22baff0c54",
+      "at": "2026-09-17T12:00:00Z",
+      "applicability": "current",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。K04 Messages 终止词汇在循环纵深的机械覆盖。verification.state 仍 none。"
+    },
+    {
+      "object": "C14",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_anthropic_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_anthropic_finish_reason",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
+      "at": "2026-09-17T12:00:00Z",
+      "applicability": "current",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。循环按 Messages 词汇派发／拒绝，不构成 G06／D02 关闭证据。"
     },
     {
       "object": "Q10",

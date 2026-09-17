@@ -1,7 +1,7 @@
-//! Finish-reason dispatch contracts for the Agent tool loop.
+//! Anthropic Messages finish-reason vocabulary at the Agent tool loop.
 //!
-//! Split out of `agent_tool_loop_tests.rs` so Q04／F03 cases do not grow that
-//! file past `npm run size:check`.
+//! Kept out of `agent_tool_loop_finish_reason_tests.rs` so Q04's verify
+//! command does not swallow C11／K04 vocabulary coverage.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -126,7 +126,71 @@ fn response(
 }
 
 #[tokio::test]
-async fn length_finish_reason_does_not_dispatch_truncated_tool_calls() {
+async fn tool_use_finish_reason_still_dispatches() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            response(
+                None,
+                vec![tool_call("call-time", "system_time_now", "{}")],
+                "tool_use",
+            ),
+            response(Some("现在是测试时间。"), Vec::new(), "end_turn"),
+        ])),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut observer = NoopObserver;
+
+    AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
+        .execute(
+            &provider,
+            &executor,
+            "run-c11-tool-use-dispatch",
+            Vec::new(),
+            vec![readonly_tool("system_time_now")],
+            &mut observer,
+        )
+        .await
+        .expect("complete tool_use still dispatch");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn end_turn_finish_reason_with_tools_still_dispatches() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            response(
+                None,
+                vec![tool_call("call-time", "system_time_now", "{}")],
+                "end_turn",
+            ),
+            response(Some("现在是测试时间。"), Vec::new(), "end_turn"),
+        ])),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut observer = NoopObserver;
+
+    AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
+        .execute(
+            &provider,
+            &executor,
+            "run-c11-end-turn-with-tools",
+            Vec::new(),
+            vec![readonly_tool("system_time_now")],
+            &mut observer,
+        )
+        .await
+        .expect("Anthropic-style end_turn with tools still dispatch");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn max_tokens_finish_reason_does_not_dispatch_truncated_tool_calls() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
             response(
@@ -136,9 +200,9 @@ async fn length_finish_reason_does_not_dispatch_truncated_tool_calls() {
                     "web_search",
                     r#"{"query":"latest status"}"#,
                 )],
-                "length",
+                "max_tokens",
             ),
-            response(Some("完整回答。"), Vec::new(), "stop"),
+            response(Some("完整回答。"), Vec::new(), "end_turn"),
         ])),
     };
     let executor = RecordingExecutor {
@@ -150,7 +214,7 @@ async fn length_finish_reason_does_not_dispatch_truncated_tool_calls() {
         .execute(
             &provider,
             &executor,
-            "run-q04-length-no-dispatch",
+            "run-c11-max-tokens-no-dispatch",
             Vec::new(),
             vec![web_search_tool()],
             &mut observer,
@@ -161,148 +225,11 @@ async fn length_finish_reason_does_not_dispatch_truncated_tool_calls() {
     assert_eq!(
         executor.calls.load(Ordering::SeqCst),
         0,
-        "length must not dispatch assembled tool calls"
+        "max_tokens must not dispatch assembled tool calls"
     );
     assert!(
         outcome.content.contains("完整回答") || outcome.terminal.is_host_authored(),
         "recovery must continue or close with a Host limitation: {:?}",
-        outcome
-    );
-}
-
-#[tokio::test]
-async fn tool_calls_finish_reason_still_dispatches() {
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            response(
-                None,
-                vec![tool_call("call-time", "system_time_now", "{}")],
-                "tool_calls",
-            ),
-            response(Some("现在是测试时间。"), Vec::new(), "stop"),
-        ])),
-    };
-    let executor = RecordingExecutor {
-        calls: AtomicU32::new(0),
-    };
-    let mut observer = NoopObserver;
-
-    AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
-        .execute(
-            &provider,
-            &executor,
-            "run-q04-tool-calls-dispatch",
-            Vec::new(),
-            vec![readonly_tool("system_time_now")],
-            &mut observer,
-        )
-        .await
-        .expect("complete tool_calls still dispatch");
-
-    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn stop_finish_reason_with_tools_still_dispatches() {
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            response(
-                None,
-                vec![tool_call("call-time", "system_time_now", "{}")],
-                "stop",
-            ),
-            response(Some("现在是测试时间。"), Vec::new(), "stop"),
-        ])),
-    };
-    let executor = RecordingExecutor {
-        calls: AtomicU32::new(0),
-    };
-    let mut observer = NoopObserver;
-
-    AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
-        .execute(
-            &provider,
-            &executor,
-            "run-q04-stop-with-tools",
-            Vec::new(),
-            vec![readonly_tool("system_time_now")],
-            &mut observer,
-        )
-        .await
-        .expect("MiniMax-style stop with tools still dispatch");
-
-    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn unknown_finish_reason_does_not_dispatch_tool_calls() {
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            response(
-                Some("缺终止块"),
-                vec![tool_call(
-                    "call-web-search",
-                    "web_search",
-                    r#"{"query":"latest status"}"#,
-                )],
-                "unknown",
-            ),
-            response(Some("完整回答。"), Vec::new(), "stop"),
-        ])),
-    };
-    let executor = RecordingExecutor {
-        calls: AtomicU32::new(0),
-    };
-    let mut observer = NoopObserver;
-
-    AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
-        .execute(
-            &provider,
-            &executor,
-            "run-q04-unknown-no-dispatch",
-            Vec::new(),
-            vec![web_search_tool()],
-            &mut observer,
-        )
-        .await
-        .expect("unknown termination must recover instead of executing");
-
-    assert_eq!(
-        executor.calls.load(Ordering::SeqCst),
-        0,
-        "unknown must not dispatch assembled tool calls"
-    );
-}
-
-#[tokio::test]
-async fn empty_content_with_length_recovers_instead_of_invalid_response() {
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            response(None, Vec::new(), "length"),
-            response(Some("完整回答。"), Vec::new(), "stop"),
-        ])),
-    };
-    let executor = RecordingExecutor {
-        calls: AtomicU32::new(0),
-    };
-    let mut observer = NoopObserver;
-
-    let outcome = AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
-        .execute(
-            &provider,
-            &executor,
-            "run-q04-length-empty-content",
-            Vec::new(),
-            Vec::new(),
-            &mut observer,
-        )
-        .await
-        .expect("length with empty prose must recover, not agent_run_invalid_model_response");
-
-    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
-    assert!(
-        outcome.content.contains("完整回答") || outcome.terminal.is_host_authored(),
-        "empty length must continue or close with a Host limitation: {:?}",
         outcome
     );
 }

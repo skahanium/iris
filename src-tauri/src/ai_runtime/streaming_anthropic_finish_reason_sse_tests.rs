@@ -170,3 +170,16 @@ async fn anthropic_sse_missing_stop_reason_does_not_yield_executable_calls() {
         response.tool_calls
     );
 }
+
+#[tokio::test]
+async fn anthropic_sse_connection_close_without_stop_reason_is_unknown_not_stop() {
+    let response = stream_anthropic(
+        "run-c11-anthropic-sse-close-unknown",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"连接结束前没有终止块\"}}\n\n",
+    )
+    .await;
+
+    assert_eq!(response.finish_reason, "unknown");
+    assert_ne!(response.finish_reason, "stop");
+    assert_eq!(response.content.as_deref(), Some("连接结束前没有终止块"));
+}
