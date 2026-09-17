@@ -79,8 +79,8 @@
 ### G06 Host 用配方当第二规划器
 
 - **目标**：`C14` 不再因无进展身份或两轮拒绝，在任务未完成且信封仍允许时强制 `synthesis_required`。完成额度预留触达后不提供业务工具属信封（`R12`），不得与无进展关面共用关面指令。观察之后下一步由模型提议（`R11`、`N15`、`N21`）。
-- **现状**：`agent_tool_loop.rs` 在剩余 completion 接近预留（约 867–876 行）时注入关面指令并 `synthesis_required`，与 `rejected_rounds >= 2`（约 1428–1446 行）、`no_progress_rounds >= 2` 或 `failed_service_rounds >= 2`（约 1609–1616 行）共用同一段关面文案。进展身份由 `agent_tool_loop/observations.rs` 的 `safe_progress_identities` 定义：有 span 时为 `[resource, revision, start, end, span_kind]`；搜索结果常无 span，退化成 URL／hash，换查询撞同一 URL 会被记为无进展。
-- **差异**：配方启发式被当成循环控制真理；预留的输出帽（信封）与关面指令（配方）仍绑在同一道闸上。Host 在当第二规划器。
+- **现状**：`agent_tool_loop.rs` 只按信封收窄业务工具面：末轮、`max_tool_calls`、以及 remaining ≤ 完成额度预留（`R12`）。预留触达把 remaining 留给表达轮，不注入 `tool_surface_closed_instruction`。`rejected_rounds`／`no_progress_rounds`／`failed_service_rounds` 仍写入诊断，但不再强制 `synthesis_required`、不再注入关面或「repair is exhausted」指令，也不再仅因 `rejected_rounds >= 2` 把退出标成 `recovery_exhausted`。负例见 `src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`。进展身份仍由 `agent_tool_loop/observations.rs` 的 `safe_progress_identities` 定义：有 span 时为 `[resource, revision, start, end, span_kind]`；搜索结果常无 span，退化成 URL／hash，换查询撞同一 URL 会被记为无进展。
+- **差异**：循环已不再用配方计数当第二规划器，但 `G06` 仍开：`D02` 验收证据包未齐（`Q04`／`Q10`、字段级 mismatch、过早收束负例尚未作为工作包关闭证据）。
 - **阻断门槛**：`at=acceptance`（只阻断 `D02` 验收，不阻断开始）。
 - **所需证据**：`D02` 工作包登记的过早收束负例（进展身份、观察后再提议、已反馈的未知工具不得强制综合）。本缺口关闭前不要求已实现这些负例。
 

@@ -1,48 +1,16 @@
-//! Host authority over the next action: the negative cases for `R11` / `N21` / `G06`.
+//! Host authority over the next action: the negative cases for `R11` / `R12` /
+//! `N21` / `G06`.
 //!
 //! The Host may enforce the envelope (still authorized, not cancelled, ledger not
 //! exhausted). It must not also act as a second planner by injecting
 //! `tool_surface_closed_instruction` because a *recipe* counter fired — two
-//! rejected proposals, or two rounds without a new safe resource.
+//! rejected proposals, two rounds without a new safe resource, or two failed
+//! service rounds. `R12` classified the completion reserve as an output-cap
+//! envelope: a reserve turn may withhold business tools and must still carry the
+//! remaining tokens, but must not inject the recipe closure instruction.
 //!
-//! Written test-first for the D02 evidence order *negative case → decision
-//! (`R12`) → implementation*. Each assertion names the recorded case in
-//! `agent-harness/implementation/D02-protocol-and-recovery.md` §三 that it pins:
-//!
-//! - §三.5.3 — two field-level `unknown_tool` rounds must not force synthesis
-//!   → **red** (`two_repaired_unknown_tool_rounds_do_not_force_synthesis`): the
-//!   loop injects `Tool proposal repair is exhausted.` after the second rejected
-//!   proposal, so the third turn is forced synthesis with an empty surface.
-//! - §三.5.1 — two rounds without a new safe resource must not close the surface
-//!   → **red** (`repeated_observation_of_the_same_resource_...`): the loop injects
-//!   `tool_surface_closed_instruction` on the third turn.
-//! - §三.5.4 — the same counter must not fire on a repeatable observation
-//!   → **green** (`no_progress_rounds_do_not_close_the_surface_...`): measured
-//!   2026-09-16, no closure instruction is injected when the repeated call is
-//!   rejected as `tool_call_already_succeeded`; kept as the green pin.
-//! - the completion reserve — **green**
-//!   (`completion_reserve_does_not_inject_a_recipe_closure_instruction`): with the
-//!   reserve reached, no closure instruction is injected either; only the surface
-//!   narrows, which is why the surface shape is left to `R12`.
-//!
-//! Measured 2026-09-16 with
-//! `DEVELOPER_DIR=/Library/Developer/CommandLineTools cargo test --lib
-//! agent_tool_loop_host_authority`: 2 passed, 2 failed. The no-progress counter is
-//! incremented by rounds that actually dispatch, so a test that wants the recipe
-//! to fire must vary its arguments each round; an identical repeat is rejected
-//! before dispatch and never reaches the counter.
-//!
-//! These tests deliberately assert **no closure instruction**, never the *shape*
-//! of the surface on a reserve turn. The surface shape belongs to `R12`: closing
-//! the business surface is currently the only mechanism that lets a reserve turn
-//! carry a non-zero allowance (`remaining.saturating_sub(synthesis_output_reserve)`
-//! would otherwise be `0` and the loop would return `ToolLoopLimit`). Asserting it
-//! here would pre-empt the decision instead of pinning the contract.
-//!
-//! When `R12` lands: fold the surviving assertions into `agent_tool_loop_tests.rs`,
-//! extend `:699` / `:877` with the two independent claims (final-turn reserve vs
-//! no-progress closure), and delete this file. It exists so the D02 negative cases
-//! have an owner before the loop changes.
+//! Kept in this file rather than folded into `agent_tool_loop_tests.rs`, which is
+//! already pinned at the size-budget split queue.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -50,19 +18,19 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
-use super::agent_tool_loop::prompt_assembly::tool_surface_closed_instruction;
 use super::agent_tool_loop::{
     AgentModelTurnBudget, AgentToolLoop, AgentToolLoopOutcome, ToolLoopExecutor, ToolLoopProvider,
 };
 use super::model_gateway::{GatewayResponse, StreamEventObserver};
 use crate::ai_runtime::run_contract::RunBudgetPolicy;
 use crate::ai_runtime::{
-    FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec,
+    FunctionCall, LlmMessage, MessageRole, TokenUsage, ToolCall, ToolCallResult, ToolSpec,
 };
 use crate::error::AppResult;
 
 // ── Harness ───────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 struct RecordedTurn {
     surfaces: Vec<String>,
     messages: Vec<LlmMessage>,
@@ -116,6 +84,15 @@ impl TurnRecordingProvider {
             .is_some_and(|turn| turn.surfaces.iter().any(|name| name == tool_name))
     }
 
+    fn turn(&self, index: usize) -> RecordedTurn {
+        self.turns
+            .lock()
+            .expect("turns lock")
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| panic!("missing recorded turn {index}"))
+    }
+
     fn turn_count(&self) -> usize {
         self.turns.lock().expect("turns lock").len()
     }
@@ -153,6 +130,12 @@ struct NoProgressExecutor {
     calls: AtomicU32,
 }
 
+/// Dispatches, but reports `success: false`. This is the other recipe counter
+/// that used to share the no-progress close-surface gate.
+struct FailedServiceExecutor {
+    calls: AtomicU32,
+}
+
 impl ToolLoopExecutor for NoProgressExecutor {
     fn execute<'a>(
         &'a self,
@@ -170,6 +153,28 @@ impl ToolLoopExecutor for NoProgressExecutor {
                 duration_ms: 1,
                 tokens_used: None,
                 error: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopExecutor for FailedServiceExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: false,
+                output: serde_json::json!({ "error": "service unavailable" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: Some("service unavailable".into()),
             })
         })
     }
@@ -215,10 +220,19 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
 }
 
 fn tool_response(call: ToolCall) -> GatewayResponse {
+    tool_response_with_usage(call, 0)
+}
+
+fn tool_response_with_usage(call: ToolCall, completion_tokens: u32) -> GatewayResponse {
     GatewayResponse {
         content: None,
         tool_calls: vec![call],
-        usage: Default::default(),
+        usage: TokenUsage {
+            prompt_tokens: 0,
+            completion_tokens,
+            total_tokens: completion_tokens,
+            ..Default::default()
+        },
         finish_reason: "tool_calls".into(),
         reasoning_content: None,
         continuation: None,
@@ -253,11 +267,9 @@ fn recorded_shape(provider: &TurnRecordingProvider) -> String {
         .join("\n")
 }
 
-/// The loop's own closure instruction, taken from its constructor rather than
-/// retyped, so a reworded instruction cannot silently satisfy an assertion.
-fn closure_instruction_text() -> String {
-    tool_surface_closed_instruction().content.text_content()
-}
+/// Historical recipe copy the loop used to inject. Identified by its own
+/// words so a reintroduced instruction cannot silently satisfy an assertion.
+const CLOSURE_INSTRUCTION_MARKER: &str = "produced no new safe resources in two complete rounds";
 
 /// The instruction the Host injects when it decides the model's repair budget is
 /// spent. Identified by its own opening words; it is inline in the loop today.
@@ -354,37 +366,26 @@ async fn two_repaired_unknown_tool_rounds_do_not_force_synthesis() {
          it stopped after {} turn(s)",
         provider.turn_count()
     );
+    assert!(
+        provider.last_turn_offered("system_time_now"),
+        "two rejected proposals must not close the business surface; recorded \
+         shape:\n{}",
+        recorded_shape(&provider)
+    );
     expect_completed(&outcome, "two repaired unknown-tool rounds");
     assert_eq!(outcome.content, "answered from the third attempt");
 }
 
 // ── D02 §三.5.4 — no-progress counters are not the envelope ────────────────
 
-/// `no_progress_rounds` and `failed_service_rounds` are recipe counters. While
-/// authorization, cancellation and the ledger all still allow another action, the
-/// Host must not close the surface because two rounds produced no new safe
-/// resource.
-///
-/// Measured on 2026-09-16: with a *repeatable* observation (identical arguments,
-/// rejected the second time as `tool_call_already_succeeded`) the closure
-/// instruction is **not** injected — the surface still narrows on the following
-/// turn, but the reason is not the no-progress recipe. The recipe closure is
-/// reproduced by the `system_time_now` case in
-/// `repeated_observation_of_the_same_resource_does_not_close_the_surface`, which
-/// dispatches three times. This test is kept as the green pin for the
-/// non-firing path, so a future change that starts injecting the instruction
-/// here fails loudly.
-///
-/// The Run uses the standard completion envelope and stays far below the tool
-/// allowance, so the *only* gate that could close the surface is the no-progress
-/// recipe.
+/// Identical `read_note` repeats are rejected as `tool_call_already_succeeded`
+/// before they can increment `no_progress_rounds`. Kept as the pin that this
+/// rejection path must not inject a closure instruction. The actual no-progress
+/// counter is covered by
+/// `repeated_observation_of_the_same_resource_does_not_close_the_surface`.
 #[tokio::test]
 async fn no_progress_rounds_do_not_close_the_surface_while_the_ledger_allows_it() {
-    // The tool must be one whose repeat dispatch is allowed: an identical
-    // `system_time_now` call is rejected on the second turn with
-    // `tool_call_already_succeeded`, which leaves only one dispatched round and
-    // never accumulates `no_progress_rounds`. Same shape as the loop's own
-    // `:877` test, so the counter is reached for the reason under test.
+    // Identical `read_note` arguments are rejected after the first dispatch.
     let provider = TurnRecordingProvider::new(vec![
         tool_response(tool_call(
             "t-1",
@@ -431,11 +432,8 @@ async fn no_progress_rounds_do_not_close_the_surface_while_the_ledger_allows_it(
          counter can accumulate; recorded shape:\n{}",
         recorded_shape(&provider)
     );
-    // The first round dispatches; the second is rejected as
-    // `tool_call_already_succeeded`, because an identical `read_note` call is not a
-    // new action. That rejection is correct, so this test asserts the counter's
-    // *effect* rather than a dispatch count: two rounds pass without a new safe
-    // resource and the closure lands on the following turn.
+    // The first round dispatches; later identical repeats are rejected as
+    // `tool_call_already_succeeded` and never increment `no_progress_rounds`.
     assert_eq!(
         executor.calls.load(Ordering::SeqCst),
         1,
@@ -451,11 +449,9 @@ async fn no_progress_rounds_do_not_close_the_surface_while_the_ledger_allows_it(
 
     assert_no_instruction(
         &provider.host_instructions(),
-        &closure_instruction_text(),
-        "Two rounds without a new safe resource exhausted a recipe counter, not \
-         the envelope: authorization was valid, the Run was not cancelled, the \
-         tool allowance had 21 calls left, and the completion envelope was not \
-         near its reserve (D02 §三.5.4, R11, G06).",
+        CLOSURE_INSTRUCTION_MARKER,
+        "A repeat rejected as `tool_call_already_succeeded` must not inject a \
+         recipe closure instruction (D02 §三.5.4, R11, G06).",
     );
 
     assert!(
@@ -520,7 +516,7 @@ async fn repeated_observation_of_the_same_resource_does_not_close_the_surface() 
 
     assert_no_instruction(
         &provider.host_instructions(),
-        &closure_instruction_text(),
+        CLOSURE_INSTRUCTION_MARKER,
         "A second observation of the same, unchanged resource is not progress, but \
          it is not an envelope reason to close the surface either: the model owns \
          the decision to re-read or to change its approach \
@@ -553,32 +549,100 @@ async fn repeated_observation_of_the_same_resource_does_not_close_the_surface() 
     );
 }
 
-// ── The completion reserve is the other recipe gate ────────────────────────
+// ── D02 §三.5.4 — failed-service rounds are also recipe, not envelope ──────
 
-/// The completion reserve is a different gate from the no-progress counter, and
-/// it currently reaches the same instruction. With a small completion envelope
-/// the reserve is hit on the second turn while the ledger still allows many more
-/// actions, so nothing except the reserve can explain a closure.
-///
-/// The Host closing the business surface here is not an envelope event: the Run
-/// still has model turns, tool allowance and authorization. The assertion is
-/// again only "no closure instruction" — which surface a reserve turn carries is
-/// `R12`'s decision, because the reserve currently shares its gate with the
-/// output cap (`remaining - synthesis_output_reserve` is `0` for any turn the
-/// loop does not classify as a synthesis turn).
+/// Two dispatched rounds with `success: false` share the no-progress close-surface
+/// gate. While the ledger still allows another action, the Host must not close
+/// the surface or inject a closure instruction.
 #[tokio::test]
-async fn completion_reserve_does_not_inject_a_recipe_closure_instruction() {
+async fn failed_service_rounds_do_not_close_the_surface_while_the_ledger_allows_it() {
     let provider = TurnRecordingProvider::new(vec![
         tool_response(tool_call(
-            "r-1",
+            "f-1",
             "read_note",
             serde_json::json!({ "path": "a.md" }),
         )),
         tool_response(tool_call(
-            "r-2",
+            "f-2",
             "read_note",
-            serde_json::json!({ "path": "a.md" }),
+            serde_json::json!({ "path": "b.md" }),
         )),
+        tool_response(tool_call(
+            "f-3",
+            "read_note",
+            serde_json::json!({ "path": "c.md" }),
+        )),
+        final_response("answered after two failed observations"),
+    ]);
+    let executor = FailedServiceExecutor {
+        calls: AtomicU32::new(0),
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-failed-service-recipe",
+            Vec::new(),
+            vec![readonly_tool_spec("read_note")],
+            &mut observer,
+        )
+        .await
+        .expect("a failed-service round is not a Run failure");
+
+    assert_eq!(
+        executor.calls.load(Ordering::SeqCst),
+        3,
+        "three differing failed observations must dispatch; recorded shape:\n{}",
+        recorded_shape(&provider)
+    );
+    assert_no_instruction(
+        &provider.host_instructions(),
+        CLOSURE_INSTRUCTION_MARKER,
+        "Two failed-service rounds exhausted a recipe counter, not the envelope \
+         (D02 §三.5.4, R11, G06).",
+    );
+    assert!(
+        provider.last_turn_offered("read_note"),
+        "the business surface must stay open after two failed-service rounds; \
+         recorded shape:\n{}",
+        recorded_shape(&provider)
+    );
+    expect_completed(&outcome, "failed-service recipe");
+    assert_eq!(outcome.content, "answered after two failed observations");
+}
+
+// ── R12 — completion reserve is an output-cap envelope ────────────────────
+
+/// First turn spends enough completion tokens that the remainder is at or below
+/// the reserve. `R12` option B: withhold the business surface, give the remaining
+/// tokens to the expression turn, and do not inject a closure instruction.
+#[tokio::test]
+async fn completion_reserve_does_not_inject_a_recipe_closure_instruction() {
+    const TOTAL: u32 = 6_000;
+    const TURN_CEILING: u32 = 4_000;
+    // Explore allowance is TOTAL - reserve = 2_000. Usage must fit that
+    // cap (otherwise the loop rejects the turn as ToolLoopLimit) and still
+    // leave remaining <= reserve so the next turn is the expression turn.
+    const FIRST_TURN_USAGE: u32 = 2_000;
+    let reserve = TOTAL.min(TURN_CEILING);
+    let remaining_after_first = TOTAL - FIRST_TURN_USAGE;
+    assert!(
+        remaining_after_first <= reserve,
+        "this case must actually reach remaining <= reserve"
+    );
+    assert_eq!(
+        FIRST_TURN_USAGE,
+        TOTAL - reserve,
+        "first-turn usage must equal the explore allowance"
+    );
+
+    let provider = TurnRecordingProvider::new(vec![
+        tool_response_with_usage(
+            tool_call("r-1", "read_note", serde_json::json!({ "path": "a.md" })),
+            FIRST_TURN_USAGE,
+        ),
         final_response("answered within the reserved envelope"),
     ]);
     let executor = NoProgressExecutor {
@@ -587,20 +651,10 @@ async fn completion_reserve_does_not_inject_a_recipe_closure_instruction() {
     let mut observer = NoopObserver;
 
     let mut policy = RunBudgetPolicy::standard();
-    // 6_000 total with a 4_000 turn ceiling leaves a 2_000 reserve: the first
-    // turn gets 2_000, the second is already inside the reserve.
-    policy.max_completion_tokens = 6_000;
-    policy.max_turn_output_tokens = 4_000;
+    policy.max_completion_tokens = TOTAL;
+    policy.max_turn_output_tokens = TURN_CEILING;
 
-    // Reachability guard: if these numbers stop producing a reserve turn, this
-    // test would pass vacuously, so it is asserted rather than assumed.
-    let reserve = 6_000 - 4_000;
-    assert_eq!(
-        reserve, 2_000,
-        "the reserve arithmetic this test depends on"
-    );
-
-    let _ = AgentToolLoop::from_policy(&policy)
+    let outcome = AgentToolLoop::from_policy(&policy)
         .execute(
             &provider,
             &executor,
@@ -612,18 +666,48 @@ async fn completion_reserve_does_not_inject_a_recipe_closure_instruction() {
         .await
         .expect("the reserve Run must complete");
 
+    assert_eq!(
+        provider.turn_count(),
+        2,
+        "explore then expression; recorded shape:\n{}",
+        recorded_shape(&provider)
+    );
+
+    let explore = provider.turn(0);
     assert!(
-        provider.turn_count() >= 2,
-        "the reserve must be reached within the scripted turns; observed {} turn(s)",
-        provider.turn_count()
+        explore.surfaces.iter().any(|name| name == "read_note"),
+        "the first turn is still an explore turn; recorded shape:\n{}",
+        recorded_shape(&provider)
+    );
+    assert_eq!(
+        explore.max_completion_tokens,
+        Some(TOTAL - reserve),
+        "explore allowance is remaining minus reserve; recorded shape:\n{}",
+        recorded_shape(&provider)
+    );
+
+    let expression = provider.turn(1);
+    assert!(
+        !expression.surfaces.iter().any(|name| name == "read_note"),
+        "R12 allows withholding the business surface once remaining <= reserve; \
+         recorded shape:\n{}",
+        recorded_shape(&provider)
+    );
+    assert_eq!(
+        expression.max_completion_tokens,
+        Some(remaining_after_first),
+        "the expression turn must receive the remaining tokens, not zero; \
+         recorded shape:\n{}",
+        recorded_shape(&provider)
     );
 
     assert_no_instruction(
         &provider.host_instructions(),
-        &closure_instruction_text(),
-        "The completion reserve was reached, but the ledger, the tool allowance \
-         and the model-turn allowance all still allowed another action, and the \
-         Run was not cancelled. A reserve is a bounded-envelope fact, not a \
-         licence to close the business surface (D02 §二, R11, G06).",
+        CLOSURE_INSTRUCTION_MARKER,
+        "The completion reserve is an output-cap envelope (R12 option B): it may \
+         withhold tools and must still give remaining tokens to the expression \
+         turn, but must not inject a recipe closure instruction.",
     );
+    expect_completed(&outcome, "completion reserve");
+    assert_eq!(outcome.content, "answered within the reserved envelope");
 }

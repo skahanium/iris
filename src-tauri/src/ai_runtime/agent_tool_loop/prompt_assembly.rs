@@ -21,16 +21,6 @@ pub(crate) fn initial_loop_budget_instruction() -> LlmMessage {
     }
 }
 
-pub(crate) fn tool_surface_closed_instruction() -> LlmMessage {
-    LlmMessage {
-        role: MessageRole::System,
-        content: "Tool work is now closed because it has reached a bounded limit or produced no new safe resources in two complete rounds. Synthesize the best answer from the current transcript, state material uncertainty plainly, and do not request another business tool.".into(),
-        tool_call_id: None,
-        tool_calls: None,
-        reasoning_content: None,
-    }
-}
-
 pub(crate) fn missing_evidence_repair_instruction() -> LlmMessage {
     LlmMessage {
         role: MessageRole::System,

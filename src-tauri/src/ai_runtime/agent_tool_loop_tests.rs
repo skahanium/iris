@@ -696,7 +696,7 @@ async fn network_category_cap_rejects_the_second_dispatch_without_calling_execut
 }
 
 #[tokio::test]
-async fn rejected_tool_proposals_close_the_business_surface_before_the_reserved_synthesis_turn() {
+async fn final_model_turn_after_a_rejected_proposal_withholds_business_tools() {
     let provider = ToolSurfaceRecordingProvider {
         responses: Mutex::new(VecDeque::from([
             scripted_tool_response(tool_call_with_arguments(
@@ -720,13 +720,13 @@ async fn rejected_tool_proposals_close_the_business_surface_before_the_reserved_
         .execute(
             &provider,
             &executor,
-            "run-rejected-proposal-synthesis",
+            "run-rejected-proposal-final-turn",
             Vec::new(),
             vec![web_tool_spec()],
             &mut observer,
         )
         .await
-        .expect("a rejected proposal still leaves the reserved synthesis turn");
+        .expect("a rejected proposal still leaves the reserved final model turn");
 
     assert_eq!(outcome.content, "I can answer from the available context.");
     assert_eq!(
@@ -874,7 +874,7 @@ async fn frozen_category_caps_reject_the_first_call_beyond_each_boundary() {
 }
 
 #[tokio::test]
-async fn two_complete_rounds_without_progress_close_tools_before_final_synthesis() {
+async fn two_complete_rounds_without_progress_keep_tools_while_the_ledger_allows_it() {
     let provider = ToolSurfaceRecordingProvider {
         responses: Mutex::new(VecDeque::from([
             scripted_tool_response(tool_call_with_arguments(
@@ -901,13 +901,13 @@ async fn two_complete_rounds_without_progress_close_tools_before_final_synthesis
         .execute(
             &provider,
             &executor,
-            "run-no-progress-synthesis",
+            "run-no-progress-keeps-tools",
             Vec::new(),
             vec![readonly_tool_spec("system_time_now")],
             &mut observer,
         )
         .await
-        .expect("two no-progress rounds must reserve a final synthesis turn");
+        .expect("two no-progress rounds must not exhaust the envelope");
 
     assert_eq!(outcome.content, "synthesized from bounded results");
     assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
@@ -920,7 +920,7 @@ async fn two_complete_rounds_without_progress_close_tools_before_final_synthesis
         [
             vec!["system_time_now".to_string()],
             vec!["system_time_now".to_string()],
-            vec![]
+            vec!["system_time_now".to_string()]
         ]
     );
 }

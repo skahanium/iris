@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 57,
+  "registryRevision": 58,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-16T15:01:06.422Z"
+    "recordedAt": "2026-09-16T15:51:41.896Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -254,7 +254,7 @@
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05#file",
-      "fingerprint": "db0d063d2ef2518f601c4d136cc45cc5"
+      "fingerprint": "91fab6befb6a1e309ada4b12fa039628"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "31a9da8e823492985d666d8dfa880705"
+      "fingerprint": "b62f61b65e5ad32652262e6b831dc94d"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -934,13 +934,13 @@
       "title": "C14 行动与恢复协调",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 15,
+      "revision": 16,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C14",
         "line": 192,
         "endLine": 232,
-        "fingerprint": "99e7274969058c538bc28be65d12a88a"
+        "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140"
       },
       "implementation": {
         "state": "partial"
@@ -2031,13 +2031,13 @@
       "title": "Host 用配方当第二规划器",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 2,
+      "revision": 3,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G06",
         "line": 77,
         "endLine": 87,
-        "fingerprint": "4f0275e532df3fbaec8abdef6f96a76a"
+        "fingerprint": "da2a83c8bbba59fd08b269850f5a995b"
       },
       "implementation": {
         "state": "unknown"
@@ -6543,10 +6543,10 @@
       "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_finish_reason",
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
-      "fingerprint": "99e7274969058c538bc28be65d12a88a",
-      "at": "2026-09-16T08:20:00Z",
-      "applicability": "needs-review",
-      "note": "registryRevision 48：本机 5 passed / 0 failed。循环纵深：length／unknown 不派发；tool_calls 与 MiniMax 式 stop+工具仍派发；空正文+length 走恢复而非 agent_run_invalid_model_response。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过。CHG-2026-09-16-32 修订了 C14 决定权（R12 预留不写关面指令）；本记录指纹随定义更新，finish_reason 覆盖仍须在 C14 施工时复核，不构成 G06 关闭证据。"
+      "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140",
+      "at": "2026-09-16T16:00:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-16-33：指纹绑到 C14 revision 16（信封关面、配方不再规划下一步）。finish_reason 循环纵深仍覆盖；host_authority 负例见 agent_tool_loop_host_authority_tests.rs。不把 C14 verification 标为通过，不构成 G06 关闭证据。"
     },
     {
       "object": "Q04",
@@ -19165,6 +19165,37 @@
           "fingerprintTo": "810567ee4bf3309b7b6eb6a94f90300d"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-16-33",
+      "at": "2026-09-16T15:51:41.896Z",
+      "author": "Cursor Grok 4.6 (C14 envelope)",
+      "classification": "refinement",
+      "reason": "只同步现状与测试指针：循环已按信封关面，配方计数不再强制综合或注入关面指令；C14 verify 指纹绑到新定义，verification.state 仍 none；不关闭 D02、Q04、Q10、G06。",
+      "review": null,
+      "objects": [
+        {
+          "id": "M05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "db0d063d2ef2518f601c4d136cc45cc5",
+          "fingerprintTo": "91fab6befb6a1e309ada4b12fa039628"
+        },
+        {
+          "id": "C14",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "99e7274969058c538bc28be65d12a88a",
+          "fingerprintTo": "d8e95a7751c09cd1fa9d7f67a5a76140"
+        },
+        {
+          "id": "G06",
+          "revisionFrom": 2,
+          "revisionTo": 3,
+          "fingerprintFrom": "4f0275e532df3fbaec8abdef6f96a76a",
+          "fingerprintTo": "da2a83c8bbba59fd08b269850f5a995b"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19267,7 +19298,7 @@
       "author": "用户（确认 R11 为决定）",
       "reviewer": "Cursor Grok 4.6 (R11 docs)",
       "conclusion": "synchronized",
-      "reason": "用户已确认 R11 为决定。三层约束与模型拥有下一步写入架构 §3 M5／C13／C14；N15 扩写钉明不改变 D01 关闭项；G06 仅 at=acceptance 阻断 D02。未新开 request_tools 缺口，未把配方写入检查器。随后 CHG-2026-09-16-32 把完成额度预留从配方清单拆到 R12；本条仍覆盖 R11 当时的三层约束，预留归类以 CHG-32 为准。",
+      "reason": "用户已确认 R11 为决定。三层约束与模型拥有下一步写入架构 §3 M5／C13／C14；N15 扩写钉明不改变 D01 关闭项；G06 仅 at=acceptance 阻断 D02。未新开 request_tools 缺口，未把配方写入检查器。随后 CHG-2026-09-16-32 把完成额度预留从配方清单拆到 R12；CHG-2026-09-16-33 同步 C14／G06 现状（信封关面）。本条仍覆盖 R11 当时的三层约束，预留归类以 CHG-32 为准，循环现状以 CHG-33 为准。",
       "evidence": "2026-09-16 用户确认 R11 为决定；docs/agent-architecture.md §3 M5、§7.4、§10.3、§11；agent-harness/decisions/README.md R11；agent-harness/implementation/D02-protocol-and-recovery.md 过早收束负例清单",
       "objects": [
         {
@@ -19287,8 +19318,8 @@
         },
         {
           "id": "C14",
-          "revision": 15,
-          "fingerprint": "99e7274969058c538bc28be65d12a88a"
+          "revision": 16,
+          "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140"
         },
         {
           "id": "D02",
@@ -19327,8 +19358,8 @@
         },
         {
           "id": "G06",
-          "revision": 2,
-          "fingerprint": "4f0275e532df3fbaec8abdef6f96a76a"
+          "revision": 3,
+          "fingerprint": "da2a83c8bbba59fd08b269850f5a995b"
         }
       ]
     },
@@ -19363,7 +19394,7 @@
       "author": "用户（确认 R12 为决定，采用方案 B）",
       "reviewer": "Cursor Grok 4.6 (R12 docs)",
       "conclusion": "synchronized",
-      "reason": "用户已确认 R12 为决定，采用方案 B：完成额度预留是 C13 信封（探索轮输出帽；预留触达后可不提供业务工具并把 remaining 留给表达），不是注入关面指令的配方。R11 配方清单不再把「预留关面」当配方。前缀表只扩号段到 R12。未改循环实现，未关闭 D02／Q04／Q10／G06。",
+      "reason": "用户已确认 R12 为决定，采用方案 B：完成额度预留是 C13 信封（探索轮输出帽；预留触达后可不提供业务工具并把 remaining 留给表达），不是注入关面指令的配方。R11 配方清单不再把「预留关面」当配方。前缀表只扩号段到 R12。随后 CHG-2026-09-16-33 落地 C14 循环并同步现状；未关闭 D02／Q04／Q10／G06。",
       "evidence": "2026-09-16 用户确认 R12 为决定并选择方案 B；docs/agent-architecture.md §3 M5、C13／C14、§11；agent-harness/decisions/README.md R12；agent-harness/implementation/D02-protocol-and-recovery.md §二／§三.5.4–5",
       "objects": [
         {
@@ -19388,8 +19419,8 @@
         },
         {
           "id": "C14",
-          "revision": 15,
-          "fingerprint": "99e7274969058c538bc28be65d12a88a"
+          "revision": 16,
+          "fingerprint": "d8e95a7751c09cd1fa9d7f67a5a76140"
         },
         {
           "id": "D02",
@@ -19403,8 +19434,8 @@
         },
         {
           "id": "G06",
-          "revision": 2,
-          "fingerprint": "4f0275e532df3fbaec8abdef6f96a76a"
+          "revision": 3,
+          "fingerprint": "da2a83c8bbba59fd08b269850f5a995b"
         },
         {
           "id": "N15",
@@ -19426,7 +19457,7 @@
         {
           "item": "C14 须拆开完成额度输出帽与关面指令：预留触达后不注入 tool_surface_closed_instruction，并把 remaining 留给表达轮；补强预留测试的工具面与 max_completion_tokens 断言",
           "owner": "C14",
-          "status": "open"
+          "status": "done"
         }
       ]
     }

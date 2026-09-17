@@ -860,10 +860,10 @@ impl AgentToolLoop {
                 (Some(completion_limit), Some(turn_limit)) => completion_limit.min(turn_limit),
                 _ => 0,
             };
-            // Do not let exploratory turns consume the final synthesis
-            // envelope. Once only that reserve remains, close business tools
-            // before building the Gateway request so the provider receives a
-            // real, enforceable output cap rather than a post-hoc rejection.
+            // R12: remaining at or below the completion reserve is an
+            // output-cap envelope. Withhold business tools and give the
+            // remaining tokens to the expression turn; do not inject a
+            // recipe closure instruction.
             if !synthesis_required
                 && !source_binding_repair_required
                 && incomplete_final_draft.is_none()
@@ -872,7 +872,6 @@ impl AgentToolLoop {
                     .is_some_and(|remaining| remaining <= synthesis_output_reserve)
             {
                 synthesis_required = true;
-                messages.push(tool_surface_closed_instruction());
             }
             let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some()
                 || synthesis_required
@@ -890,7 +889,8 @@ impl AgentToolLoop {
                 let is_synthesis_turn = synthesis_required
                     || source_binding_repair_required
                     || incomplete_final_draft.is_some()
-                    || is_final_model_turn;
+                    || is_final_model_turn
+                    || remaining <= synthesis_output_reserve;
                 let allowed_output = if is_synthesis_turn {
                     remaining
                 } else {
@@ -1425,10 +1425,9 @@ impl AgentToolLoop {
                 .all(|(_, disposition)| *disposition != ToolCallDisposition::Dispatched)
             {
                 provider.on_tool_proposals_not_dispatched(provider_run_id)?;
-                let target_action = if rejected_rounds.saturating_add(1) >= 2
-                    || model_turns.saturating_add(1) >= self.max_model_turns
-                    || tool_calls >= self.max_tool_calls
-                {
+                let envelope_last_turn = model_turns.saturating_add(1) >= self.max_model_turns
+                    || tool_calls >= self.max_tool_calls;
+                let target_action = if envelope_last_turn {
                     NEXT_ACTION_SYNTHESIZE
                 } else {
                     NEXT_ACTION_CONTINUE
@@ -1440,10 +1439,8 @@ impl AgentToolLoop {
                 ));
                 rejected_rounds = rejected_rounds.saturating_add(1);
                 executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair", "round":rejected_rounds}));
-                if rejected_rounds >= 2 || model_turns.saturating_add(1) >= self.max_model_turns
-                {
+                if envelope_last_turn {
                     synthesis_required = true;
-                    messages.push(LlmMessage { role: MessageRole::System, content: "Tool proposal repair is exhausted. No rejected action ran. Synthesize supported information from actual observations and state what remains unresolved.".into(), tool_call_id: None, tool_calls: None, reasoning_content: None });
                 }
                 continue;
             }
@@ -1602,17 +1599,12 @@ impl AgentToolLoop {
                 failed_service_rounds = failed_service_rounds.saturating_add(1);
             }
             executor.record_tool_loop_diagnostic(serde_json::json!({"event":"progress", "noProgressRounds":no_progress_rounds, "failedServiceRounds":failed_service_rounds}));
-            // Never spend the final model turn on another exploratory tool
-            // request. Once this round has left only one turn, close the
-            // business surface and reserve that final opportunity for
-            // synthesis (or the terminal structured submission tool).
+            // Envelope only: last model turn or exhausted tool-call ledger.
+            // Recipe counters (`no_progress_rounds`, `failed_service_rounds`)
+            // do not close the surface (R11, R12).
             let final_turn_must_be_reserved = model_turns.saturating_add(1) >= self.max_model_turns;
-            if no_progress_rounds >= 2 || failed_service_rounds >= 2
-                || tool_calls >= self.max_tool_calls
-                || final_turn_must_be_reserved
-            {
+            if tool_calls >= self.max_tool_calls || final_turn_must_be_reserved {
                 synthesis_required = true;
-                messages.push(tool_surface_closed_instruction());
             }
         }
 
@@ -1651,7 +1643,6 @@ impl AgentToolLoop {
             // synthetic Provider finish reason.
             Ok(result) if result.terminal.is_host_authored() => "evidence_limited",
             Ok(result) if is_natural_clarification(&result.content) => "clarification",
-            Ok(_) if rejected_rounds >= 2 => "recovery_exhausted",
             Ok(_) if !web_observation_performed && executor.web_capability_blocked() => {
                 "tool_unavailable"
             }
