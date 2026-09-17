@@ -1,52 +1,39 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 72,
+  "registryRevision": 77,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T10:02:47.820Z"
+    "recordedAt": "2026-09-17T10:14:17.176Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
       "path": "AGENT-REFORM-DISCUSSION-2026-09-14.md",
       "kind": "discussion",
       "role": "解释来源与事实边界；不作为规范条文",
-      "refs": [
-        "P01",
-        "P03",
-        "P04",
-        "P06"
-      ],
+      "refs": ["P01", "P03", "P04", "P06"],
       "fingerprint": "a8e5df28d0ed4f17cb84b65c713cef20"
     },
     "SRC-ARCH-2026-09-15": {
       "path": "docs/agent-architecture.md",
       "kind": "architecture-definition",
       "role": "上位架构决定；模块、组件、工具身份由它派生",
-      "refs": [
-        "P01",
-        "P02",
-        "P03"
-      ],
+      "refs": ["P01", "P02", "P03"],
       "fingerprint": "c090b5eea675e4ce9bf76f7f45f32aeb"
     },
     "SRC-ARCH-REPO": {
       "path": "ARCHITECTURE.md",
       "kind": "implementation-facts",
       "role": "当前实现事实与边界",
-      "refs": [
-        "P04"
-      ],
+      "refs": ["P04"],
       "fingerprint": "2bb2e0ae8f59d3e7ef2d7e2d32b47d56"
     },
     "SRC-ROADMAP-REPO": {
       "path": "ROADMAP.md",
       "kind": "version-roadmap",
       "role": "版本排期唯一来源；本体系不重复版本承诺",
-      "refs": [
-        "P01"
-      ],
+      "refs": ["P01"],
       "fingerprint": "89c16c7507b9891888ea838d4ace9cf7"
     }
   },
@@ -233,87 +220,87 @@
     },
     "modules/m01-session-and-run.md": {
       "container": "M01",
-      "registration": "M01#file",
+      "registration": "M01",
       "fingerprint": "86a42d66926dad2fdf89f2b0660ea529"
     },
     "modules/m02-permission-and-side-effects.md": {
       "container": "M02",
-      "registration": "M02#file",
+      "registration": "M02",
       "fingerprint": "d63244fc4885dfbb46e6c467b5205155"
     },
     "modules/m03-context-and-memory.md": {
       "container": "M03",
-      "registration": "M03#file",
+      "registration": "M03",
       "fingerprint": "753a126df5dcfc75e4c13fb07d87636e"
     },
     "modules/m04-model-gateway.md": {
       "container": "M04",
-      "registration": "M04#file",
+      "registration": "M04",
       "fingerprint": "5c4ed4e1133eef8a09730b479bd61dd3"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
-      "registration": "M05#file",
+      "registration": "M05",
       "fingerprint": "91fab6befb6a1e309ada4b12fa039628"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
-      "registration": "M06#file",
+      "registration": "M06",
       "fingerprint": "0bcba3af91980f08b31e05a12703e2fa"
     },
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
-      "registration": "M07#file",
+      "registration": "M07",
       "fingerprint": "dd2bf149e6e87ad32eef5273be999945"
     },
     "modules/m08-verification-and-delivery.md": {
       "container": "M08",
-      "registration": "M08#file",
+      "registration": "M08",
       "fingerprint": "ecc6abd514a5e9ece56583b2e04721ca"
     },
     "modules/m09-audit-and-diagnostics.md": {
       "container": "M09",
-      "registration": "M09#file",
+      "registration": "M09",
       "fingerprint": "736baf6428af5136748e252b33d748a5"
     },
     "registry.json": {
       "container": "FILE-REGISTRY",
-      "registration": "FILE-REGISTRY",
-      "fingerprint": "34760d80a5c70e762fe1bbaa4fbf19c4"
+      "registration": "FILE-REGISTRY#file",
+      "fingerprint": "feffc951c7c14e6606e1fc90aa10c93e"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
-      "registration": "P04#file",
+      "registration": "P04",
       "fingerprint": "cbd097b4ee83ef633e312732fd820fb3"
     },
     "requirements/open-items.md": {
       "container": "P05",
-      "registration": "P05#file",
+      "registration": "P05",
       "fingerprint": "c0cda77892bee67005467da25a1be32d"
     },
     "requirements/requirements.md": {
       "container": "P06",
-      "registration": "P06#file",
+      "registration": "P06",
       "fingerprint": "24294d94ac8dbeacbb891338b30d37c7"
     },
     "rules/governance.md": {
       "container": "P03",
-      "registration": "P03#file",
+      "registration": "P03",
       "fingerprint": "0e2620777b3fa206ebb05ddd5d16a5dc"
     },
     "rules/objects.md": {
       "container": "P02",
-      "registration": "P02#file",
+      "registration": "P02",
       "fingerprint": "b621e56b5b165066fcd3fe18fb4b9b64"
     },
     "testing/acceptance-matrix.md": {
       "container": "V03",
-      "registration": "V03#file",
+      "registration": "V03",
       "fingerprint": "7b2cdf2cfcef95872991134521855846"
     },
     "testing/evidence.md": {
       "container": "V01",
-      "registration": "V01#file",
+      "registration": "V01",
       "fingerprint": "4908958cac5eeb37cc7e95060ea0f7a1"
     },
     "tests/legacy-batch-plan.md": {
@@ -537,19 +524,11 @@
         "endLine": 167,
         "fingerprint": "70008a4a66f03dbd77223e12aaa1b361"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K01"
-        ]
-      },
+      "relations": { "implements": ["K01"] },
       "note": null
     },
     "C02": {
@@ -566,19 +545,11 @@
         "endLine": 209,
         "fingerprint": "ce4c209b3f4d2bfabd8a62fa29224467"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K02"
-        ]
-      },
+      "relations": { "implements": ["K02"] },
       "note": null
     },
     "C03": {
@@ -595,23 +566,11 @@
         "endLine": 251,
         "fingerprint": "f327db20835338cf39afa5d3b49a9b9d"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K03"
-        ],
-        "depends_on": [
-          "C01",
-          "C02"
-        ]
-      },
+      "relations": { "implements": ["K03"], "depends_on": ["C01", "C02"] },
       "note": null
     },
     "C04": {
@@ -628,22 +587,11 @@
         "endLine": 169,
         "fingerprint": "ea388829eaa9035ea2b27b7ccf353d75"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K05"
-        ],
-        "depends_on": [
-          "C01"
-        ]
-      },
+      "relations": { "implements": ["K05"], "depends_on": ["C01"] },
       "note": null
     },
     "C05": {
@@ -660,23 +608,11 @@
         "endLine": 211,
         "fingerprint": "5102979b7ea99c0505bb9d7d65758e53"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K05",
-          "K16"
-        ],
-        "depends_on": [
-          "C04"
-        ]
-      },
+      "relations": { "implements": ["K05", "K16"], "depends_on": ["C04"] },
       "note": null
     },
     "C06": {
@@ -693,22 +629,11 @@
         "endLine": 253,
         "fingerprint": "c4b49c79ae7e64029994ab9e42289b40"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K05"
-        ],
-        "depends_on": [
-          "C05"
-        ]
-      },
+      "relations": { "implements": ["K05"], "depends_on": ["C05"] },
       "note": null
     },
     "C07": {
@@ -725,19 +650,11 @@
         "endLine": 165,
         "fingerprint": "be303c3a129014a4e0d7518aef656c0e"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K07"
-        ]
-      },
+      "relations": { "implements": ["K07"] },
       "note": null
     },
     "C08": {
@@ -754,23 +671,11 @@
         "endLine": 207,
         "fingerprint": "ad81b8040ed4b9e46fdac02d1b1fe22c"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K07",
-          "K08"
-        ],
-        "depends_on": [
-          "C07"
-        ]
-      },
+      "relations": { "implements": ["K07", "K08"], "depends_on": ["C07"] },
       "note": null
     },
     "C09": {
@@ -787,22 +692,11 @@
         "endLine": 249,
         "fingerprint": "2cc4ec4d60cda186a5e1cf795ad4c457"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K08"
-        ],
-        "depends_on": [
-          "C04"
-        ]
-      },
+      "relations": { "implements": ["K08"], "depends_on": ["C04"] },
       "note": null
     },
     "C10": {
@@ -819,19 +713,11 @@
         "endLine": 163,
         "fingerprint": "be0402c6b183a31449ed2e49fa0f98f1"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K04"
-        ]
-      },
+      "relations": { "implements": ["K04"] },
       "note": null
     },
     "C11": {
@@ -848,22 +734,11 @@
         "endLine": 205,
         "fingerprint": "6617414d4df6450b1a776688d182f52b"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K04"
-        ],
-        "depends_on": [
-          "C10"
-        ]
-      },
+      "relations": { "implements": ["K04"], "depends_on": ["C10"] },
       "note": null
     },
     "C12": {
@@ -880,23 +755,11 @@
         "endLine": 247,
         "fingerprint": "f9d0b4447363412e70c6258c5f548d6f"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K04",
-          "K06"
-        ],
-        "depends_on": [
-          "C11"
-        ]
-      },
+      "relations": { "implements": ["K04", "K06"], "depends_on": ["C11"] },
       "note": null
     },
     "C13": {
@@ -913,19 +776,11 @@
         "endLine": 190,
         "fingerprint": "f1499c3b8c81fe35d51e6a6ff7ff543e"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K06"
-        ]
-      },
+      "relations": { "implements": ["K06"] },
       "note": null
     },
     "C14": {
@@ -942,23 +797,11 @@
         "endLine": 232,
         "fingerprint": "4cff06c71076865d628dbaf2ecf557c1"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K16"
-        ],
-        "depends_on": [
-          "C13",
-          "C17"
-        ]
-      },
+      "relations": { "implements": ["K16"], "depends_on": ["C13", "C17"] },
       "note": null
     },
     "C15": {
@@ -975,23 +818,13 @@
         "endLine": 274,
         "fingerprint": "1c1ce0630de04592faf7804a4f84fe6b"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "K16",
-          "L06"
-        ],
-        "depends_on": [
-          "C13",
-          "C16"
-        ]
+        "implements": ["K16", "L06"],
+        "depends_on": ["C13", "C16"]
       },
       "note": null
     },
@@ -1009,19 +842,11 @@
         "endLine": 170,
         "fingerprint": "6c006eeb089856f2b1c793f04290a945"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K10"
-        ]
-      },
+      "relations": { "implements": ["K10"] },
       "note": null
     },
     "C17": {
@@ -1038,24 +863,13 @@
         "endLine": 212,
         "fingerprint": "a01749ccfab0cb5b4c04063effbe4eca"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "K10",
-          "K16"
-        ],
-        "depends_on": [
-          "C16",
-          "C04",
-          "C13"
-        ]
+        "implements": ["K10", "K16"],
+        "depends_on": ["C16", "C04", "C13"]
       },
       "note": null
     },
@@ -1073,22 +887,11 @@
         "endLine": 254,
         "fingerprint": "729f1227294ffe6353c21967ce46311f"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K18"
-        ],
-        "depends_on": [
-          "C04"
-        ]
-      },
+      "relations": { "implements": ["K18"], "depends_on": ["C04"] },
       "note": null
     },
     "C19": {
@@ -1105,22 +908,11 @@
         "endLine": 177,
         "fingerprint": "273f9c59f1a745c8ed3e190859f6cacc"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K09"
-        ],
-        "depends_on": [
-          "C04"
-        ]
-      },
+      "relations": { "implements": ["K09"], "depends_on": ["C04"] },
       "note": null
     },
     "C20": {
@@ -1137,26 +929,13 @@
         "endLine": 219,
         "fingerprint": "8bc5250a9d2468f928b8347fb471adcf"
       },
-      "implementation": {
-        "state": "absent"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "absent" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "K11",
-          "K12",
-          "N07"
-        ],
-        "depends_on": [
-          "C10",
-          "C18",
-          "C13",
-          "C04"
-        ]
+        "implements": ["K11", "K12", "N07"],
+        "depends_on": ["C10", "C18", "C13", "C04"]
       },
       "note": null
     },
@@ -1174,23 +953,11 @@
         "endLine": 261,
         "fingerprint": "7a55ec7bfdda5aa16c8a9f6f4966dcff"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K13"
-        ],
-        "depends_on": [
-          "C04",
-          "C18"
-        ]
-      },
+      "relations": { "implements": ["K13"], "depends_on": ["C04", "C18"] },
       "note": null
     },
     "C22": {
@@ -1207,23 +974,11 @@
         "endLine": 303,
         "fingerprint": "8d62c96656893980f0e4c437115921cb"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K14"
-        ],
-        "depends_on": [
-          "C19",
-          "C21"
-        ]
-      },
+      "relations": { "implements": ["K14"], "depends_on": ["C19", "C21"] },
       "note": null
     },
     "C23": {
@@ -1240,22 +995,11 @@
         "endLine": 171,
         "fingerprint": "62b79fae885c68c01316461398c862e0"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K16"
-        ],
-        "depends_on": [
-          "C22"
-        ]
-      },
+      "relations": { "implements": ["K16"], "depends_on": ["C22"] },
       "note": null
     },
     "C24": {
@@ -1272,24 +1016,13 @@
         "endLine": 213,
         "fingerprint": "a134c89546702d47d643e6c4a1cad6f4"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "K16",
-          "L03",
-          "L04"
-        ],
-        "depends_on": [
-          "C07",
-          "C05"
-        ]
+        "implements": ["K16", "L03", "L04"],
+        "depends_on": ["C07", "C05"]
       },
       "note": null
     },
@@ -1307,23 +1040,11 @@
         "endLine": 255,
         "fingerprint": "b63690cb7b325e9e9b251e97bd0beaf2"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K15"
-        ],
-        "depends_on": [
-          "C23",
-          "C02"
-        ]
-      },
+      "relations": { "implements": ["K15"], "depends_on": ["C23", "C02"] },
       "note": null
     },
     "C26": {
@@ -1340,19 +1061,11 @@
         "endLine": 197,
         "fingerprint": "48e1a8c40e3430e47b34ba3b69fcfce8"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K17"
-        ]
-      },
+      "relations": { "implements": ["K17"] },
       "note": null
     },
     "C27": {
@@ -1369,22 +1082,11 @@
         "endLine": 239,
         "fingerprint": "4384d82dd344640c3634247994e0c3c8"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "K17"
-        ],
-        "depends_on": [
-          "C26"
-        ]
-      },
+      "relations": { "implements": ["K17"], "depends_on": ["C26"] },
       "note": null
     },
     "D01": {
@@ -1401,15 +1103,9 @@
         "endLine": 95,
         "fingerprint": "0767ce792634a56cd54f1f82190cd319"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "passed"
-      },
-      "work": {
-        "state": "done"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "passed" },
+      "work": { "state": "done" },
       "scope": [
         "N01",
         "N15",
@@ -1423,20 +1119,8 @@
         "G04"
       ],
       "relations": {
-        "depends_on": [
-          "P01",
-          "P02",
-          "P03",
-          "P06",
-          "K17",
-          "V01",
-          "V08"
-        ],
-        "closes": [
-          "G04",
-          "Q18",
-          "Q01"
-        ]
+        "depends_on": ["P01", "P02", "P03", "P06", "K17", "V01", "V08"],
+        "closes": ["G04", "Q18", "Q01"]
       },
       "note": null
     },
@@ -1454,15 +1138,9 @@
         "endLine": 91,
         "fingerprint": "7d28dc5cddb628eadaff4907d503767b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
-      "work": {
-        "state": "planned"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
+      "work": { "state": "planned" },
       "scope": [
         "N01",
         "N15",
@@ -1476,21 +1154,8 @@
         "G06"
       ],
       "relations": {
-        "depends_on": [
-          "D01",
-          "K04",
-          "K06",
-          "K10",
-          "K15",
-          "K16",
-          "R11",
-          "R12"
-        ],
-        "closes": [
-          "Q04",
-          "Q10",
-          "G06"
-        ]
+        "depends_on": ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
+        "closes": ["Q04", "Q10", "G06"]
       },
       "note": null
     },
@@ -1508,15 +1173,9 @@
         "endLine": 81,
         "fingerprint": "e77e1c00915e96a6b2dd3c1203e75dec"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
-      "work": {
-        "state": "planned"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
+      "work": { "state": "planned" },
       "scope": [
         "N05",
         "N12",
@@ -1531,18 +1190,8 @@
         "G05"
       ],
       "relations": {
-        "depends_on": [
-          "D01",
-          "K01",
-          "K03",
-          "K05",
-          "K07",
-          "K08"
-        ],
-        "closes": [
-          "Q08",
-          "G05"
-        ]
+        "depends_on": ["D01", "K01", "K03", "K05", "K07", "K08"],
+        "closes": ["Q08", "G05"]
       },
       "note": null
     },
@@ -1560,15 +1209,9 @@
         "endLine": 82,
         "fingerprint": "dfa6dc6f683960bdd2826b5095156bd6"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
-      "work": {
-        "state": "planned"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
+      "work": { "state": "planned" },
       "scope": [
         "N06",
         "N07",
@@ -1584,23 +1227,8 @@
         "G03"
       ],
       "relations": {
-        "depends_on": [
-          "D02",
-          "D03",
-          "K09",
-          "K11",
-          "K12",
-          "K13",
-          "K14",
-          "K18"
-        ],
-        "closes": [
-          "Q02",
-          "Q05",
-          "Q17",
-          "G02",
-          "G03"
-        ]
+        "depends_on": ["D02", "D03", "K09", "K11", "K12", "K13", "K14", "K18"],
+        "closes": ["Q02", "Q05", "Q17", "G02", "G03"]
       },
       "note": null
     },
@@ -1618,33 +1246,12 @@
         "endLine": 84,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
-      "work": {
-        "state": "planned"
-      },
-      "scope": [
-        "N02",
-        "N03",
-        "N04",
-        "N11",
-        "N23",
-        "Q14"
-      ],
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
+      "work": { "state": "planned" },
+      "scope": ["N02", "N03", "N04", "N11", "N23", "Q14"],
       "relations": {
-        "depends_on": [
-          "D02",
-          "D03",
-          "K05",
-          "K15",
-          "K16",
-          "L03",
-          "L04"
-        ]
+        "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
       },
       "note": null
     },
@@ -1662,30 +1269,11 @@
         "endLine": 59,
         "fingerprint": "1ef0e3f3adfdd9f347eebbefe4e583c2"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
-      "work": {
-        "state": "planned"
-      },
-      "scope": [
-        "N16",
-        "N18",
-        "Q06",
-        "Q07",
-        "Q19"
-      ],
-      "relations": {
-        "depends_on": [
-          "D04",
-          "D05",
-          "V06",
-          "E03"
-        ]
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
+      "work": { "state": "planned" },
+      "scope": ["N16", "N18", "Q06", "Q07", "Q19"],
+      "relations": { "depends_on": ["D04", "D05", "V06", "E03"] },
       "note": null
     },
     "E01": {
@@ -1702,20 +1290,11 @@
         "endLine": 71,
         "fingerprint": "884ecb3c7b4d83937aa67abd567961e8"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "V01",
-          "V02"
-        ]
-      },
+      "relations": { "implements": ["V01", "V02"] },
       "note": null
     },
     "E02": {
@@ -1732,23 +1311,11 @@
         "endLine": 114,
         "fingerprint": "d2d1b0b6e629ea7c0e2f60344153dfcc"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "V03",
-          "V04"
-        ],
-        "depends_on": [
-          "E01"
-        ]
-      },
+      "relations": { "implements": ["V03", "V04"], "depends_on": ["E01"] },
       "note": null
     },
     "E03": {
@@ -1765,24 +1332,13 @@
         "endLine": 156,
         "fingerprint": "5e7399bdb840f642ae74f5f89cde62ce"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "V01",
-          "V06",
-          "V07"
-        ],
-        "depends_on": [
-          "E01",
-          "E02"
-        ]
+        "implements": ["V01", "V06", "V07"],
+        "depends_on": ["E01", "E02"]
       },
       "note": null
     },
@@ -1800,12 +1356,8 @@
         "endLine": 59,
         "fingerprint": "1feaab647b755f53b38fe04279231742"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -1825,12 +1377,8 @@
         "endLine": 27,
         "fingerprint": "662fb9e35e9230459e92c2ba1196c9d4"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -1850,12 +1398,8 @@
         "endLine": 53,
         "fingerprint": "bad9307c79e0801c99d3df4ad9d5aa7b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -1875,24 +1419,14 @@
         "endLine": 26,
         "fingerprint": "ddb6a2d0fc7fc00153da9b3284f8cc84"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
         "blocks": [
-          {
-            "id": "D03",
-            "at": "acceptance"
-          },
-          {
-            "id": "D05",
-            "at": "acceptance"
-          }
+          { "id": "D03", "at": "acceptance" },
+          { "id": "D05", "at": "acceptance" }
         ]
       },
       "note": null
@@ -1911,22 +1445,11 @@
         "endLine": 38,
         "fingerprint": "6dab04deb226e5c2cfd7a5e1cf92a8d8"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D04",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
       "note": null
     },
     "G03": {
@@ -1943,22 +1466,11 @@
         "endLine": 50,
         "fingerprint": "54906f8713143d7805bf16e2de2fc6d8"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D04",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
       "note": null
     },
     "G04": {
@@ -1975,22 +1487,11 @@
         "endLine": 63,
         "fingerprint": "e266f35bd09c892a8a8d8df299b9ae62"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D01",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
       "note": null
     },
     "G05": {
@@ -2007,22 +1508,11 @@
         "endLine": 75,
         "fingerprint": "554d41dc4e13f6eed48903dae3ad6b37"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D03",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D03", "at": "acceptance" }] },
       "note": null
     },
     "G06": {
@@ -2039,22 +1529,11 @@
         "endLine": 87,
         "fingerprint": "1a452b52af39caa65ef1db6f3a9a4f72"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D02",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
       "note": null
     },
     "K01": {
@@ -2071,22 +1550,11 @@
         "endLine": 91,
         "fingerprint": "f47c02b89d7569bbb5e4152b3ba0814c"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C01",
-          "C03",
-          "C07",
-          "C22"
-        ]
-      },
+      "relations": { "applies_to": ["C01", "C03", "C07", "C22"] },
       "note": null
     },
     "K02": {
@@ -2103,21 +1571,11 @@
         "endLine": 87,
         "fingerprint": "21737948fbfe97459310db283fc3e40a"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C02",
-          "C25",
-          "C27"
-        ]
-      },
+      "relations": { "applies_to": ["C02", "C25", "C27"] },
       "note": null
     },
     "K03": {
@@ -2134,22 +1592,11 @@
         "endLine": 99,
         "fingerprint": "950b239eba0664428f21925365a03787"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C03",
-          "C07",
-          "C14",
-          "C25"
-        ]
-      },
+      "relations": { "applies_to": ["C03", "C07", "C14", "C25"] },
       "note": null
     },
     "K04": {
@@ -2166,22 +1613,11 @@
         "endLine": 96,
         "fingerprint": "334e9bd2466e744c182b0f55f111a735"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C10",
-          "C11",
-          "C12",
-          "C20"
-        ]
-      },
+      "relations": { "applies_to": ["C10", "C11", "C12", "C20"] },
       "note": null
     },
     "K05": {
@@ -2198,24 +1634,11 @@
         "endLine": 101,
         "fingerprint": "ceda0a86513f667e831fb6736d47718c"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C04",
-          "C05",
-          "C06",
-          "C17",
-          "C20",
-          "C24"
-        ]
-      },
+      "relations": { "applies_to": ["C04", "C05", "C06", "C17", "C20", "C24"] },
       "note": null
     },
     "K06": {
@@ -2232,24 +1655,11 @@
         "endLine": 109,
         "fingerprint": "3e648abcc442f7bf9f959369c70ed403"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C12",
-          "C13",
-          "C15",
-          "C17",
-          "C20",
-          "C21"
-        ]
-      },
+      "relations": { "applies_to": ["C12", "C13", "C15", "C17", "C20", "C21"] },
       "note": null
     },
     "K07": {
@@ -2266,21 +1676,11 @@
         "endLine": 95,
         "fingerprint": "65968fe0e8ee638639c26157d8a0654b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C07",
-          "C08",
-          "C11"
-        ]
-      },
+      "relations": { "applies_to": ["C07", "C08", "C11"] },
       "note": null
     },
     "K08": {
@@ -2297,20 +1697,11 @@
         "endLine": 107,
         "fingerprint": "d2253154c3a79a098cdd0594c23f503a"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C08",
-          "C09"
-        ]
-      },
+      "relations": { "applies_to": ["C08", "C09"] },
       "note": null
     },
     "K09": {
@@ -2327,23 +1718,11 @@
         "endLine": 89,
         "fingerprint": "e74b319d8226c3ea96f545a5eb54c762"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C04",
-          "C19",
-          "C20",
-          "C21",
-          "C15"
-        ]
-      },
+      "relations": { "applies_to": ["C04", "C19", "C20", "C21", "C15"] },
       "note": null
     },
     "K10": {
@@ -2360,21 +1739,11 @@
         "endLine": 110,
         "fingerprint": "246332272cdd744f523f02f8848ab836"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C16",
-          "C17",
-          "C14"
-        ]
-      },
+      "relations": { "applies_to": ["C16", "C17", "C14"] },
       "note": null
     },
     "K11": {
@@ -2391,23 +1760,11 @@
         "endLine": 109,
         "fingerprint": "97455ada8a03b1b14e3706e043266316"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C20",
-          "C10",
-          "C18",
-          "C22",
-          "C25"
-        ]
-      },
+      "relations": { "applies_to": ["C20", "C10", "C18", "C22", "C25"] },
       "note": null
     },
     "K12": {
@@ -2424,21 +1781,11 @@
         "endLine": 94,
         "fingerprint": "91b94fe0837f4c3c218d7838bcf55b62"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C20",
-          "C11",
-          "C12"
-        ]
-      },
+      "relations": { "applies_to": ["C20", "C11", "C12"] },
       "note": null
     },
     "K13": {
@@ -2455,21 +1802,11 @@
         "endLine": 109,
         "fingerprint": "9717ad70f62c8a1a70bfed3b59a03689"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C21",
-          "C22",
-          "C15"
-        ]
-      },
+      "relations": { "applies_to": ["C21", "C22", "C15"] },
       "note": null
     },
     "K14": {
@@ -2486,22 +1823,11 @@
         "endLine": 108,
         "fingerprint": "87fb68d57378acbe17bc5a6c67fc6e25"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C22",
-          "C07",
-          "C23",
-          "C25"
-        ]
-      },
+      "relations": { "applies_to": ["C22", "C07", "C23", "C25"] },
       "note": null
     },
     "K15": {
@@ -2518,21 +1844,11 @@
         "endLine": 107,
         "fingerprint": "b5d197d66f42820ef83a738de88ca5b4"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C25",
-          "C23",
-          "C14"
-        ]
-      },
+      "relations": { "applies_to": ["C25", "C23", "C14"] },
       "note": null
     },
     "K16": {
@@ -2549,22 +1865,11 @@
         "endLine": 111,
         "fingerprint": "529443fad5105df30206ae266bddd46e"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C23",
-          "C14",
-          "C17",
-          "C24"
-        ]
-      },
+      "relations": { "applies_to": ["C23", "C14", "C17", "C24"] },
       "note": null
     },
     "K17": {
@@ -2581,23 +1886,11 @@
         "endLine": 113,
         "fingerprint": "58cb397b479a7b308169c750616a1574"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C26",
-          "C27",
-          "C11",
-          "C20",
-          "C21"
-        ]
-      },
+      "relations": { "applies_to": ["C26", "C27", "C11", "C20", "C21"] },
       "note": null
     },
     "K18": {
@@ -2614,22 +1907,11 @@
         "endLine": 114,
         "fingerprint": "29b3cfcd4748c8dfa8899560294a4e78"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "applies_to": [
-          "C18",
-          "C16",
-          "C20",
-          "C21"
-        ]
-      },
+      "relations": { "applies_to": ["C18", "C16", "C20", "C21"] },
       "note": null
     },
     "L01": {
@@ -2646,27 +1928,13 @@
         "endLine": 100,
         "fingerprint": "36a5d197a6832c2e56b9a637ac1d7cfe"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N01",
-          "N05"
-        ],
-        "consumes": [
-          "K01",
-          "K02",
-          "K03",
-          "K07",
-          "K08",
-          "K15"
-        ]
+        "implements": ["N01", "N05"],
+        "consumes": ["K01", "K02", "K03", "K07", "K08", "K15"]
       },
       "note": null
     },
@@ -2684,30 +1952,13 @@
         "endLine": 126,
         "fingerprint": "dcbd011a875a5fb7d3f50dbc8e41e95e"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N06",
-          "N07",
-          "N08",
-          "N10",
-          "N11"
-        ],
-        "consumes": [
-          "K09",
-          "K11",
-          "K12",
-          "K13",
-          "K14",
-          "K15"
-        ]
+        "implements": ["N06", "N07", "N08", "N10", "N11"],
+        "consumes": ["K09", "K11", "K12", "K13", "K14", "K15"]
       },
       "note": null
     },
@@ -2725,24 +1976,13 @@
         "endLine": 96,
         "fingerprint": "a75011aa6b19c5c547ebad7ea4f1fd15"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N02",
-          "N03"
-        ],
-        "consumes": [
-          "K05",
-          "K14",
-          "K16"
-        ]
+        "implements": ["N02", "N03"],
+        "consumes": ["K05", "K14", "K16"]
       },
       "note": null
     },
@@ -2760,22 +2000,11 @@
         "endLine": 88,
         "fingerprint": "139b6ef1a5de30641b8ea74388f2cc5d"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "N04"
-        ],
-        "consumes": [
-          "K16"
-        ]
-      },
+      "relations": { "implements": ["N04"], "consumes": ["K16"] },
       "note": null
     },
     "L05": {
@@ -2792,24 +2021,11 @@
         "endLine": 95,
         "fingerprint": "0dc6369a7ccf55b8483980b737d1e9a1"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "N14"
-        ],
-        "consumes": [
-          "K03",
-          "K07",
-          "K08"
-        ]
-      },
+      "relations": { "implements": ["N14"], "consumes": ["K03", "K07", "K08"] },
       "note": null
     },
     "L06": {
@@ -2826,24 +2042,13 @@
         "endLine": 99,
         "fingerprint": "4e4e6f47a5acef8cb64b3e410ac7087b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N16"
-        ],
-        "consumes": [
-          "K06",
-          "K10",
-          "K14",
-          "K16"
-        ]
+        "implements": ["N16"],
+        "consumes": ["K06", "K10", "K14", "K16"]
       },
       "note": null
     },
@@ -2861,26 +2066,13 @@
         "endLine": 125,
         "fingerprint": "ff2051893f6edbca84af816531040bb8"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N01",
-          "N05",
-          "N16"
-        ],
-        "consumes": [
-          "K01",
-          "K02",
-          "K03",
-          "K04"
-        ]
+        "implements": ["N01", "N05", "N16"],
+        "consumes": ["K01", "K02", "K03", "K04"]
       },
       "note": null
     },
@@ -2898,25 +2090,13 @@
         "endLine": 127,
         "fingerprint": "8394c41fdd12474add177a8ff2c3d091"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N03",
-          "N12",
-          "N13"
-        ],
-        "consumes": [
-          "K05",
-          "K06",
-          "K16"
-        ]
+        "implements": ["N03", "N12", "N13"],
+        "consumes": ["K05", "K06", "K16"]
       },
       "note": null
     },
@@ -2934,24 +2114,11 @@
         "endLine": 123,
         "fingerprint": "9400528d82c2529910a0e28219c8d16c"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "N05",
-          "N14"
-        ],
-        "consumes": [
-          "K07",
-          "K08"
-        ]
-      },
+      "relations": { "implements": ["N05", "N14"], "consumes": ["K07", "K08"] },
       "note": null
     },
     "M04": {
@@ -2968,24 +2135,13 @@
         "endLine": 121,
         "fingerprint": "65c8ba7fbe4be8629c342daa9aa248ae"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N09",
-          "N17",
-          "N20"
-        ],
-        "consumes": [
-          "K04",
-          "K12"
-        ]
+        "implements": ["N09", "N17", "N20"],
+        "consumes": ["K04", "K12"]
       },
       "note": null
     },
@@ -3003,24 +2159,11 @@
         "endLine": 148,
         "fingerprint": "509c4dbf3d72a991feb959e1c391bc96"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "N15",
-          "N16"
-        ],
-        "consumes": [
-          "K06",
-          "K17"
-        ]
-      },
+      "relations": { "implements": ["N15", "N16"], "consumes": ["K06", "K17"] },
       "note": null
     },
     "M06": {
@@ -3037,24 +2180,11 @@
         "endLine": 128,
         "fingerprint": "0ed1e884bc91a5cccf905acb5db7415b"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "N19"
-        ],
-        "consumes": [
-          "K05",
-          "K10",
-          "K18"
-        ]
-      },
+      "relations": { "implements": ["N19"], "consumes": ["K05", "K10", "K18"] },
       "note": null
     },
     "M07": {
@@ -3071,28 +2201,13 @@
         "endLine": 135,
         "fingerprint": "a3bd6e620bc12ff62a1a1cbec28bb54b"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N06",
-          "N07",
-          "N08",
-          "N10"
-        ],
-        "consumes": [
-          "K09",
-          "K10",
-          "K11",
-          "K12",
-          "K13"
-        ]
+        "implements": ["N06", "N07", "N08", "N10"],
+        "consumes": ["K09", "K10", "K11", "K12", "K13"]
       },
       "note": null
     },
@@ -3110,26 +2225,13 @@
         "endLine": 129,
         "fingerprint": "3d80423084809f04405e998ab1a9f55c"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "implements": [
-          "N02",
-          "N04",
-          "N11",
-          "N17"
-        ],
-        "consumes": [
-          "K14",
-          "K15",
-          "K16"
-        ]
+        "implements": ["N02", "N04", "N11", "N17"],
+        "consumes": ["K14", "K15", "K16"]
       },
       "note": null
     },
@@ -3147,22 +2249,11 @@
         "endLine": 155,
         "fingerprint": "83ad048f91a4243376a8d996089536b5"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "N18"
-        ],
-        "consumes": [
-          "K17"
-        ]
-      },
+      "relations": { "implements": ["N18"], "consumes": ["K17"] },
       "note": null
     },
     "N01": {
@@ -3179,12 +2270,8 @@
         "endLine": 63,
         "fingerprint": "613fcea6a35035ca8dda04f70406a315"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3204,12 +2291,8 @@
         "endLine": 73,
         "fingerprint": "9878237a75e3a6977f844ac5f102e031"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3229,12 +2312,8 @@
         "endLine": 83,
         "fingerprint": "7277548ae92676fe6ae4e73cafeab176"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3254,12 +2333,8 @@
         "endLine": 93,
         "fingerprint": "eccc6334d3654a54e643c9104cf5399d"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3279,12 +2354,8 @@
         "endLine": 103,
         "fingerprint": "4432bbaac03469ab31e72fd6310c980f"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3304,12 +2375,8 @@
         "endLine": 113,
         "fingerprint": "6d94fe205205c5ea7d14d01d94e374c9"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3329,12 +2396,8 @@
         "endLine": 123,
         "fingerprint": "5ef40b6290ab02465383f288fd425dc4"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3354,12 +2417,8 @@
         "endLine": 133,
         "fingerprint": "deb19650085c0c49d74d16c589d6648c"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3379,12 +2438,8 @@
         "endLine": 143,
         "fingerprint": "8b55037d43c6eae5bf9b3b415293c756"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3404,12 +2459,8 @@
         "endLine": 153,
         "fingerprint": "20c5d69a98e7395e25c36b918f426877"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3429,12 +2480,8 @@
         "endLine": 163,
         "fingerprint": "c15a7ffbf739918652714f53832b9c60"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3454,12 +2501,8 @@
         "endLine": 173,
         "fingerprint": "203687baa5683366bed9e2403d2620e5"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3479,12 +2522,8 @@
         "endLine": 183,
         "fingerprint": "74644674b060b344c51238c1124f1797"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3504,12 +2543,8 @@
         "endLine": 193,
         "fingerprint": "2fa475f1786556e17fe6df68488984df"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3529,12 +2564,8 @@
         "endLine": 203,
         "fingerprint": "8b1e2702b53888edfd021a82a04535d5"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3554,12 +2585,8 @@
         "endLine": 213,
         "fingerprint": "7dcb82a0b089a15f8e411e3a4d720a14"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3579,12 +2606,8 @@
         "endLine": 223,
         "fingerprint": "1e7b1b450e63fca7e2cbc3e18fba6bbd"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3604,12 +2627,8 @@
         "endLine": 233,
         "fingerprint": "cd1d6969eb69409310f473b7b2bad5e6"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3629,12 +2648,8 @@
         "endLine": 243,
         "fingerprint": "a531375937e1633b4f735f2e09ebbec0"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3654,12 +2669,8 @@
         "endLine": 253,
         "fingerprint": "7f795c751e1680797beaf2880e71f91c"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3679,12 +2690,8 @@
         "endLine": 263,
         "fingerprint": "733a1c8156e7cab033010c491b562c4f"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3704,12 +2711,8 @@
         "endLine": 273,
         "fingerprint": "f40ea878daaeaad7f36f17770969f2e0"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3729,12 +2732,8 @@
         "endLine": 283,
         "fingerprint": "ac6bd2e346f7db1cec0e968fc8399317"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3754,12 +2753,8 @@
         "endLine": 144,
         "fingerprint": "1c8b2b9c4372b18427bac502f9e68e50"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3779,12 +2774,8 @@
         "endLine": 209,
         "fingerprint": "307cd1d4482aa3bd86fb4af0b1d4936b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3804,12 +2795,8 @@
         "endLine": 206,
         "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3829,19 +2816,11 @@
         "endLine": 279,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "P05"
-        ]
-      },
+      "relations": { "consumes": ["P05"] },
       "note": "源码事实与 Q* 未决事项的唯一位置"
     },
     "P05": {
@@ -3858,12 +2837,8 @@
         "endLine": 103,
         "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3883,12 +2858,8 @@
         "endLine": 53,
         "fingerprint": "6ad314659b015a4ca8656b93ad4fb386"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3908,20 +2879,11 @@
         "endLine": 82,
         "fingerprint": "9c94a9f80256f6b5e33c5b24abb0da48"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "P03",
-          "P05"
-        ]
-      },
+      "relations": { "consumes": ["P03", "P05"] },
       "note": "登记不进入 39 个业务工具数的入口与 Planned 占位；Planned 不暴露"
     },
     "Q01": {
@@ -3938,22 +2900,11 @@
         "endLine": 56,
         "fingerprint": "cdf338350dff64cd26178cac55314bdf"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D01",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
       "note": "调查结论：2026-09-14 那次无法唯一归因；同类现象的可定位性由 D01 交付。不阻断 D02。"
     },
     "Q02": {
@@ -3970,24 +2921,14 @@
         "endLine": 67,
         "fingerprint": "f1c5075a0bc8bca566f28b5a4ae91414"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
         "blocks": [
-          {
-            "id": "D03",
-            "at": "acceptance"
-          },
-          {
-            "id": "D04",
-            "at": "acceptance"
-          }
+          { "id": "D03", "at": "acceptance" },
+          { "id": "D04", "at": "acceptance" }
         ]
       },
       "note": null
@@ -4006,24 +2947,14 @@
         "endLine": 79,
         "fingerprint": "4529e0f687301d751d596d8c204e647f"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
         "blocks": [
-          {
-            "id": "D01",
-            "at": "acceptance"
-          },
-          {
-            "id": "D06",
-            "at": "acceptance"
-          }
+          { "id": "D01", "at": "acceptance" },
+          { "id": "D06", "at": "acceptance" }
         ]
       },
       "note": null
@@ -4042,22 +2973,11 @@
         "endLine": 91,
         "fingerprint": "eaa4eeba39fc59d9dfaac3f3447fc2fe"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D02",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
       "note": null
     },
     "Q05": {
@@ -4074,22 +2994,11 @@
         "endLine": 102,
         "fingerprint": "a5da417706fc9b514dab65dbcc0a8223"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D04",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
       "note": null
     },
     "Q06": {
@@ -4106,22 +3015,11 @@
         "endLine": 113,
         "fingerprint": "cc701424e395c94c887aab555656a2f8"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D06",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D06", "at": "acceptance" }] },
       "note": null
     },
     "Q07": {
@@ -4138,22 +3036,11 @@
         "endLine": 124,
         "fingerprint": "b5520ca814a1c858c44ab7cde7906f9b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D06",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D06", "at": "acceptance" }] },
       "note": null
     },
     "Q08": {
@@ -4170,22 +3057,11 @@
         "endLine": 135,
         "fingerprint": "96cd6a36e82f49c1cd20d656df887851"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D03",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D03", "at": "acceptance" }] },
       "note": null
     },
     "Q09": {
@@ -4202,22 +3078,11 @@
         "endLine": 147,
         "fingerprint": "9d25a63f3fe8285bff6462ef33cb42d5"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D01",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
       "note": null
     },
     "Q10": {
@@ -4234,22 +3099,11 @@
         "endLine": 159,
         "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D02",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
       "note": null
     },
     "Q11": {
@@ -4266,24 +3120,14 @@
         "endLine": 171,
         "fingerprint": "a29a814ce8718467ddb68e0a0584ed1b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
         "blocks": [
-          {
-            "id": "D01",
-            "at": "acceptance"
-          },
-          {
-            "id": "D06",
-            "at": "acceptance"
-          }
+          { "id": "D01", "at": "acceptance" },
+          { "id": "D06", "at": "acceptance" }
         ]
       },
       "note": null
@@ -4302,22 +3146,11 @@
         "endLine": 183,
         "fingerprint": "dd85c6176ec4acb041710e3b22b4aaeb"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D01",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
       "note": null
     },
     "Q13": {
@@ -4334,22 +3167,11 @@
         "endLine": 196,
         "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D02",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
       "note": "R13 待定（同 schema 取更严格一侧已否证并回退）。仍 open，仍阻断 D02 验收。不得把「风险尚未发生」或误关时的 note 写成已关闭。"
     },
     "Q14": {
@@ -4366,22 +3188,11 @@
         "endLine": 207,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D05",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D05", "at": "acceptance" }] },
       "note": null
     },
     "Q15": {
@@ -4398,22 +3209,11 @@
         "endLine": 218,
         "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D05",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D05", "at": "acceptance" }] },
       "note": null
     },
     "Q16": {
@@ -4430,22 +3230,11 @@
         "endLine": 230,
         "fingerprint": "a83fa39367eb8f9b575a46e6886015f3"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D03",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D03", "at": "acceptance" }] },
       "note": null
     },
     "Q17": {
@@ -4462,22 +3251,11 @@
         "endLine": 241,
         "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D04",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
       "note": null
     },
     "Q18": {
@@ -4494,22 +3272,11 @@
         "endLine": 253,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D01",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
       "note": null
     },
     "Q19": {
@@ -4526,22 +3293,11 @@
         "endLine": 264,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          {
-            "id": "D06",
-            "at": "acceptance"
-          }
-        ]
-      },
+      "relations": { "blocks": [{ "id": "D06", "at": "acceptance" }] },
       "note": null
     },
     "R01": {
@@ -4558,12 +3314,8 @@
         "endLine": 81,
         "fingerprint": "0f83e37bea339e70b4fb3660ab96b9b7"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4583,12 +3335,8 @@
         "endLine": 103,
         "fingerprint": "ce298478f741d2c69345dda2a443b402"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4608,12 +3356,8 @@
         "endLine": 125,
         "fingerprint": "24c06e85f6e7b29877dfd8f5863a4825"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4633,12 +3377,8 @@
         "endLine": 147,
         "fingerprint": "c8b613cdf98521dcb8f2b367b050a515"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4658,12 +3398,8 @@
         "endLine": 169,
         "fingerprint": "e69c32bbaa7fa7048e6a01cbb39ee2aa"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4683,12 +3419,8 @@
         "endLine": 191,
         "fingerprint": "18d5085c59639a35d81313dccc0d6b33"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4708,12 +3440,8 @@
         "endLine": 213,
         "fingerprint": "f991597da8f2577109135fba88fe72e5"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4733,12 +3461,8 @@
         "endLine": 235,
         "fingerprint": "9497dacb90ed0d106a4398de547977f2"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4758,12 +3482,8 @@
         "endLine": 257,
         "fingerprint": "0143db6a2b4c154c3294c0224a6a271b"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4783,12 +3503,8 @@
         "endLine": 279,
         "fingerprint": "52d9ec8de59718033291d3088789e519"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4808,12 +3524,8 @@
         "endLine": 307,
         "fingerprint": "1a8c8914c5afa0c9681aaf22b3b4e6f2"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4833,12 +3545,8 @@
         "endLine": 334,
         "fingerprint": "810567ee4bf3309b7b6eb6a94f90300d"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4858,19 +3566,11 @@
         "endLine": 378,
         "fingerprint": "e8029cb67303bd60a670feb7485e31e9"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K06"
-        ]
-      },
+      "relations": { "consumes": ["K06"] },
       "note": "待定：同版本预算漂移的兼容路径尚未采用；记录已否证的路径与两条候选。不解决 Q13，不解除对 D02 的验收阻断。"
     },
     "README-CONTRACTS": {
@@ -4887,12 +3587,8 @@
         "endLine": 38,
         "fingerprint": "38685944b2115fa5ad92e3b7de15f969"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4912,12 +3608,8 @@
         "endLine": 26,
         "fingerprint": "8ad1bd4ceea0c05e73de4006a4e75565"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4937,12 +3629,8 @@
         "endLine": 32,
         "fingerprint": "86b282d7c598378e3f29c803a429c646"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4962,12 +3650,8 @@
         "endLine": 60,
         "fingerprint": "19e6a4767318363afb1d35cba7293717"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4987,12 +3671,8 @@
         "endLine": 89,
         "fingerprint": "96e7f1b4451011ba408d522328335085"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -5012,20 +3692,11 @@
         "endLine": 88,
         "fingerprint": "a60318807b45a3e4c918170eb313fd39"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K01",
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K01", "K05"] },
       "note": "工具卡；语义归属 M01，暴露面 general"
     },
     "T03": {
@@ -5042,19 +3713,11 @@
         "endLine": 99,
         "fingerprint": "ee1930c8c3f6a976f05b92b91d4cd856"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K10"
-        ]
-      },
+      "relations": { "consumes": ["K10"] },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T04": {
@@ -5071,19 +3734,11 @@
         "endLine": 89,
         "fingerprint": "a46649aa8eed3fe50e505da807f10c7d"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K10"
-        ]
-      },
+      "relations": { "consumes": ["K10"] },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T05": {
@@ -5100,19 +3755,11 @@
         "endLine": 94,
         "fingerprint": "8e15aab926da19619fa9694e806cf4af"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K09"
-        ]
-      },
+      "relations": { "consumes": ["K09"] },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
     "T06": {
@@ -5129,20 +3776,11 @@
         "endLine": 98,
         "fingerprint": "02bbf8f55de77a570f9016770c94039b"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05",
-          "K14"
-        ]
-      },
+      "relations": { "consumes": ["K05", "K14"] },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T07": {
@@ -5159,19 +3797,11 @@
         "endLine": 102,
         "fingerprint": "5a29b8cc4b3e1c4d13523bcc5837fed1"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T08": {
@@ -5188,19 +3818,11 @@
         "endLine": 94,
         "fingerprint": "9de783d22df4581b249fca84ea4ff75a"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T09": {
@@ -5217,19 +3839,11 @@
         "endLine": 86,
         "fingerprint": "4eae0566af7bfb7cfabd1dcc9535dcde"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T10": {
@@ -5246,19 +3860,11 @@
         "endLine": 82,
         "fingerprint": "7a0287968ad6e2b378c20399b8fcabf3"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K07"
-        ]
-      },
+      "relations": { "consumes": ["K07"] },
       "note": "工具卡；语义归属 M03，暴露面 general"
     },
     "T11": {
@@ -5275,21 +3881,11 @@
         "endLine": 107,
         "fingerprint": "925bd57a843af2f1873bdf6ba71837e2"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K09",
-          "K11",
-          "K12"
-        ]
-      },
+      "relations": { "consumes": ["K09", "K11", "K12"] },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
     "T12": {
@@ -5306,20 +3902,11 @@
         "endLine": 101,
         "fingerprint": "4a07c2ebe0f3f258c844068b3ee0007c"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K09",
-          "K13"
-        ]
-      },
+      "relations": { "consumes": ["K09", "K13"] },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
     "T13": {
@@ -5336,20 +3923,11 @@
         "endLine": 86,
         "fingerprint": "dcab16c63530b19f5d475d6fd29bf74d"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05",
-          "K08"
-        ]
-      },
+      "relations": { "consumes": ["K05", "K08"] },
       "note": "工具卡；语义归属 M03，暴露面 general"
     },
     "T14": {
@@ -5366,20 +3944,11 @@
         "endLine": 104,
         "fingerprint": "83af751caf892cafdc91d595d3ffa792"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05",
-          "K08"
-        ]
-      },
+      "relations": { "consumes": ["K05", "K08"] },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
     "T15": {
@@ -5396,20 +3965,11 @@
         "endLine": 106,
         "fingerprint": "1b6618a0bff3adff999409933746b17f"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05",
-          "K14"
-        ]
-      },
+      "relations": { "consumes": ["K05", "K14"] },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
     "T16": {
@@ -5426,20 +3986,11 @@
         "endLine": 107,
         "fingerprint": "f19ec946d52f751440174e5f8cfa657d"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05",
-          "K14"
-        ]
-      },
+      "relations": { "consumes": ["K05", "K14"] },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
     "T17": {
@@ -5456,19 +4007,11 @@
         "endLine": 118,
         "fingerprint": "d2fd35fb049b7e2921fee554cad2104e"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T18": {
@@ -5485,19 +4028,11 @@
         "endLine": 115,
         "fingerprint": "1056470c84c319a4639de4693a79f64b"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T19": {
@@ -5514,19 +4049,11 @@
         "endLine": 117,
         "fingerprint": "b4da95b1a3189b738fdc1170aab9036f"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T20": {
@@ -5543,19 +4070,11 @@
         "endLine": 122,
         "fingerprint": "8b4bef166639be583885da22f5e23685"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T21": {
@@ -5572,19 +4091,11 @@
         "endLine": 136,
         "fingerprint": "84eca265c1fa3bb40a7618eebbe4645b"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T22": {
@@ -5601,19 +4112,11 @@
         "endLine": 132,
         "fingerprint": "ab594963f3166beb5a2019f3038418b0"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T23": {
@@ -5630,19 +4133,11 @@
         "endLine": 137,
         "fingerprint": "bc8c49b215242e1bc21c69065fbfe43e"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T24": {
@@ -5659,19 +4154,11 @@
         "endLine": 131,
         "fingerprint": "5b4b9255ecd26e99339f793bd6b5ea53"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T25": {
@@ -5688,19 +4175,11 @@
         "endLine": 98,
         "fingerprint": "3da8499e32d9b813055cbb397390954c"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K16"
-        ]
-      },
+      "relations": { "consumes": ["K16"] },
       "note": "工具卡；语义归属 M08，暴露面 extended"
     },
     "T26": {
@@ -5717,19 +4196,11 @@
         "endLine": 105,
         "fingerprint": "00706b568f1c694fd60ba6f4bad1158c"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K14"
-        ]
-      },
+      "relations": { "consumes": ["K14"] },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
     "T27": {
@@ -5746,19 +4217,11 @@
         "endLine": 118,
         "fingerprint": "6812c553f7f585d28e510094d83a9ad3"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T28": {
@@ -5775,19 +4238,11 @@
         "endLine": 107,
         "fingerprint": "980ea27e20a8a7ec67b3f5952ba21349"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K09"
-        ]
-      },
+      "relations": { "consumes": ["K09"] },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
     "T29": {
@@ -5804,19 +4259,11 @@
         "endLine": 108,
         "fingerprint": "cc677183809d965ac761091c53450309"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K09"
-        ]
-      },
+      "relations": { "consumes": ["K09"] },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
     "T30": {
@@ -5833,19 +4280,11 @@
         "endLine": 109,
         "fingerprint": "9598f25a9ec0dcf9b1fe5be77ee3a291"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K09"
-        ]
-      },
+      "relations": { "consumes": ["K09"] },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
     "T31": {
@@ -5862,21 +4301,11 @@
         "endLine": 144,
         "fingerprint": "a0716570d3c567eda34c59d4ef47f317"
       },
-      "implementation": {
-        "state": "partial"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "partial" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K06",
-          "K10",
-          "K14"
-        ]
-      },
+      "relations": { "consumes": ["K06", "K10", "K14"] },
       "note": "工具卡；语义归属 M05，暴露面 extended"
     },
     "T32": {
@@ -5893,19 +4322,11 @@
         "endLine": 126,
         "fingerprint": "fb37dc126c88ccfaf6c48faa0f440e14"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T33": {
@@ -5922,19 +4343,11 @@
         "endLine": 105,
         "fingerprint": "4b97296f44dc7f906e65a16b3d559c50"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T34": {
@@ -5951,19 +4364,11 @@
         "endLine": 114,
         "fingerprint": "0af3a99fce54908a9c3421a2e413971c"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T35": {
@@ -5980,19 +4385,11 @@
         "endLine": 121,
         "fingerprint": "37cc8cb07af5b1d1d38479864412dce5"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T36": {
@@ -6009,19 +4406,11 @@
         "endLine": 125,
         "fingerprint": "d23cb0ff4e1c437e238308219aaf0fcf"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T37": {
@@ -6038,19 +4427,11 @@
         "endLine": 121,
         "fingerprint": "54bd47f10eea083593e268e34213ee8f"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T38": {
@@ -6067,19 +4448,11 @@
         "endLine": 116,
         "fingerprint": "9926b5145dfb83e19686759effe9be5d"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T39": {
@@ -6096,19 +4469,11 @@
         "endLine": 120,
         "fingerprint": "70cf50054be59679e7de7fa11c65cae3"
       },
-      "implementation": {
-        "state": "present"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "present" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "consumes": [
-          "K05"
-        ]
-      },
+      "relations": { "consumes": ["K05"] },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "V01": {
@@ -6125,12 +4490,8 @@
         "endLine": 45,
         "fingerprint": "26b3b1339aacb37e1103f4fae3a446af"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -6142,20 +4503,16 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 22,
+      "revision": 23,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 82,
-        "fingerprint": "0350a33d7c9b5e8ffb8e9de605c493a3"
+        "fingerprint": "73e52d57fd3fdd86fbde1ddd2fbd42e1"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -6175,12 +4532,8 @@
         "endLine": 35,
         "fingerprint": "c80708fe0d2a66019a63036eef7984d8"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -6200,12 +4553,8 @@
         "endLine": 59,
         "fingerprint": "a08b4a591370649c3a92dd7bc54b3257"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -6225,12 +4574,8 @@
         "endLine": 84,
         "fingerprint": "67b248f8696e2e85c0d03e29bceee08c"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -6250,12 +4595,8 @@
         "endLine": 109,
         "fingerprint": "7f236062aa8a607f3a94021430b9d614"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -6275,12 +4616,8 @@
         "endLine": 134,
         "fingerprint": "7ee436d9210c6e024c6b8a2238b74d76"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -6300,12 +4637,8 @@
         "endLine": 106,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {},
@@ -6325,20 +4658,11 @@
         "endLine": 230,
         "fingerprint": "a351d9b85535d8e91447a82853ba9346"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "passed"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "passed" },
       "work": null,
       "scope": [],
-      "relations": {
-        "implements": [
-          "P02",
-          "P03"
-        ]
-      },
+      "relations": { "implements": ["P02", "P03"] },
       "note": null
     },
     "X02": {
@@ -6355,24 +4679,11 @@
         "endLine": 246,
         "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "passed"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "passed" },
       "work": null,
       "scope": [],
-      "relations": {
-        "verifies": [
-          "X01",
-          "P02",
-          "P03"
-        ],
-        "depends_on": [
-          "X01"
-        ]
-      },
+      "relations": { "verifies": ["X01", "P02", "P03"], "depends_on": ["X01"] },
       "note": null
     },
     "X03": {
@@ -6389,24 +4700,12 @@
         "endLine": 261,
         "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc"
       },
-      "implementation": {
-        "state": "unknown"
-      },
-      "verification": {
-        "state": "none"
-      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": [
-          "P01",
-          "P02",
-          "P03",
-          "P04",
-          "P05",
-          "P06",
-          "P07"
-        ]
+        "consumes": ["P01", "P02", "P03", "P04", "P05", "P06", "P07"]
       },
       "note": "身份、定义位置、修订与指纹、类型化关系、决定与复核记录；由 --reconcile 写入计算结果"
     }
@@ -18828,9 +17127,7 @@
       "reason": "D01 文件内登记本轮状态与证据时点：说明 work.state=done 早于证据 1 的登记，并列明本轮已绑定与「已绑定但未端到端」的边界。只补说明文字与指针，不改变 D01 的改动范围、证据要求、回退条件或任何用户承诺，故为细化。",
       "review": null,
       "objects": [],
-      "files": [
-        "implementation/D01-trustworthy-baseline.md"
-      ]
+      "files": ["implementation/D01-trustworthy-baseline.md"]
     },
     {
       "id": "CHG-2026-09-16-22",
@@ -19475,6 +17772,33 @@
           "fingerprintTo": "0e2620777b3fa206ebb05ddd5d16a5dc"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-46",
+      "at": "2026-09-17T11:10:00Z",
+      "author": "DSH Agent (登记ID修正)",
+      "classification": "refinement",
+      "reason": "修掉两处机械缺陷，均不改任何对象定义正文、关系或状态：① 文件级对象登记 ID 不再由代码猜——catalog.fileContainers 之外的容器名（rules/governance.md 的 P03、rules/objects.md 的 P02）登记为裸 ID，不再生成 catalog 从未登记的 P03#file／P02#file；② registry.json 正文改由仓库 Prettier 序列化，消除与 format:check 的长期不一致。按 P03 §4.1 属细化。",
+      "review": null,
+      "objects": [],
+      "files": ["rules/governance.md", "rules/objects.md", "registry.json"]
+    },
+    {
+      "id": "CHG-2026-09-17-47",
+      "at": "2026-09-17T10:14:17.176Z",
+      "author": "DSH Agent (换行与表格收口)",
+      "classification": "refinement",
+      "reason": "按仓库 Prettier 与 .gitattributes 收口：把 CRLF 工作副本转为 LF，并对齐 V02 证据表列宽（纯排版，无内容变化）",
+      "review": null,
+      "objects": [
+        {
+          "id": "V02",
+          "revisionFrom": 22,
+          "revisionTo": 23,
+          "fingerprintFrom": "0350a33d7c9b5e8ffb8e9de605c493a3",
+          "fingerprintTo": "73e52d57fd3fdd86fbde1ddd2fbd42e1"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19984,81 +18308,31 @@
     }
   ],
   "issues": {
-    "Q01": {
-      "state": "closed"
-    },
-    "Q02": {
-      "state": "open"
-    },
-    "Q03": {
-      "state": "closed"
-    },
-    "Q04": {
-      "state": "open"
-    },
-    "Q05": {
-      "state": "open"
-    },
-    "Q06": {
-      "state": "open"
-    },
-    "Q07": {
-      "state": "open"
-    },
-    "Q08": {
-      "state": "open"
-    },
-    "Q09": {
-      "state": "closed"
-    },
-    "Q10": {
-      "state": "open"
-    },
-    "Q11": {
-      "state": "closed"
-    },
-    "Q12": {
-      "state": "closed"
-    },
-    "Q13": {
-      "state": "open"
-    },
-    "Q14": {
-      "state": "open"
-    },
-    "Q15": {
-      "state": "open"
-    },
-    "Q16": {
-      "state": "open"
-    },
-    "Q17": {
-      "state": "open"
-    },
-    "Q18": {
-      "state": "closed"
-    },
-    "Q19": {
-      "state": "open"
-    },
-    "G01": {
-      "state": "open"
-    },
-    "G02": {
-      "state": "open"
-    },
-    "G03": {
-      "state": "open"
-    },
-    "G04": {
-      "state": "closed"
-    },
-    "G05": {
-      "state": "open"
-    },
-    "G06": {
-      "state": "open"
-    }
+    "Q01": { "state": "closed" },
+    "Q02": { "state": "open" },
+    "Q03": { "state": "closed" },
+    "Q04": { "state": "open" },
+    "Q05": { "state": "open" },
+    "Q06": { "state": "open" },
+    "Q07": { "state": "open" },
+    "Q08": { "state": "open" },
+    "Q09": { "state": "closed" },
+    "Q10": { "state": "open" },
+    "Q11": { "state": "closed" },
+    "Q12": { "state": "closed" },
+    "Q13": { "state": "open" },
+    "Q14": { "state": "open" },
+    "Q15": { "state": "open" },
+    "Q16": { "state": "open" },
+    "Q17": { "state": "open" },
+    "Q18": { "state": "closed" },
+    "Q19": { "state": "open" },
+    "G01": { "state": "open" },
+    "G02": { "state": "open" },
+    "G03": { "state": "open" },
+    "G04": { "state": "closed" },
+    "G05": { "state": "open" },
+    "G06": { "state": "open" }
   },
   "gaps": [],
   "notes": [

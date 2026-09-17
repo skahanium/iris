@@ -1188,7 +1188,30 @@ function checkSources(catalog, registry) {
   }
 }
 
-function writeRegistry(registry, next) {
+/**
+ * 登记表正文一律经 Prettier 序列化。
+ *
+ * `JSON.stringify(_, null, 2)` 会把每个数组都换成多行，而 Prettier 把放得下的数组
+ * 留在单行；两者混用会让 `npm run format:check` 长期对 registry.json 报错——一条
+ * 永远修不掉的告警，最后必然被无视。这里直接用仓库自己的 Prettier 与配置输出，
+ * 让 `--reconcile` 写出的字节就是 format:check 期望的字节。Prettier 不可用时退回
+ * JSON.stringify：格式告警好过让登记表写不出去。
+ */
+async function formatRegistryJson(ordered) {
+  try {
+    const prettier = await import("prettier");
+    return await prettier.format(JSON.stringify(ordered), {
+      filepath: registryPath,
+    });
+  } catch (error) {
+    process.stderr.write(
+      `  ! Prettier 不可用，registry.json 退回 JSON.stringify：${error.message}\n`,
+    );
+    return `${JSON.stringify(ordered, null, 2)}\n`;
+  }
+}
+
+async function writeRegistry(registry, next) {
   const ordered = {
     schemaVersion: next.schemaVersion,
     registryRevision: next.registryRevision,
@@ -1219,9 +1242,11 @@ function writeRegistry(registry, next) {
       `writeRegistry 会丢弃以下段：${missingSections.join("、")}（序列化必须覆盖全部段）`,
     );
   }
+  // 登记表首行标记必须保留；正文由 Prettier 产出，与 format:check 同源。
+  const body = await formatRegistryJson(ordered);
   writeFileSync(
     registryPath,
-    `<!-- iris:object FILE-REGISTRY kind=rules file=true -->\n${JSON.stringify(ordered, null, 2)}\n`,
+    `<!-- iris:object FILE-REGISTRY kind=rules file=true -->\n${body}`,
     "utf8",
   );
   return registry;
@@ -1351,15 +1376,24 @@ if (catalog && !infrastructure.length) {
   }
 
   // 文件级对象登记
-  const fileEntries = {};
-  const registrationOf = (containerId, definitionsInFile) => {
-    const shared = definitionsInFile.filter(
-      (entry) => entry.id === containerId,
-    );
-    return shared.length === 1
-      ? `${containerId}${FILE_OBJECT_SUFFIX}`
-      : containerId;
+  //
+  // 容器 ID 的拼法由 catalog 决定，不能由代码猜：
+  //   * `catalog.fileContainers` 登记的容器名（`FILE-DECISIONS`、`D01`、`K01`…）
+  //     由容器标记充当，与同 ID 的对象定义是两个逻辑对象，登记必须带 `#file`；
+  //   * 其余文件（`rules/governance.md` 的 `P03`、`rules/objects.md` 的 `P02`、
+  //     `V01`、`V03`、`M01`–`M09`…）文件级对象就是该对象本身，登记是裸 ID。
+  // 之前这里只看「容器 ID 是否恰好等于某个子对象 ID」，会给 P03／P02 造出
+  // catalog 从未登记的 `P03#file`；任何复核或变更记录去绑它都会判「引用未登记对象」。
+  const declaredRegistration = (containerId, rel) => {
+    if (catalog.fileContainers?.[containerId] !== undefined) {
+      return `${containerId}${FILE_OBJECT_SUFFIX}`;
+    }
+    if (rel !== undefined && catalogFiles[rel] !== undefined) {
+      return catalogFiles[rel];
+    }
+    return `${containerId}${FILE_OBJECT_SUFFIX}`;
   };
+  const fileEntries = {};
   for (const [rel, result] of parsed) {
     const declared = catalogFiles[rel];
     const actual = result.fileObject?.id ?? null;
@@ -1379,7 +1413,7 @@ if (catalog && !infrastructure.length) {
       const children = result.objects.filter((entry) => !entry.isFile);
       fileEntries[rel] = {
         container: result.fileObject.id,
-        registration: registrationOf(result.fileObject.id, children),
+        registration: declaredRegistration(result.fileObject.id, rel),
         fingerprint: result.fileObject.fingerprint,
       };
       if (declared && rel !== "registry.json") {
@@ -1428,7 +1462,7 @@ if (catalog && !infrastructure.length) {
         `agent-harness/${rel} 的容器 ID 是 ${container.id}，登记为 ${containerId}`,
       );
     }
-    currentFingerprints.set(`${containerId}${FILE_OBJECT_SUFFIX}`, {
+    currentFingerprints.set(declaredRegistration(containerId, rel), {
       file: rel,
       line: container.startLine,
       fingerprint: container.fingerprint,
@@ -1608,9 +1642,7 @@ if (catalog && !infrastructure.length) {
       if (!current) continue;
       if (recorded.fingerprint === current.fingerprint) continue;
       const baseId = recorded.registration ?? recorded.container ?? rel;
-      const containerId = isContainerRegistration(baseId)
-        ? baseId
-        : `${baseId}${FILE_OBJECT_SUFFIX}`;
+      const containerId = declaredRegistration(baseId, rel);
       changed.push({
         id: containerId,
         from: 0,
@@ -1775,7 +1807,7 @@ if (catalog && !infrastructure.length) {
       }
     }
 
-    writeRegistry(registry, nextRegistry);
+    await writeRegistry(registry, nextRegistry);
     if (changed.length > 0) {
       warnings.push(
         `已接受 ${changed.length} 个对象的内容变化并生成变更记录（仍需独立复核）: ${changed
