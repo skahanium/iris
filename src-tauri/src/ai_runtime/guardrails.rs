@@ -52,7 +52,14 @@ fn validate_tool_schema(
         .and_then(serde_json::Value::as_array)
     {
         if !allowed.contains(value) {
-            return Err(format!("{location} is outside the declared enum"));
+            let listed = allowed
+                .iter()
+                .map(declared_enum_token)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "{location} is outside the declared enum [{listed}]"
+            ));
         }
     }
     let Some(expected_type) = schema_object
@@ -118,6 +125,13 @@ fn validate_tool_schema(
     Ok(())
 }
 
+fn declared_enum_token(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| value.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,21 +156,61 @@ mod tests {
             ),
             GuardResult::Pass
         ));
-        assert!(matches!(
-            verify_tool_args("web_search", &serde_json::json!({"limit": 3}), &schema),
-            GuardResult::Block { .. }
-        ));
-        assert!(matches!(
-            verify_tool_args("web_search", &serde_json::json!({"query": 7}), &schema),
-            GuardResult::Block { .. }
-        ));
-        assert!(matches!(
-            verify_tool_args(
-                "web_search",
-                &serde_json::json!({"query": "Iris", "urls": [7]}),
-                &schema
-            ),
-            GuardResult::Block { .. }
-        ));
+        match verify_tool_args("web_search", &serde_json::json!({"limit": 3}), &schema) {
+            GuardResult::Block { reason } => {
+                assert!(
+                    reason.contains("arguments.query is required"),
+                    "missing required field must name the path, got {reason}"
+                );
+            }
+            other => panic!("expected Block, got {other:?}"),
+        }
+        match verify_tool_args("web_search", &serde_json::json!({"query": 7}), &schema) {
+            GuardResult::Block { reason } => {
+                assert!(
+                    reason.contains("arguments.query must be a string"),
+                    "type mismatch must name the allowed type, got {reason}"
+                );
+            }
+            other => panic!("expected Block, got {other:?}"),
+        }
+        match verify_tool_args(
+            "web_search",
+            &serde_json::json!({"query": "Iris", "urls": [7]}),
+            &schema,
+        ) {
+            GuardResult::Block { reason } => {
+                assert!(
+                    reason.contains("arguments.urls[0] must be a string"),
+                    "nested item mismatch must name the path, got {reason}"
+                );
+            }
+            other => panic!("expected Block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_argument_validation_lists_declared_enum_values() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["fast", "thorough"]}
+            },
+            "required": ["mode"]
+        });
+
+        match verify_tool_args(
+            "search_hybrid",
+            &serde_json::json!({"mode": "slow"}),
+            &schema,
+        ) {
+            GuardResult::Block { reason } => {
+                assert!(
+                    reason.contains("arguments.mode is outside the declared enum [fast, thorough]"),
+                    "enum mismatch must list allowed values, got {reason}"
+                );
+            }
+            other => panic!("expected Block, got {other:?}"),
+        }
     }
 }

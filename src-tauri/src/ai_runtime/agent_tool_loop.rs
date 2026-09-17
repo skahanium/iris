@@ -1789,12 +1789,19 @@ fn tool_proposal_feedback_instruction(
         .iter()
         .map(|(call, disposition)| {
             let reason = match disposition {
-                ToolCallDisposition::Rejected(reason) => reason,
+                ToolCallDisposition::Rejected(reason) => *reason,
                 ToolCallDisposition::Deferred => "deferred_for_feedback",
                 ToolCallDisposition::Dispatched => "dispatched",
             };
             if matches!(disposition, ToolCallDisposition::Rejected(_)) {
-                format!("{}:rejected_before_dispatch({reason})", call.function.name)
+                let mut line = format!("{}:rejected_before_dispatch({reason})", call.function.name);
+                if reason == "arguments_schema_mismatch" {
+                    if let Some(field_reason) = schema_mismatch_block_reason(call, tools) {
+                        line.push_str(": ");
+                        line.push_str(&field_reason);
+                    }
+                }
+                line
             } else {
                 format!("{}:{reason}", call.function.name)
             }
@@ -1810,6 +1817,18 @@ fn tool_proposal_feedback_instruction(
         tool_call_id: None,
         tool_calls: None,
         reasoning_content: None,
+    }
+}
+
+fn schema_mismatch_block_reason(call: &ToolCall, tools: &[ToolSpec]) -> Option<String> {
+    let schema = &tools
+        .iter()
+        .find(|tool| tool.name == call.function.name)?
+        .input_schema;
+    let args = serde_json::from_str::<serde_json::Value>(&call.function.arguments).ok()?;
+    match crate::ai_runtime::guardrails::verify_tool_args(&call.function.name, &args, schema) {
+        crate::ai_runtime::guardrails::GuardResult::Block { reason } => Some(reason),
+        _ => None,
     }
 }
 

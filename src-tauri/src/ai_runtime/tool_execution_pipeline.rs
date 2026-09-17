@@ -64,14 +64,14 @@ pub(crate) fn evaluate_tool_execution(
         });
     }
 
-    if let crate::ai_runtime::guardrails::GuardResult::Block { .. } =
+    if let crate::ai_runtime::guardrails::GuardResult::Block { reason } =
         crate::ai_runtime::guardrails::verify_tool_args(
             gate.entry.name,
             gate.args,
             &gate.entry.input_schema,
         )
     {
-        let result = invalid_arguments_tool_result(gate.entry.name);
+        let result = invalid_arguments_tool_result(gate.entry.name, &reason);
         return Ok(ToolExecutionGateOutcome {
             decision,
             tool_result: Some(result),
@@ -139,11 +139,14 @@ fn denied_tool_result(tool_name: &str, reason: Option<&str>) -> ToolCallResult {
     }
 }
 
-fn invalid_arguments_tool_result(tool_name: &str) -> ToolCallResult {
+fn invalid_arguments_tool_result(tool_name: &str, detail: &str) -> ToolCallResult {
     ToolCallResult {
         tool_name: tool_name.to_string(),
         success: false,
-        output: serde_json::json!({ "error": "tool_arguments_invalid" }),
+        output: serde_json::json!({
+            "error": "tool_arguments_invalid",
+            "reason": detail,
+        }),
         duration_ms: 0,
         tokens_used: None,
         error: Some("tool_arguments_invalid".to_string()),
@@ -221,5 +224,13 @@ mod tests {
             .expect("invalid arguments must stop dispatch");
         assert!(!result.success);
         assert_eq!(result.error.as_deref(), Some("tool_arguments_invalid"));
+        let reason = result.output["reason"]
+            .as_str()
+            .expect("invalid arguments must carry the field-level reason");
+        assert!(
+            reason.contains("arguments.query must be a string"),
+            "pipeline result must name the failing field and allowed type, got {reason}"
+        );
+        assert_eq!(result.output["error"], "tool_arguments_invalid");
     }
 }
