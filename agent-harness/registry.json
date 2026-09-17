@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 77,
+  "registryRevision": 78,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T10:14:17.176Z"
+    "recordedAt": "2026-09-17T10:47:33.410Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -141,7 +141,7 @@
     "decisions/README.md": {
       "container": "FILE-DECISIONS",
       "registration": "FILE-DECISIONS#file",
-      "fingerprint": "7a8c63d15194050096b33058991e02ed"
+      "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f"
     },
     "flows/L01-conversation-and-revision.md": {
       "container": "L01",
@@ -186,7 +186,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "a3d096d3ad4c4f62b75b1876069de5c9"
+      "fingerprint": "7cfd85337ba9c675c1a8979c68fb2de0"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "feffc951c7c14e6606e1fc90aa10c93e"
+      "fingerprint": "a7faf785e87109e2960d2f5303d6a3e6"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1141,18 +1141,7 @@
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": { "state": "planned" },
-      "scope": [
-        "N01",
-        "N15",
-        "N16",
-        "N17",
-        "N20",
-        "N21",
-        "Q04",
-        "Q10",
-        "Q13",
-        "G06"
-      ],
+      "scope": ["N01", "N15", "N16", "N17", "N20", "N21", "Q04", "Q10", "G06"],
       "relations": {
         "depends_on": ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
         "closes": ["Q04", "Q10", "G06"]
@@ -1348,13 +1337,13 @@
       "title": "decisions/README.md 的文件级容器",
       "owner": "P03",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "FILE-DECISIONS",
-        "line": 51,
-        "endLine": 59,
-        "fingerprint": "1feaab647b755f53b38fe04279231742"
+        "line": 52,
+        "endLine": 60,
+        "fingerprint": "bf4770015b45418173a54ce18269972c"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1521,13 +1510,13 @@
       "title": "Host 用配方当第二规划器",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 5,
+      "revision": 6,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G06",
         "line": 77,
         "endLine": 87,
-        "fingerprint": "1a452b52af39caa65ef1db6f3a9a4f72"
+        "fingerprint": "d354e0ff2aabe94dc261ed860ae40340"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2812,8 +2801,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 266,
-        "endLine": 279,
+        "line": 267,
+        "endLine": 280,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": { "state": "unknown" },
@@ -3159,20 +3148,20 @@
       "title": "预算存档兼容：同版本不同数值可能读取失败",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
         "line": 185,
-        "endLine": 196,
-        "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b"
+        "endLine": 197,
+        "fingerprint": "9cea6ab3ebd14c74b64bfba30194436e"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
-      "note": "R13 待定（同 schema 取更严格一侧已否证并回退）。仍 open，仍阻断 D02 验收。不得把「风险尚未发生」或误关时的 note 写成已关闭。"
+      "relations": {},
+      "note": "R13 已采用（改数必须先升 schema）。仍 open。不阻断 D02；第一次改 for_profile 默认值的施工被本条挡住，届时再挂 blocks。不得把「风险尚未发生」或移出 D02 写成已关闭。"
     },
     "Q14": {
       "kind": "issue",
@@ -3184,8 +3173,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
-        "line": 198,
-        "endLine": 207,
+        "line": 199,
+        "endLine": 208,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": { "state": "unknown" },
@@ -3205,8 +3194,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 209,
-        "endLine": 218,
+        "line": 210,
+        "endLine": 219,
         "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
       "implementation": { "state": "unknown" },
@@ -3226,8 +3215,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 220,
-        "endLine": 230,
+        "line": 221,
+        "endLine": 231,
         "fingerprint": "a83fa39367eb8f9b575a46e6886015f3"
       },
       "implementation": { "state": "unknown" },
@@ -3247,8 +3236,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 232,
-        "endLine": 241,
+        "line": 233,
+        "endLine": 242,
         "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
       "implementation": { "state": "unknown" },
@@ -3268,8 +3257,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 243,
-        "endLine": 253,
+        "line": 244,
+        "endLine": 254,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": { "state": "unknown" },
@@ -3289,8 +3278,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 255,
-        "endLine": 264,
+        "line": 256,
+        "endLine": 265,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": { "state": "unknown" },
@@ -3310,8 +3299,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R01",
-        "line": 61,
-        "endLine": 81,
+        "line": 62,
+        "endLine": 82,
         "fingerprint": "0f83e37bea339e70b4fb3660ab96b9b7"
       },
       "implementation": { "state": "unknown" },
@@ -3331,8 +3320,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R02",
-        "line": 83,
-        "endLine": 103,
+        "line": 84,
+        "endLine": 104,
         "fingerprint": "ce298478f741d2c69345dda2a443b402"
       },
       "implementation": { "state": "unknown" },
@@ -3352,8 +3341,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R03",
-        "line": 105,
-        "endLine": 125,
+        "line": 106,
+        "endLine": 126,
         "fingerprint": "24c06e85f6e7b29877dfd8f5863a4825"
       },
       "implementation": { "state": "unknown" },
@@ -3373,8 +3362,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R04",
-        "line": 127,
-        "endLine": 147,
+        "line": 128,
+        "endLine": 148,
         "fingerprint": "c8b613cdf98521dcb8f2b367b050a515"
       },
       "implementation": { "state": "unknown" },
@@ -3394,8 +3383,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R05",
-        "line": 149,
-        "endLine": 169,
+        "line": 150,
+        "endLine": 170,
         "fingerprint": "e69c32bbaa7fa7048e6a01cbb39ee2aa"
       },
       "implementation": { "state": "unknown" },
@@ -3415,8 +3404,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R06",
-        "line": 171,
-        "endLine": 191,
+        "line": 172,
+        "endLine": 192,
         "fingerprint": "18d5085c59639a35d81313dccc0d6b33"
       },
       "implementation": { "state": "unknown" },
@@ -3436,8 +3425,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R07",
-        "line": 193,
-        "endLine": 213,
+        "line": 194,
+        "endLine": 214,
         "fingerprint": "f991597da8f2577109135fba88fe72e5"
       },
       "implementation": { "state": "unknown" },
@@ -3457,8 +3446,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R08",
-        "line": 215,
-        "endLine": 235,
+        "line": 216,
+        "endLine": 236,
         "fingerprint": "9497dacb90ed0d106a4398de547977f2"
       },
       "implementation": { "state": "unknown" },
@@ -3478,8 +3467,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R09",
-        "line": 237,
-        "endLine": 257,
+        "line": 238,
+        "endLine": 258,
         "fingerprint": "0143db6a2b4c154c3294c0224a6a271b"
       },
       "implementation": { "state": "unknown" },
@@ -3499,8 +3488,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R10",
-        "line": 259,
-        "endLine": 279,
+        "line": 260,
+        "endLine": 280,
         "fingerprint": "52d9ec8de59718033291d3088789e519"
       },
       "implementation": { "state": "unknown" },
@@ -3520,8 +3509,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R11",
-        "line": 281,
-        "endLine": 307,
+        "line": 282,
+        "endLine": 308,
         "fingerprint": "1a8c8914c5afa0c9681aaf22b3b4e6f2"
       },
       "implementation": { "state": "unknown" },
@@ -3541,8 +3530,8 @@
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R12",
-        "line": 309,
-        "endLine": 334,
+        "line": 310,
+        "endLine": 335,
         "fingerprint": "810567ee4bf3309b7b6eb6a94f90300d"
       },
       "implementation": { "state": "unknown" },
@@ -3554,24 +3543,24 @@
     },
     "R13": {
       "kind": "decision",
-      "name": "same-schema-budget-drift-compat-undecided",
-      "title": "R13 同版本预算漂移的兼容路径（待定，尚未采用）",
+      "name": "same-schema-budget-drift-schema-gate-deferred-table",
+      "title": "R13 改预算默认值必须先升 schema_version（已采用；常量表延后）",
       "owner": "M05",
       "maturity": "defined",
-      "revision": 3,
+      "revision": 4,
       "definition": {
         "file": "decisions/README.md",
         "anchor": "R13",
-        "line": 336,
-        "endLine": 378,
-        "fingerprint": "e8029cb67303bd60a670feb7485e31e9"
+        "line": 337,
+        "endLine": 369,
+        "fingerprint": "98261fd05c8d7c88e67e28146d6a889c"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "consumes": ["K06"] },
-      "note": "待定：同版本预算漂移的兼容路径尚未采用；记录已否证的路径与两条候选。不解决 Q13，不解除对 D02 的验收阻断。"
+      "note": "已采用：当前不改默认值；改数必须先升 schema_version。常量表延后到第一次改数。不关闭 Q13，不把 D02 标为可验收。"
     },
     "README-CONTRACTS": {
       "kind": "rules",
@@ -17799,6 +17788,58 @@
           "fingerprintTo": "73e52d57fd3fdd86fbde1ddd2fbd42e1"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-48",
+      "at": "2026-09-17T10:47:33.410Z",
+      "author": "Cursor Grok 4.6 (R13 Q13 D02 governance)",
+      "classification": "governance",
+      "reason": "采用 R13：当前不改预算默认值，改数必须先升 schema_version，常量表延后到第一次改数。Q13 保持 open，移出 D02 的 scope 与 blocks；不改 D02 closes，不关闭任何 issue，不把 D02 标为可验收。",
+      "review": "REV-2026-09-17-48",
+      "objects": [
+        {
+          "id": "FILE-DECISIONS#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "7a8c63d15194050096b33058991e02ed",
+          "fingerprintTo": "02c2c2040e6fbe2766f9f354d075ed3f"
+        },
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "a3d096d3ad4c4f62b75b1876069de5c9",
+          "fingerprintTo": "7cfd85337ba9c675c1a8979c68fb2de0"
+        },
+        {
+          "id": "R13",
+          "revisionFrom": 3,
+          "revisionTo": 4,
+          "fingerprintFrom": "e8029cb67303bd60a670feb7485e31e9",
+          "fingerprintTo": "98261fd05c8d7c88e67e28146d6a889c"
+        },
+        {
+          "id": "Q13",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "a8b97fc060e68941bf5a9b6f9c874d6b",
+          "fingerprintTo": "9cea6ab3ebd14c74b64bfba30194436e"
+        },
+        {
+          "id": "G06",
+          "revisionFrom": 5,
+          "revisionTo": 6,
+          "fingerprintFrom": "1a452b52af39caa65ef1db6f3a9a4f72",
+          "fingerprintTo": "d354e0ff2aabe94dc261ed860ae40340"
+        },
+        {
+          "id": "FILE-DECISIONS",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "1feaab647b755f53b38fe04279231742",
+          "fingerprintTo": "bf4770015b45418173a54ce18269972c"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -17939,7 +17980,9 @@
         {
           "id": "FILE-DECISIONS",
           "revision": 13,
-          "fingerprint": "1feaab647b755f53b38fe04279231742"
+          "fingerprint": "1feaab647b755f53b38fe04279231742",
+          "stale": true,
+          "staleNote": "索引增补 R13（已采用）；绑定停留在写入当时的指纹。"
         },
         {
           "id": "R11",
@@ -18061,7 +18104,9 @@
         {
           "id": "FILE-DECISIONS",
           "revision": 13,
-          "fingerprint": "1feaab647b755f53b38fe04279231742"
+          "fingerprint": "1feaab647b755f53b38fe04279231742",
+          "stale": true,
+          "staleNote": "索引增补 R13（已采用）；绑定停留在写入当时的指纹。"
         },
         {
           "id": "R12",
@@ -18108,7 +18153,9 @@
         {
           "id": "FILE-DECISIONS#file",
           "revision": 0,
-          "fingerprint": "7a8c63d15194050096b33058991e02ed"
+          "fingerprint": "7a8c63d15194050096b33058991e02ed",
+          "stale": true,
+          "staleNote": "R13 由待定改为已采用，文件外围变化；绑定停留在写入当时的指纹。"
         },
         {
           "id": "Q13",
@@ -18146,7 +18193,9 @@
         {
           "id": "Q13",
           "revision": 13,
-          "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b"
+          "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b",
+          "stale": true,
+          "staleNote": "Q13 正文改为 R13 已采用、移出 D02 阻断；绑定停留在写入当时的指纹。"
         }
       ]
     },
@@ -18163,7 +18212,9 @@
         {
           "id": "G06",
           "revision": 4,
-          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
+          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033",
+          "stale": true,
+          "staleNote": "G06 正文在后续细化与包 A 中继续变化；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         }
       ],
       "supersedesNote": "本条按用户 2026-09-17 确认的方向新增：旧复核保留写入时的指纹并标记 stale，不再通过改写旧记录指纹来解封。"
@@ -18181,12 +18232,16 @@
         {
           "id": "FILE-DECISIONS#file",
           "revision": 0,
-          "fingerprint": "7a8c63d15194050096b33058991e02ed"
+          "fingerprint": "7a8c63d15194050096b33058991e02ed",
+          "stale": true,
+          "staleNote": "R13 由待定改为已采用，容器外围变化；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         },
         {
           "id": "Q13",
           "revision": 13,
-          "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b"
+          "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b",
+          "stale": true,
+          "staleNote": "Q13 移出 D02 的 scope 与 blocks；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         }
       ],
       "supersedesNote": "本条按用户 2026-09-17 确认的方向新增：旧复核保留写入时的指纹并标记 stale，不再通过改写旧记录指纹来解封。"
@@ -18204,12 +18259,16 @@
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "1e68ee021ed96ec81302eabede42066b"
+          "fingerprint": "1e68ee021ed96ec81302eabede42066b",
+          "stale": true,
+          "staleNote": "D02 规则段移出 Q13 作用域并改写预算回归证据；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         },
         {
           "id": "R13",
           "revision": 2,
-          "fingerprint": "51b8af05c9ae8d22d17f387b99312d09"
+          "fingerprint": "51b8af05c9ae8d22d17f387b99312d09",
+          "stale": true,
+          "staleNote": "R13 由待定改为已采用（schema 版本门控、常量表延后）；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         }
       ],
       "supersedesNote": "本条按用户 2026-09-17 确认的方向新增：旧复核保留写入时的指纹并标记 stale，不再通过改写旧记录指纹来解封。"
@@ -18256,17 +18315,23 @@
         {
           "id": "G06",
           "revision": 5,
-          "fingerprint": "1a452b52af39caa65ef1db6f3a9a4f72"
+          "fingerprint": "1a452b52af39caa65ef1db6f3a9a4f72",
+          "stale": true,
+          "staleNote": "G06 差异段补写 Q13 已移出 D02 作用域；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         },
         {
           "id": "D02#file",
           "revision": 13,
-          "fingerprint": "a3d096d3ad4c4f62b75b1876069de5c9"
+          "fingerprint": "a3d096d3ad4c4f62b75b1876069de5c9",
+          "stale": true,
+          "staleNote": "D02 规则段移出 Q13 作用域并改写预算回归证据；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         },
         {
           "id": "R13",
           "revision": 3,
-          "fingerprint": "e8029cb67303bd60a670feb7485e31e9"
+          "fingerprint": "e8029cb67303bd60a670feb7485e31e9",
+          "stale": true,
+          "staleNote": "R13 由待定改为已采用；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         }
       ],
       "supersedesNote": "本条按 governance §5.2 第 6 条新增：旧复核记录保留写入当时的指纹并标记 stale，不改写其指纹；解封由本条针对当前指纹的复核完成。"
@@ -18284,7 +18349,9 @@
         {
           "id": "FILE-DECISIONS#file",
           "revision": 13,
-          "fingerprint": "7a8c63d15194050096b33058991e02ed"
+          "fingerprint": "7a8c63d15194050096b33058991e02ed",
+          "stale": true,
+          "staleNote": "R13 由待定改为已采用，容器外围变化；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         }
       ],
       "supersedesNote": "本条按 governance §5.2 第 6 条新增：旧复核记录保留写入当时的指纹并标记 stale，不改写其指纹；解封由本条针对当前指纹的复核完成。"
@@ -18303,6 +18370,48 @@
           "id": "P03",
           "revision": 11,
           "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-17-48",
+      "change": "CHG-2026-09-17-48",
+      "at": "2026-09-17T10:47:33.410Z",
+      "author": "用户（会话内确认：R13 采用、Q13 移出 D02）",
+      "reviewer": "Cursor Grok 4.6 (R13 Q13 D02 governance)",
+      "conclusion": "synchronized",
+      "reason": "用户已确认：当前不改预算默认值，但改数必须先升 schema_version（常量表延后到第一次改数）；Q13 保持 open，移出 D02 的 scope 与 blocks。落地后 catalog 与正文一致：D02.closes 仍为 Q04／Q10／G06，work.state 仍 planned；Q13／G06／Q04／Q10 仍 open。检查器对 D02 的 Q13 验收阻断已解除；Q04／Q10／G06 因 closes 豁免在计算上也不挡验收，产品上仍不得把 D02 标为完成。本条只解封归属与阻断边，不构成合同已通过。",
+      "evidence": "可追溯评审记录：本会话用户确认「暂时不改预算默认值，但预留今后可调整的空间」以及「拿掉 Q13 对 D02 的验收阻断并移出 scope」。决定正文为 decisions/README.md 的 R13；catalog.mjs 的 D02.scope 与 Q13.blocks；implementation/D02-protocol-and-recovery.md 规则段。实测：node scripts/agent-harness-check.mjs 退出码 0；registry.issues.Q13 仍为 open。",
+      "objects": [
+        {
+          "id": "FILE-DECISIONS#file",
+          "revision": 0,
+          "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f"
+        },
+        {
+          "id": "D02#file",
+          "revision": 0,
+          "fingerprint": "7cfd85337ba9c675c1a8979c68fb2de0"
+        },
+        {
+          "id": "R13",
+          "revision": 4,
+          "fingerprint": "98261fd05c8d7c88e67e28146d6a889c"
+        },
+        {
+          "id": "Q13",
+          "revision": 14,
+          "fingerprint": "9cea6ab3ebd14c74b64bfba30194436e"
+        },
+        {
+          "id": "G06",
+          "revision": 6,
+          "fingerprint": "d354e0ff2aabe94dc261ed860ae40340"
+        },
+        {
+          "id": "FILE-DECISIONS",
+          "revision": 14,
+          "fingerprint": "bf4770015b45418173a54ce18269972c"
         }
       ]
     }

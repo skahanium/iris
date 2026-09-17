@@ -187,11 +187,12 @@
 ### Q13 预算存档兼容：同版本不同数值可能读取失败
 
 - **已确认事实**：`agent_run_repository.rs` 的 `materialize_budget_policy` 会比较存档策略与规范策略，同版本但数值不匹配可能返回 `InvalidBudgetPolicy`；当前没有通用的 schema 3 旧数值兼容分支。
-- **不能推出**：必须采用唯一迁移实现；也不等同于 SQLite 表结构迁移。
+- **不能推出**：必须采用唯一迁移实现；也不等同于 SQLite 表结构迁移。`R13` 已采用不等于本条关闭，也不等于 `D02` 可验收。
 - **影响边界**：`C13`、`M01`、`K06`。
-- **所需证据**：预算调整必须处理旧策略的识别、读取与恢复语义，不得无说明地给已有 Run 扩权（`V04`）。
-- **实测（2026-09-17）**：把本地上限与网络上限各收紧一档的同版本存档会被拒绝为 `Run(InvalidBudgetPolicy)`——即同版本任何数值差异都不可读。在同一 schema 内放宽为「取更严格一侧」的尝试已被否证：它会让`complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry` 的放宽用例不再失败关闭，等于取消篡改检测。候选路径与待定问题见 `R13`。
-- **未确定**：被篡改的下调与历史下调在读取时不可区分（下调只收紧不扩权，故接受）；`legacy_budget_drift` 是否需要用户可见、是否改为受控的策略版本升级流程，见 `R13`「未确定的事项」。
+- **所需证据**：第一次修改 `for_profile` 默认值时，必须升 `schema_version`、冻结上一版规范值，并使旧 Run 可读且不扩权（`V04`）。当前不改数，不要求常量表落地。
+- **实测（2026-09-17）**：把本地上限与网络上限各收紧一档的同版本存档会被拒绝为 `Run(InvalidBudgetPolicy)`——即同版本任何数值差异都不可读。在同一 schema 内放宽为「取更严格一侧」的尝试已被否证：它会让`complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry` 的放宽用例不再失败关闭，等于取消篡改检测。门禁见已采用的 `R13`。
+- **覆盖**：本条仍 open；已移出 `D02` 的 `scope` 与 `blocks D02@acceptance`。第一次改默认值的施工被本条挡住，届时再挂阻断边。
+- **未确定**：第一次改数时的具体 `schema_version` 与冻结构落点；被篡改的下调与历史下调在读取时不可区分（下调只收紧不扩权，故接受）；`legacy_budget_drift` 是否需要用户可见。
 
 <!-- iris:end Q13 -->
 

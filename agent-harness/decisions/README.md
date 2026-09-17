@@ -34,6 +34,7 @@
 | `R10` | 确定性测试不替代真实质量评价                   | `E01`–`E03`、`V01`–`V08`              |
 | `R11` | 约束分不变量／信封／配方，模型拥有下一步       | `M05`、`C13`、`C14`、`N15`、`G06`     |
 | `R12` | 完成额度预留是输出帽信封，不是关面配方         | `M05`、`C13`、`C14`、`D02`、`G06`     |
+| `R13` | 改预算默认值必须先升 `schema_version`          | `K06`、`C13`、`Q13`                   |
 
 ## 三、状态怎么读
 
@@ -54,7 +55,7 @@
 
 ## 索引对象说明
 
-本对象是决定记录的索引容器：登记 `R01`–`R12` 的身份、统一的四段结构（决定／依据／理由／未确定的事项），以及「决定不替代复核流程」这一约束——架构变更仍需 `registry.json.reviews` 里的独立复核记录。各决定的正式定义在自己的子对象块里。
+本对象是决定记录的索引容器：登记 `R01`–`R13` 的身份、统一的四段结构（决定／依据／理由／未确定的事项），以及「决定不替代复核流程」这一约束——架构变更仍需 `registry.json.reviews` 里的独立复核记录。各决定的正式定义在自己的子对象块里。
 
 <!-- iris:end FILE-DECISIONS -->
 
@@ -333,26 +334,25 @@ Iris 已有值得保留的合同；多个关键问题可定位到协议、上下
 
 <!-- iris:end R12 -->
 
-<!-- iris:object R13 kind=decision name=same-schema-budget-drift-compat-undecided -->
+<!-- iris:object R13 kind=decision name=same-schema-budget-drift-schema-gate-deferred-table -->
 
-### R13 同版本预算漂移的兼容路径（待定，尚未采用）
+### R13 改预算默认值必须先升 schema_version（已采用；常量表延后）
 
 ## 决定
 
-**尚未形成决定。** 本条记录 `Q13` 要解决时必须满足的约束，以及一条已被实测否证的路径。
+当前**不修改**预算默认值。`materialize_budget_policy` 对**当前 schema 的成员**必须保持「完整但不规范 → 失败关闭」，读取与重试都要在进入执行前失败。
 
-已确定（不可放宽的约束）：`materialize_budget_policy` 对**当前 schema 的成员**必须保持
-「完整但不规范 → 失败关闭」，读取与重试都要在进入执行前失败。这条不变量由既有测试
-`complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry` 钉住，四条用例覆盖
-未知 schema、放宽主额度（`maxModelTurns: 1000`）、profile 字段错配，以及 profile 与 envelope 不符。
+以后若修改任何默认值：必须先提升 `schema_version`，把上一版规范值冻成该版本的一行，旧存档走显式兼容分支；**当前** schema 的任何成员差异继续失败关闭。第一次改数之前**不要求**常量表落地——预留的是 schema 版本轴，不是一张尚无新默认值的空表。
 
-因此，「同版本数值漂移一律失败」**不能**通过在同一 schema 内逐字段取更严格一侧来放宽——
-见下「已否证的路径」。
+本条**不关闭** `Q13`，也不把 `D02` 标为可验收。
 
 ## 依据
 
-用户 2026-09-17 指示处理 `Q13`；[当前基线与未决问题](../requirements/current-baseline.md) 的 `Q13`；
-`agent_run_repository.rs::materialize_budget_policy`；`run_contract.rs::for_profile` 的硬编码规范值。
+用户 2026-09-17 确认：暂时不改预算默认值，但预留今后可调整的空间；并将 `Q13` 移出 `D02` 的 `scope` 与 `blocks D02@acceptance`。[当前基线与未决问题](../requirements/current-baseline.md) 的 `Q13`；`agent_run_repository.rs::materialize_budget_policy`；`run_contract.rs::for_profile` 的硬编码规范值。
+
+## 理由
+
+同 schema 内逐字段取更严格一侧会取消篡改检测（见下「已否证的路径」）。「不打算改默认值」又堵死以后调数的合法门口。门禁写在 `schema_version` 上：现在不造空表，改数时才有上一版可冻。
 
 ## 已否证的路径（2026-09-17 实测）
 
@@ -360,19 +360,10 @@ Iris 已有值得保留的合同；多个关键问题可定位到协议、上下
 结果是 `complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry` 失败：
 `expanded_main_budget`（`maxModelTurns` 从 1 改 1000）不再失败关闭，而是被 `min` 钳回规范值后**读取成功**。
 它虽然不会真的扩权，但**取消了篡改检测本身**——因为「被篡改的放宽」与「历史默认值更高」在读取时不可区分。
-该实现已回退，理由记录在此，避免重复走这条路。
+该实现已回退，不得再走。
 
 ## 未确定的事项
 
-两条候选路径，需要先选定再实现：
-
-1. **schema 版本门控（倾向）**：修改任何默认值前先提升 `schema_version`，旧版本走显式兼容分支；
-   当前 schema 的任何成员差异继续失败关闭。代价是需要把历史默认值冻结成随 schema 版本索引的常量表，
-   而不是让 `for_profile` 直接产出「今天的规范」。没有这张表，旧 Run 只能按旧值读取，无法与篡改区分。
-2. **保持现状 + 显式导出/恢复**：不做兼容，界定为「不打算修改既有默认值」；若将来必须修改，
-   为受影响的 Run 提供显式、可审计的恢复路径（而非静默物化）。
-
-需要用户决定的是：**是否有近期修改预算默认值的计划**。若没有，`Q13` 可以先作为已知限制保留，
-`D02` 的验收要另行决定是解除这一阻断，还是维持「改默认值前必须先做 schema 门控」。
+第一次改数时的具体 `schema_version` 取值、冻结构落点与旧 Run 读取分支；`legacy_budget_drift` 是否用户可见。`Q13` 仍 open：兼容路径尚未实现，只是不再阻断 `D02` 验收。
 
 <!-- iris:end R13 -->

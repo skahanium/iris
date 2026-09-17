@@ -1217,7 +1217,6 @@ export const objects = {
       "N21",
       "Q04",
       "Q10",
-      "Q13",
       "G06",
     ],
     depends_on: ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
@@ -1404,13 +1403,13 @@ export const objects = {
 
   R13: {
     kind: "decision",
-    name: "same-schema-budget-drift-compat-undecided",
-    title: "R13 同版本预算漂移的兼容路径（待定，尚未采用）",
+    name: "same-schema-budget-drift-schema-gate-deferred-table",
+    title: "R13 改预算默认值必须先升 schema_version（已采用；常量表延后）",
     owner: "M05",
     maturity: "defined",
     definition: { file: "decisions/README.md", anchor: "R13" },
     consumes: ["K06"],
-    note: "待定：同版本预算漂移的兼容路径尚未采用；记录已否证的路径与两条候选。不解决 Q13，不解除对 D02 的验收阻断。",
+    note: "已采用：当前不改默认值；改数必须先升 schema_version。常量表延后到第一次改数。不关闭 Q13，不把 D02 标为可验收。",
   },
 
   // ── Q01–Q19 / G01–G06 未决问题与缺口 ──────────────────────
@@ -1517,8 +1516,7 @@ export const objects = {
     owner: "M05",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q13" },
-    blocks: blocks("acceptance", ["D02"]),
-    note: "R13 待定（同 schema 取更严格一侧已否证并回退）。仍 open，仍阻断 D02 验收。不得把「风险尚未发生」或误关时的 note 写成已关闭。",
+    note: "R13 已采用（改数必须先升 schema）。仍 open。不阻断 D02；第一次改 for_profile 默认值的施工被本条挡住，届时再挂 blocks。不得把「风险尚未发生」或移出 D02 写成已关闭。",
   },
   Q14: {
     kind: "issue",
