@@ -28,7 +28,7 @@
 | `L`  | 链路（交接顺序） | `L01`–`L06` |    6 | `flows/`                                         |
 | `V`  | 证据与验收判据   | `V01`–`V08` |    8 | `testing/`                                       |
 | `D`  | 依赖单元与工作包 | `D01`–`D06` |    6 | `implementation/`、`tests/`                      |
-| `R`  | 决定记录         | `R01`–`R12` |   12 | `decisions/`                                     |
+| `R`  | 决定记录         | `R01`–`R13` |   13 | `decisions/`                                     |
 | `P`  | 体系规则         | `P01`–`P07` |    7 | `README.md`、`rules/`、`requirements/`、`tools/` |
 | `X`  | 检查器与其测试   | `X01`–`X03` |    3 | `scripts/`、`tests/`、`registry.json`            |
 | `Q`  | 未决问题         | `Q01`–`Q19` |   19 | `requirements/current-baseline.md`               |

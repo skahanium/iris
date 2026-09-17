@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 59,
+  "registryRevision": 62,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T04:13:53.673Z"
+    "recordedAt": "2026-09-17T05:00:01.190Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -154,7 +154,7 @@
     "decisions/README.md": {
       "container": "FILE-DECISIONS",
       "registration": "FILE-DECISIONS#file",
-      "fingerprint": "6860295fce37bfba806665b537bdc737"
+      "fingerprint": "7a8c63d15194050096b33058991e02ed"
     },
     "flows/L01-conversation-and-revision.md": {
       "container": "L01",
@@ -199,7 +199,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "dfef0cfd448bf5e319a1b8d80fcd2379"
+      "fingerprint": "1e68ee021ed96ec81302eabede42066b"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "351c1100d4cc43f43135739e7e18ae13"
+      "fingerprint": "c4cc4522234b9d8164329890d8cdd592"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -304,7 +304,7 @@
     "rules/objects.md": {
       "container": "P02",
       "registration": "P02#file",
-      "fingerprint": "907ae381f5d3a6344fdd66ca8d8f737f"
+      "fingerprint": "b621e56b5b165066fcd3fe18fb4b9b64"
     },
     "testing/acceptance-matrix.md": {
       "container": "V03",
@@ -3825,8 +3825,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 264,
-        "endLine": 277,
+        "line": 266,
+        "endLine": 279,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": {
@@ -4326,13 +4326,13 @@
       "title": "预算存档兼容：同版本不同数值可能读取失败",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
         "line": 185,
-        "endLine": 194,
-        "fingerprint": "d616c25c613e433cce26324da8e6c1f4"
+        "endLine": 196,
+        "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b"
       },
       "implementation": {
         "state": "unknown"
@@ -4350,7 +4350,7 @@
           }
         ]
       },
-      "note": null
+      "note": "由 R13 解决：同版本预算数值漂移取更严格一侧，更宽松仍失败关闭。R13 已落地，故不再阻断 D02 验收。"
     },
     "Q14": {
       "kind": "issue",
@@ -4362,8 +4362,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
-        "line": 196,
-        "endLine": 205,
+        "line": 198,
+        "endLine": 207,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": {
@@ -4394,8 +4394,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 207,
-        "endLine": 216,
+        "line": 209,
+        "endLine": 218,
         "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
       "implementation": {
@@ -4426,8 +4426,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 218,
-        "endLine": 228,
+        "line": 220,
+        "endLine": 230,
         "fingerprint": "a83fa39367eb8f9b575a46e6886015f3"
       },
       "implementation": {
@@ -4458,8 +4458,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 230,
-        "endLine": 239,
+        "line": 232,
+        "endLine": 241,
         "fingerprint": "67a72aa222cab951486c0a5ba4866093"
       },
       "implementation": {
@@ -4490,8 +4490,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 241,
-        "endLine": 251,
+        "line": 243,
+        "endLine": 253,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": {
@@ -4522,8 +4522,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 253,
-        "endLine": 262,
+        "line": 255,
+        "endLine": 264,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": {
@@ -4843,6 +4843,35 @@
       "scope": [],
       "relations": {},
       "note": null
+    },
+    "R13": {
+      "kind": "decision",
+      "name": "same-schema-budget-drift-prefers-stricter",
+      "title": "R13 同版本预算存档的数值漂移取更严格一侧",
+      "owner": "M05",
+      "maturity": "defined",
+      "revision": 2,
+      "definition": {
+        "file": "decisions/README.md",
+        "anchor": "R13",
+        "line": 336,
+        "endLine": 378,
+        "fingerprint": "51b8af05c9ae8d22d17f387b99312d09"
+      },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": null,
+      "scope": [],
+      "relations": {
+        "consumes": [
+          "K06"
+        ]
+      },
+      "note": "待定：同版本预算漂移必须走 schema 版本门控，尚未采用；记录已否证的路径与两条候选。不解决 Q13。"
     },
     "README-CONTRACTS": {
       "kind": "rules",
@@ -19213,6 +19242,85 @@
           "fingerprintTo": "14e5e3a010e0e2e23af6fb403bd70033"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-35",
+      "at": "2026-09-17T04:39:41.134Z",
+      "author": "DSH Agent（会话内 Q13 收口）",
+      "classification": "architecture",
+      "reason": "R13：同版本预算存档的数值漂移改为逐字段取更严格一侧后物化读取，任一上限高于规范值仍失败关闭（InvalidBudgetPolicy）；同时把 for_profile 的 schema_version 3 提为常量。这改变预算/权限语义（物化策略直接用于执行），按 P03 §4.1 属架构变更。Q13 因此解除对 D02 验收的阻断。",
+      "review": "REV-2026-09-17-35",
+      "objects": [
+        {
+          "id": "FILE-DECISIONS#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "6860295fce37bfba806665b537bdc737",
+          "fingerprintTo": "7a8c63d15194050096b33058991e02ed"
+        },
+        {
+          "id": "P02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "907ae381f5d3a6344fdd66ca8d8f737f",
+          "fingerprintTo": "b621e56b5b165066fcd3fe18fb4b9b64"
+        },
+        {
+          "id": "Q13",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "d616c25c613e433cce26324da8e6c1f4",
+          "fingerprintTo": "51570c08d3baa16c4bd2d80eb406e687"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-17-36",
+      "at": "2026-09-17T04:41:25.507Z",
+      "author": "DSH Agent（会话内 Q13 收口）",
+      "classification": "refinement",
+      "reason": "D02 正文对齐 R13：登记 Q13 由决定解决（不由工作包关闭）、预算证据项标注已落地、回退条件改为「撤销 R13 兼容分支」。登记表把 Q13 标为 closed（closedBy=R13）。只改说明与状态，不改实现语义（R13 的架构变更已在 CHG-2026-09-17-35 复核）。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "dfef0cfd448bf5e319a1b8d80fcd2379",
+          "fingerprintTo": "8e245ae1cc74ff5c87d1e8c5233df9eb"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-17-37",
+      "at": "2026-09-17T05:00:01.190Z",
+      "author": "DSH Agent（会话内 Q13 尽调）",
+      "classification": "governance",
+      "reason": "R13 改为待定并记录已否证的路径：同 schema 内逐字段取更严格一侧会取消「完整但不规范必须失败关闭」的篡改检测，实测使 complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry 失败，实现已回退。Q13 恢复 open 并继续阻断 D02 验收。这只是把决定与状态改成事实，未采用任何新规则；采用 schema 版本门控属后续治理变更。",
+      "review": "REV-2026-09-17-37",
+      "objects": [
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "8e245ae1cc74ff5c87d1e8c5233df9eb",
+          "fingerprintTo": "1e68ee021ed96ec81302eabede42066b"
+        },
+        {
+          "id": "R13",
+          "revisionFrom": 1,
+          "revisionTo": 2,
+          "fingerprintFrom": "174fd8fe81e6890c22c04c72391cf0c1",
+          "fingerprintTo": "51b8af05c9ae8d22d17f387b99312d09"
+        },
+        {
+          "id": "Q13",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "51570c08d3baa16c4bd2d80eb406e687",
+          "fingerprintTo": "a8b97fc060e68941bf5a9b6f9c874d6b"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19423,12 +19531,14 @@
         {
           "id": "FILE-DECISIONS#file",
           "revision": 0,
-          "fingerprint": "6860295fce37bfba806665b537bdc737"
+          "fingerprint": "7a8c63d15194050096b33058991e02ed",
+          "rebound": "decisions/README.md 于 CHG-2026-09-17-35 加入 R13 后容器指纹变化；按 REV-2026-09-17-35 的结论重新绑定到当前指纹，原判断不变。"
         },
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "dfef0cfd448bf5e319a1b8d80fcd2379"
+          "fingerprint": "1e68ee021ed96ec81302eabede42066b",
+          "rebound": "D02 于 CHG-2026-09-17-37 更正表述后容器指纹变化；按该变更的复核重新绑定，原判断不变。"
         },
         {
           "id": "C13",
@@ -19494,6 +19604,56 @@
           "id": "G06",
           "revision": 4,
           "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-17-35",
+      "change": "CHG-2026-09-17-35",
+      "at": "2026-09-17T04:39:41.134Z",
+      "author": "用户（2026-09-17 指示按建议处理 Q13）",
+      "reviewer": "DSH Agent（会话内 Q13 收口）",
+      "conclusion": "synchronized",
+      "reason": "R13 的兼容分支已落地且与决定一致：同版本数值漂移逐字段取 min(存档, 规范)，任一上限高于规范值仍失败关闭；策略物化结果直接用于执行，因此该分支不放宽任何执行额度。现有验证结论无失效：既有的「放宽上限必须失败关闭」测试仍绿，新增回归钉子覆盖更严格一侧可读。",
+      "evidence": "可追溯评审记录：用户 2026-09-17 指示按建议处理 Q13（会话内），决定正文为 decisions/README.md 的 R13。实测证据：agent_run_repository_tests.rs 的 q13_schema_three_archive_with_drifted_values_is_readable_only_when_stricter（实现前以 #[ignore] 记录为红，实现后转绿）。",
+      "objects": [
+        {
+          "id": "FILE-DECISIONS#file",
+          "revision": 0,
+          "fingerprint": "7a8c63d15194050096b33058991e02ed"
+        },
+        {
+          "id": "Q13",
+          "revision": 13,
+          "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b",
+          "rebound": "Q13 于 CHG-2026-09-17-37 更正为未解决状态后指纹变化；按该变更的复核重新绑定。"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-17-37",
+      "change": "CHG-2026-09-17-37",
+      "at": "2026-09-17T05:00:01.190Z",
+      "author": "用户（2026-09-17 指示处理 Q13）",
+      "reviewer": "DSH Agent（会话内 Q13 尽调）",
+      "conclusion": "synchronized",
+      "reason": "R13 由「已采用」改为「待定并记录否证路径」，Q13 恢复 open 并向 D02 重新登记阻断边；这些都为事实性更正，未引入新规则，也未改变任何执行语义（R13 的实现从未进入执行路径，已回退）。",
+      "evidence": "实测证据：complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry 在改动下失败、回退后恢复为绿（cargo test --lib agent_run_repository，37 passed）；决定正文为 decisions/README.md 的 R13。",
+      "objects": [
+        {
+          "id": "D02#file",
+          "revision": 0,
+          "fingerprint": "1e68ee021ed96ec81302eabede42066b"
+        },
+        {
+          "id": "R13",
+          "revision": 2,
+          "fingerprint": "51b8af05c9ae8d22d17f387b99312d09"
+        },
+        {
+          "id": "Q13",
+          "revision": 13,
+          "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b"
         }
       ]
     }

@@ -1402,6 +1402,17 @@ export const objects = {
     definition: { file: "decisions/README.md", anchor: "R12" },
   },
 
+  R13: {
+    kind: "decision",
+    name: "same-schema-budget-drift-prefers-stricter",
+    title: "R13 同版本预算存档的数值漂移取更严格一侧",
+    owner: "M05",
+    maturity: "defined",
+    definition: { file: "decisions/README.md", anchor: "R13" },
+    consumes: ["K06"],
+    note: "待定：同版本预算漂移必须走 schema 版本门控，尚未采用；记录已否证的路径与两条候选。不解决 Q13。",
+  },
+
   // ── Q01–Q19 / G01–G06 未决问题与缺口 ──────────────────────
   Q01: {
     kind: "issue",
