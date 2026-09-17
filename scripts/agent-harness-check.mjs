@@ -97,6 +97,8 @@ const violations = [];
 const infrastructure = [];
 const warnings = [];
 const reports = [];
+// 陈旧绑定（历史记录，不阻断检查；仍需一条针对当前指纹的复核才能谈解封）
+const staleBindings = [];
 
 const violation = (check, message) => violations.push({ check, message });
 const broken = (check, message) => infrastructure.push({ check, message });
@@ -868,7 +870,13 @@ function computeReadiness(
   return result;
 }
 
-function checkReviews(catalog, registry, definitions, currentFingerprints) {
+function checkReviews(
+  catalog,
+  registry,
+  definitions,
+  currentFingerprints,
+  staleBindings,
+) {
   const changes = registry?.changes ?? [];
   const reviews = registry?.reviews ?? [];
   const changeById = new Map(changes.map((entry) => [entry.id, entry]));
@@ -955,16 +963,47 @@ function checkReviews(catalog, registry, definitions, currentFingerprints) {
           violation("reviews", `复核 ${review.id} 引用未登记对象 ${object.id}`);
           continue;
         }
-        if (!object.fingerprint) continue;
+        // 绑定为 null 或已标记 stale 的条目不再声称覆盖当前内容：它们是历史记录，
+        // 不阻断检查，改为缺口（governance §5.2：复核之后对象又变化 → 该对象不能解封，
+        // 而不是整条复核失效、也不是整次检查失败）。
+        if (object.fingerprint === null || object.stale === true) {
+          if (
+            object.fingerprint !== null &&
+            object.fingerprint !== recorded.fingerprint
+          ) {
+            staleBindings.push({
+              review: review.id,
+              object: object.id,
+              reason: "复核写入后对象又变化，绑定停留在旧指纹",
+            });
+          }
+          continue;
+        }
         if (object.fingerprint !== recorded.fingerprint) {
           violation(
             "reviews",
-            `复核 ${review.id} 绑定的是 ${object.id} 的旧指纹（复核之后对象又变化，不能解封）`,
+            `复核 ${review.id} 绑定的是 ${object.id} 的旧指纹（复核之后对象又变化，不能解封；` +
+              `应新增一条针对当前指纹的复核，而不是改写本条指纹）`,
           );
         }
       }
     }
   }
+
+  const duplicated = (list, label) => {
+    const seen = new Set();
+    for (const entry of list) {
+      if (seen.has(entry.id)) {
+        violation(
+          "changes",
+          `${label} ID 重复：${entry.id}（登记表内 ID 必须唯一）`,
+        );
+      }
+      seen.add(entry.id);
+    }
+  };
+  duplicated(changes, "变更");
+  duplicated(reviews, "复核");
 
   for (const review of reviews) {
     if (!changeById.has(review.change)) {
@@ -1140,8 +1179,21 @@ function writeRegistry(registry, next) {
     changes: next.changes,
     reviews: next.reviews,
     issues: next.issues,
+    // 序列化必须覆盖登记表的每个段：漏掉一个段会让 --reconcile 静默丢数据
+    // （notes 与 gaps 都曾因漏写而消失）。
+    gaps: next.gaps ?? [],
     notes: next.notes ?? [],
   };
+  // 防回归：登记表的顶层段一旦在序列化里漏掉就会被静默丢弃。
+  const missingSections = Object.keys(next).filter(
+    (key) => !(key in ordered) && next[key] !== undefined,
+  );
+  if (missingSections.length > 0) {
+    broken(
+      "registry",
+      `writeRegistry 会丢弃以下段：${missingSections.join("、")}（序列化必须覆盖全部段）`,
+    );
+  }
   writeFileSync(
     registryPath,
     `<!-- iris:object FILE-REGISTRY kind=rules file=true -->\n${JSON.stringify(ordered, null, 2)}\n`,
@@ -1469,7 +1521,13 @@ if (catalog && !infrastructure.length) {
     }
   }
 
-  checkReviews(catalog, registry, definitions, currentFingerprints);
+  checkReviews(
+    catalog,
+    registry,
+    definitions,
+    currentFingerprints,
+    staleBindings,
+  );
   checkArchive();
   checkDocsIndex();
   checkSources(catalog, registry);
@@ -1622,6 +1680,7 @@ if (catalog && !infrastructure.length) {
       verify: registry.verify ?? [],
       changes: registry.changes ?? [],
       reviews: registry.reviews ?? [],
+      gaps: staleBindings.map((gap) => ({ ...gap })),
       issues: Object.fromEntries(
         Object.entries(catalog.objects)
           .filter(([, entry]) => entry.kind === "issue")
@@ -1633,7 +1692,19 @@ if (catalog && !infrastructure.length) {
     };
 
     if (changed.length > 0) {
-      const sequence = (nextRegistry.changes?.length ?? 0) + 1;
+      // 分配 ID 时必须避让登记表里已有的 ID：手工新增的变更/复核可能与
+      // 基于长度的序号重号（2026-09-17 曾产生重复的 REV-2026-09-17-38）。
+      const existingIds = new Set([
+        ...(nextRegistry.changes ?? []).map((entry) => entry.id),
+        ...(nextRegistry.reviews ?? []).map((entry) => entry.id),
+      ]);
+      let sequence = (nextRegistry.changes?.length ?? 0) + 1;
+      while (
+        existingIds.has(`CHG-${now.slice(0, 10)}-${sequence}`) ||
+        existingIds.has(`REV-${now.slice(0, 10)}-${sequence}`)
+      ) {
+        sequence += 1;
+      }
       const changeId = `CHG-${now.slice(0, 10)}-${sequence}`;
       const reviewId = `REV-${now.slice(0, 10)}-${sequence}`;
       const needsReview = classification !== "refinement";
@@ -1705,6 +1776,7 @@ if (catalog && !infrastructure.length) {
     violations,
     infrastructure,
     warnings,
+    gaps: staleBindings,
   };
 
   reports.push(report);
@@ -1737,6 +1809,7 @@ if (options.json) {
         infrastructure,
         violations,
         warnings,
+        gaps: staleBindings,
         readiness: reports[0]?.readiness ?? {},
         blocked: reports[0]?.blocked ?? {},
         checks: reports[0]?.checks ?? {},
@@ -1747,6 +1820,16 @@ if (options.json) {
   );
 } else {
   for (const warning of warnings) process.stdout.write(`  ! ${warning}\n`);
+  if (staleBindings.length > 0 && !options.json) {
+    process.stdout.write(
+      `  ! 陈旧复核绑定 ${staleBindings.length} 项（不阻断检查，但相关对象需一条针对当前指纹的复核才能解封）:\n`,
+    );
+    for (const gap of staleBindings) {
+      process.stdout.write(
+        `      ${gap.review} → ${gap.object}：${gap.reason}\n`,
+      );
+    }
+  }
   if (violations.length > 0) {
     process.stderr.write(
       `agent-harness:check FAILED（${violations.length} 项违规）:\n`,

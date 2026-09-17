@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 62,
+  "registryRevision": 65,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T05:00:01.190Z"
+    "recordedAt": "2026-09-17T05:12:16.570Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -279,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY",
-      "fingerprint": "c4cc4522234b9d8164329890d8cdd592"
+      "fingerprint": "e70b22eccb78e2730ecb5f40ed7c3c33"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -299,7 +299,7 @@
     "rules/governance.md": {
       "container": "P03",
       "registration": "P03#file",
-      "fingerprint": "3bf3e8306589f4dc09ff76f424be34de"
+      "fingerprint": "2305b326ac298e8c2127a78c8b97944e"
     },
     "rules/objects.md": {
       "container": "P02",
@@ -3800,8 +3800,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "P03",
-        "line": 183,
-        "endLine": 203,
+        "line": 185,
+        "endLine": 205,
         "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
       },
       "implementation": {
@@ -6321,8 +6321,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X01",
-        "line": 205,
-        "endLine": 227,
+        "line": 207,
+        "endLine": 229,
         "fingerprint": "a351d9b85535d8e91447a82853ba9346"
       },
       "implementation": {
@@ -6351,8 +6351,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X02",
-        "line": 229,
-        "endLine": 243,
+        "line": 231,
+        "endLine": 245,
         "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd"
       },
       "implementation": {
@@ -6385,8 +6385,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X03",
-        "line": 245,
-        "endLine": 258,
+        "line": 247,
+        "endLine": 260,
         "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc"
       },
       "implementation": {
@@ -19321,6 +19321,23 @@
           "fingerprintTo": "a8b97fc060e68941bf5a9b6f9c874d6b"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-17-38",
+      "at": "2026-09-17T05:08:51.381Z",
+      "author": "DSH Agent（会话内治理整改）",
+      "classification": "governance",
+      "reason": "取消 rebind：复核绑定保留写入当时指纹并标 stale，陈旧只影响被改动的对象、报告为缺口而不阻断检查；解封必须由一条针对当前指纹的新复核完成。三处历史 rebind 已整改（旧记录恢复原指纹，新增 REV-2026-09-17-38/39/40 覆盖当前指纹）。按 P03 §4.1 属治理变更。",
+      "review": "REV-2026-09-17-41",
+      "objects": [
+        {
+          "id": "P03#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "3bf3e8306589f4dc09ff76f424be34de",
+          "fingerprintTo": "2305b326ac298e8c2127a78c8b97944e"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19531,14 +19548,16 @@
         {
           "id": "FILE-DECISIONS#file",
           "revision": 0,
-          "fingerprint": "7a8c63d15194050096b33058991e02ed",
-          "rebound": "decisions/README.md 于 CHG-2026-09-17-35 加入 R13 后容器指纹变化；按 REV-2026-09-17-35 的结论重新绑定到当前指纹，原判断不变。"
+          "fingerprint": "6860295fce37",
+          "stale": true,
+          "staleNote": "本对象在本记录写入后被细化，绑定恢复为写入当时的指纹；当前状态由后续复核覆盖。"
         },
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "1e68ee021ed96ec81302eabede42066b",
-          "rebound": "D02 于 CHG-2026-09-17-37 更正表述后容器指纹变化；按该变更的复核重新绑定，原判断不变。"
+          "fingerprint": "dfef0cfd448b",
+          "stale": true,
+          "staleNote": "本对象在本记录写入后被细化，绑定恢复为写入当时的指纹；当前状态由后续复核覆盖。"
         },
         {
           "id": "C13",
@@ -19625,8 +19644,9 @@
         {
           "id": "Q13",
           "revision": 13,
-          "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b",
-          "rebound": "Q13 于 CHG-2026-09-17-37 更正为未解决状态后指纹变化；按该变更的复核重新绑定。"
+          "fingerprint": null,
+          "stale": true,
+          "staleNote": "原指纹不可找回：该 rebind 发生在登记表尚未提交时，历史值未落盘。当前状态由 REV-2026-09-17-38 覆盖；本条不再声称覆盖任何指纹。"
         }
       ]
     },
@@ -19656,6 +19676,81 @@
           "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-17-38",
+      "change": "CHG-2026-09-17-34",
+      "at": "2026-09-17T05:08:09Z",
+      "author": "用户（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）",
+      "reviewer": "DSH Agent（文档收口）",
+      "conclusion": "synchronized",
+      "reason": "治理规则 §5.2 增补第 6、7 条，与检查器实现一致：陈旧绑定保留原指纹并标记 stale，报告为缺口而不阻断检查；解封须由针对当前指纹的新复核完成；陈旧只影响被改动的对象。",
+      "evidence": "差异：rules/governance.md §5.2 第 6、7 条；scripts/agent-harness-check.mjs 的 checkReviews 陈旧分支与 gaps 输出。实测：agent-harness:check PASSED 并输出 2 项陈旧绑定缺口。",
+      "objects": [
+        {
+          "id": "G06",
+          "revision": 4,
+          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
+        }
+      ],
+      "supersedesNote": "本条按用户 2026-09-17 确认的方向新增：旧复核保留写入时的指纹并标记 stale，不再通过改写旧记录指纹来解封。"
+    },
+    {
+      "id": "REV-2026-09-17-39",
+      "change": "CHG-2026-09-17-35",
+      "at": "2026-09-17T05:08:09Z",
+      "author": "用户（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）",
+      "reviewer": "DSH Agent（文档收口）",
+      "conclusion": "no-impact",
+      "reason": "decisions/README.md 增加 R13、Q13 正文补实测与候选路径：容器前言变化与新决定的加入，未改动任何既有决定或模块的合同语义；Q13 由「已解决」更正为「待定」属事实更正。两者都不推翻 REV-2026-09-16-32／35 的原判断。",
+      "evidence": "差异为 decisions/README.md 的 R13 块与 current-baseline.md 的 Q13 块。",
+      "objects": [
+        {
+          "id": "FILE-DECISIONS#file",
+          "revision": 0,
+          "fingerprint": "7a8c63d15194050096b33058991e02ed"
+        },
+        {
+          "id": "Q13",
+          "revision": 13,
+          "fingerprint": "a8b97fc060e68941bf5a9b6f9c874d6b"
+        }
+      ],
+      "supersedesNote": "本条按用户 2026-09-17 确认的方向新增：旧复核保留写入时的指纹并标记 stale，不再通过改写旧记录指纹来解封。"
+    },
+    {
+      "id": "REV-2026-09-17-40",
+      "change": "CHG-2026-09-17-37",
+      "at": "2026-09-17T05:08:09Z",
+      "author": "用户（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）",
+      "reviewer": "DSH Agent（文档收口）",
+      "conclusion": "no-impact",
+      "reason": "D02 正文撤掉「已由 R13 落地」的表述并把回退条件改为禁止放宽「完整但不规范必须失败关闭」，R13 改写为「待定并记录否证路径」：两者都是把文档改成与事实一致，未引入新规则或改变执行语义。",
+      "evidence": "差异为 D02 工作包正文与 R13 决定正文；R13 的实现已回退，src-tauri 无改动。",
+      "objects": [
+        {
+          "id": "D02#file",
+          "revision": 0,
+          "fingerprint": "1e68ee021ed96ec81302eabede42066b"
+        },
+        {
+          "id": "R13",
+          "revision": 2,
+          "fingerprint": "51b8af05c9ae8d22d17f387b99312d09"
+        }
+      ],
+      "supersedesNote": "本条按用户 2026-09-17 确认的方向新增：旧复核保留写入时的指纹并标记 stale，不再通过改写旧记录指纹来解封。"
+    },
+    {
+      "id": "REV-2026-09-17-41",
+      "change": "CHG-2026-09-17-38",
+      "at": "2026-09-17T05:08:51.381Z",
+      "author": "用户（2026-09-17 确认取消 rebind、改为新复核覆盖当前指纹）",
+      "reviewer": "DSH Agent（会话内治理整改）",
+      "conclusion": "synchronized",
+      "reason": "治理规则 §5.2 增补第 6、7 条，与检查器实现一致：陈旧绑定保留原指纹并标记 stale，报告为缺口而不阻断检查；解封须由针对当前指纹的新复核完成；陈旧只影响被改动的对象。 ｜ 编号更正：原为自动分配时与手工新增复核重号，已改为 41。",
+      "evidence": "差异：rules/governance.md §5.2 第 6、7 条；scripts/agent-harness-check.mjs 的 checkReviews 陈旧分支与 gaps 输出。实测：agent-harness:check PASSED 并输出 2 项陈旧绑定缺口。",
+      "objects": []
     }
   ],
   "issues": {
@@ -19735,6 +19830,18 @@
       "state": "open"
     }
   },
+  "gaps": [
+    {
+      "review": "REV-2026-09-16-32",
+      "object": "FILE-DECISIONS#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-16-32",
+      "object": "D02#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    }
+  ],
   "notes": [
     "本登记表由 scripts/agent-harness-check.mjs --reconcile 写入计算值（指纹、行号、修订）；身份、成熟度、关系与作用域在 agent-harness/catalog.mjs 人工维护。",
     "revision > 1 且 changes 中同一批 187 个对象全部变化，是建立期指纹比对缺陷（比较字段层级不一致）造成的假变化，不是 187 次真实修订；该缺陷已修复，此后无内容变化时 reconcile 不再产生变更记录。",
@@ -19744,6 +19851,6 @@
     "CHG-2026-09-15-14 是规则计数更正与 X02 覆盖声明降级；REV-2026-09-15-GOV1 的 X02 绑定指纹随该次定义重写更新，结论仍是当时的 synchronized，不构成新的治理复核。",
     "本文件最后一次写入：2026-09-15T07:42:40Z。",
     "2026-09-16：`--reconcile` 的变更检测补上文件级容器指纹（登记为 `<ID>#file`）。此前 reconcile 会静默吸收容器正文变化（不产生 changes 记录），与 check 模式的 propagation 阻断口径不一致；该缺陷已修复。",
-    "2026-09-16：已知制度后果——任何对象在被复核之后再次细化，其指纹变化会让所有绑定它的复核判为过期并阻断检查，需要一次新的复核重新绑定（本次为 G06，见 REV-2026-09-16-38）。该级联是 review↔fingerprint 绑定的直接后果；若细化频繁发生在被架构复核覆盖的对象上，会反复触发复核。是否允许『细化后自动按无影响重新绑定』属于治理变更，需要独立复核后再改规则。"
+    "2026-09-17（用户确认）：取消「改写旧复核指纹」的做法。复核记录保留写入当时的指纹；对象此后变化时该绑定标记 stale 并只影响该对象，当前状态必须由一条针对当前指纹的复核覆盖。此前三次 rebind 已按此形态整改（REV-2026-09-16-24／32／-35 恢复原指纹，新增 REV-2026-09-17-38／39／40）。Q13 的原指纹发生在登记表未提交时、未落盘，无法找回，已在记录中如实标注。"
   ]
 }
