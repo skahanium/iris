@@ -20,6 +20,8 @@ mod messages_impl;
 mod minimax_tool_call_impl;
 #[path = "model_gateway/responses.rs"]
 mod responses_impl;
+#[path = "model_gateway/streaming_anthropic.rs"]
+mod streaming_anthropic;
 #[path = "model_gateway/streaming_chat_completions.rs"]
 mod streaming_chat_completions;
 #[path = "model_gateway/streaming.rs"]

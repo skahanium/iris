@@ -57,6 +57,8 @@ pub(crate) mod classified_ephemeral;
 pub mod classified_retrieval;
 pub(crate) mod diagnostic_query;
 #[cfg(test)]
+mod streaming_anthropic_finish_reason_sse_tests;
+#[cfg(test)]
 mod streaming_finish_reason_sse_tests;
 // Legacy CEF history is retained only so users' pre-existing encrypted files
 // remain untouched. New classified Runs use `classified_ephemeral` exclusively.

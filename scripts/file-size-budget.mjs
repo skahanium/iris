@@ -48,7 +48,6 @@ export const SPLIT_QUEUE = {
   "src-tauri/src/commands/assistant_commands.rs": 2600,
   "src-tauri/src/feed/repository_tests.rs": 2400,
   "src-tauri/src/embedding/scheduler.rs": 2400,
-  "src-tauri/src/ai_runtime/model_gateway/streaming.rs": 2300,
   "src-tauri/src/ai_runtime/agent_run_repository_tests.rs": 2200,
   "src-tauri/src/commands/file.rs": 2200,
   "src-tauri/src/ai_runtime/run_context_tests.rs": 2200,

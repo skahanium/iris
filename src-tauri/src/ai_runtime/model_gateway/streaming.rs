@@ -7,9 +7,10 @@ use std::error::Error as StdError;
 use std::time::{Duration, Instant};
 
 use crate::ai_runtime::text_support::sanitize_provider_visible_content;
-use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
+use crate::ai_types::{EndpointFamily, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult, ProviderErrorKind};
 
+use super::streaming_anthropic::AnthropicStreamState;
 use super::streaming_chat_completions::ChatCompletionsStreamState;
 use super::streaming_reasoning::{
     append_minimax_reasoning_details, minimax_reasoning_continuation,
@@ -176,138 +177,6 @@ fn apply_streaming_auth_headers(
             builder.header("Authorization", format!("Bearer {}", api_key))
         }
     }
-}
-
-#[derive(Default)]
-struct AnthropicToolUseBlock {
-    id: Option<String>,
-    name: Option<String>,
-    input_json: String,
-}
-
-#[derive(Default)]
-struct AnthropicStreamState {
-    content: String,
-    tool_blocks: std::collections::BTreeMap<usize, AnthropicToolUseBlock>,
-    usage: TokenUsage,
-    finish_reason: Option<String>,
-}
-
-impl AnthropicStreamState {
-    fn apply_event_json(&mut self, json: &serde_json::Value) -> AppResult<Option<String>> {
-        match json["type"].as_str() {
-            Some("content_block_start") => {
-                let index = json["index"].as_u64().unwrap_or(0) as usize;
-                let block = &json["content_block"];
-                match block["type"].as_str() {
-                    Some("text") => {
-                        if let Some(text) = block["text"].as_str() {
-                            self.content.push_str(text);
-                            return Ok(Some(text.to_string()));
-                        }
-                    }
-                    Some("tool_use") => {
-                        let entry = self.tool_blocks.entry(index).or_default();
-                        entry.id = block["id"].as_str().map(str::to_string);
-                        entry.name = block["name"].as_str().map(str::to_string);
-                        if let Some(input) = block.get("input") {
-                            if input != &serde_json::json!({}) {
-                                entry.input_json = serde_json::to_string(input)
-                                    .unwrap_or_else(|_| "{}".to_string());
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Some("content_block_delta") => {
-                let index = json["index"].as_u64().unwrap_or(0) as usize;
-                let delta = &json["delta"];
-                match delta["type"].as_str() {
-                    Some("text_delta") => {
-                        if let Some(text) = delta["text"].as_str() {
-                            self.content.push_str(text);
-                            return Ok(Some(text.to_string()));
-                        }
-                    }
-                    Some("input_json_delta") => {
-                        if let Some(partial) = delta["partial_json"].as_str() {
-                            self.tool_blocks
-                                .entry(index)
-                                .or_default()
-                                .input_json
-                                .push_str(partial);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Some("message_start") | Some("message_delta") => {
-                if let Some(stop_reason) = json["delta"]["stop_reason"].as_str() {
-                    self.finish_reason = Some(stop_reason.to_string());
-                }
-                if let Some(input_tokens) = json["message"]["usage"]["input_tokens"].as_u64() {
-                    self.usage.prompt_tokens = input_tokens as u32;
-                }
-                if let Some(input_tokens) = json["usage"]["input_tokens"].as_u64() {
-                    self.usage.prompt_tokens = input_tokens as u32;
-                }
-                if let Some(output_tokens) = json["usage"]["output_tokens"].as_u64() {
-                    self.usage.completion_tokens = output_tokens as u32;
-                }
-                self.usage.total_tokens = self.usage.prompt_tokens + self.usage.completion_tokens;
-            }
-            Some("error") => {
-                let message = json["error"]["message"]
-                    .as_str()
-                    .or_else(|| json["message"].as_str())
-                    .unwrap_or("Anthropic stream error");
-                return Err(AppError::msg(message.to_string()));
-            }
-            _ => {}
-        }
-        Ok(None)
-    }
-
-    fn into_gateway_response(self) -> GatewayResponse {
-        let tool_calls = self
-            .tool_blocks
-            .into_values()
-            .filter_map(|block| {
-                let id = block.id?;
-                let name = block.name?;
-                let arguments = normalize_tool_arguments(block.input_json);
-                Some(ToolCall {
-                    id,
-                    call_type: "function".to_string(),
-                    function: FunctionCall { name, arguments },
-                })
-            })
-            .collect();
-
-        GatewayResponse {
-            content: if self.content.is_empty() {
-                None
-            } else {
-                Some(self.content)
-            },
-            tool_calls,
-            usage: self.usage,
-            finish_reason: self.finish_reason.unwrap_or_else(|| "stop".to_string()),
-            reasoning_content: None,
-            continuation: None,
-        }
-    }
-}
-
-fn normalize_tool_arguments(input_json: String) -> String {
-    let trimmed = input_json.trim();
-    if trimmed.is_empty() {
-        return "{}".to_string();
-    }
-    serde_json::from_str::<serde_json::Value>(trimmed)
-        .and_then(|value| serde_json::to_string(&value))
-        .unwrap_or(input_json)
 }
 
 fn sanitize_stream_error_message(message: &str) -> String {
@@ -1696,74 +1565,6 @@ mod tests {
             observer.events[0].data,
             StreamEventData::Token { ref token, .. } if token == "观察者令牌"
         ));
-    }
-
-    #[test]
-    fn anthropic_stream_state_accumulates_text_and_tool_use_blocks() {
-        let mut state = AnthropicStreamState::default();
-
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {
-                    "type": "text_delta",
-                    "text": "先查一下。"
-                }
-            }))
-            .unwrap();
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "content_block_start",
-                "index": 1,
-                "content_block": {
-                    "type": "tool_use",
-                    "id": "toolu_stream_1",
-                    "name": "search_hybrid",
-                    "input": {}
-                }
-            }))
-            .unwrap();
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "content_block_delta",
-                "index": 1,
-                "delta": {
-                    "type": "input_json_delta",
-                    "partial_json": "{\"query\":\"阶段 1\""
-                }
-            }))
-            .unwrap();
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "content_block_delta",
-                "index": 1,
-                "delta": {
-                    "type": "input_json_delta",
-                    "partial_json": ",\"limit\":5}"
-                }
-            }))
-            .unwrap();
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "message_delta",
-                "delta": { "stop_reason": "tool_use" },
-                "usage": { "output_tokens": 11 }
-            }))
-            .unwrap();
-
-        let response = state.into_gateway_response();
-        assert_eq!(response.content.as_deref(), Some("先查一下。"));
-        assert_eq!(response.finish_reason, "tool_use");
-        assert_eq!(response.usage.completion_tokens, 11);
-        assert_eq!(response.tool_calls.len(), 1);
-        assert_eq!(response.tool_calls[0].id, "toolu_stream_1");
-        assert_eq!(response.tool_calls[0].function.name, "search_hybrid");
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&response.tool_calls[0].function.arguments)
-                .unwrap(),
-            serde_json::json!({ "query": "阶段 1", "limit": 5 })
-        );
     }
 
     #[test]
