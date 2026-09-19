@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 111,
+  "registryRevision": 115,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T05:51:36.489Z"
+    "recordedAt": "2026-09-19T05:55:04.832Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -191,7 +191,7 @@
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
       "registration": "D03#file",
-      "fingerprint": "19ff187fd0085813d4082723cc9f821a"
+      "fingerprint": "6c207d405fbdbb6cf3a06603f1f159f1"
     },
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "2adaddc6f29e490444806ac92bbacead"
+      "fingerprint": "1b9b370902677bfd19d71d47adc75295"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1158,8 +1158,8 @@
       "definition": {
         "file": "implementation/D03-session-permission-context.md",
         "anchor": "D03",
-        "line": 91,
-        "endLine": 104,
+        "line": 92,
+        "endLine": 105,
         "fingerprint": "68122b88f0152c116d52ba35723cd19e"
       },
       "implementation": { "state": "present" },
@@ -18809,6 +18809,23 @@
           "fingerprintTo": "68122b88f0152c116d52ba35723cd19e"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-57",
+      "at": "2026-09-19T05:54:52.308Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "D03 §三之一 填入收口提交哈希与证据绑定行（内容与已绑证据一致，仅补时点）",
+      "review": null,
+      "objects": [
+        {
+          "id": "D03#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "19ff187fd0085813d4082723cc9f821a",
+          "fingerprintTo": "6c207d405fbdbb6cf3a06603f1f159f1"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18941,8 +18958,7 @@
         {
           "id": "D02",
           "revision": 13,
-          "fingerprint": "ed68c9f2e95842b1f2dcfb062ede63ea",
-          "stale": true
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
         },
         {
           "id": "N15",
@@ -19053,8 +19069,7 @@
         {
           "id": "D02",
           "revision": 13,
-          "fingerprint": "ed68c9f2e95842b1f2dcfb062ede63ea",
-          "stale": true
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
         },
         {
           "id": "R11",
@@ -19419,8 +19434,7 @@
         {
           "id": "D02",
           "revision": 0,
-          "fingerprint": "ed68c9f2e95842b1f2dcfb062ede63ea",
-          "stale": true
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
         },
         {
           "id": "D04",
@@ -19446,8 +19460,7 @@
         {
           "id": "D02",
           "revision": 14,
-          "fingerprint": "ed68c9f2e95842b1f2dcfb062ede63ea",
-          "stale": true
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
         },
         {
           "id": "Q04",
@@ -19538,7 +19551,7 @@
         {
           "id": "K08",
           "revision": 13,
-          "fingerprint": "7916cc7f30f7ada7a877d41d9e90ec5c"
+          "fingerprint": "11cfe1dca744a6ecfe0f30383f0e73e0"
         },
         {
           "id": "V02",
@@ -19570,12 +19583,12 @@
         {
           "id": "D03#file",
           "revision": 0,
-          "fingerprint": "19ff187fd0085813d4082723cc9f821a"
+          "fingerprint": "6c207d405fbdbb6cf3a06603f1f159f1"
         },
         {
           "id": "D03",
           "revision": 12,
-          "fingerprint": "68122b88f0152c116d52ba35723cd19e"
+          "fingerprint": "6c207d405fbdbb6cf3a06603f1f159f1"
         }
       ]
     }
@@ -19611,26 +19624,6 @@
     {
       "review": "REV-2026-09-15-GOV1",
       "object": "X01",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-16-24",
-      "object": "D02",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-16-32",
-      "object": "D02",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-19-47",
-      "object": "D02",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-19-47",
-      "object": "D02",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
