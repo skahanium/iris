@@ -1221,6 +1221,7 @@ export const objects = {
     ],
     depends_on: ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
     closes: ["Q04", "Q10", "G06"],
+    note: "关闭门槛（2026-09-17 改写，见 D02 §三）：Q04／Q10 用各自现有 V03 机械记录，不要求逐端点 V05；G06 用 host_authority 独立 verify 命令；D02 自身需一条 applicability=current 的 verify。V05 外移 G03／Q17／D04。Q13 不关。检查器 acceptanceReady=true 不是验收。",
   },
   D03: {
     kind: "work",
@@ -1445,6 +1446,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q04" },
     blocks: blocks("acceptance", ["D02"]),
+    note: "关闭门槛：Chat Completions 五类终止的现有 V03 机械记录（4 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04，不是本条关闭条件。Anthropic 五类只算 C11／K04，不扩大本条。",
   },
   Q05: {
     kind: "issue",
@@ -1493,6 +1495,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q10" },
     blocks: blocks("acceptance", ["D02"]),
+    note: "关闭门槛：事实 1–3 的现有 V03 机械记录（5 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04。服务端搜索事件与引用不算本条（→ G03）。",
   },
   Q11: {
     kind: "issue",
@@ -1549,6 +1552,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q17" },
     blocks: blocks("acceptance", ["D04"]),
+    note: "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。",
   },
   Q18: {
     kind: "issue",
@@ -1589,6 +1593,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G03" },
     blocks: blocks("acceptance", ["D04"]),
+    note: "协议侧逐端点 V05 的承接方（2026-09-17）：Q04／Q10 的关闭不再要求 V05；服务端搜索事件与引用归本条。D02 只交付机械续轮与终止原因，不关闭本条。",
   },
   G04: {
     kind: "issue",
@@ -1613,6 +1618,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G06" },
     blocks: blocks("acceptance", ["D02"]),
+    note: "关闭门槛：过早收束负例由 host_authority 的独立 verify 命令绑定（agent_tool_loop_host_authority_tests.rs），不写在 C14 备注里代替。字段级 mismatch（K16／C14）与 Anthropic 终止（C11／K04）不写入本条关闭条件。随 D02 验收关闭。",
   },
 
   // ── X01–X03 检查器与基础设施 ──────────────────────────────

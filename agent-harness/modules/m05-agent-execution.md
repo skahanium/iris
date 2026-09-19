@@ -78,7 +78,7 @@
 - `C13` 在可调用工具的 Run 中为纠偏和最终表达预留资源，不能正常行动耗尽全部模型回合后才发现无法纠正；不足以满足该合同的配置应明确标为**受限配置**（§3 M5）。完成额度预留触达后可不提供业务工具并把 remaining 留给表达（`R12`）；不得与无进展计数共用关面指令。循环已按信封收窄工具面、预留轮不写关面指令；`G06` 仍开，因为 `D02` 验收证据包未齐。
 - 相同错误反复出现时，`C14` 检查是否已提供有效反馈、工具面是否变化、参数或策略是否发生实质修正；具体次数与时限由受控恢复策略配置和评测校准，**不能把「一次重复」直接等同于整个任务不可恢复**（§3 M5）。
 - 达到该路径的停滞阈值后停止该路径，仍检查其他获准行动与已有材料能否完成任务。
-- 当前源码基线中 `rejected_rounds`／`no_progress_rounds`／`failed_service_rounds` 仍是诊断字段，**不再**关面、注入关面指令，或仅因 `rejected_rounds >= 2` 把退出标成 `recovery_exhausted`。两轮未知工具后若模型自己给出答案，退出是正常完成。诊断查询测的是注入的事件 JSON，不依赖循环再产出该 reason。过早收束的可判定关闭仍由 `D02` 承接（`G06`）。
+- 当前源码基线中 `rejected_rounds`／`no_progress_rounds`／`failed_service_rounds` 仍是诊断字段，**不再**关面、注入关面指令，或仅因 `rejected_rounds >= 2` 把退出标成 `recovery_exhausted`。两轮未知工具后若模型自己给出答案，退出是正常完成。诊断查询测的是注入的事件 JSON，不依赖循环再产出该 reason。过早收束的可判定关闭由 `D02` 承接（`G06`），其关闭证据是 `agent_tool_loop_host_authority_tests.rs` 的**独立 `verify` 命令**绑定，不是写在 `C14` 备注里代替。
 
 ## 审计
 
@@ -109,12 +109,14 @@
 
 | 需求／判据                                                        | 覆盖方式                                                                   |
 | ----------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| LOOP 指产品内部让 agent 持续行动、验证、纠错直到完成任务（`N15`） | 组合轨迹证据（`V04`）+ 明确判据；过早收束负例由 `D02` 承接（`G06`、`N21`） |
-| 可恢复错误不得一次即终止（`N16`）                                 | §8.6 恢复能力独立验收案例                                                  |
+| LOOP 指产品内部让 agent 持续行动、验证、纠错直到完成任务（`N15`） | 组合轨迹证据（`V04`）+ 明确判据；过早收束负例由 `D02` 承接（`G06`、`N21`），独立命令见 `agent_tool_loop_host_authority_tests.rs` |
+| 可恢复错误不得一次即终止（`N16`）                                 | §8.6 恢复能力独立验收案例：`D02` 四例见 `agent_tool_loop_recovery_cases_tests.rs` |
 | 未派发的提议不计入已执行工具数                                    | `V02` 已登记不变量，检测位置 `C17`／`C13`，测试标注「待补充（`D02`）」     |
 | 预算归属                                                          | 父子预算归属记录：父级总消耗、子级分配、重叠与遗漏均为 0（`D06` 回归证据） |
 
 §8.6 要求的恢复验收案例包括：先提议未知工具，再根据反馈正确调用并完成；参数错误后修正；搜索暂时失败后成功；单页抓取失败而其余页面仍可交付；重复无效提议在有界纠偏后停止该路径；取消／拒绝后不继续重试；写入回执未知时不重复执行。**每例同时检查内部错误与恢复关联、实际资源计数，以及用户侧是否出现不应有的降级提示。**
+
+**七例按交付方拆分**（2026-09-17 关闭门槛改写）：`D02` 本包交付四例——未知工具纠正后**真的派发**、参数按字段级原因修正后派发、网络工具暂失败后再提议成功、取消后不再开新的模型轮或工具轮，见 `src-tauri/src/ai_runtime/agent_tool_loop_recovery_cases_tests.rs`（循环组合证据，不声称桌面 E2E 或生产入口）；「单页抓取失败而其余页面仍可交付」→ `D04`／`K13`；「重复无效提议在有界纠偏后停止该路径」→ `G06` 的 `host_authority` 负例；「写入回执未知时不重复执行」→ `D05`／`C06`。四例首次运行即通过且未改动循环，属**新增钉子**而非缺陷修复。
 
 评测分别报告首试成功率、可恢复案例的最终完成率、额外耗时与调用成本、错误提示误报，以及越权或重复副作用；**本次不凭空设统一容错百分比**，恢复策略必须在这些约束下校准（§8.6）。本模块 `M05`、`C13`–`C15` 当前 `implementation.state=partial`，全部 `verification.state=none`。
 
@@ -227,7 +229,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`。信封关面与配方负例见 `src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`；终止原因循环纵深见 `src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs`。字段级参数纠偏见 `src-tauri/src/ai_runtime/agent_tool_loop_schema_feedback_tests.rs`（`schema_mismatch_feedback_*`）与 `guardrails` 枚举取值断言；`registry.json.verify` 对象 `C14`／`K16`。本组件当前 `verification.state=none`，已绑定指纹的证据记录不构成合同已通过，也不关闭 `G06`／`D02`。
+关键不变量与所需证据类别见 `V01`–`V07`。信封关面与配方负例见 `src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`；终止原因循环纵深见 `src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs`。字段级参数纠偏见 `src-tauri/src/ai_runtime/agent_tool_loop_schema_feedback_tests.rs`（`schema_mismatch_feedback_*`）与 `guardrails` 枚举取值断言；恢复案例四例（未知工具纠正后派发、参数修正后派发、暂失败后再提议成功、取消后不再开轮）见 `src-tauri/src/ai_runtime/agent_tool_loop_recovery_cases_tests.rs`；`registry.json.verify` 对象 `C14`／`K16`。本组件当前 `verification.state=none`，已绑定指纹的证据记录不构成合同已通过；`D02` 的验收只表示本包清单已绑定，不代标本组件 `passed`。
 
 <!-- iris:end C14 -->
 

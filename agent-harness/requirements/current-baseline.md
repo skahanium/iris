@@ -85,8 +85,8 @@
 - **已确认事实**：此前 Chat Completions 流式分支没有消费 `choices[0].finish_reason`，正常返回及尾缓冲早退写死 `stop`。现行路径由 `ChatCompletionsStreamState` 消费该字段，缺省为 `unknown`（与非流式一致）；`length` 等到 `FinalAnswerIntegrity`，截断工具不派发。
 - **不能推出**：所有协议都忽略终止原因——同文件 Anthropic 状态机已有停止原因处理，Responses 走独立路径。Anthropic 五类终止负例绑定不在本条，也不在 `G06`。本条覆盖不关闭 `D02`／`Q10`／`G06`，也不替代逐端点 `V05`。
 - **影响边界**：`C11`、`C23`、`C14`；对应架构定义 `F03`。
-- **所需证据**：覆盖正常结束、长度截断、工具结束、尾事件与缺失终止事件的协议测试（`V05`）。
-- **覆盖**：Chat Completions 流式已保留供应商终止事实（缺省 `unknown`，不填 `stop`）；截断工具不派发；Anthropic／Responses 仍不在本条范围。Anthropic Messages 流式五类负例已另绑 `C11`／`K04`，不扩大本条关闭条件。`V03` 机械记录见 `registry.json.verify`；不把 `Q04`／`C11` 的 `verification.state` 标为通过，也不关闭本项。
+- **所需证据**：覆盖正常结束、长度截断、工具结束、尾事件与缺失终止事件的协议测试。**本条的关闭证据是 Chat Completions 的机械记录（`V03`）**，见 `registry.json.verify`；逐端点 `V05` 是本条的验证目标但**不是关闭门槛**——它由 `G03`／`Q17`／`D04` 承接（2026-09-17 关闭门槛改写）。
+- **覆盖**：Chat Completions 流式已保留供应商终止事实（缺省 `unknown`，不填 `stop`）；截断工具不派发；Anthropic／Responses 仍不在本条范围。Anthropic Messages 流式五类负例已另绑 `C11`／`K04`，不扩大本条关闭条件。`V03` 机械记录见 `registry.json.verify`；不把 `Q04`／`C11` 的 `verification.state` 标为通过。本条由 `D02` 验收关闭，关闭只表示已确认的 Chat Completions 缺陷已修复并有机械覆盖，**不表示任一端点已 live 通过**。
 
 <!-- iris:end Q04 -->
 
@@ -153,8 +153,8 @@
 - **已确认事实**：DeepSeek 推理续接字段在部分 assistant 消息中被丢弃；DeepSeek 的 `extra_body` SDK 参数与实际 HTTP 请求字段存在混淆；Responses 续轮时稳定指令和新追加的修复消息可能没有进入最终请求；服务端搜索事件和引用尚未完整进入现有网关处理路径。
 - **不能推出**：某一协议的问题推成所有模型均受影响；也不能用「换个更强模型是否能成功」的实验来合理化已知合同错误。
 - **影响边界**：`C11`、`C12`、`M04`。
-- **所需证据**：按协议合同的字段保真测试与出站结构证据（`V05`、`V08`）。
-- **覆盖**：DeepSeek 直发 HTTP 使用顶层 `thinking`（不再写 `extra_body`）；同一 Provider 工具续轮 assistant 回放 `reasoning_content`，普通历史不回放私有推理；Responses 续轮保留稳定 `instructions` 并将 Host System 修复写入 `input`。服务端搜索事件／引用仍不在本条范围。`V03` 机械记录见 `registry.json.verify`；不把 `Q10`／`C11` 的 `verification.state` 标为通过，也不关闭本项、`D02`、`G03`、`Q17`，不替代逐端点 `V05`。
+- **所需证据**：按协议合同的字段保真测试与出站结构证据（`V08`）。**本条的关闭证据是事实 1–3 的机械记录（`V03`）**，见 `registry.json.verify`；逐端点 `V05` 是验证目标但**不是关闭门槛**，由 `G03`／`Q17`／`D04` 承接（2026-09-17 关闭门槛改写）。
+- **覆盖**：DeepSeek 直发 HTTP 使用顶层 `thinking`（不再写 `extra_body`）；同一 Provider 工具续轮 assistant 回放 `reasoning_content`，普通历史不回放私有推理；Responses 续轮保留稳定 `instructions` 并将 Host System 修复写入 `input`。服务端搜索事件／引用不在本条范围（→ `G03`）。`V03` 机械记录见 `registry.json.verify`；不把 `Q10`／`C11` 的 `verification.state` 标为通过。本条由 `D02` 验收关闭，关闭只表示事实 1–3 已修复并有机械覆盖，**不表示任一端点已 live 通过**，也不关闭 `G03`／`Q17`。
 
 <!-- iris:end Q10 -->
 
@@ -237,7 +237,8 @@
 - **已确认事实**：不同厂商文档的能力表述不一致；`OpenAI-compatible` 标签或首轮文本成功不足以证明工具声明、客户端工具续轮与返回事件合同成立。本体系**不宣布** MiniMax、DeepSeek 或 Gemini 任一端点已通过。
 - **不能推出**：仅凭厂商名或品牌判定能力可用。
 - **影响边界**：`C10`、`C11`、`C20`、`K12`。
-- **所需证据**：逐端点的协议测试加对应端点真实调用（`V05`）。
+- **所需证据**：逐端点的协议测试加对应端点真实调用（`V05`）。本条是 `V05` 的**承接方**：2026-09-17 关闭门槛改写把协议侧的逐端点 `V05` 从 `Q04`／`Q10` 移到这里与 `G03`／`D04`，本条与 `G03` 仍 open，`D04` 关闭它们。
+- **归属**：`Q04`／`Q10` 的关闭不依赖本条；本条不被 `D02` 关闭。`D02` 只交付机械续轮与终止原因，其 §三「关闭门槛」表已写明。
 
 <!-- iris:end Q17 -->
 

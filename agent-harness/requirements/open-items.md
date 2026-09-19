@@ -45,7 +45,7 @@
 - **现状**：服务端搜索事件和引用尚未完整进入现有网关处理路径；端点、混合续轮与费用适配待验证（`Q17`）。
 - **差异**：原生搜索尚未作为受控子请求接入主链路。
 - **阻断门槛**：`at=acceptance`（`D04`）。
-- **所需证据**：逐端点的协议测试 + 对应端点真实调用（`V05`）；不得仅凭厂商名或 `OpenAI-compatible` 标签判定能力。
+- **所需证据**：逐端点的协议测试 + 对应端点真实调用（`V05`）；不得仅凭厂商名或 `OpenAI-compatible` 标签判定能力。**本缺口是协议侧逐端点 `V05` 的承接方**（2026-09-17 关闭门槛改写：`Q04`／`Q10` 的关闭不再要求 `V05`，该证据由本缺口与 `Q17`／`D04` 承接）。`D02` 只交付机械续轮与终止原因，不关闭本缺口。
 
 <!-- iris:end G03 -->
 
@@ -82,7 +82,7 @@
 - **现状**：`agent_tool_loop.rs` 只按信封收窄业务工具面：末轮、`max_tool_calls`、以及 remaining ≤ 完成额度预留（`R12`）。预留触达把 remaining 留给表达轮，不注入 `tool_surface_closed_instruction`。`rejected_rounds`／`no_progress_rounds`／`failed_service_rounds` 仍写入诊断，但不再强制 `synthesis_required`、不再注入关面或「repair is exhausted」指令，也不再仅因 `rejected_rounds >= 2` 把退出标成 `recovery_exhausted`。负例见 `src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`。进展身份仍由 `agent_tool_loop/observations.rs` 的 `safe_progress_identities` 定义：有 span 时为 `[resource, revision, start, end, span_kind]`；搜索结果常无 span，退化成 URL／hash，换查询撞同一 URL 会被记为无进展。
 - **差异**：循环已不再用配方计数当第二规划器（三处闸门与 `recovery_exhausted` 退出分支均已按 `R11`／`R12` 改写，负例见 `agent_tool_loop_host_authority_tests.rs`）。本缺口仍 open，随 `D02` 验收关闭（`closes`）；`closes` 豁免不等于已关闭。字段级参数反馈属 `K16`／`C14`，不构成本缺口的关闭条件。Anthropic 五类终止负例属 `C11`／`K04` 后续，不是 `Q04` 本条范围，也不写入本缺口关闭条件。`Q13` 已移出 `D02` 作用域，不构成本缺口关闭条件。
 - **阻断门槛**：`at=acceptance`（只阻断 `D02` 验收，不阻断开始）。
-- **所需证据**：`D02` 工作包登记的过早收束负例已实现并通过（`src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`：两轮已反馈的未知工具不得强制综合、无进展／服务失败计数不得关面、预留触达不得注入关面指令；旧的 `:699`／`:877` 已按新契约改写）。关闭本缺口仍待 `D02` 验收，不另要求字段级 mismatch 或 Anthropic 终止绑定。
+- **所需证据**：`D02` 工作包登记的过早收束负例已实现并通过，且**由独立 `verify` 命令绑定**（不是写在 `C14` 备注里代替）：`src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs` 绑定 `cargo test --lib agent_tool_loop_host_authority`——两轮已反馈的未知工具不得强制综合、无进展／服务失败计数不得关面、预留触达不得注入关面指令；旧的 `:699`／`:877` 已按新契约改写。关闭本缺口仍待 `D02` 验收，不另要求字段级 mismatch 或 Anthropic 终止绑定。
 
 <!-- iris:end G06 -->
 

@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 80,
+  "registryRevision": 81,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-17T11:44:07.685Z"
+    "recordedAt": "2026-09-19T04:46:35.515Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -186,7 +186,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "dc9b803108afd1177308fb788524fc19"
+      "fingerprint": "d3f9b4790161401cec084cf57d747814"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -196,7 +196,7 @@
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "253de78849c05f947fe6a7e21244e477"
+      "fingerprint": "289c395dfe932f469066f1087ac580da"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
@@ -241,7 +241,7 @@
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05",
-      "fingerprint": "91fab6befb6a1e309ada4b12fa039628"
+      "fingerprint": "858be576e0976d16b82862e5320c0c61"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "e26fbd255352f5d05b36d7d656bd2838"
+      "fingerprint": "93295e63282fe8325f7f9e0010da398f"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -772,8 +772,8 @@
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C13",
-        "line": 150,
-        "endLine": 190,
+        "line": 152,
+        "endLine": 192,
         "fingerprint": "f1499c3b8c81fe35d51e6a6ff7ff543e"
       },
       "implementation": { "state": "partial" },
@@ -789,13 +789,13 @@
       "title": "C14 行动与恢复协调",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 17,
+      "revision": 18,
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C14",
-        "line": 192,
-        "endLine": 232,
-        "fingerprint": "4cff06c71076865d628dbaf2ecf557c1"
+        "line": 194,
+        "endLine": 234,
+        "fingerprint": "1d69cdc01d7c2bf1dcd302328ac47cdd"
       },
       "implementation": { "state": "partial" },
       "verification": { "state": "none" },
@@ -814,8 +814,8 @@
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "C15",
-        "line": 234,
-        "endLine": 274,
+        "line": 236,
+        "endLine": 276,
         "fingerprint": "1c1ce0630de04592faf7804a4f84fe6b"
       },
       "implementation": { "state": "partial" },
@@ -1130,13 +1130,13 @@
       "title": "D02 修正协议与有界纠偏",
       "owner": "C14",
       "maturity": "defined",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "implementation/D02-protocol-and-recovery.md",
         "anchor": "D02",
-        "line": 79,
-        "endLine": 92,
-        "fingerprint": "7d28dc5cddb628eadaff4907d503767b"
+        "line": 115,
+        "endLine": 128,
+        "fingerprint": "921617a8193a17d2738c106c2be595bc"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1146,7 +1146,7 @@
         "depends_on": ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
         "closes": ["Q04", "Q10", "G06"]
       },
-      "note": null
+      "note": "关闭门槛（2026-09-17 改写，见 D02 §三）：Q04／Q10 用各自现有 V03 机械记录，不要求逐端点 V05；G06 用 host_authority 独立 verify 命令；D02 自身需一条 applicability=current 的 verify。V05 外移 G03／Q17／D04。Q13 不关。检查器 acceptanceReady=true 不是验收。"
     },
     "D03": {
       "kind": "work",
@@ -1194,8 +1194,8 @@
       "definition": {
         "file": "implementation/D04-dual-path-search.md",
         "anchor": "D04",
-        "line": 69,
-        "endLine": 82,
+        "line": 72,
+        "endLine": 85,
         "fingerprint": "dfa6dc6f683960bdd2826b5095156bd6"
       },
       "implementation": { "state": "unknown" },
@@ -1447,20 +1447,20 @@
       "title": "原生搜索事件的接入与端点适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G03",
         "line": 40,
         "endLine": 50,
-        "fingerprint": "54906f8713143d7805bf16e2de2fc6d8"
+        "fingerprint": "0fbae3744e287dc38569f950d2a599a4"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": null
+      "note": "协议侧逐端点 V05 的承接方（2026-09-17）：Q04／Q10 的关闭不再要求 V05；服务端搜索事件与引用归本条。D02 只交付机械续轮与终止原因，不关闭本条。"
     },
     "G04": {
       "kind": "issue",
@@ -1510,20 +1510,20 @@
       "title": "Host 用配方当第二规划器",
       "owner": "M05",
       "maturity": "draft",
-      "revision": 6,
+      "revision": 7,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G06",
         "line": 77,
         "endLine": 87,
-        "fingerprint": "d354e0ff2aabe94dc261ed860ae40340"
+        "fingerprint": "4db38fb68d7362103f4c770134caf337"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
-      "note": null
+      "note": "关闭门槛：过早收束负例由 host_authority 的独立 verify 命令绑定（agent_tool_loop_host_authority_tests.rs），不写在 C14 备注里代替。字段级 mismatch（K16／C14）与 Anthropic 终止（C11／K04）不写入本条关闭条件。随 D02 验收关闭。"
     },
     "K01": {
       "kind": "contract",
@@ -1846,13 +1846,13 @@
       "title": "K16 验证报告与可恢复错误反馈",
       "owner": "C23",
       "maturity": "defined",
-      "revision": 14,
+      "revision": 15,
       "definition": {
         "file": "contracts/K16-verification-report.md",
         "anchor": "K16",
         "line": 13,
         "endLine": 111,
-        "fingerprint": "529443fad5105df30206ae266bddd46e"
+        "fingerprint": "7f06ca6d8ae5b1b37a0cfc43c6383f0f"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2144,8 +2144,8 @@
       "definition": {
         "file": "modules/m05-agent-execution.md",
         "anchor": "M05",
-        "line": 132,
-        "endLine": 148,
+        "line": 134,
+        "endLine": 150,
         "fingerprint": "509c4dbf3d72a991feb959e1c391bc96"
       },
       "implementation": { "state": "partial" },
@@ -2801,8 +2801,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 267,
-        "endLine": 280,
+        "line": 268,
+        "endLine": 281,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": { "state": "unknown" },
@@ -2954,20 +2954,20 @@
       "title": "Chat Completions 流式终止原因丢失",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 16,
+      "revision": 17,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q04",
         "line": 81,
         "endLine": 91,
-        "fingerprint": "06ff6425c93e01f30ae314209f3af1a0"
+        "fingerprint": "cf416a70a89bc913fbdfdb519c647b0d"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
-      "note": null
+      "note": "关闭门槛：Chat Completions 五类终止的现有 V03 机械记录（4 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04，不是本条关闭条件。Anthropic 五类只算 C11／K04，不扩大本条。"
     },
     "Q05": {
       "kind": "issue",
@@ -3080,20 +3080,20 @@
       "title": "模型协议字段丢失与续轮保真",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q10",
         "line": 149,
         "endLine": 159,
-        "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6"
+        "fingerprint": "472dc5d2602bb72006315d53f50caeb9"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
-      "note": null
+      "note": "关闭门槛：事实 1–3 的现有 V03 机械记录（5 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04。服务端搜索事件与引用不算本条（→ G03）。"
     },
     "Q11": {
       "kind": "issue",
@@ -3232,20 +3232,20 @@
       "title": "原生搜索端点与混合续轮适配待验证",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
         "line": 233,
-        "endLine": 242,
-        "fingerprint": "67a72aa222cab951486c0a5ba4866093"
+        "endLine": 243,
+        "fingerprint": "92b7c3c0bc05f7ea8f3936562dd24eba"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": null
+      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。"
     },
     "Q18": {
       "kind": "issue",
@@ -3257,8 +3257,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 244,
-        "endLine": 254,
+        "line": 245,
+        "endLine": 255,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": { "state": "unknown" },
@@ -3278,8 +3278,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 256,
-        "endLine": 265,
+        "line": 257,
+        "endLine": 266,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": { "state": "unknown" },
@@ -17986,6 +17986,93 @@
           "fingerprintTo": "06ff6425c93e01f30ae314209f3af1a0"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-47",
+      "at": "2026-09-19T04:46:35.515Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "architecture",
+      "reason": "D02 关闭门槛改写：Q04／Q10 关闭证据降至各自现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 需 host_authority 独立 verify 命令；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许（§4.1 属验收门槛，按治理/架构变更复核）。不标 done、不关 issue、不改 Q13。",
+      "review": "REV-2026-09-19-47",
+      "objects": [
+        {
+          "id": "D02",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "dc9b803108afd1177308fb788524fc19",
+          "fingerprintTo": "d3f9b4790161401cec084cf57d747814"
+        },
+        {
+          "id": "D04",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "253de78849c05f947fe6a7e21244e477",
+          "fingerprintTo": "289c395dfe932f469066f1087ac580da"
+        },
+        {
+          "id": "M05",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "91fab6befb6a1e309ada4b12fa039628",
+          "fingerprintTo": "858be576e0976d16b82862e5320c0c61"
+        },
+        {
+          "id": "C14",
+          "revisionFrom": 17,
+          "revisionTo": 18,
+          "fingerprintFrom": "4cff06c71076865d628dbaf2ecf557c1",
+          "fingerprintTo": "1d69cdc01d7c2bf1dcd302328ac47cdd"
+        },
+        {
+          "id": "K16",
+          "revisionFrom": 14,
+          "revisionTo": 15,
+          "fingerprintFrom": "529443fad5105df30206ae266bddd46e",
+          "fingerprintTo": "7f06ca6d8ae5b1b37a0cfc43c6383f0f"
+        },
+        {
+          "id": "D02",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "7d28dc5cddb628eadaff4907d503767b",
+          "fingerprintTo": "921617a8193a17d2738c106c2be595bc"
+        },
+        {
+          "id": "Q04",
+          "revisionFrom": 16,
+          "revisionTo": 17,
+          "fingerprintFrom": "06ff6425c93e01f30ae314209f3af1a0",
+          "fingerprintTo": "cf416a70a89bc913fbdfdb519c647b0d"
+        },
+        {
+          "id": "Q10",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
+          "fingerprintTo": "472dc5d2602bb72006315d53f50caeb9"
+        },
+        {
+          "id": "Q17",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "67a72aa222cab951486c0a5ba4866093",
+          "fingerprintTo": "92b7c3c0bc05f7ea8f3936562dd24eba"
+        },
+        {
+          "id": "G03",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "54906f8713143d7805bf16e2de2fc6d8",
+          "fingerprintTo": "0fbae3744e287dc38569f950d2a599a4"
+        },
+        {
+          "id": "G06",
+          "revisionFrom": 6,
+          "revisionTo": 7,
+          "fingerprintFrom": "d354e0ff2aabe94dc261ed860ae40340",
+          "fingerprintTo": "4db38fb68d7362103f4c770134caf337"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18586,6 +18673,73 @@
           "fingerprint": "dc9b803108afd1177308fb788524fc19"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-19-47",
+      "change": "CHG-2026-09-19-47",
+      "at": "2026-09-19T04:46:35.515Z",
+      "author": "用户（Grok 方案授权人；技术核对记录见 registry.json.reviews 的 evidence 字段，仍待真人/独立复核）",
+      "reviewer": "DeepSeek Harness（施工）",
+      "conclusion": "needs-reverification",
+      "reason": "D02 关闭门槛改写：Q04／Q10 关闭证据降至各自现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 需 host_authority 独立 verify 命令；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许（§4.1 属验收门槛，按治理/架构变更复核）。不标 done、不关 issue、不改 Q13。",
+      "evidence": "--reconcile 只登记待复核，不能作为独立复核完成依据",
+      "objects": [
+        {
+          "id": "D02",
+          "revision": 0,
+          "fingerprint": "d3f9b4790161401cec084cf57d747814"
+        },
+        {
+          "id": "D04",
+          "revision": 0,
+          "fingerprint": "289c395dfe932f469066f1087ac580da"
+        },
+        {
+          "id": "M05",
+          "revision": 0,
+          "fingerprint": "858be576e0976d16b82862e5320c0c61"
+        },
+        {
+          "id": "C14",
+          "revision": 18,
+          "fingerprint": "1d69cdc01d7c2bf1dcd302328ac47cdd"
+        },
+        {
+          "id": "K16",
+          "revision": 15,
+          "fingerprint": "7f06ca6d8ae5b1b37a0cfc43c6383f0f"
+        },
+        {
+          "id": "D02",
+          "revision": 14,
+          "fingerprint": "921617a8193a17d2738c106c2be595bc"
+        },
+        {
+          "id": "Q04",
+          "revision": 17,
+          "fingerprint": "cf416a70a89bc913fbdfdb519c647b0d"
+        },
+        {
+          "id": "Q10",
+          "revision": 13,
+          "fingerprint": "472dc5d2602bb72006315d53f50caeb9"
+        },
+        {
+          "id": "Q17",
+          "revision": 12,
+          "fingerprint": "92b7c3c0bc05f7ea8f3936562dd24eba"
+        },
+        {
+          "id": "G03",
+          "revision": 12,
+          "fingerprint": "0fbae3744e287dc38569f950d2a599a4"
+        },
+        {
+          "id": "G06",
+          "revision": 7,
+          "fingerprint": "4db38fb68d7362103f4c770134caf337"
+        }
+      ]
     }
   ],
   "issues": {
@@ -18618,12 +18772,22 @@
   "gaps": [
     {
       "review": "REV-2026-09-16-24",
+      "object": "C14",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-16-24",
       "object": "G06",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
       "review": "REV-2026-09-16-32",
       "object": "D02#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-16-32",
+      "object": "C14",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
