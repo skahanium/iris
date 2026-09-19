@@ -42,10 +42,16 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "capabilities_read",
-            description: "读取当前 AI 能力摘要，包括联网开关、已启用模型池与可用工具；不读取凭据明文。",
+            description: "读取当前 AI 能力摘要，包括联网开关、已启用模型池与可用工具；可询问指定工具是否在当前 Run 的工具面内；不读取凭据明文，也不改变工具面。",
             input_schema: serde_json::json!({
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "request_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要核对的工具名。只回报它们是否已在当前 Run 的工具面内；本工具不因此开放任何工具或权限"
+                    }
+                }
             }),
             access_level: ToolAccessLevel::ReadProfile,
             requires_confirmation: false,

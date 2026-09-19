@@ -148,7 +148,7 @@ async fn dispatch_tool_inner(
         })),
         "system_time_now" => runtime_impl::system_time_now_tool(),
         "app_context_read" => runtime_impl::app_context_read_tool(state, ctx),
-        "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx),
+        "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx, args),
         "web_search" => web_impl::web_search_tool(state, args, ctx).await,
         "web_fetch" => web_impl::web_fetch_tool(state, args, ctx).await,
         "read_note" => note_impl::read_note(state, ctx, args).await,

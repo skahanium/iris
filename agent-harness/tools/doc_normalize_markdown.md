@@ -26,7 +26,7 @@
 
 - 能力合同（`C16`）：`required_capability_ids() = ["document.transform"]`。该能力 ID 只在目录映射里出现，见本节末的暴露缺口。
 - 权限原子（`C04`）：`Atom::DocNormalizeMarkdown`（`doc.normalize_markdown`），Risk = Medium，`supported = true`。
-- 确认要求：当前目录项 `requires_confirmation = true`，且风险等级非 Low，因此决策为 `RequiresConfirmation`——调用必须走 `C05` 冻结变更与用户确认路径后才执行；授权范围内的已有有效授权不再反复索要（`K05`）。
+- 确认要求：目录项 `requires_confirmation = false`（2026-09-19 由 `true` 修正）。本工具不落盘，原先要求用户确认一个并不存在的副作用，属 `G01` 登记的权限分类错误；现在决策是直接执行，不再进入 `C05` 冻结变更路径。授权判定仍由按工具名的能力合同决定，档位只是展示元数据。
 - 不受联网开关约束：本工具不发起网络请求，`web.search` 与本工具无关。
 - 不读 Vault：输入完全来自参数中的 `content`，处理器不调用 `ctx` 的检索范围与文档策略检查；因此它既不扩权也不受检索范围收窄。
 
@@ -34,11 +34,11 @@
 
 **处理器自身无文件写入、无数据库写入。** 它只做纯字符串变换并返回文本（[boundary.rs](../../src-tauri/src/ai_runtime/tool_dispatch/boundary.rs) 的 `doc_normalize_markdown_tool`）。
 
-必须如实记录的当前事实：目录项把访问级别标为 `ToolAccessLevel::WriteMarkdown`，与「无文件写入的变换」不一致；架构定义 §6.3 与 `G01` 都把它登记为**权限分类错误**（原话：处理器返回转换文本，目录却标有写权限；目标应按真实效果修正分类）。因此当前实际行为是：不写文件，但因为是写等级且需确认，它仍然进入 `C05`→`C06` 的冻结变更路径，冻结目标被记为 `application://tool/doc_normalize_markdown`（[run_tool_loop.rs](../../src-tauri/src/ai_runtime/run_tool_loop.rs) 的 `frozen_relative_paths`），并计入「已确认变更」预算。读调用方文本、返回候选、再决定是否写入，属于调用方的责任。
+2026-09-19 修正记录：目录档位由 `ToolAccessLevel::WriteMarkdown` 改为 `ReadProfile`，`requires_confirmation` 由 `true` 改为 `false`。修正前目录把「无文件写入的变换」标成写等级（架构定义 §6.3 与 `G01` 登记的权限分类错误），调用因此被记进 `C05`→`C06` 冻结变更路径并把冻结目标写成 `application://tool/doc_normalize_markdown`，还消耗「已确认变更」预算——这些都是不存在的副作用的影子。现在既不写文件，也不再走确认路径。读调用方文本、返回候选、再决定是否写入，始终属于调用方的责任。
 
 ## 预算
 
-- `cost_class` 由目录的 `requires_confirmation = true` 归入 `ToolBudgetClass::ConfirmedChange`（[capability.rs](../../src-tauri/src/ai_runtime/tool_catalog/capability.rs) 的 `budget_class`）。
+- 档位由目录修正后的 `requires_confirmation = false` 决定；在 2026-09-19 修正前它被归入 `ToolBudgetClass::ConfirmedChange`。**请以源码为权威**：`budget_class` 的实现见 [capability.rs](../../src-tauri/src/ai_runtime/tool_catalog/capability.rs)。
 - 当前预设 `max_confirmed_change_calls = 6`（Standard／Delegated／DurableApply 三预设同值，见 [run_contract.rs](../../src-tauri/src/ai_runtime/run_contract.rs)）。这是**主循环分类额度**，不是全局统一总数；数值权威在 `K06`，本卡不据此设新门槛。
 - 单次派发包裹在 30 秒超时内（`DEFAULT_TOOL_DISPATCH_TIMEOUT`）；不在自动重试白名单（白名单只含 `web_search`／`web_fetch`）。
 - 输入文本大小无独立声明上限；实际受模型请求与工具结果的整体信封约束，**具体上限待核对**。
@@ -73,7 +73,7 @@
 
 ## 源码落点
 
-- 目录定义：[tool_catalog/boundary.rs](../../src-tauri/src/ai_runtime/tool_catalog/boundary.rs)（`doc_normalize_markdown`：`WriteMarkdown`、`requires_confirmation = true`、`Dispatchable`、`default_enabled_without_skill = false`、`max_results = None`、`execution_metadata = None`）。
+- 目录定义：[tool_catalog/boundary.rs](../../src-tauri/src/ai_runtime/tool_catalog/boundary.rs)（`doc_normalize_markdown`：`ReadProfile`、`requires_confirmation = false`（2026-09-19 修正）、`Dispatchable`、`default_enabled_without_skill = false`、`max_results = None`、`execution_metadata = None`）。
 - 能力与预算分类：[tool_catalog/capability.rs](../../src-tauri/src/ai_runtime/tool_catalog/capability.rs)（`document.transform`、`budget_class`）。
 - 权限画像：[agent_permissions.rs](../../src-tauri/src/ai_runtime/agent_permissions.rs)（`permission_profile_for_tool` 的 `doc_normalize_markdown` 分支）。
 - 处理器与规范化实现：[tool_dispatch/boundary.rs](../../src-tauri/src/ai_runtime/tool_dispatch/boundary.rs)（`doc_normalize_markdown_tool`、`normalize_markdown`、`markdown_fence_marker`）。
@@ -84,14 +84,14 @@
 
 `implementation.state = present`（静态源码事实：目录项 `Dispatchable`，处理器与规范化函数在位并有单元测试）。`verification.state = none`。
 
-已知不一致：目录 `WriteMarkdown`（写等级、需确认）与「无文件写入的变换」的目标分类不符，登记于 `G01`，**本卡不声明已修正**；「文本变换不能替代内容保持验证」是 `C23` 的目标合同，本轮未执行任何内容保持实验；能力授予缺口见「暴露规则」。未执行真实模型验收，不声明该工具在用户任务中可用。
+已知不一致（**已修正**，2026-09-19）：目录原为 `WriteMarkdown`（写等级、需确认），与「无文件写入的变换」的目标分类不符；现已改为 `ReadProfile` 且不再需要确认，`G01` 的差异 1、2 据此收口。修正判据由 `result_only_tools_do_not_declare_write_class_access` 钉住（只返回载荷的工具不得声明写类档位）。「文本变换不能替代内容保持验证」是 `C23` 的目标合同，本轮未执行任何内容保持实验；能力授予缺口见「暴露规则」。未执行真实模型验收，不声明该工具在用户任务中可用。
 
 ## 相关合同
 
 - `K16` 验证报告：格式整理的允许变化集合与逐项报告由该合同承载；本工具的输出只是候选。
-- `K05` 授权范围与冻结确认：确认、目标绑定与版本复验；本工具因此进入变更路径。
-- `K06` 统一预算账本：`ConfirmedChange` 分类额度的唯一权威。
-- 相邻工具：`T15` `insert_text_at_cursor`／`T16` `replace_selection`（真正的受控写入动作）、`T26` `doc_extract_citations`（同为文本辅助）、`T06` `read_note`（取得待整理原文）。
+- `K05` 授权范围与冻结确认：本工具不再进入变更路径（不落盘）；`K05` 只约束真正写入的 `T15`／`T16`。
+- `K06` 统一预算账本：档位分类的唯一权威；本工具的档位以源码为准。
+- 相邻工具：`T15` `insert_text_at_cursor`／`T16` `replace_selection`（真正的受控写入动作）、`T26` `doc_extract_citations`（同为文本辅助，也在 2026-09-19 一并修正档位）、`T06` `read_note`（取得待整理原文）。
 - 需求依据：`N04`（Markdown 格式整理不修改实际内容，序号除外）；缺口依据 `G01`。
 - 依据文档：[docs/agent-architecture.md](../../docs/agent-architecture.md) §6.3、§7.3；[AGENT-REFORM-DISCUSSION-2026-09-14.md](../../AGENT-REFORM-DISCUSSION-2026-09-14.md) 第十八节（格式整理的内容保持要求）。
 

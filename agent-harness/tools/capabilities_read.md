@@ -12,23 +12,34 @@
 
 读取当前 AI 能力摘要：联网开关、已启用模型池、以及**本次 Run 已经暴露**的工具清单；不读取凭据明文。语义归属为工具（`M6`），责任模块 `M06`（`C16` 工具目录、工具面与技能接入）。
 
-目标合同比现状更大：架构定义要求本工具承担「读取能力**及申请同授权内工具面扩展**」。其中「申请扩展」的 `request_tools` 参数**尚未实现**，差异登记在 `G01`（「`capabilities_read` 的目标合同 `request_tools` 参数需实现消费」）。本卡因此同时写现状与目标差距，不把目标写成已实现。
+关于「申请同授权内工具面扩展」（架构定义 §6.5）：`request_tools` 参数已于 2026-09-19 落地为**询问**而不是扩展——它回答「这些工具是否已在本次 Run 的工具面内」，并明确拒绝不在面内的项。**本工具在任何情况下都不开放工具、能力或权限**，也不安装新的工具面版本；因此本卡写的是「已实现的询问语义」，不是架构定义里更强的「申请后安装」语义。两者的差距如实保留在 `G01` 的第 3 项（`spawn_subagent` 参数消费）与架构 §6.5 的目标描述中。
 
 ## 参数与消费
 
-现状：目录 schema 声明为空对象 `{"type":"object","properties":{}}`，**不声明任何参数**；处理器 `capabilities_read_tool(state, ctx)` 不读取 `args`。在 `src-tauri/src` 与 `src` 下检索 `request_tools` **无任何命中**，即该参数既不在 schema 中，也没有消费方。
+目录 schema 声明 `request_tools`：可选的字符串数组，元素为要核对的工具名。处理器 `capabilities_read_tool(state, ctx, args)` 读取该参数并逐项回答：
+
+| 输入情形                    | 回答                                                              | 稳定原因码                                  |
+| --------------------------- | ----------------------------------------------------------------- | ------------------------------------------- |
+| 参数缺省                    | 返回的摘要与不带该参数时**逐字节相同**（不出现 `requestedTools`） | —                                           |
+| 命中本 Run 工具面           | 列入 `requestedTools.available`                                   | —                                           |
+| 命中目录但不在本 Run 工具面 | 列入 `unavailable`，明确拒绝                                      | `capability_request_not_in_current_surface` |
+| 目录中不存在该名称          | 列入 `unavailable`，与「不在面内」区分                            | `capability_request_unknown_tool`           |
+| 数组元素不是字符串          | 列入 `unavailable`                                                | `capability_request_entry_must_be_a_string` |
+| 参数不是数组                | 整项拒绝，`available` 为空                                        | `capability_request_must_be_a_string_array` |
+
+**任何一支都不改变工具面**：`tools[]` 与不带参数时完全一致。这是 `G01` 要求的「无效参数必须明确拒绝而不是静默忽略」，也是不得悄悄扩权的边界。
 
 输入来自派发上下文：`ctx.available_tool_names`（本 Run 的工具面）与 `ctx.web_search_enabled`；模型池来自数据库中的 LLM 配置。
 
-返回 `CapabilitySnapshot`：`kind`（固定 `capabilities`）、`web_search_enabled`、`models[]`（`provider_id`、`model`、`configured`）、`tools[]`（`name`、`requires_confirmation`、`access_level`、`cost_class`、`output_policy`、`evidence_policy`）。
+返回 `CapabilitySnapshot`：`kind`（固定 `capabilities`）、`web_search_enabled`、`models[]`（`provider_id`、`model`、`configured`）、`tools[]`（`name`、`requires_confirmation`、`access_level`、`cost_class`、`output_policy`、`evidence_policy`），以及**仅当传入 `request_tools` 时**出现的 `requestedTools`。
 
 源码事实（与「能力查询」的用途直接相关，须如实记录）：
 
 1. 工具清单来自 `ctx.available_tool_names` 与全目录的交集，因此**只报告本 Run 当前工具面内的工具**，不把全目录或未授权能力泄露给模型；`available_tool_names` 为空时 `tools` 为空数组。
-2. 工具项包含元数据，**不包含 `input_schema`**。模型因此无法凭本工具构造未暴露工具的合法参数；这与「申请同授权内工具面扩展」的目标合同是否完备，**待核对**。
+2. 工具项包含元数据，**不包含 `input_schema`**。模型因此无法凭本工具构造未暴露工具的合法参数；`request_tools` 同样只回报「在不在面内」，不回报 schema，因此这一缺口仍然存在。
 3. `configured` 只表达「凭据可用或该 provider 不需要 Key」，同样是布尔事实，不含密钥材料。
 
-目标合同（`G01`）：接受目标工具名申请，由 `C16` 与 `C04` 验证后在**下一轮**安装新版本工具面；名称未知或权限不足返回明确原因；不执行业务动作、不授予新权限（架构定义 §6.5）。
+目标合同（`G01` 剩余部分）：接受目标工具名申请，由 `C16` 与 `C04` 验证后在**下一轮**安装新版本工具面。本轮实现的是其中的**明确拒绝与明确回答**，**不包含**安装新工具面。
 
 ## 授权
 
@@ -62,15 +73,15 @@
 ## 失败反馈
 
 - 超时：`{"error":"tool_dispatch_timeout","failure_class":"timeout", ...}`。
-- 参数无效：现状无参数。若模型提出 `request_tools`，参数校验只按 schema 校验已声明字段（允许额外字段透传），处理器忽略它——模型会得到一个**看似成功但没有申请效果**的结果。这正是 `G01` 要求消除的行为：要实现在下一轮消费，要么明确拒绝并说明原因（架构定义 §6.5「名称未知或权限不足返回明确原因」），不允许静默忽略。
-- 具体缺口引用：`G01`（阻断门槛 `at=acceptance`，所需证据为工具卡逐项实现状态与目录分类的一致性核对）。
+- 参数无效（2026-09-19 落地）：`request_tools` 非数组 → `capability_request_must_be_a_string_array`；数组元素非字符串 → `capability_request_entry_must_be_a_string`；名称未登记 → `capability_request_unknown_tool`；已登记但不在本 Run 工具面 → `capability_request_not_in_current_surface`。四支都**明确拒绝并给稳定原因**，且都不改变工具面——这正是 `G01` 要求消除的「静默忽略」；判据见 `capabilities_read_answers_request_tools_without_widening_the_surface` 与 `capabilities_read_rejects_a_malformed_request_tools_value`。
+- 具体缺口引用：`G01` 的差异 3（`spawn_subagent` 参数消费）仍 open，归 `Q06`／`D06`；差异 1、2 已收口。
 - 用户侧：不得把读能力失败表达为「模型能力降级」（`N17`）。
 
 ## 暴露规则
 
 - `default_enabled_without_skill = true`；目标工具面中属普通助手对话「基础 4 个」之一。
 - 例外：`ContextMode::ExplicitReferences` 且检索范围不受限时被 `constrain_for_run_context` 隐藏。
-- 架构定义 §6.5 要求「对于当前面未包括、但在既有授权内的能力」由本工具承担申请；在 `request_tools` 落地前，目标暴露规则与现状之间的差距由 `G01` 承载，本卡不宣告该规则已生效。
+- 架构定义 §6.5 要求「对于当前面未包括、但在既有授权内的能力」由本工具承担申请。2026-09-19 落地的是**回答与拒绝**：本工具报告某项是否已在面内并给出稳定原因，**不由本工具安装新工具面**。因此 §6.5 的「申请后下一轮安装」语义仍未被本卡宣告生效，差距由 `G01` 差异 3 与架构 §6.5 的目标描述承载。
 
 ## 源码落点
 
@@ -80,13 +91,13 @@
 - 工具面输入：[tool_dispatch/context.rs](../../src-tauri/src/ai_runtime/tool_dispatch/context.rs)（`available_tool_names` 注释：必须只报告这些工具）。
 - 全目录投影（对照：`all_catalog_tools_as_specs` 过滤 Planned）：同文件。
 - 权限与能力分类：[agent_permissions.rs](../../src-tauri/src/ai_runtime/agent_permissions.rs)、[tool_catalog/capability.rs](../../src-tauri/src/ai_runtime/tool_catalog/capability.rs)。
-- 现有测试：`tool_dispatch/runtime.rs` 内两个派发测试——空工具面返回空 `tools`；只报告当前工具面（联网关闭时不宣称 `web_search`，无 Run 面时不宣称 `search_hybrid`）。
+- 现有测试：`tool_dispatch/runtime.rs` 内四个派发测试——空工具面返回空 `tools`；只报告当前工具面（联网关闭时不宣称 `web_search`，无 Run 面时不宣称 `search_hybrid`）；`capabilities_read_answers_request_tools_without_widening_the_surface`（缺省参数逐字节不变、三类回答分类正确、工具面不变）；`capabilities_read_rejects_a_malformed_request_tools_value`（畸形入参明确拒绝且不报告任何已授予）。目录侧另有 `capabilities_read_declares_the_parameters_its_dispatcher_consumes`。
 
 ## 当前状态
 
-`implementation.state = partial`（静态源码事实：目录项为 `Dispatchable`、读取处理器在位，但目标合同要求的 `request_tools` 参数与消费方在源码中不存在）。`verification.state = none`。
+`implementation.state = present`（静态源码事实：目录项 `Dispatchable`，`request_tools` 已在 schema 声明并由处理器消费，四类回答与拒绝路径各有测试）。`verification.state = none`。
 
-差异归属：`G01`（工具目录目标与现状的差异；`at=acceptance`，修复工作包可以开始）。未执行真实模型验收；不声明合同正确、不声明工具面申请可用。
+差异归属：`G01` 差异 1、2 已收口，差异 3（`spawn_subagent` 的 `context_hint`／`max_rounds`）仍 open，归 `Q06`／`D06`。未执行真实模型验收；不声明合同正确、**不声明「申请后安装新工具面」可用**——本轮实现的是询问与明确拒绝，不是扩展。
 
 ## 相关合同
 

@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 97,
+  "registryRevision": 99,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T05:20:48.082Z"
+    "recordedAt": "2026-09-19T05:41:44.496Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "710e72312aa2fde606eba5cdcbf36031"
+      "fingerprint": "f27b7f287dbc8c3c441040d89a1306fc"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1400,13 +1400,13 @@
       "title": "工具目录目标与现状的差异",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G01",
         "line": 16,
-        "endLine": 26,
-        "fingerprint": "ddb6a2d0fc7fc00153da9b3284f8cc84"
+        "endLine": 30,
+        "fingerprint": "2071e9f771f3bc6b238ec2d886414a8a"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1430,8 +1430,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G02",
-        "line": 28,
-        "endLine": 38,
+        "line": 32,
+        "endLine": 42,
         "fingerprint": "6dab04deb226e5c2cfd7a5e1cf92a8d8"
       },
       "implementation": { "state": "unknown" },
@@ -1451,8 +1451,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G03",
-        "line": 40,
-        "endLine": 50,
+        "line": 44,
+        "endLine": 54,
         "fingerprint": "0fbae3744e287dc38569f950d2a599a4"
       },
       "implementation": { "state": "unknown" },
@@ -1472,8 +1472,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G04",
-        "line": 52,
-        "endLine": 63,
+        "line": 56,
+        "endLine": 67,
         "fingerprint": "e266f35bd09c892a8a8d8df299b9ae62"
       },
       "implementation": { "state": "unknown" },
@@ -1493,8 +1493,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G05",
-        "line": 65,
-        "endLine": 75,
+        "line": 69,
+        "endLine": 79,
         "fingerprint": "554d41dc4e13f6eed48903dae3ad6b37"
       },
       "implementation": { "state": "unknown" },
@@ -1514,8 +1514,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G06",
-        "line": 77,
-        "endLine": 87,
+        "line": 81,
+        "endLine": 91,
         "fingerprint": "4db38fb68d7362103f4c770134caf337"
       },
       "implementation": { "state": "unknown" },
@@ -2822,8 +2822,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "P05",
-        "line": 89,
-        "endLine": 103,
+        "line": 93,
+        "endLine": 107,
         "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
       "implementation": { "state": "unknown" },
@@ -3694,13 +3694,13 @@
       "title": "capabilities_read",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "tools/capabilities_read.md",
         "anchor": "T03",
         "line": 9,
-        "endLine": 99,
-        "fingerprint": "ee1930c8c3f6a976f05b92b91d4cd856"
+        "endLine": 110,
+        "fingerprint": "0c1647b9ae0d600db31e2bb5b0e222b4"
       },
       "implementation": { "state": "partial" },
       "verification": { "state": "none" },
@@ -4156,13 +4156,13 @@
       "title": "doc_normalize_markdown",
       "owner": "M08",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "tools/doc_normalize_markdown.md",
         "anchor": "T25",
         "line": 9,
         "endLine": 98,
-        "fingerprint": "3da8499e32d9b813055cbb397390954c"
+        "fingerprint": "6c386cfbc7102343473643fb87f27cfe"
       },
       "implementation": { "state": "present" },
       "verification": { "state": "none" },
@@ -4492,13 +4492,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 25,
+      "revision": 26,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 82,
-        "fingerprint": "8cefe8dc86a6c2c5720be7c16481ed22"
+        "fingerprint": "794a9d8b80a34747cbe321cc4d49e183"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -5381,6 +5381,50 @@
       "at": "2026-09-19T05:20:00Z",
       "applicability": "current",
       "note": "2026-09-19 排版后重跑：本机退出码 0（95 个托管文件、194 个已定义对象、0 violation、0 缺口）。"
+    },
+    {
+      "object": "G01",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_catalog/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib result_only_tools_do_not_declare_write_class_access",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "2071e9f771f3bc6b238ec2d886414a8a",
+      "at": "2026-09-19T06:10:00Z",
+      "applicability": "current",
+      "note": "G01 差异 1 的关闭证据：只返回载荷、不落盘的工具不得声明写类档位或要求确认。本机 1 passed / 0 failed。修正对象为 doc_normalize_markdown（WriteMarkdown→ReadProfile）与同形状的 doc_extract_citations（WriteCache→ReadProfile），两者 requires_confirmation 由 true 改 false——原先要求用户确认一个并不存在的副作用。"
+    },
+    {
+      "object": "G01",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/runtime.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib capabilities_read",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "2071e9f771f3bc6b238ec2d886414a8a",
+      "at": "2026-09-19T06:10:00Z",
+      "applicability": "current",
+      "note": "G01 差异 2 的关闭证据：本机 5 passed / 0 failed。request_tools 已在 schema 声明并由处理器消费；缺省参数时返回摘要逐字节不变；命中面内报可用，命中目录但不在面内按 capability_request_not_in_current_surface 拒绝，未登记名称按 capability_request_unknown_tool 拒绝，非数组按 capability_request_must_be_a_string_array 拒绝；任何一支都不改工具面（tools[] 与基线逐字节相同）。不声称「申请后安装新工具面」已实现。"
+    },
+    {
+      "object": "T25",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_catalog/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib result_only_tools_do_not_declare_write_class_access",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "6c386cfbc7102343473643fb87f27cfe",
+      "at": "2026-09-19T06:10:00Z",
+      "applicability": "current",
+      "note": "工具卡 T25 与目录事实的一致性核对：目录档位 ReadProfile、requires_confirmation=false（2026-09-19 修正）。不把 T25 的 verification.state 标为通过。"
+    },
+    {
+      "object": "T03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/runtime.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib capabilities_read",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "0c1647b9ae0d600db31e2bb5b0e222b4",
+      "at": "2026-09-19T06:10:00Z",
+      "applicability": "current",
+      "note": "工具卡 T03 与目录／处理器事实的一致性核对：schema 声明 request_tools，处理器消费并四类拒绝。不把 T03 的 verification.state 标为通过，不声称 §6.5 的「申请后安装」已生效。"
     }
   ],
   "changes": [
@@ -18423,6 +18467,44 @@
           "revisionTo": 25,
           "fingerprintFrom": "711f7ebd52047f55f46a4d052ffaf72f",
           "fingerprintTo": "8cefe8dc86a6c2c5720be7c16481ed22"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-52",
+      "at": "2026-09-19T05:41:37.123Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "G01 差异 1、2 收口：目录档位修正与 request_tools 落地，同步工具卡 T25／T03 与缺口正文",
+      "review": null,
+      "objects": [
+        {
+          "id": "V02",
+          "revisionFrom": 25,
+          "revisionTo": 26,
+          "fingerprintFrom": "8cefe8dc86a6c2c5720be7c16481ed22",
+          "fingerprintTo": "794a9d8b80a34747cbe321cc4d49e183"
+        },
+        {
+          "id": "G01",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "ddb6a2d0fc7fc00153da9b3284f8cc84",
+          "fingerprintTo": "2071e9f771f3bc6b238ec2d886414a8a"
+        },
+        {
+          "id": "T03",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "ee1930c8c3f6a976f05b92b91d4cd856",
+          "fingerprintTo": "0c1647b9ae0d600db31e2bb5b0e222b4"
+        },
+        {
+          "id": "T25",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "3da8499e32d9b813055cbb397390954c",
+          "fingerprintTo": "6c386cfbc7102343473643fb87f27cfe"
         }
       ]
     }

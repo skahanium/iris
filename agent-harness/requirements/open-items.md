@@ -19,9 +19,13 @@
 
 - **目标**：39 个内置业务工具（`T01`–`T39`），16 通用 + 23 扩展；Planned 不暴露；`conclude_reasoning` 退出目标工具面；`submit_final_answer` 保留 1 个条件式入口。
 - **现状**：基线 `2670739f` 共 51 个内置目录项，其中 38 可派发、2 HarnessOnly、11 Planned。
-- **差异**：`doc_normalize_markdown` 的目录权限分类与真实效果不符（处理器返回转换文本，目录标有写权限）；`capabilities_read` 的目标合同 `request_tools` 参数需实现消费；`spawn_subagent` 的 `context_hint`／`max_rounds` 未被消费（见 `Q06`）。
-- **阻断门槛**：`at=acceptance`。修复这些差异的工作包可以开始。
+- **差异**（2026-09-19 收口，逐项标注）：
+  1. `doc_normalize_markdown` 的目录权限分类与真实效果不符——**已修**：该工具与同形状的 `doc_extract_citations` 都只返回载荷、不落盘，目录档位由写类改为 `ReadProfile`，`requires_confirmation` 由 `true` 改为 `false`（原先要求用户确认一个并不存在的副作用）。授权判定仍由按工具名的能力合同决定，`ToolAccessLevel` 只是展示元数据。
+  2. `capabilities_read` 的目标合同 `request_tools` 参数需实现消费——**已实现**：参数进入 schema 并由处理器消费；命中当前 Run 工具面则回报可用，命中目录但不在本 Run 工具面则按 `capability_request_not_in_current_surface` 明确拒绝，未登记工具按 `capability_request_unknown_tool` 拒绝，非数组入参按 `capability_request_must_be_a_string_array` 拒绝；**任何情况下都不开放工具、能力或权限**。
+  3. `spawn_subagent` 的 `context_hint`／`max_rounds` 未被消费——**仍 open**，归 `Q06` 与 `D06`，不随本条关闭。
+- **阻断门槛**：`at=acceptance`（`D03`、`D05`）。
 - **所需证据**：工具卡逐项实现状态与目录分类的一致性核对；无效参数必须明确拒绝而不是静默忽略。
+- **覆盖**：`result_only_tools_do_not_declare_write_class_access`（只返回载荷的工具不得声明写类档位）、`capabilities_read_declares_the_parameters_its_dispatcher_consumes`（声明的参数必须被消费）、`capabilities_read_answers_request_tools_without_widening_the_surface`（回答询问不得扩大工具面）、`capabilities_read_rejects_a_malformed_request_tools_value`（畸形入参明确拒绝）。上述均为 `V03` 机械负例；第 3 项不在本条关闭条件内。
 
 <!-- iris:end G01 -->
 

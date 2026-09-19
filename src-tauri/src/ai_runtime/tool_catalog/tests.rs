@@ -358,3 +358,48 @@ fn catalog_exposes_skill_root_capability_tools() {
     assert!(!catalog_find("memory_read").unwrap().requires_confirmation);
     assert!(catalog_find("memory_write").unwrap().requires_confirmation);
 }
+
+/// Tools that only return a result payload never persist anything. Declaring a
+/// write-class access level makes the catalog's own classification contradict the
+/// handler, which is what `G01` registers: "目录权限分类与真实效果不符".
+#[test]
+fn result_only_tools_do_not_declare_write_class_access() {
+    use crate::ai_runtime::ToolAccessLevel as Access;
+    for tool in [
+        "doc_normalize_markdown",
+        "doc_extract_citations",
+        "system_time_now",
+        "app_context_read",
+    ] {
+        let entry = catalog_find(tool).unwrap_or_else(|| panic!("missing {tool}"));
+        assert!(
+            matches!(
+                entry.access_level,
+                Access::ReadIndex | Access::ReadNoteSpan | Access::ReadProfile
+            ),
+            "{tool} returns a payload and writes nothing, so it must not claim a \
+             write-class access level; got {:?}",
+            entry.access_level
+        );
+        assert!(
+            !entry.requires_confirmation,
+            "{tool} performs no side effect and must not require confirmation"
+        );
+    }
+}
+
+/// `capabilities_read` is the surface the model uses to learn what it may call.
+/// A declared parameter that the dispatcher never reads is exactly the
+/// "参数声明与执行不一致" half of `G01`.
+#[test]
+fn capabilities_read_declares_the_parameters_its_dispatcher_consumes() {
+    let entry = catalog_find("capabilities_read").expect("capabilities_read entry");
+    let properties = entry.input_schema["properties"]
+        .as_object()
+        .expect("capabilities_read must declare an object schema with properties");
+    assert!(
+        properties.contains_key("request_tools"),
+        "capabilities_read must declare the request_tools parameter it consumes; \
+         declared properties were {properties:?}"
+    );
+}
