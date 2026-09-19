@@ -1225,7 +1225,9 @@ export const objects = {
       file: "implementation/D03-session-permission-context.md",
       anchor: "D03",
     },
-    work: { state: "planned" },
+    work: { state: "done" },
+    implementation: { state: "present" },
+    verification: { state: "passed" },
     // Q15／Q16 于 2026-09-19 确定并关闭，据此移出 scope：它们不再是本包「尚未收清」的
     // 范围。
     //
@@ -1236,6 +1238,7 @@ export const objects = {
     scope: ["N05", "N12", "N13", "N14", "N22", "Q02", "Q08", "G01", "G05"],
     depends_on: ["D01", "K01", "K03", "K05", "K07", "K08"],
     closes: ["Q08", "G05"],
+    note: "2026-09-19 收口：Q02／G01 由本包施工修复并绑证据，Q08／G05 由本包关闭；D03 自身有 current verify，§三之一 记时点。verification.state=passed 只表示本包清单已绑定，不代标 C03／C07／C08 等组件的 passed。",
   },
   D04: {
     kind: "work",

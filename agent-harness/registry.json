@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 108,
+  "registryRevision": 111,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T05:47:46.201Z"
+    "recordedAt": "2026-09-19T05:51:36.489Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -191,7 +191,7 @@
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
       "registration": "D03#file",
-      "fingerprint": "c4c1afc6603842244e10ac1f09e035bf"
+      "fingerprint": "19ff187fd0085813d4082723cc9f821a"
     },
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "c42828c9994c3c83ea87ae00024c22c6"
+      "fingerprint": "2adaddc6f29e490444806ac92bbacead"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1154,23 +1154,23 @@
       "title": "D03 收清会话、权限与上下文",
       "owner": "C07",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "implementation/D03-session-permission-context.md",
         "anchor": "D03",
-        "line": 68,
-        "endLine": 81,
-        "fingerprint": "e77e1c00915e96a6b2dd3c1203e75dec"
+        "line": 91,
+        "endLine": 104,
+        "fingerprint": "68122b88f0152c116d52ba35723cd19e"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
-      "work": { "state": "planned" },
+      "implementation": { "state": "present" },
+      "verification": { "state": "passed" },
+      "work": { "state": "done" },
       "scope": ["N05", "N12", "N13", "N14", "N22", "Q02", "Q08", "G01", "G05"],
       "relations": {
         "depends_on": ["D01", "K01", "K03", "K05", "K07", "K08"],
         "closes": ["Q08", "G05"]
       },
-      "note": null
+      "note": "2026-09-19 收口：Q02／G01 由本包施工修复并绑证据，Q08／G05 由本包关闭；D03 自身有 current verify，§三之一 记时点。verification.state=passed 只表示本包清单已绑定，不代标 C03／C07／C08 等组件的 passed。"
     },
     "D04": {
       "kind": "work",
@@ -5512,6 +5512,83 @@
       "at": "2026-09-19T07:00:00Z",
       "applicability": "current",
       "note": "E03 提升为 defined 的机械证据：本机 3 passed / 0 failed。零分母维度必须标为未覆盖而不是满分通过（Q03 的两个负例）。verification.state 仍 none——不声称语义或组合质量通过。"
+    },
+    {
+      "object": "D03",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/run_engine/publication_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib cancellation_after_candidate_but_before_commit_cannot_publish_it",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "68122b88f0152c116d52ba35723cd19e",
+      "at": "2026-09-19T07:20:00Z",
+      "applicability": "current",
+      "note": "D03 回归证据 1（输入修订／取消）：本机 1 passed / 0 failed。取消发生在候选产生之后、提交之前时该候选不得发布——Run 终态 Cancelled、final_message_id 为空、无 ContentDelta／Completed、无 AnswerDelta／AnswerReset／AnswerComplete。本包自身的 verify，不代替 Q16 的记录。"
+    },
+    {
+      "object": "D03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/run_context.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib history_selection_tests",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "68122b88f0152c116d52ba35723cd19e",
+      "at": "2026-09-19T07:20:00Z",
+      "applicability": "current",
+      "note": "D03 回归证据 2（上下文覆盖清单）：本机 9 passed / 0 failed。摘要覆盖终点与 token 预算后历史视图比较；有缺口必须告知、连续不得谎报。"
+    },
+    {
+      "object": "D03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/conversation_memory.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib memory_extraction_tests",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "68122b88f0152c116d52ba35723cd19e",
+      "at": "2026-09-19T07:20:00Z",
+      "applicability": "current",
+      "note": "D03 回归证据 3（压缩边界／长对话承接）：本机 13 passed / 0 failed。更正保留为约束；摘要与近期窗口在 25 条消息处不重叠；模型压缩只在完整消息上推进且失效后重建。"
+    },
+    {
+      "object": "D03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/subagent_coordinator.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib explicit_empty_allowed_tools_does_not_inherit_parent_surface",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "68122b88f0152c116d52ba35723cd19e",
+      "at": "2026-09-19T07:20:00Z",
+      "applicability": "current",
+      "note": "D03 回归证据 4（权限只继承或收窄）：本机 1 passed / 0 failed。子任务显式给出空 allowed_tools 时不得继承父级工具面；同组另有 harness_tools_do_not_inherit_vault_search_permission。"
+    },
+    {
+      "object": "D03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/frozen_change_plan_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib frozen_change_plan_tests",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "68122b88f0152c116d52ba35723cd19e",
+      "at": "2026-09-19T07:20:00Z",
+      "applicability": "current",
+      "note": "D03 回归证据 5（冻结确认与版本复验）：本机 5 passed / 0 failed。计划哈希是规范的并拒绝任何变更；过期计划不得批准；持久化计划重算哈希并拒绝被篡改的参数。"
+    },
+    {
+      "object": "D03",
+      "kind": "V04",
+      "testPath": "tests/ai-sidecar-search-route-write.test.tsx",
+      "command": "npx vitest run tests/ai-sidecar-search-route-write.test.tsx",
+      "environment": "local / macOS / node v26.0.0 / vitest",
+      "fingerprint": "68122b88f0152c116d52ba35723cd19e",
+      "at": "2026-09-19T07:20:00Z",
+      "applicability": "current",
+      "note": "D03 回归证据 6（两个设置入口交替保存的往返结果，与 D04 共用）：本机 5 passed / 0 failed。侧栏改主服务保留备用项并提到首位、管理中心保存的备用项不丢失、交替保存后候选稳定无重复、清空写空数组、主服务禁用时可用性回退到备用项。"
+    },
+    {
+      "object": "D03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_run_repository_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib same_session_concurrent",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "68122b88f0152c116d52ba35723cd19e",
+      "at": "2026-09-19T07:20:00Z",
+      "applicability": "current",
+      "note": "D03 回归证据 7（运行中拒绝新指令的形态）：本机 2 passed / 0 failed。同一会话并发启动与并发重试都只允许一个活动 Run，第二个以 agent_run_active_run_exists 拒绝——这正是 K03 §一 已确定交互形态的判据。"
     }
   ],
   "changes": [
@@ -18708,6 +18785,30 @@
           "fingerprintTo": "aca78336e194a43bb90f39d52537fc73"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-56",
+      "at": "2026-09-19T05:50:03.881Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "architecture",
+      "reason": "D03 关闭门槛表、三之一时点表与 §五 不作出的承诺改写；属验收门槛变化，按架构变更复核",
+      "review": "REV-2026-09-19-56",
+      "objects": [
+        {
+          "id": "D03#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "c4c1afc6603842244e10ac1f09e035bf",
+          "fingerprintTo": "19ff187fd0085813d4082723cc9f821a"
+        },
+        {
+          "id": "D03",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "e77e1c00915e96a6b2dd3c1203e75dec",
+          "fingerprintTo": "68122b88f0152c116d52ba35723cd19e"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19455,17 +19556,39 @@
           "fingerprint": "0be98a33d79789919db2818c4b319190"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-19-56",
+      "change": "CHG-2026-09-19-56",
+      "at": "2026-09-19T05:50:03.881Z",
+      "author": "用户（已批准的遗留收口方案授权人）",
+      "reviewer": "DeepSeek Harness（施工）",
+      "conclusion": "synchronized",
+      "reason": "D03 关闭门槛表、三之一时点表与 §五 不作出的承诺改写；属验收门槛变化，按架构变更复核",
+      "evidence": "技术核对（施工者 DeepSeek Harness，2026-09-19）：①D03 §三「关闭门槛」表逐项固定本包关闭证据，并把「覆盖终点与裁剪边界同源」明确排除在关闭条件外（登记为 Q08 已知限制）；②§三之一按 D01 的教训记时点，work.state=done 将晚于全部证据；③§五 把 Q15／Q16 的「已确定」与「明确不做」分开写，未把不做写成已实现；④closes 保持 [\"Q08\",\"G05\"] 不动，Q02／G01 留在 scope 内、由 registry.issues 在验收时独立写 closed——避免 D02 收口时明确禁止的「先声明 closes、再补证据」顺序。独立性声明：本条复核由施工者本人作出，不是 P03 §5.2 要求的独立复核——本变更改写验收门槛，按 §5.2 规则 1、2 必须由未参与本变更编写的独立 AI 或人工重新复核；在此之前只算技术核对通过。",
+      "objects": [
+        {
+          "id": "D03#file",
+          "revision": 0,
+          "fingerprint": "19ff187fd0085813d4082723cc9f821a"
+        },
+        {
+          "id": "D03",
+          "revision": 12,
+          "fingerprint": "68122b88f0152c116d52ba35723cd19e"
+        }
+      ]
     }
   ],
   "issues": {
     "Q01": { "state": "closed" },
-    "Q02": { "state": "open" },
+    "Q02": { "state": "closed" },
     "Q03": { "state": "closed" },
     "Q04": { "state": "closed" },
     "Q05": { "state": "open" },
     "Q06": { "state": "open" },
     "Q07": { "state": "open" },
-    "Q08": { "state": "open" },
+    "Q08": { "state": "closed" },
     "Q09": { "state": "closed" },
     "Q10": { "state": "closed" },
     "Q11": { "state": "closed" },
@@ -19477,11 +19600,11 @@
     "Q17": { "state": "open" },
     "Q18": { "state": "closed" },
     "Q19": { "state": "open" },
-    "G01": { "state": "open" },
+    "G01": { "state": "closed" },
     "G02": { "state": "open" },
     "G03": { "state": "open" },
     "G04": { "state": "closed" },
-    "G05": { "state": "open" },
+    "G05": { "state": "closed" },
     "G06": { "state": "closed" }
   },
   "gaps": [
@@ -19537,6 +19660,12 @@
       "author": "DeepSeek Harness（施工）",
       "topic": "2026-09-19 D02 收口：issues 段手工改写",
       "detail": "Q04／Q10／G06 的 state 由 open 改为 closed。检查器不会因 D02 的 closes 自动关 issue，必须手写（X03）。关闭依据见 D02 §三「关闭门槛」表与 §三之一 时点表；Q13 保持 open。"
+    },
+    {
+      "at": "2026-09-19T07:25:00Z",
+      "author": "DeepSeek Harness（施工）",
+      "topic": "2026-09-19 D03 收口：issues 段手工改写",
+      "detail": "Q02／Q08／G01／G05 的 state 由 open 改为 closed。检查器不会因 D03 的 closes 自动关 issue，必须手写（X03）。关闭依据：Q02 与 G01 由本包施工修复并绑 V04／V03 证据；Q08／G05 见 D03 §三「关闭门槛」表。Q13（预算存档兼容）与 Q14（双路搜索对纯编辑任务的触发范围）保持 open——Q13 待第一次真改预算默认值时处理，Q14 归 D05 按其 §三 处理。未把 Q15／Q16 写入本批：它们已在 2026-09-19 随交互形态与记忆语义确定而关闭。"
     }
   ]
 }
