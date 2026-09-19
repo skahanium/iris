@@ -1,39 +1,52 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 129,
+  "registryRevision": 130,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T14:12:55.564Z"
+    "recordedAt": "2026-09-19T14:53:56.795Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
       "path": "AGENT-REFORM-DISCUSSION-2026-09-14.md",
       "kind": "discussion",
       "role": "解释来源与事实边界；不作为规范条文",
-      "refs": ["P01", "P03", "P04", "P06"],
+      "refs": [
+        "P01",
+        "P03",
+        "P04",
+        "P06"
+      ],
       "fingerprint": "a8e5df28d0ed4f17cb84b65c713cef20"
     },
     "SRC-ARCH-2026-09-15": {
       "path": "docs/agent-architecture.md",
       "kind": "architecture-definition",
       "role": "上位架构决定；模块、组件、工具身份由它派生",
-      "refs": ["P01", "P02", "P03"],
+      "refs": [
+        "P01",
+        "P02",
+        "P03"
+      ],
       "fingerprint": "355f30f18a392e711c7fa81b79ba8965"
     },
     "SRC-ARCH-REPO": {
       "path": "ARCHITECTURE.md",
       "kind": "implementation-facts",
       "role": "当前实现事实与边界",
-      "refs": ["P04"],
+      "refs": [
+        "P04"
+      ],
       "fingerprint": "2bb2e0ae8f59d3e7ef2d7e2d32b47d56"
     },
     "SRC-ROADMAP-REPO": {
       "path": "ROADMAP.md",
       "kind": "version-roadmap",
       "role": "版本排期唯一来源；本体系不重复版本承诺",
-      "refs": ["P01"],
+      "refs": [
+        "P01"
+      ],
       "fingerprint": "89c16c7507b9891888ea838d4ace9cf7"
     }
   },
@@ -96,7 +109,7 @@
     "contracts/K11-dual-path-search.md": {
       "container": "K11",
       "registration": "K11#file",
-      "fingerprint": "9539fa54ee312aaba9e4c99e08b1211b"
+      "fingerprint": "165f7d51dd84117573d06ef5bec41d20"
     },
     "contracts/K12-native-search-subrequest.md": {
       "container": "K12",
@@ -236,7 +249,7 @@
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04",
-      "fingerprint": "129eef68f287f43a05422f6f105a6a85"
+      "fingerprint": "cbbf430a84f9432d479b23d595a2c94a"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
@@ -266,7 +279,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "a3dad3a233274e8a959d45ab54df4d94"
+      "fingerprint": "3c65a4fb89f8fc931b2615ed8ebaf75f"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -533,7 +546,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K01"]
+        "implements": [
+          "K01"
+        ]
       },
       "note": null
     },
@@ -560,7 +575,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K02"]
+        "implements": [
+          "K02"
+        ]
       },
       "note": null
     },
@@ -587,8 +604,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K03"],
-        "depends_on": ["C01", "C02"]
+        "implements": [
+          "K03"
+        ],
+        "depends_on": [
+          "C01",
+          "C02"
+        ]
       },
       "note": null
     },
@@ -615,8 +637,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K05"],
-        "depends_on": ["C01"]
+        "implements": [
+          "K05"
+        ],
+        "depends_on": [
+          "C01"
+        ]
       },
       "note": null
     },
@@ -643,8 +669,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K05", "K16"],
-        "depends_on": ["C04"]
+        "implements": [
+          "K05",
+          "K16"
+        ],
+        "depends_on": [
+          "C04"
+        ]
       },
       "note": null
     },
@@ -671,8 +702,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K05"],
-        "depends_on": ["C05"]
+        "implements": [
+          "K05"
+        ],
+        "depends_on": [
+          "C05"
+        ]
       },
       "note": null
     },
@@ -699,7 +734,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K07"]
+        "implements": [
+          "K07"
+        ]
       },
       "note": null
     },
@@ -726,8 +763,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K07", "K08"],
-        "depends_on": ["C07"]
+        "implements": [
+          "K07",
+          "K08"
+        ],
+        "depends_on": [
+          "C07"
+        ]
       },
       "note": null
     },
@@ -754,8 +796,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K08"],
-        "depends_on": ["C04"]
+        "implements": [
+          "K08"
+        ],
+        "depends_on": [
+          "C04"
+        ]
       },
       "note": null
     },
@@ -782,7 +828,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K04"]
+        "implements": [
+          "K04"
+        ]
       },
       "note": "C10 按端点探针 native_search_support_for 已落地；生产无适配器故 unsupported。已有机械 V03，verification 仍 none，不是 passed，不是 V05。"
     },
@@ -792,13 +840,13 @@
       "title": "C11 协议与续轮适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 15,
+      "revision": 16,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C11",
         "line": 165,
         "endLine": 205,
-        "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c"
+        "fingerprint": "f6516942e644db31887c78f0d36625a8"
       },
       "implementation": {
         "state": "partial"
@@ -809,8 +857,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K04"],
-        "depends_on": ["C10"]
+        "implements": [
+          "K04"
+        ],
+        "depends_on": [
+          "C10"
+        ]
       },
       "note": "fixture 解析器在 native_search_subrequest.rs；流式主路径仍未保真搜索事件。verification 仍 none，不把本条标 passed，不关 G03。"
     },
@@ -837,8 +889,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K04", "K06"],
-        "depends_on": ["C11"]
+        "implements": [
+          "K04",
+          "K06"
+        ],
+        "depends_on": [
+          "C11"
+        ]
       },
       "note": null
     },
@@ -865,7 +922,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K06"]
+        "implements": [
+          "K06"
+        ]
       },
       "note": null
     },
@@ -892,8 +951,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K16"],
-        "depends_on": ["C13", "C17"]
+        "implements": [
+          "K16"
+        ],
+        "depends_on": [
+          "C13",
+          "C17"
+        ]
       },
       "note": null
     },
@@ -920,8 +984,14 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K16", "L06"],
-        "depends_on": ["C13", "C16"]
+        "implements": [
+          "K16",
+          "L06"
+        ],
+        "depends_on": [
+          "C13",
+          "C16"
+        ]
       },
       "note": null
     },
@@ -948,7 +1018,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K10"]
+        "implements": [
+          "K10"
+        ]
       },
       "note": null
     },
@@ -975,8 +1047,15 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K10", "K16"],
-        "depends_on": ["C16", "C04", "C13"]
+        "implements": [
+          "K10",
+          "K16"
+        ],
+        "depends_on": [
+          "C16",
+          "C04",
+          "C13"
+        ]
       },
       "note": null
     },
@@ -1003,8 +1082,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K18"],
-        "depends_on": ["C04"]
+        "implements": [
+          "K18"
+        ],
+        "depends_on": [
+          "C04"
+        ]
       },
       "note": null
     },
@@ -1031,8 +1114,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K09"],
-        "depends_on": ["C04"]
+        "implements": [
+          "K09"
+        ],
+        "depends_on": [
+          "C04"
+        ]
       },
       "note": null
     },
@@ -1059,8 +1146,17 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K11", "K12", "N07"],
-        "depends_on": ["C10", "C18", "C13", "C04"]
+        "implements": [
+          "K11",
+          "K12",
+          "N07"
+        ],
+        "depends_on": [
+          "C10",
+          "C18",
+          "C13",
+          "C04"
+        ]
       },
       "note": "协调器已接入生产 web_search；K12 构造器与解析器已落地，生产无适配器故原生 unsupported，MCP 单路是正常配置。K12 未进生产执行，故 partial 不是 present。机械 V03 不是验收，不把 verification 标 passed，不关 G02。"
     },
@@ -1087,8 +1183,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K13"],
-        "depends_on": ["C04", "C18"]
+        "implements": [
+          "K13"
+        ],
+        "depends_on": [
+          "C04",
+          "C18"
+        ]
       },
       "note": null
     },
@@ -1115,8 +1216,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K14"],
-        "depends_on": ["C19", "C21"]
+        "implements": [
+          "K14"
+        ],
+        "depends_on": [
+          "C19",
+          "C21"
+        ]
       },
       "note": null
     },
@@ -1143,8 +1249,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K16"],
-        "depends_on": ["C22"]
+        "implements": [
+          "K16"
+        ],
+        "depends_on": [
+          "C22"
+        ]
       },
       "note": null
     },
@@ -1171,8 +1281,15 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K16", "L03", "L04"],
-        "depends_on": ["C07", "C05"]
+        "implements": [
+          "K16",
+          "L03",
+          "L04"
+        ],
+        "depends_on": [
+          "C07",
+          "C05"
+        ]
       },
       "note": null
     },
@@ -1199,8 +1316,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K15"],
-        "depends_on": ["C23", "C02"]
+        "implements": [
+          "K15"
+        ],
+        "depends_on": [
+          "C23",
+          "C02"
+        ]
       },
       "note": null
     },
@@ -1227,7 +1349,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K17"]
+        "implements": [
+          "K17"
+        ]
       },
       "note": null
     },
@@ -1254,8 +1378,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["K17"],
-        "depends_on": ["C26"]
+        "implements": [
+          "K17"
+        ],
+        "depends_on": [
+          "C26"
+        ]
       },
       "note": null
     },
@@ -1295,8 +1423,20 @@
         "G04"
       ],
       "relations": {
-        "depends_on": ["P01", "P02", "P03", "P06", "K17", "V01", "V08"],
-        "closes": ["G04", "Q18", "Q01"]
+        "depends_on": [
+          "P01",
+          "P02",
+          "P03",
+          "P06",
+          "K17",
+          "V01",
+          "V08"
+        ],
+        "closes": [
+          "G04",
+          "Q18",
+          "Q01"
+        ]
       },
       "note": null
     },
@@ -1323,10 +1463,33 @@
       "work": {
         "state": "done"
       },
-      "scope": ["N01", "N15", "N16", "N17", "N20", "N21", "Q04", "Q10", "G06"],
+      "scope": [
+        "N01",
+        "N15",
+        "N16",
+        "N17",
+        "N20",
+        "N21",
+        "Q04",
+        "Q10",
+        "G06"
+      ],
       "relations": {
-        "depends_on": ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
-        "closes": ["Q04", "Q10", "G06"]
+        "depends_on": [
+          "D01",
+          "K04",
+          "K06",
+          "K10",
+          "K15",
+          "K16",
+          "R11",
+          "R12"
+        ],
+        "closes": [
+          "Q04",
+          "Q10",
+          "G06"
+        ]
       },
       "note": "2026-09-19 收口：D02 自身有 current verify，关闭门槛三行各有对应记录（Q04／Q10 用现有 V03，G06 用 host_authority 独立命令），§三之一记时点，故 work.state=done、verification.state=passed——只表示本包清单已绑定，不代标 C11／C14 的 passed，也不表示逐端点 V05 已通过（外移 G03／Q17／D04）。Q13 不关。"
     },
@@ -1353,10 +1516,30 @@
       "work": {
         "state": "done"
       },
-      "scope": ["N05", "N12", "N13", "N14", "N22", "Q02", "Q08", "G01", "G05"],
+      "scope": [
+        "N05",
+        "N12",
+        "N13",
+        "N14",
+        "N22",
+        "Q02",
+        "Q08",
+        "G01",
+        "G05"
+      ],
       "relations": {
-        "depends_on": ["D01", "K01", "K03", "K05", "K07", "K08"],
-        "closes": ["Q08", "G05"]
+        "depends_on": [
+          "D01",
+          "K01",
+          "K03",
+          "K05",
+          "K07",
+          "K08"
+        ],
+        "closes": [
+          "Q08",
+          "G05"
+        ]
       },
       "note": "2026-09-19 收口：Q02／G01 由本包施工修复并绑证据，Q08／G05 由本包关闭；D03 自身有 current verify，§三之一 记时点。verification.state=passed 只表示本包清单已绑定，不代标 C03／C07／C08 等组件的 passed。"
     },
@@ -1398,8 +1581,23 @@
         "G03"
       ],
       "relations": {
-        "depends_on": ["D02", "D03", "K09", "K11", "K12", "K13", "K14", "K18"],
-        "closes": ["Q02", "Q05", "Q17", "G02", "G03"]
+        "depends_on": [
+          "D02",
+          "D03",
+          "K09",
+          "K11",
+          "K12",
+          "K13",
+          "K14",
+          "K18"
+        ],
+        "closes": [
+          "Q02",
+          "Q05",
+          "Q17",
+          "G02",
+          "G03"
+        ]
       },
       "note": null
     },
@@ -1426,9 +1624,24 @@
       "work": {
         "state": "planned"
       },
-      "scope": ["N02", "N03", "N04", "N11", "N23", "Q14"],
+      "scope": [
+        "N02",
+        "N03",
+        "N04",
+        "N11",
+        "N23",
+        "Q14"
+      ],
       "relations": {
-        "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
+        "depends_on": [
+          "D02",
+          "D03",
+          "K05",
+          "K15",
+          "K16",
+          "L03",
+          "L04"
+        ]
       },
       "note": null
     },
@@ -1455,9 +1668,20 @@
       "work": {
         "state": "planned"
       },
-      "scope": ["N16", "N18", "Q06", "Q07", "Q19"],
+      "scope": [
+        "N16",
+        "N18",
+        "Q06",
+        "Q07",
+        "Q19"
+      ],
       "relations": {
-        "depends_on": ["D04", "D05", "V06", "E03"]
+        "depends_on": [
+          "D04",
+          "D05",
+          "V06",
+          "E03"
+        ]
       },
       "note": null
     },
@@ -1484,7 +1708,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["V01", "V02"]
+        "implements": [
+          "V01",
+          "V02"
+        ]
       },
       "note": null
     },
@@ -1511,8 +1738,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["V03", "V04"],
-        "depends_on": ["E01"]
+        "implements": [
+          "V03",
+          "V04"
+        ],
+        "depends_on": [
+          "E01"
+        ]
       },
       "note": null
     },
@@ -1539,8 +1771,15 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["V01", "V06", "V07"],
-        "depends_on": ["E01", "E02"]
+        "implements": [
+          "V01",
+          "V06",
+          "V07"
+        ],
+        "depends_on": [
+          "E01",
+          "E02"
+        ]
       },
       "note": null
     },
@@ -1838,7 +2077,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C01", "C03", "C07", "C22"]
+        "applies_to": [
+          "C01",
+          "C03",
+          "C07",
+          "C22"
+        ]
       },
       "note": null
     },
@@ -1865,7 +2109,11 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C02", "C25", "C27"]
+        "applies_to": [
+          "C02",
+          "C25",
+          "C27"
+        ]
       },
       "note": null
     },
@@ -1892,7 +2140,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C03", "C07", "C14", "C25"]
+        "applies_to": [
+          "C03",
+          "C07",
+          "C14",
+          "C25"
+        ]
       },
       "note": null
     },
@@ -1919,7 +2172,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C10", "C11", "C12", "C20"]
+        "applies_to": [
+          "C10",
+          "C11",
+          "C12",
+          "C20"
+        ]
       },
       "note": null
     },
@@ -1946,7 +2204,14 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C04", "C05", "C06", "C17", "C20", "C24"]
+        "applies_to": [
+          "C04",
+          "C05",
+          "C06",
+          "C17",
+          "C20",
+          "C24"
+        ]
       },
       "note": null
     },
@@ -1973,7 +2238,14 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C12", "C13", "C15", "C17", "C20", "C21"]
+        "applies_to": [
+          "C12",
+          "C13",
+          "C15",
+          "C17",
+          "C20",
+          "C21"
+        ]
       },
       "note": null
     },
@@ -2000,7 +2272,11 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C07", "C08", "C11"]
+        "applies_to": [
+          "C07",
+          "C08",
+          "C11"
+        ]
       },
       "note": null
     },
@@ -2027,7 +2303,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C08", "C09"]
+        "applies_to": [
+          "C08",
+          "C09"
+        ]
       },
       "note": null
     },
@@ -2054,7 +2333,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C04", "C19", "C20", "C21", "C15"]
+        "applies_to": [
+          "C04",
+          "C19",
+          "C20",
+          "C21",
+          "C15"
+        ]
       },
       "note": null
     },
@@ -2081,7 +2366,11 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C16", "C17", "C14"]
+        "applies_to": [
+          "C16",
+          "C17",
+          "C14"
+        ]
       },
       "note": null
     },
@@ -2108,7 +2397,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C20", "C10", "C18", "C22", "C25"]
+        "applies_to": [
+          "C20",
+          "C10",
+          "C18",
+          "C22",
+          "C25"
+        ]
       },
       "note": null
     },
@@ -2135,7 +2430,11 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C20", "C11", "C12"]
+        "applies_to": [
+          "C20",
+          "C11",
+          "C12"
+        ]
       },
       "note": "构造器与 fixture 解析器已落地；C10 按端点声明，生产无适配器故原生 unsupported；搜索事件尚未进入网关流式路径。不是 V05，不关 G03。"
     },
@@ -2162,7 +2461,11 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C21", "C22", "C15"]
+        "applies_to": [
+          "C21",
+          "C22",
+          "C15"
+        ]
       },
       "note": null
     },
@@ -2189,7 +2492,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C22", "C07", "C23", "C25"]
+        "applies_to": [
+          "C22",
+          "C07",
+          "C23",
+          "C25"
+        ]
       },
       "note": null
     },
@@ -2216,7 +2524,11 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C25", "C23", "C14"]
+        "applies_to": [
+          "C25",
+          "C23",
+          "C14"
+        ]
       },
       "note": null
     },
@@ -2243,7 +2555,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C23", "C14", "C17", "C24"]
+        "applies_to": [
+          "C23",
+          "C14",
+          "C17",
+          "C24"
+        ]
       },
       "note": null
     },
@@ -2270,7 +2587,13 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C26", "C27", "C11", "C20", "C21"]
+        "applies_to": [
+          "C26",
+          "C27",
+          "C11",
+          "C20",
+          "C21"
+        ]
       },
       "note": null
     },
@@ -2297,7 +2620,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "applies_to": ["C18", "C16", "C20", "C21"]
+        "applies_to": [
+          "C18",
+          "C16",
+          "C20",
+          "C21"
+        ]
       },
       "note": null
     },
@@ -2324,8 +2652,18 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N01", "N05"],
-        "consumes": ["K01", "K02", "K03", "K07", "K08", "K15"]
+        "implements": [
+          "N01",
+          "N05"
+        ],
+        "consumes": [
+          "K01",
+          "K02",
+          "K03",
+          "K07",
+          "K08",
+          "K15"
+        ]
       },
       "note": null
     },
@@ -2352,8 +2690,21 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N06", "N07", "N08", "N10", "N11"],
-        "consumes": ["K09", "K11", "K12", "K13", "K14", "K15"]
+        "implements": [
+          "N06",
+          "N07",
+          "N08",
+          "N10",
+          "N11"
+        ],
+        "consumes": [
+          "K09",
+          "K11",
+          "K12",
+          "K13",
+          "K14",
+          "K15"
+        ]
       },
       "note": null
     },
@@ -2380,8 +2731,15 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N02", "N03"],
-        "consumes": ["K05", "K14", "K16"]
+        "implements": [
+          "N02",
+          "N03"
+        ],
+        "consumes": [
+          "K05",
+          "K14",
+          "K16"
+        ]
       },
       "note": null
     },
@@ -2408,8 +2766,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N04"],
-        "consumes": ["K16"]
+        "implements": [
+          "N04"
+        ],
+        "consumes": [
+          "K16"
+        ]
       },
       "note": null
     },
@@ -2436,8 +2798,14 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N14"],
-        "consumes": ["K03", "K07", "K08"]
+        "implements": [
+          "N14"
+        ],
+        "consumes": [
+          "K03",
+          "K07",
+          "K08"
+        ]
       },
       "note": null
     },
@@ -2464,8 +2832,15 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N16"],
-        "consumes": ["K06", "K10", "K14", "K16"]
+        "implements": [
+          "N16"
+        ],
+        "consumes": [
+          "K06",
+          "K10",
+          "K14",
+          "K16"
+        ]
       },
       "note": null
     },
@@ -2492,8 +2867,17 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N01", "N05", "N16"],
-        "consumes": ["K01", "K02", "K03", "K04"]
+        "implements": [
+          "N01",
+          "N05",
+          "N16"
+        ],
+        "consumes": [
+          "K01",
+          "K02",
+          "K03",
+          "K04"
+        ]
       },
       "note": null
     },
@@ -2520,8 +2904,16 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N03", "N12", "N13"],
-        "consumes": ["K05", "K06", "K16"]
+        "implements": [
+          "N03",
+          "N12",
+          "N13"
+        ],
+        "consumes": [
+          "K05",
+          "K06",
+          "K16"
+        ]
       },
       "note": null
     },
@@ -2548,8 +2940,14 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N05", "N14"],
-        "consumes": ["K07", "K08"]
+        "implements": [
+          "N05",
+          "N14"
+        ],
+        "consumes": [
+          "K07",
+          "K08"
+        ]
       },
       "note": null
     },
@@ -2576,8 +2974,15 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N09", "N17", "N20"],
-        "consumes": ["K04", "K12"]
+        "implements": [
+          "N09",
+          "N17",
+          "N20"
+        ],
+        "consumes": [
+          "K04",
+          "K12"
+        ]
       },
       "note": null
     },
@@ -2604,8 +3009,14 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N15", "N16"],
-        "consumes": ["K06", "K17"]
+        "implements": [
+          "N15",
+          "N16"
+        ],
+        "consumes": [
+          "K06",
+          "K17"
+        ]
       },
       "note": null
     },
@@ -2632,8 +3043,14 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N19"],
-        "consumes": ["K05", "K10", "K18"]
+        "implements": [
+          "N19"
+        ],
+        "consumes": [
+          "K05",
+          "K10",
+          "K18"
+        ]
       },
       "note": null
     },
@@ -2660,8 +3077,19 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N06", "N07", "N08", "N10"],
-        "consumes": ["K09", "K10", "K11", "K12", "K13"]
+        "implements": [
+          "N06",
+          "N07",
+          "N08",
+          "N10"
+        ],
+        "consumes": [
+          "K09",
+          "K10",
+          "K11",
+          "K12",
+          "K13"
+        ]
       },
       "note": null
     },
@@ -2688,8 +3116,17 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N02", "N04", "N11", "N17"],
-        "consumes": ["K14", "K15", "K16"]
+        "implements": [
+          "N02",
+          "N04",
+          "N11",
+          "N17"
+        ],
+        "consumes": [
+          "K14",
+          "K15",
+          "K16"
+        ]
       },
       "note": null
     },
@@ -2716,8 +3153,12 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["N18"],
-        "consumes": ["K17"]
+        "implements": [
+          "N18"
+        ],
+        "consumes": [
+          "K17"
+        ]
       },
       "note": null
     },
@@ -3394,7 +3835,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["P05"]
+        "consumes": [
+          "P05"
+        ]
       },
       "note": "源码事实与 Q* 未决事项的唯一位置"
     },
@@ -3471,7 +3914,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["P03", "P05"]
+        "consumes": [
+          "P03",
+          "P05"
+        ]
       },
       "note": "登记不进入 39 个业务工具数的入口与 Planned 占位；Planned 不暴露"
     },
@@ -4397,7 +4843,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K06"]
+        "consumes": [
+          "K06"
+        ]
       },
       "note": "已采用：当前不改默认值；改数必须先升 schema_version。常量表延后到第一次改数。不关闭 Q13，不把 D02 标为可验收。"
     },
@@ -4549,7 +4997,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K01", "K05"]
+        "consumes": [
+          "K01",
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M01，暴露面 general"
     },
@@ -4576,7 +5027,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K10"]
+        "consumes": [
+          "K10"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
@@ -4603,7 +5056,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K10"]
+        "consumes": [
+          "K10"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
@@ -4630,7 +5085,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K09"]
+        "consumes": [
+          "K09"
+        ]
       },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
@@ -4657,7 +5114,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05", "K14"]
+        "consumes": [
+          "K05",
+          "K14"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
@@ -4684,7 +5144,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
@@ -4711,7 +5173,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
@@ -4738,7 +5202,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
@@ -4765,7 +5231,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K07"]
+        "consumes": [
+          "K07"
+        ]
       },
       "note": "工具卡；语义归属 M03，暴露面 general"
     },
@@ -4792,7 +5260,11 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K09", "K11", "K12"]
+        "consumes": [
+          "K09",
+          "K11",
+          "K12"
+        ]
       },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
@@ -4819,7 +5291,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K09", "K13"]
+        "consumes": [
+          "K09",
+          "K13"
+        ]
       },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
@@ -4846,7 +5321,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05", "K08"]
+        "consumes": [
+          "K05",
+          "K08"
+        ]
       },
       "note": "工具卡；语义归属 M03，暴露面 general"
     },
@@ -4873,7 +5351,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05", "K08"]
+        "consumes": [
+          "K05",
+          "K08"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
@@ -4900,7 +5381,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05", "K14"]
+        "consumes": [
+          "K05",
+          "K14"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
@@ -4927,7 +5411,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05", "K14"]
+        "consumes": [
+          "K05",
+          "K14"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
@@ -4954,7 +5441,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
@@ -4981,7 +5470,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
@@ -5008,7 +5499,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
@@ -5035,7 +5528,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
@@ -5062,7 +5557,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5089,7 +5586,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5116,7 +5615,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
@@ -5143,7 +5644,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5170,7 +5673,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K16"]
+        "consumes": [
+          "K16"
+        ]
       },
       "note": "工具卡；语义归属 M08，暴露面 extended"
     },
@@ -5197,7 +5702,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K14"]
+        "consumes": [
+          "K14"
+        ]
       },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
@@ -5224,7 +5731,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5251,7 +5760,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K09"]
+        "consumes": [
+          "K09"
+        ]
       },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
@@ -5278,7 +5789,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K09"]
+        "consumes": [
+          "K09"
+        ]
       },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
@@ -5305,7 +5818,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K09"]
+        "consumes": [
+          "K09"
+        ]
       },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
@@ -5332,7 +5847,11 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K06", "K10", "K14"]
+        "consumes": [
+          "K06",
+          "K10",
+          "K14"
+        ]
       },
       "note": "工具卡；语义归属 M05，暴露面 extended"
     },
@@ -5359,7 +5878,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5386,7 +5907,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
@@ -5413,7 +5936,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5440,7 +5965,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5467,7 +5994,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5494,7 +6023,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5521,7 +6052,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
@@ -5548,7 +6081,9 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["K05"]
+        "consumes": [
+          "K05"
+        ]
       },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
@@ -5775,7 +6310,10 @@
       "work": null,
       "scope": [],
       "relations": {
-        "implements": ["P02", "P03"]
+        "implements": [
+          "P02",
+          "P03"
+        ]
       },
       "note": null
     },
@@ -5802,8 +6340,14 @@
       "work": null,
       "scope": [],
       "relations": {
-        "verifies": ["X01", "P02", "P03"],
-        "depends_on": ["X01"]
+        "verifies": [
+          "X01",
+          "P02",
+          "P03"
+        ],
+        "depends_on": [
+          "X01"
+        ]
       },
       "note": null
     },
@@ -5830,7 +6374,15 @@
       "work": null,
       "scope": [],
       "relations": {
-        "consumes": ["P01", "P02", "P03", "P04", "P05", "P06", "P07"]
+        "consumes": [
+          "P01",
+          "P02",
+          "P03",
+          "P04",
+          "P05",
+          "P06",
+          "P07"
+        ]
       },
       "note": "身份、定义位置、修订与指纹、类型化关系、决定与复核记录；由 --reconcile 写入计算结果"
     }
@@ -6999,8 +7551,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7010,8 +7562,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。 2026-09-19 重绑：本机 streaming_finish_reason_sse 3 passed（含 G03 夹带搜索事件负例）。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。 2026-09-19 重绑：本机 streaming_finish_reason_sse 3 passed（含 G03 夹带搜索事件负例）。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7021,8 +7573,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7032,8 +7584,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7043,8 +7595,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7054,8 +7606,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7065,8 +7617,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7076,8 +7628,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，不关闭 Q04／D02。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，不关闭 Q04／D02。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7087,8 +7639,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -7098,8 +7650,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
-      "applicability": "current",
-      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，不关闭 Q04／D02。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，不关闭 Q04／D02。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "G02",
@@ -7110,7 +7662,7 @@
       "fingerprint": "c23a7fa25d9c97491544b7e918cf3132",
       "at": "2026-09-19T14:20:00Z",
       "applicability": "current",
-      "note": "2026-09-19 对照检查后重绑：本机 dual_path 13 passed / 0 failed。协调器接入；生产原生 unsupported；MCP failover 不是双路；web_fetch 不呈现 dualPath。机械覆盖不是验收，不关 G02，不是 V04。 2026-09-19 K12 第一刀重绑：构造器已落地，生产无适配器故原生 unsupported。不关 G02，不是 V04。"
+      "note": "2026-09-19 K12 对照检查后重绑：本机 dual_path 13 passed / 0 failed（协调器 + execute_web_tool 分路状态 + web_fetch 不呈现 dualPath）。构造器已落地，生产无适配器故原生 unsupported。机械覆盖不是验收，不关 G02，不是 V04。"
     },
     {
       "object": "C20",
@@ -7121,7 +7673,7 @@
       "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
       "at": "2026-09-19T14:20:00Z",
       "applicability": "current",
-      "note": "2026-09-19 对照检查后重绑：本机 13 passed / 0 failed。implementation.state=partial（K12 不在）。不把 C20 verification 标 passed，不关 G02。 2026-09-19 K12 第一刀重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
+      "note": "2026-09-19 K12 对照检查后重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
     },
     {
       "object": "C20",
@@ -7132,7 +7684,7 @@
       "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
       "at": "2026-09-19T14:20:00Z",
       "applicability": "current",
-      "note": "2026-09-19 对照检查后重绑：本机 1 passed / 0 failed。生产入口搜索收集经协调器：native.supported=false、attempted=false，MCP 仍执行。不是 V04。 2026-09-19 K12 第一刀重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
+      "note": "2026-09-19 K12 对照检查后重绑：生产入口搜索收集经协调器：native.supported=false、attempted=false，MCP 仍执行。implementation.state=partial（构造器在，直播路径不在）。不是 V04，不把 C20 verification 标 passed，不关 G02。"
     },
     {
       "object": "C20",
@@ -7143,7 +7695,7 @@
       "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
       "at": "2026-09-19T14:20:00Z",
       "applicability": "current",
-      "note": "2026-09-19 对照检查后重绑：本机 1 passed / 0 failed。web_search 返回 dualPath 分路状态；MCP 主备次数不是 dualPathComplete。无降级文案。 2026-09-19 K12 第一刀重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
+      "note": "2026-09-19 K12 对照检查后重绑：web_search 返回 dualPath 分路状态；MCP 主备次数不是 dualPathComplete。无降级文案。implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
     },
     {
       "object": "C20",
@@ -7154,7 +7706,7 @@
       "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
       "at": "2026-09-19T14:20:00Z",
       "applicability": "current",
-      "note": "2026-09-19 对照检查：本机 1 passed / 0 failed。web_fetch 复用 packetizer 但不呈现 dualPath。不是 V04，不关 G02。 2026-09-19 K12 第一刀重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
+      "note": "2026-09-19 K12 对照检查后重绑：web_fetch 复用 packetizer 但不呈现 dualPath。implementation.state=partial（构造器在，直播路径不在）。不是 V04，不把 C20 verification 标 passed，不关 G02。"
     },
     {
       "object": "K12",
@@ -7208,8 +7760,129 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
       "at": "2026-09-19T14:20:00Z",
+      "applicability": "obsolete",
+      "note": "2026-09-19 第一刀：本机 1 passed / 0 failed。流式主路径不把搜索事件变成可引用凭据。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】2026-09-19 对照检查改写了 C11 正文（Q04／D02 已关闭口径、ResponsesReserved 未加），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
       "applicability": "current",
-      "note": "2026-09-19 第一刀：本机 1 passed / 0 failed。流式主路径不把搜索事件变成可引用凭据。不把 C11 verification 标 passed，不关 G03。"
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。 2026-09-19 重绑：本机 streaming_finish_reason_sse 3 passed（含 G03 夹带搜索事件负例）。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::deepseek_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib deepseek_tool_continuation_preserves_reasoning_content",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib messages_for_api_does_not_replay_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::responses_",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib responses_double_preserves_instructions_and_host_repair_on_continuation",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_anthropic.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic::tests",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_anthropic_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_anthropic_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_anthropic_finish_reason",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib chat_completions_sse_web_search_call_is_ignored_without_credentials",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "f6516942e644db31887c78f0d36625a8",
+      "at": "2026-09-19T14:55:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 第一刀：本机 1 passed / 0 failed。流式主路径不把搜索事件变成可引用凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
     }
   ],
   "changes": [
@@ -19264,7 +19937,9 @@
       "reason": "D01 文件内登记本轮状态与证据时点：说明 work.state=done 早于证据 1 的登记，并列明本轮已绑定与「已绑定但未端到端」的边界。只补说明文字与指针，不改变 D01 的改动范围、证据要求、回退条件或任何用户承诺，故为细化。",
       "review": null,
       "objects": [],
-      "files": ["implementation/D01-trustworthy-baseline.md"]
+      "files": [
+        "implementation/D01-trustworthy-baseline.md"
+      ]
     },
     {
       "id": "CHG-2026-09-16-22",
@@ -19918,7 +20593,11 @@
       "reason": "修掉两处机械缺陷，均不改任何对象定义正文、关系或状态：① 文件级对象登记 ID 不再由代码猜——catalog.fileContainers 之外的容器名（rules/governance.md 的 P03、rules/objects.md 的 P02）登记为裸 ID，不再生成 catalog 从未登记的 P03#file／P02#file；② registry.json 正文改由仓库 Prettier 序列化，消除与 format:check 的长期不一致。按 P03 §4.1 属细化。",
       "review": null,
       "objects": [],
-      "files": ["rules/governance.md", "rules/objects.md", "registry.json"]
+      "files": [
+        "rules/governance.md",
+        "rules/objects.md",
+        "registry.json"
+      ]
     },
     {
       "id": "CHG-2026-09-17-47",
@@ -21008,6 +21687,37 @@
           "fingerprintTo": "d11c3e38b35d8eaae99b3f52d917e014"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-74",
+      "at": "2026-09-19T14:53:56.795Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "对照检查：K11 不再把无真原生写成无 K12；M04 去掉已关闭的 Q04／D02 未决口径；C11 写明 ResponsesReserved 直播路径未加。不关 G02／G03，不标 C20／C11 verification passed，不自签 REV。",
+      "review": null,
+      "objects": [
+        {
+          "id": "K11#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "9539fa54ee312aaba9e4c99e08b1211b",
+          "fingerprintTo": "165f7d51dd84117573d06ef5bec41d20"
+        },
+        {
+          "id": "M04",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "129eef68f287f43a05422f6f105a6a85",
+          "fingerprintTo": "cbbf430a84f9432d479b23d595a2c94a"
+        },
+        {
+          "id": "C11",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+          "fingerprintTo": "f6516942e644db31887c78f0d36625a8"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -22069,6 +22779,11 @@
     {
       "review": "REV-2026-09-16-32",
       "object": "P01#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-19-60",
+      "object": "G03",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
