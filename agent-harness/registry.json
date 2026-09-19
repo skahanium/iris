@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 117,
+  "registryRevision": 118,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T06:09:05.697Z"
+    "recordedAt": "2026-09-19T06:10:15.324Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "ed518ecd306bb0cae1ed18d7450637e7"
+      "fingerprint": "16aa1dc61ea1e3d725369324b564f6e5"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -19641,8 +19641,8 @@
     "Q12": { "state": "closed" },
     "Q13": { "state": "open" },
     "Q14": { "state": "open" },
-    "Q15": { "state": "open" },
-    "Q16": { "state": "open" },
+    "Q15": { "state": "closed" },
+    "Q16": { "state": "closed" },
     "Q17": { "state": "open" },
     "Q18": { "state": "closed" },
     "Q19": { "state": "open" },
@@ -19707,6 +19707,12 @@
       "author": "DeepSeek Harness（施工）",
       "topic": "2026-09-19 D03 收口：issues 段手工改写",
       "detail": "Q02／Q08／G01／G05 的 state 由 open 改为 closed。检查器不会因 D03 的 closes 自动关 issue，必须手写（X03）。关闭依据：Q02 与 G01 由本包施工修复并绑 V04／V03 证据；Q08／G05 见 D03 §三「关闭门槛」表。Q13（预算存档兼容）与 Q14（双路搜索对纯编辑任务的触发范围）保持 open——Q13 待第一次真改预算默认值时处理，Q14 归 D05 按其 §三 处理。未把 Q15／Q16 写入本批：它们已在 2026-09-19 随交互形态与记忆语义确定而关闭。"
+    },
+    {
+      "at": "2026-09-19T07:45:00Z",
+      "author": "DeepSeek Harness（施工）",
+      "topic": "2026-09-19 补写：Q15／Q16 的 issues 状态",
+      "detail": "Q15／Q16 的正文、catalog note、K03／K08 与「尚未确定」表都已在 57276ae7 写成「已确定并关闭」，但该提交只改了 markdown 与 catalog，**没有同步 registry.issues**，于是登记表里它们仍是 open。本批补写为 closed；检查器不会因 closes 或正文声明自动关 issue，必须手写（X03）。Q15／Q16 的 blocks 边与 scope 已在 57276ae7 移出，因此补写状态不改变任何就绪计算——这一点本身说明「正文说关闭」与「登记表说关闭」是两件事，文档门只查前者。"
     }
   ]
 }
