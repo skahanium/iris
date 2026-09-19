@@ -313,10 +313,10 @@ fn native_search_endpoint_from_run_context(
 ) -> Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef> {
     let model = context.model_override()?;
     crate::llm::model_catalog::find_model(&model.model_id).map(|entry| {
-        crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef {
-            model_id: model.model_id,
-            endpoint_family: entry.endpoint_family,
-        }
+        crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef::new(
+            model.model_id,
+            entry.endpoint_family,
+        )
     })
 }
 
@@ -379,6 +379,12 @@ impl<'a> NormalRunToolExecutor<'a> {
     ) -> Self {
         self.native_search_endpoint = endpoint;
         self
+    }
+
+    fn web_search_call_deadline(&self) -> Duration {
+        crate::ai_runtime::native_search_adapter::web_search_call_deadline(
+            self.native_search_endpoint.as_ref(),
+        )
     }
 
     /// Enable real ChildRun execution with the same provider route selected for
@@ -590,12 +596,13 @@ impl<'a> NormalRunToolExecutor<'a> {
             native_endpoint: self.native_search_endpoint.clone(),
         };
         let call_started = Instant::now();
+        let search_deadline = self.web_search_call_deadline();
         let mut attempts_for_search = 0_u32;
         let output = if discovery_only || max_fetches > 0 {
             loop {
                 attempts_for_search = attempts_for_search.saturating_add(1);
                 let attempt_count = self.record_web_attempt()?;
-                let remaining_time = WEB_TOOL_CALL_DEADLINE.saturating_sub(call_started.elapsed());
+                let remaining_time = search_deadline.saturating_sub(call_started.elapsed());
                 if remaining_time.is_zero() {
                     let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
                     self.set_web_failure(Some(failure))?;
@@ -604,7 +611,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                         failure,
                         attempt_count,
                         call_started.elapsed(),
-                        remaining_web_tool_budget_ms(call_started.elapsed()),
+                        remaining_web_tool_budget_until(call_started.elapsed(), search_deadline),
                     ));
                 }
                 let mut attempt_input = broker_input.clone();
@@ -638,7 +645,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 let retry_is_eligible = attempts_for_search < 2
                     && (failure.retryable || adaptive_oversize_retry)
                     && call_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
-                        < WEB_TOOL_CALL_DEADLINE;
+                        < search_deadline;
                 if retry_is_eligible {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     continue;
@@ -649,7 +656,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     failure,
                     attempt_count,
                     call_started.elapsed(),
-                    remaining_web_tool_budget_ms(call_started.elapsed()),
+                    remaining_web_tool_budget_until(call_started.elapsed(), search_deadline),
                 ));
             }
         } else {
@@ -687,7 +694,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     failure,
                     self.web_attempt_count(),
                     call_started.elapsed(),
-                    remaining_web_tool_budget_ms(call_started.elapsed()),
+                    remaining_web_tool_budget_until(call_started.elapsed(), search_deadline),
                 ));
             }
             let proposed_urls = candidates
@@ -759,7 +766,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     canonical_urls,
                     new_resource_count,
                     duplicate_resource_count,
-                    remaining_web_tool_budget_ms(call_started.elapsed()) > 0,
+                    remaining_web_tool_budget_until(call_started.elapsed(), search_deadline) > 0,
                     &output.dual_path,
                 ),
                 duration_ms: bounded_duration_ms(call_started.elapsed()),
@@ -3457,7 +3464,11 @@ fn bounded_duration_ms(duration: Duration) -> u64 {
 }
 
 fn remaining_web_tool_budget_ms(elapsed: Duration) -> u64 {
-    bounded_duration_ms(WEB_TOOL_CALL_DEADLINE.saturating_sub(elapsed))
+    remaining_web_tool_budget_until(elapsed, WEB_TOOL_CALL_DEADLINE)
+}
+
+fn remaining_web_tool_budget_until(elapsed: Duration, deadline: Duration) -> u64 {
+    bounded_duration_ms(deadline.saturating_sub(elapsed))
 }
 
 fn web_duration_bucket(duration: Duration) -> &'static str {

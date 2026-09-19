@@ -1,15 +1,15 @@
 //! K12 native search subrequest constructor and fixture credential parser.
 //!
 //! This module constructs an isolated native-search payload and maps protocol
-//! fixtures onto K11 route-attempt fields. Production has no registered
-//! adapters, so C10 still reports native search as unsupported. Streaming
-//! search events are not admitted into `streaming.rs`.
+//! fixtures onto K11 route-attempt fields. Production adapters are registered
+//! per model in `native_search_adapter` (MiniMax-M3 today). Streaming search
+//! events are not admitted into `streaming.rs`.
 
 #![cfg_attr(
     not(test),
     allow(
         dead_code,
-        reason = "K12 constructor and fixture parser are production types; live execution waits on a registered adapter and G03 streaming"
+        reason = "unused helpers remain until streaming admits native search events"
     )
 )]
 
@@ -27,6 +27,24 @@ use crate::ai_types::EndpointFamily;
 pub(crate) struct NativeSearchEndpointRef {
     pub model_id: String,
     pub endpoint_family: EndpointFamily,
+    /// Chat API base of the selected candidate, if known. Native search may
+    /// derive a sibling path from it; it is not sent as vendor JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_base: Option<String>,
+    /// Encrypted-store service for the selected candidate, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_service: Option<String>,
+}
+
+impl NativeSearchEndpointRef {
+    pub(crate) fn new(model_id: impl Into<String>, endpoint_family: EndpointFamily) -> Self {
+        Self {
+            model_id: model_id.into(),
+            endpoint_family,
+            api_base: None,
+            credential_service: None,
+        }
+    }
 }
 
 /// Public retrieval scope that may travel with the approved query.
@@ -199,16 +217,18 @@ pub(crate) fn native_search_unsupported_reason_for(
     if catalog_capability_absent(&endpoint.model_id) {
         return Some(NativeSearchUnsupportedReason::CapabilityAbsent);
     }
-    if test_adapter_registered(&endpoint.model_id) {
+    if test_adapter_registered(&endpoint.model_id)
+        || crate::ai_runtime::native_search_adapter::lookup_production_adapter(&endpoint.model_id)
+            .is_some()
+    {
         return None;
     }
     Some(NativeSearchUnsupportedReason::AdapterAbsent)
 }
 
-/// Production adapter registry size. Empty means Iris has not adapted any endpoint.
-#[cfg(test)]
+/// Production adapter registry size. Counted from per-model adapter files.
 pub(crate) fn production_native_search_adapter_count() -> usize {
-    0
+    crate::ai_runtime::native_search_adapter::production_adapter_count()
 }
 
 fn catalog_capability_absent(model_id: &str) -> bool {
@@ -299,10 +319,16 @@ fn push_https_hit(hits: &mut Vec<SearchHit>, url: &str, title: &str) {
     if hits.iter().any(|hit| hit.url == url) {
         return;
     }
+    let title = title.trim();
+    let snippet = if title.is_empty() {
+        url.to_string()
+    } else {
+        title.to_string()
+    };
     hits.push(SearchHit {
         url: url.to_string(),
         title: title.to_string(),
-        snippet: String::new(),
+        snippet,
     });
 }
 
@@ -388,10 +414,7 @@ mod tests {
     }
 
     fn endpoint(model_id: &str, family: EndpointFamily) -> NativeSearchEndpointRef {
-        NativeSearchEndpointRef {
-            model_id: model_id.into(),
-            endpoint_family: family,
-        }
+        NativeSearchEndpointRef::new(model_id, family)
     }
 
     fn draft(query: &str, private_material: Option<&str>) -> NativeSearchSubrequestDraft {
@@ -472,6 +495,57 @@ mod tests {
                 "type": "web_search_call",
                 "status": "completed"
             }]
+        })
+    }
+
+    /// Shape taken from the 2026-09-20 MiniMax-M3 `/v1/responses` live probe.
+    /// Hosts are examples; this is not a V05 verdict.
+    fn minimax_responses_live_shape_fixture() -> Value {
+        json!({
+            "id": "resp-fixture",
+            "object": "response",
+            "status": "completed",
+            "model": "MiniMax-M3",
+            "output": [
+                {
+                    "id": "call_fixture",
+                    "type": "web_search_call",
+                    "status": "completed",
+                    "action": { "type": "search", "query": "Shanghai weather today" }
+                },
+                {
+                    "id": "resp-fixture_msg",
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "summary",
+                        "annotations": [{
+                            "type": "url_citation",
+                            "title": "example weather",
+                            "url": "https://weather.example/shanghai"
+                        }]
+                    }]
+                }
+            ],
+            "tools": [{ "type": "web_search" }]
+        })
+    }
+
+    /// Shape taken from the 2026-09-20 MiniMax Anthropic Messages live probe:
+    /// HTTP 200, `stop_reason=end_turn`, only a `text` block. Not native search.
+    fn minimax_anthropic_messages_text_only_fixture() -> Value {
+        json!({
+            "id": "msg-fixture",
+            "type": "message",
+            "role": "assistant",
+            "model": "MiniMax-M3",
+            "content": [{
+                "type": "text",
+                "text": "I don't have access to real-time weather data."
+            }],
+            "stop_reason": "end_turn"
         })
     }
 
@@ -600,6 +674,33 @@ mod tests {
     }
 
     #[test]
+    fn minimax_responses_live_shape_yields_https_credentials() {
+        let parse = parse_native_search_payload(
+            NativeSearchPayloadFamily::OpenAiShaped,
+            &minimax_responses_live_shape_fixture(),
+        );
+        assert!(parse.has_retrieval_credentials);
+        assert!(!parse.generated_text_only);
+        assert_eq!(parse.failure, None);
+        assert_eq!(parse.candidates.len(), 1);
+        assert_eq!(parse.candidates[0].url, "https://weather.example/shanghai");
+    }
+
+    #[test]
+    fn minimax_anthropic_messages_text_only_is_protocol_insufficient() {
+        let parse = parse_native_search_payload(
+            NativeSearchPayloadFamily::OpenAiShaped,
+            &minimax_anthropic_messages_text_only_fixture(),
+        );
+        assert!(!parse.has_retrieval_credentials);
+        assert!(parse.generated_text_only);
+        assert_eq!(
+            parse.failure,
+            Some(RouteFailureClass::ProtocolOrResultInsufficient)
+        );
+    }
+
+    #[test]
     fn text_only_url_is_protocol_insufficient_not_succeeded_or_unsupported() {
         let parse = parse_native_search_payload(
             NativeSearchPayloadFamily::OpenAiShaped,
@@ -675,7 +776,7 @@ mod tests {
                 allow_second_route: true,
             },
             &probe,
-            &ProductionNativeSearchRoute,
+            &ProductionNativeSearchRoute::default(),
             &mcp,
         )
         .await;
@@ -706,6 +807,23 @@ mod tests {
             native_search_support_for(Some(&chat)),
             NativeSearchSupport::Available
         );
+    }
+
+    #[test]
+    fn minimax_m3_production_adapter_is_available() {
+        let entry = crate::llm::model_catalog::find_model("MiniMax-M3").expect("catalog");
+        assert!(entry.supports_tools);
+        assert_eq!(
+            entry.endpoint_family,
+            EndpointFamily::OpenAiCompatibleChatCompletions
+        );
+        let endpoint = endpoint(entry.id, entry.endpoint_family);
+        assert_eq!(
+            native_search_support_for(Some(&endpoint)),
+            NativeSearchSupport::Available
+        );
+        assert_eq!(native_search_unsupported_reason_for(Some(&endpoint)), None);
+        assert_eq!(production_native_search_adapter_count(), 1);
     }
 
     #[test]
@@ -775,8 +893,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn production_registry_empty_keeps_probe_unsupported_and_still_calls_mcp() {
-        assert_eq!(production_native_search_adapter_count(), 0);
+    async fn production_registry_does_not_adapt_deepseek_and_still_calls_mcp() {
+        assert_eq!(production_native_search_adapter_count(), 1);
         let chat = endpoint(
             "deepseek-v4-flash",
             EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -802,7 +920,7 @@ mod tests {
                 allow_second_route: true,
             },
             &probe,
-            &ProductionNativeSearchRoute,
+            &ProductionNativeSearchRoute::default(),
             &mcp,
         )
         .await;

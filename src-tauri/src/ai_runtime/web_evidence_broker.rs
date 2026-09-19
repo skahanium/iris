@@ -774,14 +774,17 @@ async fn collect_planned_query_fetches(
         };
         let outcome = coordinate_dual_path_search(
             DualPathSearchRequest {
-                identity,
+                identity: identity.clone(),
                 query: query.clone(),
                 allow_second_route: true,
             },
             &ProductionNativeSearchSupport {
                 endpoint: native_endpoint.clone(),
             },
-            &ProductionNativeSearchRoute,
+            &ProductionNativeSearchRoute {
+                endpoint: native_endpoint.clone(),
+                identity: identity.clone(),
+            },
             &mcp_route,
         )
         .await;

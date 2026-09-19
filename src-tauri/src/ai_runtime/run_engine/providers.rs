@@ -635,6 +635,8 @@ impl<'a> FailoverStreamingProvider<'a> {
                 |candidate| crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef {
                     model_id: candidate.model.clone(),
                     endpoint_family: candidate.endpoint_family,
+                    api_base: Some(candidate.base_url.clone()),
+                    credential_service: candidate.credential_service.clone(),
                 },
             )
     }

@@ -1,9 +1,7 @@
 //! C20 dual-path web search coordinator (K11 mechanical subset).
 //!
-//! Production native search is reported as unsupported because the C10 adapter
-//! registry is empty (K12 constructor exists; no endpoint is adapted). MCP
-//! failover remains one route. Injectable doubles cover both-route combinations
-//! for V03; they are not V04.
+//! Native search is supported only for models with a registered per-model
+//! adapter. Unadapted endpoints stay `unsupported` and MCP remains one route.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -171,8 +169,8 @@ pub(crate) trait SearchRoute {
     async fn execute(&self, query: &str) -> RouteAttemptOutcome;
 }
 
-/// Production native support: consult C10 per-endpoint probe. Empty registry
-/// keeps every production endpoint unsupported.
+/// Production native support: consult C10 per-endpoint probe plus the per-model
+/// adapter registry.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ProductionNativeSearchSupport {
     pub endpoint: Option<NativeSearchEndpointRef>,
@@ -195,18 +193,20 @@ impl NativeSearchSupportProbe for NativeSearchSupport {
 }
 
 /// Native executor used in production. Must not be called while the probe is unsupported.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct ProductionNativeSearchRoute;
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ProductionNativeSearchRoute {
+    pub endpoint: Option<NativeSearchEndpointRef>,
+    pub identity: SearchActionIdentity,
+}
 
 impl SearchRoute for ProductionNativeSearchRoute {
-    async fn execute(&self, _query: &str) -> RouteAttemptOutcome {
-        RouteAttemptOutcome {
-            generated_text_only: false,
-            has_retrieval_credentials: false,
-            failure: Some(RouteFailureClass::ProtocolOrResultInsufficient),
-            internal_provider_attempts: 0,
-            candidates: Vec::new(),
-        }
+    async fn execute(&self, query: &str) -> RouteAttemptOutcome {
+        crate::ai_runtime::native_search_adapter::execute_production_route(
+            self.endpoint.as_ref(),
+            &self.identity,
+            query,
+        )
+        .await
     }
 }
 
