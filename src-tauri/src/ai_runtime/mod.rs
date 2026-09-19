@@ -80,6 +80,8 @@ pub(crate) mod frozen_change_plan;
 mod frozen_change_plan_tests;
 pub mod guardrails;
 pub mod mcp_external_tools;
+#[cfg(test)]
+mod mcp_external_tools_tests;
 pub mod mcp_host_runtime;
 pub mod mcp_runtime_registry;
 #[cfg(test)]
@@ -131,3 +133,5 @@ pub(crate) mod tool_name_origin;
 pub(crate) mod tool_surface;
 pub mod trace;
 pub mod web_evidence_broker;
+#[cfg(test)]
+mod web_evidence_broker_tests;

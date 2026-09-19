@@ -7392,7 +7392,7 @@
     {
       "object": "C18",
       "kind": "V03",
-      "testPath": "src-tauri/src/ai_runtime/mcp_external_tools.rs",
+      "testPath": "src-tauri/src/ai_runtime/mcp_external_tools_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_invalidate_existing_binding_hash",
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "d837e9389cba8780513641777fed6022",
@@ -7414,7 +7414,7 @@
     {
       "object": "Q05",
       "kind": "V03",
-      "testPath": "src-tauri/src/ai_runtime/mcp_external_tools.rs",
+      "testPath": "src-tauri/src/ai_runtime/mcp_external_tools_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_invalidate_existing_binding_hash",
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "efbee7d33f48bf7b6dfd70193f99e735",
@@ -7425,7 +7425,7 @@
     {
       "object": "Q05",
       "kind": "V03",
-      "testPath": "src-tauri/src/ai_runtime/web_evidence_broker.rs",
+      "testPath": "src-tauri/src/ai_runtime/web_evidence_broker_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib legacy_anysearch_mapping_gets_a_runtime_result_limit_without_mutation",
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "efbee7d33f48bf7b6dfd70193f99e735",
@@ -7678,7 +7678,7 @@
     {
       "object": "C20",
       "kind": "V03",
-      "testPath": "src-tauri/src/ai_runtime/web_evidence_broker.rs",
+      "testPath": "src-tauri/src/ai_runtime/web_evidence_broker_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib search_without_usable_https_candidates_is_recorded_as_failed_health",
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
