@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 128,
+  "registryRevision": 129,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T13:08:07.172Z"
+    "recordedAt": "2026-09-19T14:12:55.564Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -20,7 +20,7 @@
       "kind": "architecture-definition",
       "role": "上位架构决定；模块、组件、工具身份由它派生",
       "refs": ["P01", "P02", "P03"],
-      "fingerprint": "1149bf4f3ee82a42c6e264219fc42716"
+      "fingerprint": "355f30f18a392e711c7fa81b79ba8965"
     },
     "SRC-ARCH-REPO": {
       "path": "ARCHITECTURE.md",
@@ -101,7 +101,7 @@
     "contracts/K12-native-search-subrequest.md": {
       "container": "K12",
       "registration": "K12#file",
-      "fingerprint": "1fa9b4c3001da66ab818c3e264dc4aa3"
+      "fingerprint": "8575f208678a0969a151589276b955e3"
     },
     "contracts/K13-web-reading-window.md": {
       "container": "K13",
@@ -196,7 +196,7 @@
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "7f74c0ba5a6a8313269e31dce843e946"
+      "fingerprint": "fda52812550496649fa4e17cf421d797"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
@@ -236,7 +236,7 @@
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04",
-      "fingerprint": "d866518b4af06556f7f49a682301bf3a"
+      "fingerprint": "129eef68f287f43a05422f6f105a6a85"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
@@ -251,7 +251,7 @@
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
       "registration": "M07",
-      "fingerprint": "3626232893d6ef01af2a94c976e595d7"
+      "fingerprint": "54f109036f55af656c2aca2ecee0e04c"
     },
     "modules/m08-verification-and-delivery.md": {
       "container": "M08",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "f451163b52ae174a249e0201afde7ef6"
+      "fingerprint": "a3dad3a233274e8a959d45ab54df4d94"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -765,13 +765,13 @@
       "title": "C10 能力与路由",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C10",
         "line": 123,
         "endLine": 163,
-        "fingerprint": "be0402c6b183a31449ed2e49fa0f98f1"
+        "fingerprint": "874dba8ad616eea0384fc641e3e73cee"
       },
       "implementation": {
         "state": "partial"
@@ -784,7 +784,7 @@
       "relations": {
         "implements": ["K04"]
       },
-      "note": null
+      "note": "C10 按端点探针 native_search_support_for 已落地；生产无适配器故 unsupported。已有机械 V03，verification 仍 none，不是 passed，不是 V05。"
     },
     "C11": {
       "kind": "component",
@@ -792,13 +792,13 @@
       "title": "C11 协议与续轮适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 14,
+      "revision": 15,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C11",
         "line": 165,
         "endLine": 205,
-        "fingerprint": "72995acbdc14d252f44796bf0322ec9f"
+        "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c"
       },
       "implementation": {
         "state": "partial"
@@ -812,7 +812,7 @@
         "implements": ["K04"],
         "depends_on": ["C10"]
       },
-      "note": null
+      "note": "fixture 解析器在 native_search_subrequest.rs；流式主路径仍未保真搜索事件。verification 仍 none，不把本条标 passed，不关 G03。"
     },
     "C12": {
       "kind": "component",
@@ -1042,13 +1042,13 @@
       "title": "C20 双路网页搜索协调",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "modules/m07-retrieval-and-evidence.md",
         "anchor": "C20",
         "line": 179,
         "endLine": 219,
-        "fingerprint": "287984024c59f19aea298370a0c03271"
+        "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9"
       },
       "implementation": {
         "state": "partial"
@@ -1062,7 +1062,7 @@
         "implements": ["K11", "K12", "N07"],
         "depends_on": ["C10", "C18", "C13", "C04"]
       },
-      "note": "协调器已接入生产 web_search；生产原生 unsupported，MCP 单路是正常配置。K12 不在，故 partial 不是 present。机械 V03 不是验收，不把 verification 标 passed，不关 G02。"
+      "note": "协调器已接入生产 web_search；K12 构造器与解析器已落地，生产无适配器故原生 unsupported，MCP 单路是正常配置。K12 未进生产执行，故 partial 不是 present。机械 V03 不是验收，不把 verification 标 passed，不关 G02。"
     },
     "C21": {
       "kind": "component",
@@ -1370,8 +1370,8 @@
       "definition": {
         "file": "implementation/D04-dual-path-search.md",
         "anchor": "D04",
-        "line": 75,
-        "endLine": 88,
+        "line": 76,
+        "endLine": 89,
         "fingerprint": "dfa6dc6f683960bdd2826b5095156bd6"
       },
       "implementation": {
@@ -1661,13 +1661,13 @@
       "title": "双路搜索协调的真实执行",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G02",
         "line": 32,
         "endLine": 42,
-        "fingerprint": "cc8fa3e0b877caa9ba4743ea61ef67bf"
+        "fingerprint": "c23a7fa25d9c97491544b7e918cf3132"
       },
       "implementation": {
         "state": "unknown"
@@ -1685,7 +1685,7 @@
           }
         ]
       },
-      "note": "2026-09-19 第一刀：协调器已接入，生产原生 unsupported，机械 V03 存在。机械覆盖不是验收；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。"
+      "note": "2026-09-19 第一刀：协调器已接入，K12 构造器已落地但生产无适配器故原生 unsupported，机械 V03 存在。机械覆盖不是验收；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。"
     },
     "G03": {
       "kind": "issue",
@@ -1693,13 +1693,13 @@
       "title": "原生搜索事件的接入与端点适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G03",
         "line": 44,
         "endLine": 55,
-        "fingerprint": "93ad8de50829f74844178c1fafca9df7"
+        "fingerprint": "6cb4e5be0340fab0c11269a8888414e8"
       },
       "implementation": {
         "state": "unknown"
@@ -1717,7 +1717,7 @@
           }
         ]
       },
-      "note": "协议侧逐端点 V05 的承接方（2026-09-17）：Q04／Q10 的关闭不再要求 V05；服务端搜索事件与引用归本条。D02 只交付机械续轮与终止原因，不关闭本条。"
+      "note": "2026-09-19 第一刀：有构造器／解析器，无直播路径、无适配器。不是关闭。协议侧逐端点 V05 的承接方（2026-09-17）：Q04／Q10 的关闭不再要求 V05；服务端搜索事件与引用归本条。D02 只交付机械续轮与终止原因，不关闭本条。"
     },
     "G04": {
       "kind": "issue",
@@ -2137,7 +2137,7 @@
       "relations": {
         "applies_to": ["C20", "C11", "C12"]
       },
-      "note": null
+      "note": "构造器与 fixture 解析器已落地；C10 按端点声明，生产无适配器故原生 unsupported；搜索事件尚未进入网关流式路径。不是 V05，不关 G03。"
     },
     "K13": {
       "kind": "contract",
@@ -4775,13 +4775,13 @@
       "title": "web_search",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "tools/web_search.md",
         "anchor": "T11",
         "line": 9,
         "endLine": 107,
-        "fingerprint": "0c41ede758241072a85da7d77299efbf"
+        "fingerprint": "d11c3e38b35d8eaae99b3f52d917e014"
       },
       "implementation": {
         "state": "partial"
@@ -5976,8 +5976,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T08:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -5987,8 +5987,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T08:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C14",
@@ -6097,8 +6097,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6108,8 +6108,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6119,8 +6119,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6130,8 +6130,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6141,8 +6141,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6152,8 +6152,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-17T11:44:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，不关闭 Q04／D02。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，不关闭 Q04／D02。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6163,8 +6163,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-17T11:44:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "K04",
@@ -6196,8 +6196,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "72995acbdc14d252f44796bf0322ec9f",
       "at": "2026-09-17T12:00:00Z",
-      "applicability": "current",
-      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，不关闭 Q04／D02。"
+      "applicability": "obsolete",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，不关闭 Q04／D02。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "K04",
@@ -6944,8 +6944,8 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "cc8fa3e0b877caa9ba4743ea61ef67bf",
       "at": "2026-09-19T13:10:00Z",
-      "applicability": "current",
-      "note": "2026-09-19 对照检查后重绑：本机 dual_path 13 passed / 0 failed。协调器接入；生产原生 unsupported；MCP failover 不是双路；web_fetch 不呈现 dualPath。机械覆盖不是验收，不关 G02，不是 V04。"
+      "applicability": "obsolete",
+      "note": "2026-09-19 对照检查后重绑：本机 dual_path 13 passed / 0 failed。协调器接入；生产原生 unsupported；MCP failover 不是双路；web_fetch 不呈现 dualPath。机械覆盖不是验收，不关 G02，不是 V04。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C20",
@@ -6955,8 +6955,8 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "287984024c59f19aea298370a0c03271",
       "at": "2026-09-19T13:10:00Z",
-      "applicability": "current",
-      "note": "2026-09-19 对照检查后重绑：本机 13 passed / 0 failed。implementation.state=partial（K12 不在）。不把 C20 verification 标 passed，不关 G02。"
+      "applicability": "obsolete",
+      "note": "2026-09-19 对照检查后重绑：本机 13 passed / 0 failed。implementation.state=partial（K12 不在）。不把 C20 verification 标 passed，不关 G02。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C20",
@@ -6966,8 +6966,8 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "287984024c59f19aea298370a0c03271",
       "at": "2026-09-19T13:10:00Z",
-      "applicability": "current",
-      "note": "2026-09-19 对照检查后重绑：本机 1 passed / 0 failed。生产入口搜索收集经协调器：native.supported=false、attempted=false，MCP 仍执行。不是 V04。"
+      "applicability": "obsolete",
+      "note": "2026-09-19 对照检查后重绑：本机 1 passed / 0 failed。生产入口搜索收集经协调器：native.supported=false、attempted=false，MCP 仍执行。不是 V04。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C20",
@@ -6977,8 +6977,8 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "287984024c59f19aea298370a0c03271",
       "at": "2026-09-19T13:10:00Z",
-      "applicability": "current",
-      "note": "2026-09-19 对照检查后重绑：本机 1 passed / 0 failed。web_search 返回 dualPath 分路状态；MCP 主备次数不是 dualPathComplete。无降级文案。"
+      "applicability": "obsolete",
+      "note": "2026-09-19 对照检查后重绑：本机 1 passed / 0 failed。web_search 返回 dualPath 分路状态；MCP 主备次数不是 dualPathComplete。无降级文案。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C20",
@@ -6988,8 +6988,228 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "287984024c59f19aea298370a0c03271",
       "at": "2026-09-19T13:10:00Z",
+      "applicability": "obsolete",
+      "note": "2026-09-19 对照检查：本机 1 passed / 0 failed。web_fetch 复用 packetizer 但不呈现 dualPath。不是 V04，不关 G02。 【已被取代，保留为历史证据】2026-09-19 K12 第一刀改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
       "applicability": "current",
-      "note": "2026-09-19 对照检查：本机 1 passed / 0 failed。web_fetch 复用 packetizer 但不呈现 dualPath。不是 V04，不关 G02。"
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。 2026-09-19 重绑：本机 streaming_finish_reason_sse 3 passed（含 G03 夹带搜索事件负例）。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::deepseek_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib deepseek_tool_continuation_preserves_reasoning_content",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib messages_for_api_does_not_replay_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::responses_",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib responses_double_preserves_instructions_and_host_repair_on_continuation",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_anthropic.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic::tests",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，不关闭 Q04／D02。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_anthropic_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_anthropic_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_anthropic_finish_reason",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，不关闭 Q04／D02。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "G02",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_search.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "c23a7fa25d9c97491544b7e918cf3132",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 对照检查后重绑：本机 dual_path 13 passed / 0 failed。协调器接入；生产原生 unsupported；MCP failover 不是双路；web_fetch 不呈现 dualPath。机械覆盖不是验收，不关 G02，不是 V04。 2026-09-19 K12 第一刀重绑：构造器已落地，生产无适配器故原生 unsupported。不关 G02，不是 V04。"
+    },
+    {
+      "object": "C20",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_search.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 对照检查后重绑：本机 13 passed / 0 failed。implementation.state=partial（K12 不在）。不把 C20 verification 标 passed，不关 G02。 2026-09-19 K12 第一刀重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
+    },
+    {
+      "object": "C20",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/web_evidence_broker.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib search_without_usable_https_candidates_is_recorded_as_failed_health",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 对照检查后重绑：本机 1 passed / 0 failed。生产入口搜索收集经协调器：native.supported=false、attempted=false，MCP 仍执行。不是 V04。 2026-09-19 K12 第一刀重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
+    },
+    {
+      "object": "C20",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/web.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib successful_web_response_is_packetized",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 对照检查后重绑：本机 1 passed / 0 failed。web_search 返回 dualPath 分路状态；MCP 主备次数不是 dualPathComplete。无降级文案。 2026-09-19 K12 第一刀重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
+    },
+    {
+      "object": "C20",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/web.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib web_fetch_response_does_not_present_search_dual_path",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "7af9547e49d9e85418fc18bfe90c33b9",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 对照检查：本机 1 passed / 0 failed。web_fetch 复用 packetizer 但不呈现 dualPath。不是 V04，不关 G02。 2026-09-19 K12 第一刀重绑：implementation.state=partial（构造器在，直播路径不在）。不把 C20 verification 标 passed，不关 G02。"
+    },
+    {
+      "object": "K12",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/native_search_subrequest.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib native_search_subrequest",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "91b94fe0837f4c3c218d7838bcf55b62",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 第一刀：本机 13 passed / 0 failed。构造器不带笔记、两族 fixture 凭据、纯文本不算已搜、空结果非传输故障、C10 按端点、supports_tools 不推断 Available。不是 V05，不关 G03／K12。"
+    },
+    {
+      "object": "G03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/native_search_subrequest.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib native_search_subrequest",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "6cb4e5be0340fab0c11269a8888414e8",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 第一刀：本机 13 passed / 0 failed。有构造器／解析器，生产无适配器。不是关闭，不是 V05。"
+    },
+    {
+      "object": "G03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib chat_completions_sse_web_search_call_is_ignored_without_credentials",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "6cb4e5be0340fab0c11269a8888414e8",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 第一刀：本机 1 passed / 0 failed。SSE 夹带 web_search_call／grounding 不崩、无 Error、流式路径无检索凭据；fixture 解析器仍能认出 grounding。G03 仍 open。"
+    },
+    {
+      "object": "C10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/native_search_subrequest.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib native_search_subrequest",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "874dba8ad616eea0384fc641e3e73cee",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 第一刀：本机 13 passed / 0 failed。按端点探针：ASR／TTS capability_absent，无适配器 adapter_absent，supports_tools 不推断 Available。已有机械 V03，verification 仍 none，不是 passed，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib chat_completions_sse_web_search_call_is_ignored_without_credentials",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "888f4cf50f5fb04746abdf8c8ae4fe0c",
+      "at": "2026-09-19T14:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 第一刀：本机 1 passed / 0 failed。流式主路径不把搜索事件变成可引用凭据。不把 C11 verification 标 passed，不关 G03。"
     }
   ],
   "changes": [
@@ -20708,6 +20928,86 @@
           "fingerprintTo": "cc8fa3e0b877caa9ba4743ea61ef67bf"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-73",
+      "at": "2026-09-19T14:12:55.564Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "K12 构造器与 fixture 解析器落地；C10 按端点声明，生产无适配器故原生 unsupported；搜索事件尚未进入网关流式路径。不关 G02／G03／Q17／D04。",
+      "review": null,
+      "objects": [
+        {
+          "id": "K12#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "1fa9b4c3001da66ab818c3e264dc4aa3",
+          "fingerprintTo": "8575f208678a0969a151589276b955e3"
+        },
+        {
+          "id": "D04#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "7f74c0ba5a6a8313269e31dce843e946",
+          "fingerprintTo": "fda52812550496649fa4e17cf421d797"
+        },
+        {
+          "id": "M04",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "d866518b4af06556f7f49a682301bf3a",
+          "fingerprintTo": "129eef68f287f43a05422f6f105a6a85"
+        },
+        {
+          "id": "M07",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "3626232893d6ef01af2a94c976e595d7",
+          "fingerprintTo": "54f109036f55af656c2aca2ecee0e04c"
+        },
+        {
+          "id": "C10",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "be0402c6b183a31449ed2e49fa0f98f1",
+          "fingerprintTo": "874dba8ad616eea0384fc641e3e73cee"
+        },
+        {
+          "id": "C11",
+          "revisionFrom": 14,
+          "revisionTo": 15,
+          "fingerprintFrom": "72995acbdc14d252f44796bf0322ec9f",
+          "fingerprintTo": "888f4cf50f5fb04746abdf8c8ae4fe0c"
+        },
+        {
+          "id": "C20",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "287984024c59f19aea298370a0c03271",
+          "fingerprintTo": "7af9547e49d9e85418fc18bfe90c33b9"
+        },
+        {
+          "id": "G02",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "cc8fa3e0b877caa9ba4743ea61ef67bf",
+          "fingerprintTo": "c23a7fa25d9c97491544b7e918cf3132"
+        },
+        {
+          "id": "G03",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "93ad8de50829f74844178c1fafca9df7",
+          "fingerprintTo": "6cb4e5be0340fab0c11269a8888414e8"
+        },
+        {
+          "id": "T11",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "0c41ede758241072a85da7d77299efbf",
+          "fingerprintTo": "d11c3e38b35d8eaae99b3f52d917e014"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -21554,7 +21854,9 @@
         {
           "id": "G03",
           "revision": 13,
-          "fingerprint": "93ad8de50829f74844178c1fafca9df7"
+          "fingerprint": "93ad8de50829f74844178c1fafca9df7",
+          "stale": true,
+          "staleNote": "2026-09-19 K12 第一刀改写了 G03 现状（有构造器／解析器，无直播路径、无适配器）；按 governance §5.2 规则 6 不改写本条旧指纹，只标 stale。施工者不得自签新 REV 解封。"
         },
         {
           "id": "D02#file",

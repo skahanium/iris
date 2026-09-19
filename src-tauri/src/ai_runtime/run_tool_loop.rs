@@ -303,6 +303,21 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     child_tool_events: Option<Arc<Mutex<Vec<BufferedChildToolLifecycle>>>>,
     /// Stable scope used only for durable child tool-call identifiers.
     child_event_scope: Option<String>,
+    /// Frozen C10 native-search endpoint for this Run. None means adapter_absent.
+    native_search_endpoint:
+        Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef>,
+}
+
+fn native_search_endpoint_from_run_context(
+    context: &RunContext,
+) -> Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef> {
+    let model = context.model_override()?;
+    crate::llm::model_catalog::find_model(&model.model_id).map(|entry| {
+        crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef {
+            model_id: model.model_id,
+            endpoint_family: entry.endpoint_family,
+        }
+    })
 }
 
 impl<'a> NormalRunToolExecutor<'a> {
@@ -353,7 +368,17 @@ impl<'a> NormalRunToolExecutor<'a> {
             subagent_depth: 0,
             child_tool_events: None,
             child_event_scope: None,
+            native_search_endpoint: native_search_endpoint_from_run_context(context),
         }
+    }
+
+    /// Bind the frozen provider/model used by C10's native-search probe.
+    pub(crate) fn with_native_search_endpoint(
+        mut self,
+        endpoint: Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef>,
+    ) -> Self {
+        self.native_search_endpoint = endpoint;
+        self
     }
 
     /// Enable real ChildRun execution with the same provider route selected for
@@ -562,6 +587,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 },
                 attempt: 1,
             },
+            native_endpoint: self.native_search_endpoint.clone(),
         };
         let call_started = Instant::now();
         let mut attempts_for_search = 0_u32;
@@ -2762,6 +2788,7 @@ impl NormalRunToolExecutor<'_> {
         )
         .with_allowed_tool_names(&child_tool_names)
         .with_skill_activation_plan(self.skill_activation_plan.clone())
+        .with_native_search_endpoint(self.native_search_endpoint.clone())
         .with_parent_run_web_state(self)
         .at_subagent_depth(1)
         .with_child_event_buffer(spec.id.clone(), Arc::clone(&child_tool_events));

@@ -96,6 +96,7 @@ pub(super) async fn web_search_tool(
                 action_id: "web_search".into(),
                 attempt: 1,
             },
+            native_endpoint: None,
         },
     )
     .await?;
@@ -139,6 +140,7 @@ pub(super) async fn web_fetch_tool(
                 action_id: "web_fetch".into(),
                 attempt: 1,
             },
+            native_endpoint: None,
         },
     )
     .await?;
@@ -257,6 +259,9 @@ mod tests {
                 dual_path.mcp.succeeded = true;
                 dual_path.mcp_internal_provider_attempts = 2;
                 dual_path.usage.mcp = 1;
+                dual_path.native_unsupported_reason = Some(
+                    crate::ai_runtime::native_search_subrequest::NativeSearchUnsupportedReason::AdapterAbsent,
+                );
                 dual_path
             },
         };
@@ -270,6 +275,10 @@ mod tests {
         assert!(encoded.chars().count() < 50_000);
         assert_eq!(response["dualPath"]["native"]["supported"], false);
         assert_eq!(response["dualPath"]["native"]["attempted"], false);
+        assert_eq!(
+            response["dualPath"]["native"]["unsupportedReason"],
+            "adapter_absent"
+        );
         assert_eq!(response["dualPath"]["mcp"]["succeeded"], true);
         assert_eq!(response["dualPath"]["mcpInternalProviderAttempts"], 2);
         assert_eq!(response["dualPath"]["bothAvailableRoutesAttempted"], false);

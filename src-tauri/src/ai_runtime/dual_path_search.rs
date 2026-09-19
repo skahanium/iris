@@ -1,11 +1,17 @@
 //! C20 dual-path web search coordinator (K11 mechanical subset).
 //!
-//! Production native search is reported as unsupported because Iris does not
-//! yet construct a K12 native subrequest. MCP failover remains one route.
-//! Injectable doubles cover both-route combinations for V03; they are not V04.
+//! Production native search is reported as unsupported because the C10 adapter
+//! registry is empty (K12 constructor exists; no endpoint is adapted). MCP
+//! failover remains one route. Injectable doubles cover both-route combinations
+//! for V03; they are not V04.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+use crate::ai_runtime::native_search_subrequest::{
+    native_search_support_for, native_search_unsupported_reason_for, NativeSearchEndpointRef,
+    NativeSearchUnsupportedReason,
+};
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -133,6 +139,8 @@ pub(crate) struct DualPathSearchOutcome {
     pub shortage: Option<String>,
     pub executed_in_parallel: bool,
     pub mcp_internal_provider_attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_unsupported_reason: Option<NativeSearchUnsupportedReason>,
 }
 
 impl DualPathSearchOutcome {
@@ -150,6 +158,12 @@ impl DualPathSearchOutcome {
 /// Capability probe for the native search route.
 pub(crate) trait NativeSearchSupportProbe {
     fn native_search_support(&self) -> NativeSearchSupport;
+    fn native_search_unsupported_reason(&self) -> Option<NativeSearchUnsupportedReason> {
+        match self.native_search_support() {
+            NativeSearchSupport::Unsupported => Some(NativeSearchUnsupportedReason::AdapterAbsent),
+            _ => None,
+        }
+    }
 }
 
 /// One injectable search route (native or MCP).
@@ -157,13 +171,20 @@ pub(crate) trait SearchRoute {
     async fn execute(&self, query: &str) -> RouteAttemptOutcome;
 }
 
-/// Production native support: no K12 subrequest exists yet.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct ProductionNativeSearchSupport;
+/// Production native support: consult C10 per-endpoint probe. Empty registry
+/// keeps every production endpoint unsupported.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ProductionNativeSearchSupport {
+    pub endpoint: Option<NativeSearchEndpointRef>,
+}
 
 impl NativeSearchSupportProbe for ProductionNativeSearchSupport {
     fn native_search_support(&self) -> NativeSearchSupport {
-        NativeSearchSupport::Unsupported
+        native_search_support_for(self.endpoint.as_ref())
+    }
+
+    fn native_search_unsupported_reason(&self) -> Option<NativeSearchUnsupportedReason> {
+        native_search_unsupported_reason_for(self.endpoint.as_ref())
     }
 }
 
@@ -276,6 +297,10 @@ where
         shortage,
         executed_in_parallel: false,
         mcp_internal_provider_attempts: mcp_outcome.internal_provider_attempts,
+        native_unsupported_reason: match native_support {
+            NativeSearchSupport::Unsupported => probe.native_search_unsupported_reason(),
+            _ => None,
+        },
     }
 }
 
@@ -389,7 +414,7 @@ pub(crate) fn dual_path_status_json(outcome: &DualPathSearchOutcome) -> Value {
             "actionId": outcome.identity.action_id,
             "attempt": outcome.identity.attempt,
         },
-        "native": route_status_json(&outcome.native),
+        "native": native_route_status_json(outcome),
         "mcp": route_status_json(&outcome.mcp),
         "candidates": outcome.candidates.iter().map(|candidate| {
             json!({
@@ -418,6 +443,15 @@ fn route_status_json(status: &RouteStatus) -> Value {
         "succeeded": status.succeeded,
         "failed": status.failed.map(failure_class_name),
     })
+}
+
+fn native_route_status_json(outcome: &DualPathSearchOutcome) -> Value {
+    let mut native = route_status_json(&outcome.native);
+    native["unsupportedReason"] = match outcome.native_unsupported_reason {
+        Some(reason) => json!(reason),
+        None => Value::Null,
+    };
+    native
 }
 
 fn channel_name(channel: &SearchChannel) -> &'static str {
@@ -794,13 +828,13 @@ mod tests {
         let mcp = ScriptedSearchRoute::new(credentialed(vec![hit("https://mcp.example/b")], 1));
 
         assert_eq!(
-            ProductionNativeSearchSupport.native_search_support(),
+            ProductionNativeSearchSupport::default().native_search_support(),
             NativeSearchSupport::Unsupported
         );
 
         let outcome = coordinate_dual_path_search(
             request(true),
-            &ProductionNativeSearchSupport,
+            &ProductionNativeSearchSupport::default(),
             &native,
             &mcp,
         )

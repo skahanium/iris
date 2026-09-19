@@ -13,6 +13,7 @@ use crate::ai_runtime::dual_path_search::{
     ProductionNativeSearchRoute, ProductionNativeSearchSupport, RouteAttemptOutcome,
     RouteFailureClass, SearchActionIdentity, SearchChannel, SearchHit, SearchRoute,
 };
+use crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef;
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::{
     ContextPacket, SourceType, TrustLevel, WebEvidenceMeta, WebSearchBackend, WebSourceRank,
@@ -61,6 +62,8 @@ pub struct WebEvidenceBrokerInput {
     pub provider_selection_frozen: bool,
     /// K11 request identity for this search action. Empty in fetch-only callers.
     pub(crate) search_identity: SearchActionIdentity,
+    /// Frozen model/endpoint for C10 native-search probing. Backup dispatch omits it.
+    pub(crate) native_endpoint: Option<NativeSearchEndpointRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -180,6 +183,7 @@ async fn collect_web_evidence_with_queries(
             &input.provider_snapshots,
             input.provider_selection_frozen,
             input.search_identity,
+            input.native_endpoint,
         )
         .await;
         dual_path = collection.dual_path;
@@ -746,6 +750,7 @@ async fn collect_planned_query_fetches(
     provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     provider_selection_frozen: bool,
     search_identity: SearchActionIdentity,
+    native_endpoint: Option<NativeSearchEndpointRef>,
 ) -> PlannedSearchCollection {
     let mut fetches = Vec::new();
     let mut dual_path = DualPathSearchOutcome {
@@ -775,7 +780,9 @@ async fn collect_planned_query_fetches(
                 query: query.clone(),
                 allow_second_route: true,
             },
-            &ProductionNativeSearchSupport,
+            &ProductionNativeSearchSupport {
+                endpoint: native_endpoint.clone(),
+            },
             &ProductionNativeSearchRoute,
             &mcp_route,
         )
@@ -2683,6 +2690,7 @@ mod tests {
                 provider_snapshots: Vec::new(),
                 provider_selection_frozen: false,
                 search_identity: SearchActionIdentity::default(),
+                native_endpoint: None,
             },
         )
         .await
@@ -2870,6 +2878,7 @@ mod tests {
                 provider_snapshots: snapshots,
                 provider_selection_frozen: true,
                 search_identity: SearchActionIdentity::default(),
+                native_endpoint: None,
             },
         )
         .await
@@ -2945,6 +2954,7 @@ mod tests {
                 provider_snapshots: vec![snapshot],
                 provider_selection_frozen: true,
                 search_identity: SearchActionIdentity::default(),
+                native_endpoint: None,
             },
         )
         .await
@@ -3032,6 +3042,7 @@ mod tests {
                     .unwrap(),
             provider_selection_frozen: true,
             search_identity: SearchActionIdentity::default(),
+            native_endpoint: None,
         };
         for output in [
             collect_initial_run_web_evidence_with_usage(&db, input.clone())

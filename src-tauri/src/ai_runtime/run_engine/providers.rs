@@ -623,6 +623,22 @@ impl<'a> FailoverStreamingProvider<'a> {
         }
     }
 
+    /// Frozen model/endpoint for C10 native-search probing. Taken from the
+    /// already-selected route candidate; never inferred from a brand name.
+    pub(crate) fn native_search_endpoint(
+        &self,
+    ) -> Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef> {
+        self.route
+            .select_streaming_for_requirements(self.requirements)
+            .first()
+            .map(
+                |candidate| crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef {
+                    model_id: candidate.model.clone(),
+                    endpoint_family: candidate.endpoint_family,
+                },
+            )
+    }
+
     /// Test-only seam for exercising the production failover loop against a
     /// local deterministic transport without weakening the HTTPS-only client
     /// used by every production construction path.

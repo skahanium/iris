@@ -150,7 +150,8 @@ pub(crate) async fn execute_post_confirmation_verification(
         sink,
         Vec::new(),
     )
-    .with_verification_targets(targets);
+    .with_verification_targets(targets)
+    .with_native_search_endpoint(provider.native_search_endpoint());
     let message = |role, content| LlmMessage {
         role,
         content: MessageContent::Text(content),
@@ -633,6 +634,7 @@ async fn dispatch_normal_run_after_context(
         )
         .with_allowed_tool_names(&tool_surface_plan.tool_names)
         .with_skill_activation_plan(active_skills.plan.clone())
+        .with_native_search_endpoint(provider.native_search_endpoint())
         .with_child_run_provider(&provider);
         return if let Some(telemetry) = telemetry {
             RunEngine::execute_tool_loop_with_eval_telemetry_and_policy(
@@ -712,6 +714,7 @@ async fn dispatch_normal_run_after_context(
         )
         .with_allowed_tool_names(&[])
         .with_skill_activation_plan(active_skills.plan.clone())
+        .with_native_search_endpoint(provider.native_search_endpoint())
         .with_child_run_provider(&provider);
         return if let Some(telemetry) = telemetry {
             RunEngine::execute_tool_loop_with_eval_telemetry_and_policy(

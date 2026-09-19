@@ -68,11 +68,11 @@
 
 ## 源码落点
 
-| 组件  | 现有落点                                                                                                                                                                                                                                                                  | 处置                             |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `C10` | `src-tauri/src/ai_runtime/provider_router.rs`、`src-tauri/src/ai_runtime/capability_resolver.rs`                                                                                                                                                                          | 收清 Provider 与工具能力来源     |
-| `C11` | `src-tauri/src/ai_runtime/model_gateway.rs` 及其子文件（`body.rs`、`messages.rs`、`streaming.rs`、`streaming_chat_completions.rs`、`streaming_anthropic.rs`、`responses.rs`、`anthropic_response.rs`、`usage.rs`、`abort.rs`、`http_backend.rs`、`minimax_tool_call.rs`） | 修正现有合同，原生事件适配需补齐 |
-| `C12` | 网关、`src-tauri/src/ai_runtime/run_engine/providers.rs`、`src-tauri/src/ai_runtime/circuit_breaker.rs`                                                                                                                                                                   | 统一执行报告                     |
+| 组件  | 现有落点                                                                                                                                                                                                                                                                                                                  | 处置                                                                         |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `C10` | `src-tauri/src/ai_runtime/provider_router.rs`、`src-tauri/src/ai_runtime/capability_resolver.rs`、`src-tauri/src/ai_runtime/native_search_subrequest.rs`（`native_search_support_for` 按端点探针）                                                                                                                        | 收清 Provider 与工具能力来源；原生搜索按端点声明，生产无适配器故 unsupported |
+| `C11` | `src-tauri/src/ai_runtime/model_gateway.rs` 及其子文件（`body.rs`、`messages.rs`、`streaming.rs`、`streaming_chat_completions.rs`、`streaming_anthropic.rs`、`responses.rs`、`anthropic_response.rs`、`usage.rs`、`abort.rs`、`http_backend.rs`、`minimax_tool_call.rs`）；fixture 解析器在 `native_search_subrequest.rs` | 修正现有合同；流式主路径仍未保真搜索事件                                     |
+| `C12` | 网关、`src-tauri/src/ai_runtime/run_engine/providers.rs`、`src-tauri/src/ai_runtime/circuit_breaker.rs`                                                                                                                                                                                                                   | 统一执行报告                                                                 |
 
 ## 兼容
 
@@ -150,7 +150,7 @@
 
 ## 源码落点
 
-现有基础与处置：provider_router.rs、capability_resolver.rs；收清 Provider 与工具能力来源。capability-and-routing 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
+现有基础与处置：provider_router.rs、capability_resolver.rs；`native_search_support_for`（`native_search_subrequest.rs`）按端点声明原生搜索支持，生产注册表为空故 `unsupported`（`adapter_absent` 或 ASR／TTS `capability_absent`）。不得从 `supports_tools=true` 或品牌名推断 `Available`。capability-and-routing 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
 
 ## 兼容
 
@@ -158,7 +158,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`；本组件当前 `verification.state=none`，没有绑定指纹的证据记录。
+关键不变量与所需证据类别见 `V01`–`V07`；本组件当前 `verification.state=none`。已有机械 `V03`（按端点探针：ASR／TTS `capability_absent`、无适配器 `adapter_absent`、`supports_tools` 不推断 `Available`），不是 `passed`，也不是逐端点 `V05`。
 
 <!-- iris:end C10 -->
 
@@ -192,7 +192,7 @@
 
 ## 源码落点
 
-现有基础与处置：model_gateway 及其子文件；修正现有合同，原生事件适配需补齐。protocol-and-continuation 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
+现有基础与处置：model_gateway 及其子文件；`native_search_subrequest.rs` 的 fixture 解析器映射检索凭据形状。流式主路径仍未保真搜索事件（`streaming.rs` 事件枚举未扩，`G03` 仍 open）。protocol-and-continuation 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
 
 ## 兼容
 
@@ -200,7 +200,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`。Chat Completions 流式终止原因已有 `V03` 机械记录（`registry.json.verify`，对象 `C11`／`Q04`）；Anthropic Messages 流式五类终止（`end_turn`／`max_tokens`／`tool_use`／`message_stop`／缺 `stop_reason`→`unknown`）已有 `V03` 机械记录（对象 `C11`／`K04`）；`Q10` 出站续轮（DeepSeek 顶层 `thinking`、工具续轮 `reasoning_content`、Responses `instructions`／Host 修复）亦有 `V03` 机械记录。本组件 `verification.state` 仍为 `none`，因为服务端搜索事件（`G03`／`Q17`）与逐端点 `V05` 不在本条范围。不据此关闭 `Q04`／`D02`，也不把 Anthropic 覆盖写入 `Q04` 关闭条件。
+关键不变量与所需证据类别见 `V01`–`V07`。Chat Completions 流式终止原因已有 `V03` 机械记录（`registry.json.verify`，对象 `C11`／`Q04`）；Anthropic Messages 流式五类终止（`end_turn`／`max_tokens`／`tool_use`／`message_stop`／缺 `stop_reason`→`unknown`）已有 `V03` 机械记录（对象 `C11`／`K04`）；`Q10` 出站续轮（DeepSeek 顶层 `thinking`、工具续轮 `reasoning_content`、Responses `instructions`／Host 修复）亦有 `V03` 机械记录。本组件 `verification.state` 仍为 `none`，因为服务端搜索事件（`G03`／`Q17`）与逐端点 `V05` 不在本条范围。fixture 解析器不是流式保真，也不据此关闭 `Q04`／`G03`／`D04`，也不把 Anthropic 覆盖写入 `Q04` 关闭条件。
 
 <!-- iris:end C11 -->
 
