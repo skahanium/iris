@@ -128,9 +128,12 @@
 ### Q08 会话压缩覆盖边界与裁剪边界不同源
 
 - **已确认事实**：近期历史受 token 和消息对数限制，模型压缩却主要按消息条数确定覆盖终点；少量长消息可能先被裁剪但尚未进入摘要覆盖范围。系统已有覆盖不完整检测，因此不是完全静默丢失。
+- **检测位置（2026-09-19 核对）**：`run_context.rs` 的 `history_coverage_is_incomplete(memory, recent_messages)` 比较摘要覆盖终点与**真实的 token 预算后历史视图**首条序号（`seq_end + 1 < first_recent.seq`），装配时把结果写入 `conversation_history_coverage_incomplete`，再由 `conversation_memory_prompt_fragment` 把 `CONVERSATION_HISTORY_COVERAGE_WARNING` 追加进 provider 看到的历史块（`run_context.rs` 常量定义处）。因此合同要求的「一致，**或**留下显式缺口」由它满足：缺口不会被当成已覆盖。
 - **不能推出**：发现缺口与补齐缺口是不同能力；也不能预设「收紧联网次数会加速裁剪」。
 - **影响边界**：`C08`、`C07`、`K07`、`K08`。
 - **所需证据**：被裁剪区间必须有可解释的覆盖或缺口；摘要不得覆盖用户后来的纠正（`V02`）。
+- **覆盖**：检测与显式缺口均已在位——`partial_memory_marks_an_omitted_middle_range_for_the_model`（有缺口时报缺口并把「历史覆盖边界」写进模型可见的历史块）、`contiguous_memory_and_recent_history_do_not_claim_a_gap`（连续时不得谎报缺口）、`latest_explicit_correction_is_preserved_as_a_constraint`（后续更正必须保留为约束）、`refresh_keeps_summary_and_recent_window_disjoint_at_twenty_five_messages`（摘要与近期窗口不重叠）。`V03` 机械记录见 `registry.json.verify`；本条由 `D03` 验收关闭。
+- **已知限制（本条关闭不等于已消除）**：覆盖终点仍由 `conversation_memory.rs` 的 `refresh_for_session` 按**消息条数**（`recent_message_limit`）计算，而裁剪边界由 `select_bounded_recent_history` 按 **token 预算**计算——两者不同源这一事实**没有改变**。不同源不是合同禁止的状态（合同允许「留下显式缺口」），但它意味着缺口会周期性出现，补缺依赖警告而不是靠边界对齐。把覆盖终点改为与 token 预算同源是一项独立的后续改进，登记在此，不在本条关闭条件内。
 
 <!-- iris:end Q08 -->
 

@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 99,
+  "registryRevision": 102,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T05:41:44.496Z"
+    "recordedAt": "2026-09-19T05:43:42.823Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "f27b7f287dbc8c3c441040d89a1306fc"
+      "fingerprint": "6907f649f58c4599a932709912ec62e8"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -2801,8 +2801,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 268,
-        "endLine": 281,
+        "line": 271,
+        "endLine": 284,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": { "state": "unknown" },
@@ -3038,13 +3038,13 @@
       "title": "压缩覆盖边界与裁剪边界不同源",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q08",
         "line": 126,
-        "endLine": 135,
-        "fingerprint": "96cd6a36e82f49c1cd20d656df887851"
+        "endLine": 138,
+        "fingerprint": "c736fb0184f9145115544091c5c9764a"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -3063,8 +3063,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q09",
-        "line": 137,
-        "endLine": 147,
+        "line": 140,
+        "endLine": 150,
         "fingerprint": "9d25a63f3fe8285bff6462ef33cb42d5"
       },
       "implementation": { "state": "unknown" },
@@ -3084,8 +3084,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q10",
-        "line": 149,
-        "endLine": 159,
+        "line": 152,
+        "endLine": 162,
         "fingerprint": "472dc5d2602bb72006315d53f50caeb9"
       },
       "implementation": { "state": "unknown" },
@@ -3105,8 +3105,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q11",
-        "line": 161,
-        "endLine": 171,
+        "line": 164,
+        "endLine": 174,
         "fingerprint": "a29a814ce8718467ddb68e0a0584ed1b"
       },
       "implementation": { "state": "unknown" },
@@ -3131,8 +3131,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q12",
-        "line": 173,
-        "endLine": 183,
+        "line": 176,
+        "endLine": 186,
         "fingerprint": "dd85c6176ec4acb041710e3b22b4aaeb"
       },
       "implementation": { "state": "unknown" },
@@ -3152,8 +3152,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
-        "line": 185,
-        "endLine": 197,
+        "line": 188,
+        "endLine": 200,
         "fingerprint": "9cea6ab3ebd14c74b64bfba30194436e"
       },
       "implementation": { "state": "unknown" },
@@ -3173,8 +3173,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
-        "line": 199,
-        "endLine": 208,
+        "line": 202,
+        "endLine": 211,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": { "state": "unknown" },
@@ -3194,8 +3194,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 210,
-        "endLine": 219,
+        "line": 213,
+        "endLine": 222,
         "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
       },
       "implementation": { "state": "unknown" },
@@ -3215,8 +3215,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 221,
-        "endLine": 231,
+        "line": 224,
+        "endLine": 234,
         "fingerprint": "a83fa39367eb8f9b575a46e6886015f3"
       },
       "implementation": { "state": "unknown" },
@@ -3236,8 +3236,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 233,
-        "endLine": 243,
+        "line": 236,
+        "endLine": 246,
         "fingerprint": "92b7c3c0bc05f7ea8f3936562dd24eba"
       },
       "implementation": { "state": "unknown" },
@@ -3257,8 +3257,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 245,
-        "endLine": 255,
+        "line": 248,
+        "endLine": 258,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": { "state": "unknown" },
@@ -3278,8 +3278,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 257,
-        "endLine": 266,
+        "line": 260,
+        "endLine": 269,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": { "state": "unknown" },
@@ -3694,13 +3694,13 @@
       "title": "capabilities_read",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "tools/capabilities_read.md",
         "anchor": "T03",
         "line": 9,
         "endLine": 110,
-        "fingerprint": "0c1647b9ae0d600db31e2bb5b0e222b4"
+        "fingerprint": "b986104f45bf9423de87c9004d39c9d2"
       },
       "implementation": { "state": "partial" },
       "verification": { "state": "none" },
@@ -4492,13 +4492,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 26,
+      "revision": 27,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 82,
-        "fingerprint": "794a9d8b80a34747cbe321cc4d49e183"
+        "endLine": 84,
+        "fingerprint": "bceb40dd8443e1145dc611b00b8d8d6c"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4622,8 +4622,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 84,
-        "endLine": 106,
+        "line": 86,
+        "endLine": 108,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": { "state": "unknown" },
@@ -5423,6 +5423,50 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "0c1647b9ae0d600db31e2bb5b0e222b4",
       "at": "2026-09-19T06:10:00Z",
+      "applicability": "obsolete",
+      "note": "工具卡 T03 与目录／处理器事实的一致性核对：schema 声明 request_tools，处理器消费并四类拒绝。不把 T03 的 verification.state 标为通过，不声称 §6.5 的「申请后安装」已生效。【已被取代，保留为历史证据】2026-09-19 该对象正文改写（request_tools 落地后同步工具卡），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
+    },
+    {
+      "object": "Q08",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/run_context.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib history_selection_tests",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "c736fb0184f9145115544091c5c9764a",
+      "at": "2026-09-19T06:30:00Z",
+      "applicability": "current",
+      "note": "Q08 关闭证据：本机 9 passed / 0 failed。history_coverage_is_incomplete 比较摘要覆盖终点与 token 预算后历史视图的首条序号；有缺口时必须把「历史覆盖边界」写进模型可见的历史块，连续时不得谎报缺口。合同要求的「一致，或留下显式缺口」据此满足。**不同源这一事实未改变**：覆盖终点仍按消息条数、裁剪边界仍按 token 预算，已登记为本条「已知限制」。"
+    },
+    {
+      "object": "Q08",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/conversation_memory.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib memory_extraction_tests",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "c736fb0184f9145115544091c5c9764a",
+      "at": "2026-09-19T06:30:00Z",
+      "applicability": "current",
+      "note": "Q08 相邻证据：本机 13 passed / 0 failed。摘要不得覆盖用户后来的纠正，且摘要与近期窗口必须不重叠（latest_explicit_correction_is_preserved_as_a_constraint、refresh_keeps_summary_and_recent_window_disjoint_at_twenty_five_messages）。"
+    },
+    {
+      "object": "G05",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/run_engine/publication_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib cancellation_after_candidate_but_before_commit_cannot_publish_it",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "554d41dc4e13f6eed48903dae3ad6b37",
+      "at": "2026-09-19T06:30:00Z",
+      "applicability": "current",
+      "note": "G05 可验证性质之一：取消发生在候选产生之后、提交之前时，该候选不得发布（run 终态 Cancelled、final_message_id 为空、无 ContentDelta／Completed、无 AnswerDelta／AnswerReset／AnswerComplete）。本机 1 passed / 0 failed。跨组件组合证据。G05 的另一半（压缩覆盖与裁剪边界一致或留显式缺口）见 Q08 的两条记录；G05 由 D03 验收关闭。"
+    },
+    {
+      "object": "T03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/runtime.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib capabilities_read",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "b986104f45bf9423de87c9004d39c9d2",
+      "at": "2026-09-19T06:35:00Z",
       "applicability": "current",
       "note": "工具卡 T03 与目录／处理器事实的一致性核对：schema 声明 request_tools，处理器消费并四类拒绝。不把 T03 的 verification.state 标为通过，不声称 §6.5 的「申请后安装」已生效。"
     }
@@ -18505,6 +18549,37 @@
           "revisionTo": 13,
           "fingerprintFrom": "3da8499e32d9b813055cbb397390954c",
           "fingerprintTo": "6c386cfbc7102343473643fb87f27cfe"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-53",
+      "at": "2026-09-19T05:43:36.664Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "Q08 登记检测位置与已知限制；V02 台账新增覆盖缺口与纠正保留两行",
+      "review": null,
+      "objects": [
+        {
+          "id": "V02",
+          "revisionFrom": 26,
+          "revisionTo": 27,
+          "fingerprintFrom": "794a9d8b80a34747cbe321cc4d49e183",
+          "fingerprintTo": "bceb40dd8443e1145dc611b00b8d8d6c"
+        },
+        {
+          "id": "Q08",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "96cd6a36e82f49c1cd20d656df887851",
+          "fingerprintTo": "c736fb0184f9145115544091c5c9764a"
+        },
+        {
+          "id": "T03",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "0c1647b9ae0d600db31e2bb5b0e222b4",
+          "fingerprintTo": "b986104f45bf9423de87c9004d39c9d2"
         }
       ]
     }
