@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 124,
+  "registryRevision": 126,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T11:45:40.917Z"
+    "recordedAt": "2026-09-19T12:12:34.459Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -20,7 +20,7 @@
       "kind": "architecture-definition",
       "role": "上位架构决定；模块、组件、工具身份由它派生",
       "refs": ["P01", "P02", "P03"],
-      "fingerprint": "1f71477892d7ceee7eac1d35f6b2733d"
+      "fingerprint": "6f40796d5fe0d99811c231354d860ff2"
     },
     "SRC-ARCH-REPO": {
       "path": "ARCHITECTURE.md",
@@ -131,7 +131,7 @@
     "contracts/K18-mcp-transport.md": {
       "container": "K18",
       "registration": "K18#file",
-      "fingerprint": "3c7b1028069a05aacfc492e4c554ed72"
+      "fingerprint": "e53db119cf6064403a6905db024e3429"
     },
     "contracts/README.md": {
       "container": "README-CONTRACTS",
@@ -196,7 +196,7 @@
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "486f6febbdb22486e9212581d0bd6203"
+      "fingerprint": "3cc17400ef6c9fa3cbb1c427c8de97c2"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
@@ -226,7 +226,7 @@
     "modules/m02-permission-and-side-effects.md": {
       "container": "M02",
       "registration": "M02",
-      "fingerprint": "fcde5d2569bbaa8110b54f638e47225e"
+      "fingerprint": "4195b5cebe4e35baceaff2ba4bbffa02"
     },
     "modules/m03-context-and-memory.md": {
       "container": "M03",
@@ -246,7 +246,7 @@
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
       "registration": "M06",
-      "fingerprint": "53ec730210597da73734f1ac725f0315"
+      "fingerprint": "a8b33bf35327424923df11dfef0a1218"
     },
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
@@ -261,12 +261,12 @@
     "modules/m09-audit-and-diagnostics.md": {
       "container": "M09",
       "registration": "M09",
-      "fingerprint": "35c065779e5084eca295b7f7553b6812"
+      "fingerprint": "ee00c087a8f77baf8a91145bc6d558bb"
     },
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "339447559a3c8c2d2361724956145149"
+      "fingerprint": "5984a538e0d14ffdbcc2c432e0bd5bbf"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1876,13 +1876,13 @@
       "title": "K18 MCP 传输与外部工具边界",
       "owner": "C18",
       "maturity": "defined",
-      "revision": 14,
+      "revision": 15,
       "definition": {
         "file": "contracts/K18-mcp-transport.md",
         "anchor": "K18",
         "line": 13,
         "endLine": 114,
-        "fingerprint": "27f597579cb531d8a3e0b0357fe14fd4"
+        "fingerprint": "520c45968e7bcfc10f558b942f527452"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1921,13 +1921,13 @@
       "title": "L02 联网检索与核实链路",
       "owner": "M07",
       "maturity": "defined",
-      "revision": 13,
+      "revision": 15,
       "definition": {
         "file": "flows/L02-web-retrieval.md",
         "anchor": "L02",
         "line": 11,
         "endLine": 126,
-        "fingerprint": "6fa0f271ce03e80e5bfa3467c6139a0b"
+        "fingerprint": "186e494e37709150ff46793b7e9a4649"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2963,20 +2963,20 @@
       "title": "读取路径写入数据库触发隐藏配置变更",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q05",
         "line": 93,
         "endLine": 103,
-        "fingerprint": "f0930d544a9b54e390832911b3147e39"
+        "fingerprint": "efbee7d33f48bf7b6dfd70193f99e735"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": "源码 list 只读已有机械 V03；关闭仍等 D04 验收。不把 C18 verification 标为通过。"
+      "note": "落点 058366ea；源码 list 只读已有机械 V03；关闭仍等 D04 验收。不把 C18 verification 标为通过。"
     },
     "Q06": {
       "kind": "issue",
@@ -5620,8 +5620,8 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "f0930d544a9b54e390832911b3147e39",
       "at": "2026-09-19T11:36:00Z",
-      "applicability": "current",
-      "note": "本机 2 passed / 0 failed。列举旧 AnySearch／Firecrawl 行不持久化 maxResultsArg，hash 与 updated_at 不变。不关闭 Q05，不把 C18 verification 标 passed。"
+      "applicability": "obsolete",
+      "note": "本机 2 passed / 0 failed。列举旧 AnySearch／Firecrawl 行不持久化 maxResultsArg，hash 与 updated_at 不变。不关闭 Q05，不把 C18 verification 标 passed。【已被取代，保留为历史证据】2026-09-19 时序口径改写 Q05 正文（落点 058366ea），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
     },
     {
       "object": "Q05",
@@ -5631,8 +5631,8 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "f0930d544a9b54e390832911b3147e39",
       "at": "2026-09-19T11:36:00Z",
-      "applicability": "current",
-      "note": "本机 1 passed / 0 failed。list 不使既有 binding 的 config_matches 失败；显式 upsert 改哈希后仍拒绝旧审查哈希。不关闭 Q05。"
+      "applicability": "obsolete",
+      "note": "本机 1 passed / 0 failed。list 不使既有 binding 的 config_matches 失败；显式 upsert 改哈希后仍拒绝旧审查哈希。不关闭 Q05。【已被取代，保留为历史证据】2026-09-19 时序口径改写 Q05 正文（落点 058366ea），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
     },
     {
       "object": "Q05",
@@ -5642,8 +5642,8 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "f0930d544a9b54e390832911b3147e39",
       "at": "2026-09-19T11:36:00Z",
-      "applicability": "current",
-      "note": "本机 1 passed / 0 failed。SQL 插入的旧 mapping 经 runtime overlay 仍带 max_results，库内 mapping／hash 不变。"
+      "applicability": "obsolete",
+      "note": "本机 1 passed / 0 failed。SQL 插入的旧 mapping 经 runtime overlay 仍带 max_results，库内 mapping／hash 不变。【已被取代，保留为历史证据】2026-09-19 时序口径改写 Q05 正文（落点 058366ea），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
     },
     {
       "object": "C18",
@@ -5699,6 +5699,39 @@
       "at": "2026-09-19T11:50:00Z",
       "applicability": "current",
       "note": "2026-09-19 自检补全不变量措辞后重绑：本机 1 passed / 0 failed。列举不旋转冻结 hash；显式保存后漂移拒绝仍在。不把 C18 verification 标 passed。"
+    },
+    {
+      "object": "Q05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_runtime_registry.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_persist_legacy",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "efbee7d33f48bf7b6dfd70193f99e735",
+      "at": "2026-09-19T12:06:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 时序口径改写后重绑：本机 2 passed / 0 failed。列举旧 AnySearch／Firecrawl 行不持久化 maxResultsArg，hash 与 updated_at 不变。落点 058366ea。不关闭 Q05，不把 C18 verification 标 passed。"
+    },
+    {
+      "object": "Q05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_external_tools.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_invalidate_existing_binding_hash",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "efbee7d33f48bf7b6dfd70193f99e735",
+      "at": "2026-09-19T12:06:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 时序口径改写后重绑：本机 1 passed / 0 failed。list 不使既有 binding 的 config_matches 失败；显式 upsert 改哈希后仍拒绝旧审查哈希。落点 058366ea。不关闭 Q05。"
+    },
+    {
+      "object": "Q05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/web_evidence_broker.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib legacy_anysearch_mapping_gets_a_runtime_result_limit_without_mutation",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "efbee7d33f48bf7b6dfd70193f99e735",
+      "at": "2026-09-19T12:06:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 时序口径改写后重绑：本机 1 passed / 0 failed。SQL 插入的旧 mapping 经 runtime overlay 仍带 max_results，库内 mapping／hash 不变。落点 058366ea。不关闭 Q05。"
     }
   ],
   "changes": [
@@ -19207,6 +19240,96 @@
           "revisionTo": 13,
           "fingerprintFrom": "636af295c5f86abdd249ed5a99dd56a1",
           "fingerprintTo": "d837e9389cba8780513641777fed6022"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-69",
+      "at": "2026-09-19T12:05:50.219Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "Q05／F04 时序口径：list 只读落点 058366ea；145bc563／70c929ac 不是 list 只读；不关 Q05、不标 D04 done。",
+      "review": null,
+      "objects": [
+        {
+          "id": "K18#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "3c7b1028069a05aacfc492e4c554ed72",
+          "fingerprintTo": "e53db119cf6064403a6905db024e3429"
+        },
+        {
+          "id": "D04#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "486f6febbdb22486e9212581d0bd6203",
+          "fingerprintTo": "3cc17400ef6c9fa3cbb1c427c8de97c2"
+        },
+        {
+          "id": "M06",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "53ec730210597da73734f1ac725f0315",
+          "fingerprintTo": "228391626208ef527f1832946f2a55f2"
+        },
+        {
+          "id": "M09",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "35c065779e5084eca295b7f7553b6812",
+          "fingerprintTo": "ee00c087a8f77baf8a91145bc6d558bb"
+        },
+        {
+          "id": "L02",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "6fa0f271ce03e80e5bfa3467c6139a0b",
+          "fingerprintTo": "b407a7aa34eb5953b74e6b11d3bfed5f"
+        },
+        {
+          "id": "Q05",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "f0930d544a9b54e390832911b3147e39",
+          "fingerprintTo": "efbee7d33f48bf7b6dfd70193f99e735"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-70",
+      "at": "2026-09-19T12:12:34.459Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "Q05／F04 时序口径自检：剩余阅读面改为落点见 Q05（058366ea）；不关 Q05、不标 D04 done、不改 C18 对象与工具卡。",
+      "review": null,
+      "objects": [
+        {
+          "id": "M02",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "fcde5d2569bbaa8110b54f638e47225e",
+          "fingerprintTo": "4195b5cebe4e35baceaff2ba4bbffa02"
+        },
+        {
+          "id": "M06",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "228391626208ef527f1832946f2a55f2",
+          "fingerprintTo": "a8b33bf35327424923df11dfef0a1218"
+        },
+        {
+          "id": "K18",
+          "revisionFrom": 14,
+          "revisionTo": 15,
+          "fingerprintFrom": "27f597579cb531d8a3e0b0357fe14fd4",
+          "fingerprintTo": "520c45968e7bcfc10f558b942f527452"
+        },
+        {
+          "id": "L02",
+          "revisionFrom": 14,
+          "revisionTo": 15,
+          "fingerprintFrom": "b407a7aa34eb5953b74e6b11d3bfed5f",
+          "fingerprintTo": "186e494e37709150ff46793b7e9a4649"
         }
       ]
     }

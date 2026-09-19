@@ -82,7 +82,7 @@
 ## 兼容
 
 - **设置写入语义必须统一**（§10.2 `F01`、`Q02`）：`McpProfilesPanel` 保存完整有序候选数组，`useAiSidecarBridge` 的 `setWebSearchProviderId` 写单元素数组；缺陷是两个设置入口的写入语义不一致，会丢失已有备用项。目标：MCP 主服务和备用顺序只有一个编辑语义；完整设置、简略设置、IPC 和持久配置必须往返一致（§5.1）。
-- **读取路径不得隐藏写库**（§10.2 `F04`、`Q05`）：`list_web_evidence_providers` 已只读列举，不再在读取路径 UPDATE 映射、哈希与时间。兼容补字段发生在显式 `upsert`／`normalize_provider_input`；调用侧 overlay 不写库。既有信任与快照不能随新哈希自动扩权。`Q05` 仍 open，关闭等 `D04` 验收。
+- **读取路径不得隐藏写库**（§10.2 `F04`、`Q05`）：`list_web_evidence_providers` 已只读列举，不再在读取路径 UPDATE 映射、哈希与时间（落点见 `Q05`，`058366ea`）。兼容补字段发生在显式 `upsert`／`normalize_provider_input`；调用侧 overlay 不写库。既有信任与快照不能随新哈希自动扩权。`Q05` 仍 open，关闭等 `D04` 验收。
 - `resolve_web_search_provider_route` 只返回启用的 MCP 搜索候选，最多 3 个（§5.1）。
 - MCP 列表内部的主备转移仍是同一路线的服务选择，不默认向全部 MCP 服务并发请求（§5.1）。
 - 读边界兼容策略见 [ARCHITECTURE.md](../../ARCHITECTURE.md) Compatibility boundaries。
@@ -103,9 +103,9 @@
 - 依赖合同：[`K05`](../contracts/K05-authorization-and-confirmation.md)、[`K10`](../contracts/K10-tool-surface.md)、[`K18`](../contracts/K18-mcp-transport.md)（`applies_to`：`C18`、`C16`、`C20`、`C21`）。
 - 工具清单与暴露规则见 [架构定义](../../docs/agent-architecture.md) §6；逐工具合同在 [工具卡片](../tools/README.md)，本文件不重复定义。
 - 相关缺口：`G01`（工具目录目标与现状的差异，责任人 `M06`）主要工作包 `D03`。
-- 相关未决问题：`Q02`（设置写入冲突）、`Q05`（读取路径写库的 list 路径已从源码消除，关闭仍等 `D04`）、`Q06`（子任务参数声明与执行不一致）、`Q01`／`Q12`（工具名来源无法区分）。
+- 相关未决问题：`Q02`（设置写入冲突）、`Q05`（读取路径写库的 list 路径落点见 `Q05`（`058366ea`），关闭仍等 `D04`）、`Q06`（子任务参数声明与执行不一致）、`Q01`／`Q12`（工具名来源无法区分）。
 - `Q02` 的范围限制：不能推出「整个前端从来只能配置一条路线」。
-- `Q05` 的范围限制：源码 list 写库已消除，机械 `V03` 见 `registry.json.verify`；不把 `C18` `verification.state` 标为通过，也不关闭本条。漂移拒绝闸门仍在：显式保存改哈希后必须重新审查，列举不得换哈希。
+- `Q05` 的范围限制：源码 list 写库落点见 `Q05`（`058366ea`），机械 `V03` 见 `registry.json.verify`；不把 `C18` `verification.state` 标为通过，也不关闭本条。漂移拒绝闸门仍在：显式保存改哈希后必须重新审查，列举不得换哈希。
 - 版本排期唯一来源是 [ROADMAP.md](../../ROADMAP.md)。
 <!-- iris:end M06 -->
 

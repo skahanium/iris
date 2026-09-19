@@ -6,7 +6,7 @@
 
 本文件只定义 MCP 传输与外部工具边界，不复制相邻对象的正式定义：授权与确认见 [K05](./K05-authorization-and-confirmation.md)，工具面版本与派发观察见 [K10](./K10-tool-surface.md)，额度租约见 [K06](./K06-budget-ledger.md)，联网授权与查询外发见 [K09](./K09-web-authorization.md)，两路搜索协调见 [K11](./K11-dual-path-search.md)，正文窗口与完整性见 [K13](./K13-web-reading-window.md)，来源身份与账本引用见 [K14](./K14-evidence-and-provenance.md)，事件与审计见 [K17](./K17-audit-events.md)。
 
-本文件的编译依据是架构定义的 M6 与外部只读边界，以及 [ARCHITECTURE.md](../../ARCHITECTURE.md) 记录的 `external.read` 边界。外部 MCP 工具不分配业务工具 ID，其数量按服务动态计算（见 [objects.md](../rules/objects.md) §1.3）。`implementation.state` 只描述源码事实，不代表合同正确或用户任务可用；设置写入冲突（`Q02`，对应架构 `F01`）仍是待修正项。读取路径写库（`Q05`，对应架构 `F04`）的 list 写库已从源码消除，本条仍 open 直至 `D04` 验收，按 [current-baseline.md](../requirements/current-baseline.md) 引用，本文件不宣称 `D04` 已关闭或本合同已通过。
+本文件的编译依据是架构定义的 M6 与外部只读边界，以及 [ARCHITECTURE.md](../../ARCHITECTURE.md) 记录的 `external.read` 边界。外部 MCP 工具不分配业务工具 ID，其数量按服务动态计算（见 [objects.md](../rules/objects.md) §1.3）。`implementation.state` 只描述源码事实，不代表合同正确或用户任务可用；设置写入冲突（`Q02`，对应架构 `F01`）仍是待修正项。读取路径写库（`Q05`，对应架构 `F04`）的 list 写库落点见 `Q05`（`058366ea`），本条仍 open 直至 `D04` 验收，按 [current-baseline.md](../requirements/current-baseline.md) 引用，本文件不宣称 `D04` 已关闭或本合同已通过。
 
 <!-- iris:end K18 -->
 
@@ -66,7 +66,7 @@ binding 的生命周期：
 9. **输出与记录边界**：输出正文与证据摘录遵守当前实现的字符上限；事件、审计与检查点不保存参数或原始输出；原始 provider JSON 不进入事件、审计、错误或评测报告。
 10. **引用绑定本 Run**：成功输出向模型返回正文和账本来源引用 `E{id}`；最终结构化提交只能引用本 Run 实际采用的 `E{id}`（登记规则见 `K14`，交付表达见 `K15`）。
 11. **设置往返一致**：MCP 主服务与备用顺序只有一个编辑语义；简略入口可以只展示主服务，但更换主服务不得静默删除备用项；完整设置、简略设置、IPC 与持久配置必须往返一致（`Q02` 是待修正差异）。
-12. **查询保持只读**：普通列举与读取路径不得触发隐藏的配置变更；配置升级应发生在明确的保存／升级边界，既有信任与快照不随新哈希自动扩权（`Q05` 的 list 写库已从源码消除，关闭仍等 `D04` 验收）。
+12. **查询保持只读**：普通列举与读取路径不得触发隐藏的配置变更；配置升级应发生在明确的保存／升级边界，既有信任与快照不随新哈希自动扩权（`Q05` 的 list 写库落点见 `Q05`（`058366ea`），关闭仍等 `D04` 验收）。
 
 ## 异常处理
 

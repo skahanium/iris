@@ -94,8 +94,8 @@
 
 ### Q05 读取路径写入数据库：普通列举触发隐藏配置变更
 
-- **已确认事实**：`list_web_evidence_providers` 已改为 `with_read_conn` 只读列举，不再调用 `heal_legacy_search_result_limit_mappings`（该函数已删除）。配置升级发生在显式 `upsert_web_evidence_provider`／`normalize_provider_input`；搜索调用侧 `effective_mcp_search_mapping` 只在内存补 `maxResultsArg`、不 UPDATE。`mcp_external_tools.rs` 仍比较绑定哈希与当前 provider 哈希，不一致时拒绝。
-- **不能推出**：`D04` 双路已接通、本条已关闭、`C18` 已 `passed`、或任一端点 live 通过。配置内容实际变化后重算哈希本身仍必要，问题在变更时机、可见性与已有绑定的处理。
+- **已确认事实**：list 写库的落点是 `058366ea`（2026-09-19）：删除 `heal_legacy_search_result_limit_mappings`，`list_web_evidence_providers` 改为 `with_read_conn` 只读列举，测试从 `list_silently_heals_*` 反转为 `list_does_not_persist_*`。现行源码不再在读取路径 UPDATE 映射、哈希与时间。配置升级发生在显式 `upsert_web_evidence_provider`／`normalize_provider_input`；搜索调用侧 `effective_mcp_search_mapping` 只在内存补 `maxResultsArg`、不 UPDATE。`mcp_external_tools.rs` 仍比较绑定哈希与当前 provider 哈希，不一致时拒绝。`145bc563`（2026-07-18）把列举路径 heal **泛化**，是缺陷放大不是消除；`70c929ac`（2026-09-03）只拆健康表 capability，该提交里 list 仍 heal。
+- **不能推出**：`D04` 双路已接通、本条已关闭、`F04` 已关闭、`C18` 已 `passed`、或任一端点 live 通过。不能把 `145bc563` 或 `70c929ac` 读成 list 只读已落地。现行源码 list 写库已消除 ≠ 本条已关闭。配置内容实际变化后重算哈希本身仍必要，问题在变更时机、可见性与已有绑定的处理。
 - **影响边界**：`C18`、`C04`、`C26`；对应架构定义 `F04`。
 - **所需证据**：查询保持只读、配置升级移到明确保存边界的验证；既有信任与快照不随新哈希自动扩权。
 - **覆盖**：`list_does_not_persist_legacy_anysearch_result_limit`、`list_does_not_persist_legacy_firecrawl_result_limit`、`list_does_not_invalidate_existing_binding_hash`、`legacy_anysearch_mapping_gets_a_runtime_result_limit_without_mutation`；`V03` 机械记录见 `registry.json.verify`。不把 `Q05`／`C18` 的 `verification.state` 标为通过。本条仍由 `D04` 验收关闭。
