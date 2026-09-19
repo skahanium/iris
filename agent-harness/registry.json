@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 81,
+  "registryRevision": 96,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T04:46:35.515Z"
+    "recordedAt": "2026-09-19T04:59:36.795Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -186,7 +186,7 @@
     "implementation/D02-protocol-and-recovery.md": {
       "container": "D02",
       "registration": "D02#file",
-      "fingerprint": "d3f9b4790161401cec084cf57d747814"
+      "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
     },
     "implementation/D03-session-permission-context.md": {
       "container": "D03",
@@ -241,7 +241,7 @@
     "modules/m05-agent-execution.md": {
       "container": "M05",
       "registration": "M05",
-      "fingerprint": "858be576e0976d16b82862e5320c0c61"
+      "fingerprint": "4916a64b32a42ce902c54910c3e88d54"
     },
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "93295e63282fe8325f7f9e0010da398f"
+      "fingerprint": "ae8a212204b340c850c18f19a8985ebb"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -286,7 +286,7 @@
     "rules/governance.md": {
       "container": "P03",
       "registration": "P03",
-      "fingerprint": "0e2620777b3fa206ebb05ddd5d16a5dc"
+      "fingerprint": "aba2d9631617a9617dc77b3ca52c276c"
     },
     "rules/objects.md": {
       "container": "P02",
@@ -1138,15 +1138,15 @@
         "endLine": 128,
         "fingerprint": "921617a8193a17d2738c106c2be595bc"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
-      "work": { "state": "planned" },
+      "implementation": { "state": "present" },
+      "verification": { "state": "passed" },
+      "work": { "state": "done" },
       "scope": ["N01", "N15", "N16", "N17", "N20", "N21", "Q04", "Q10", "G06"],
       "relations": {
         "depends_on": ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
         "closes": ["Q04", "Q10", "G06"]
       },
-      "note": "关闭门槛（2026-09-17 改写，见 D02 §三）：Q04／Q10 用各自现有 V03 机械记录，不要求逐端点 V05；G06 用 host_authority 独立 verify 命令；D02 自身需一条 applicability=current 的 verify。V05 外移 G03／Q17／D04。Q13 不关。检查器 acceptanceReady=true 不是验收。"
+      "note": "2026-09-19 收口：D02 自身有 current verify，关闭门槛三行各有对应记录（Q04／Q10 用现有 V03，G06 用 host_authority 独立命令），§三之一记时点，故 work.state=done、verification.state=passed——只表示本包清单已绑定，不代标 C11／C14 的 passed，也不表示逐端点 V05 已通过（外移 G03／Q17／D04）。Q13 不关。"
     },
     "D03": {
       "kind": "work",
@@ -1846,13 +1846,13 @@
       "title": "K16 验证报告与可恢复错误反馈",
       "owner": "C23",
       "maturity": "defined",
-      "revision": 15,
+      "revision": 16,
       "definition": {
         "file": "contracts/K16-verification-report.md",
         "anchor": "K16",
         "line": 13,
         "endLine": 111,
-        "fingerprint": "7f06ca6d8ae5b1b37a0cfc43c6383f0f"
+        "fingerprint": "897922f16ba134494da949a65678dfd9"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4639,13 +4639,13 @@
       "title": "X01 文档体系检查器",
       "owner": "P03",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 14,
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X01",
         "line": 208,
         "endLine": 230,
-        "fingerprint": "a351d9b85535d8e91447a82853ba9346"
+        "fingerprint": "1c85b2afe464d3bd20f0d0913fac1fed"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "passed" },
@@ -4660,13 +4660,13 @@
       "title": "X02 检查器负例自测",
       "owner": "P03",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X02",
         "line": 232,
         "endLine": 246,
-        "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd"
+        "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "passed" },
@@ -4708,8 +4708,8 @@
       "environment": "local / Windows 10 / node v24.14.1",
       "fingerprint": "a351d9b85535d8e91447a82853ba9346",
       "at": "2026-09-16T02:30:00Z",
-      "applicability": "current",
-      "note": "registryRevision 30：本机退出码 0（95 个托管文件、187 个已定义对象、187 个登记对象）。本机以 path.relative 的 Windows 分隔符计算文件级指纹会让 94 个托管文件全部误报；检查器已改为固定 POSIX 分隔符（对象指纹不含路径，本来不受影响）。X01 指纹绑定 rules/governance.md 中的定义，检查器代码变化不改变它。"
+      "applicability": "obsolete",
+      "note": "registryRevision 30：本机退出码 0（95 个托管文件、187 个已定义对象、187 个登记对象）。本机以 path.relative 的 Windows 分隔符计算文件级指纹会让 94 个托管文件全部误报；检查器已改为固定 POSIX 分隔符（对象指纹不含路径，本来不受影响）。X01 指纹绑定 rules/governance.md 中的定义，检查器代码变化不改变它。【已被取代，保留为历史证据】2026-09-19 该对象正文改写，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "X02",
@@ -4719,8 +4719,8 @@
       "environment": "自动化检查（本机 Windows 未运行；由仓库质量门在受支持平台上执行）",
       "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd",
       "at": "2026-09-16T02:30:00Z",
-      "applicability": "current",
-      "note": "registryRevision 30：22 条负例覆盖范围以 X02 正文为准。本机无法运行：本会话沙箱禁止管道 stdio，node --test 的文件级 spawn 与检查器子进程均返回 EPERM（在我的检查器路径修复前后各跑一次，均为 45 项失败、原因同为 spawn EPERM），故本条绑定仓库质量门运行，未声称本机已执行。"
+      "applicability": "obsolete",
+      "note": "registryRevision 30：22 条负例覆盖范围以 X02 正文为准。本机无法运行：本会话沙箱禁止管道 stdio，node --test 的文件级 spawn 与检查器子进程均返回 EPERM（在我的检查器路径修复前后各跑一次，均为 45 项失败、原因同为 spawn EPERM），故本条绑定仓库质量门运行，未声称本机已执行。【已被取代，保留为历史证据】2026-09-19 该对象正文改写，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "C26",
@@ -4862,8 +4862,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
       "at": "2026-09-17T09:10:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-43：指纹绑到 C14 revision 17。Chat Completions 循环纵深 5 passed；Anthropic 词汇另见 agent_tool_loop_anthropic_finish_reason_tests.rs。host_authority 负例见 agent_tool_loop_host_authority_tests.rs。不把 C14 verification 标为通过，不构成 G06／D02 关闭证据。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-43：指纹绑到 C14 revision 17。Chat Completions 循环纵深 5 passed；Anthropic 词汇另见 agent_tool_loop_anthropic_finish_reason_tests.rs。host_authority 负例见 agent_tool_loop_host_authority_tests.rs。不把 C14 verification 标为通过，不构成 G06／D02 关闭证据。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "C14",
@@ -4873,8 +4873,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
       "at": "2026-09-17T09:10:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-43：本机 3 passed / 0 failed。参数无效时 Host System 反馈同时含 arguments_schema_mismatch 与字段级 Block.reason（必填／类型／枚举）。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过，不关闭 G06／D02。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-43：本机 3 passed / 0 failed。参数无效时 Host System 反馈同时含 arguments_schema_mismatch 与字段级 Block.reason（必填／类型／枚举）。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过，不关闭 G06／D02。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "K16",
@@ -4884,8 +4884,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "529443fad5105df30206ae266bddd46e",
       "at": "2026-09-17T09:10:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-43：本机 3 passed / 0 failed。K16「工具存在但参数无效」的字段级 Host 反馈机械覆盖。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。verification.state 仍 none，不等于 D02 可验收，不关闭 G06。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-43：本机 3 passed / 0 failed。K16「工具存在但参数无效」的字段级 Host 反馈机械覆盖。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。verification.state 仍 none，不等于 D02 可验收，不关闭 G06。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "K16",
@@ -4895,8 +4895,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "529443fad5105df30206ae266bddd46e",
       "at": "2026-09-17T09:10:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-43：本机 1 passed / 0 failed。同一 verify_tool_args 闸门的 pipeline 结果保留 error=tool_arguments_invalid 并带字段级 reason。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。verification.state 仍 none。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-43：本机 1 passed / 0 failed。同一 verify_tool_args 闸门的 pipeline 结果保留 error=tool_arguments_invalid 并带字段级 reason。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。verification.state 仍 none。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "C14",
@@ -4906,8 +4906,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
       "at": "2026-09-17T09:10:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-43：本机 2 passed / 0 failed。guardrails Block.reason 点出必填路径、允许类型，枚举失败列出合法取值。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-43：本机 2 passed / 0 failed。guardrails Block.reason 点出必填路径、允许类型，枚举失败列出合法取值。随后全量 cargo test --lib：2101 passed / 0 failed / 5 ignored。不把 C14 verification 标为通过。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q04",
@@ -4917,8 +4917,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "06ff6425c93e01f30ae314209f3af1a0",
       "at": "2026-09-16T08:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 9 passed / 0 failed。Q04 五类协议测试中的状态机部分。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不关闭 Q04，不替代逐端点 V05。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Q04 五类协议测试中的状态机部分。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。不关闭 Q04，不替代逐端点 V05。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q04",
@@ -4928,8 +4928,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "06ff6425c93e01f30ae314209f3af1a0",
       "at": "2026-09-16T08:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 2 passed / 0 failed。Q04 长度截断与缺失终止的字节级 SSE。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。Q04 长度截断与缺失终止的字节级 SSE。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q04",
@@ -4939,8 +4939,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "06ff6425c93e01f30ae314209f3af1a0",
       "at": "2026-09-16T08:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 5 passed / 0 failed。Q04 截断工具不得当作完整动作执行；含空正文+length 恢复。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 5 passed / 0 failed。Q04 截断工具不得当作完整动作执行；含空正文+length 恢复。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q04",
@@ -4950,8 +4950,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "06ff6425c93e01f30ae314209f3af1a0",
       "at": "2026-09-16T08:20:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 1 passed / 0 failed。length／unknown／max_tokens 不是正常结束；may_execute_tool_calls 仅放行 tool_calls／tool_use／stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 1 passed / 0 failed。length／unknown／max_tokens 不是正常结束；may_execute_tool_calls 仅放行 tool_calls／tool_use／stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "C11",
@@ -5082,8 +5082,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
       "at": "2026-09-17T12:00:00Z",
-      "applicability": "current",
-      "note": "包 B 对照检查：本机 3 passed / 0 failed。循环按 Messages 词汇派发／拒绝，不构成 G06／D02 关闭证据。"
+      "applicability": "obsolete",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。循环按 Messages 词汇派发／拒绝，不构成 G06／D02 关闭证据。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q10",
@@ -5093,8 +5093,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 2 passed / 0 failed。Q10 事实 2：DeepSeek thinking 写在 HTTP 顶层。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不关闭 Q10／D02／G03／Q17，不替代 V05 live。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。Q10 事实 2：DeepSeek thinking 写在 HTTP 顶层。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不关闭 Q10／D02／G03／Q17，不替代 V05 live。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q10",
@@ -5104,8 +5104,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 事实 1：工具续轮回放 reasoning_content。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 事实 1：工具续轮回放 reasoning_content。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q10",
@@ -5115,8 +5115,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 隐私不倒退：无工具历史不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 隐私不倒退：无工具历史不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q10",
@@ -5126,8 +5126,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
       "at": "2026-09-16T09:19:36Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 3 passed / 0 failed。Q10 事实 3：Responses 续轮 instructions 与 Host 修复；无 System 夹具不编造 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Q10 事实 3：Responses 续轮 instructions 与 Host 修复；无 System 夹具不编造 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
     },
     {
       "object": "Q10",
@@ -5137,8 +5137,250 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "26a1f09d9acb99c95b7ea43f1dfd8fb6",
       "at": "2026-09-16T09:19:36Z",
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 事实 3 字节级替身。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不关闭 Q10／D02，不替代 V05。【已被取代，保留为历史证据】2026-09-19 D02 关闭门槛改写改变了本条对象正文，本条绑定的是改写前的指纹，按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出（不再声称覆盖当前内容，不计入必需维度），并另立一条绑定当前指纹的记录。"
+    },
+    {
+      "object": "D02",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_recovery_cases_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_recovery_cases",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "921617a8193a17d2738c106c2be595bc",
+      "at": "2026-09-19T04:47:00Z",
       "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。Q10 事实 3 字节级替身。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。不关闭 Q10／D02，不替代 V05。"
+      "note": "D02 §三 本包恢复案例：本机 4 passed / 0 failed（未知工具纠正后真的派发、参数按字段级 reason 修正后派发、网络工具暂失败后再提议成功、取消后不再开新的模型轮或工具轮）。每例另断被拒提议不计执行次数（K16 不变量 6）与 Run 以模型答案结束、不出现 Host 兜底终止（K16 不变量 7／N17）。四例首次运行即通过、未改动 AgentToolLoop：这是新增钉子，不是缺陷修复。循环组合证据，不声称桌面 E2E 或生产入口；不把 C14／K16 的 verification 标为通过。"
+    },
+    {
+      "object": "D02",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_host_authority",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "921617a8193a17d2738c106c2be595bc",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "G06 关闭证据（本节关闭门槛表第 3 行）：本机 5 passed / 0 failed。两轮已反馈的未知工具不得强制综合（REPAIR_EXHAUSTED_MARKER 不出现）、无进展与服务失败计数不得关面、预留触达不注入关面指令（CLOSURE_INSTRUCTION_MARKER 不出现）。同一记录另绑 G06 与 C14；不把 C14 verification 标为通过。"
+    },
+    {
+      "object": "D02",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "921617a8193a17d2738c106c2be595bc",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "转引 Q04 关闭证据（不重复计数）：本机 9 passed / 0 failed。Q04 关闭门槛表第 1 行＝Chat Completions 五类终止的现有 V03 机械钉，本条只作 D02 侧转引；Q04 自身的绑定记录见其 verify 行。"
+    },
+    {
+      "object": "D02",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::deepseek_reasoning",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "921617a8193a17d2738c106c2be595bc",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "转引 Q10 关闭证据（不重复计数）：本机 2 passed / 0 failed。Q10 关闭门槛表第 2 行＝事实 1–3 的现有 V03 机械钉，本条只作 D02 侧转引；不把 C11 的 10 条再数一遍。"
+    },
+    {
+      "object": "D02",
+      "kind": "V03",
+      "testPath": "docs/eval/results/2026-09-17-agent-harness-work-report.md",
+      "command": "npm run agent-harness:check",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "921617a8193a17d2738c106c2be595bc",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "D02 §三之一 时点表的验收口径依据：工作包状态与证据时点分别记录，不用「完成」标签代替证据。本条不是回归证据，只证明收口时检查器在本机退出码 0。"
+    },
+    {
+      "object": "G06",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_host_authority",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "4db38fb68d7362103f4c770134caf337",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 5 passed / 0 failed。G06「Host 用配方当第二规划器」的关闭证据由本条独立绑定，不写在 C14 备注里代替；C14 只作行动与恢复协调的机械覆盖，字段级 mismatch 与 Anthropic 终止不写入 G06 关闭条件。不把 C14 verification 标为通过。"
+    },
+    {
+      "object": "C14",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_host_authority",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "1d69cdc01d7c2bf1dcd302328ac47cdd",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 5 passed / 0 failed。G06「Host 用配方当第二规划器」的关闭证据由本条独立绑定，不写在 C14 备注里代替；C14 只作行动与恢复协调的机械覆盖，字段级 mismatch 与 Anthropic 终止不写入 G06 关闭条件。不把 C14 verification 标为通过。"
+    },
+    {
+      "object": "C14",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_schema_feedback_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib schema_mismatch_feedback",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "1d69cdc01d7c2bf1dcd302328ac47cdd",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "2026-09-17 合同改写（D02 关闭门槛）改变了本条对象的正文，原绑定指纹随之失效。按 §5.2 规则 6 不改写旧记录，改以实际重跑补一条绑定当前指纹的记录：本机 3 passed / 0 failed。Host System 反馈同时含 arguments_schema_mismatch 与字段级 Block.reason（必填／类型／枚举）。verification.state 仍 none。"
+    },
+    {
+      "object": "K16",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_schema_feedback_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib schema_mismatch_feedback",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "7f06ca6d8ae5b1b37a0cfc43c6383f0f",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "obsolete",
+      "note": "2026-09-17 合同改写（D02 关闭门槛）改变了本条对象的正文，原绑定指纹随之失效。按 §5.2 规则 6 不改写旧记录，改以实际重跑补一条绑定当前指纹的记录：本机 3 passed / 0 failed。Host System 反馈同时含 arguments_schema_mismatch 与字段级 Block.reason（必填／类型／枚举）。verification.state 仍 none。【已被取代，保留为历史证据】2026-09-19 对象正文改写（含 Prettier 排版），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
+    },
+    {
+      "object": "Q04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "cf416a70a89bc913fbdfdb519c647b0d",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 9 passed / 0 failed。状态机侧：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表。这是 Q04 的关闭证据（2026-09-17 关闭门槛表第 1 行：现 V03，不是 V05）；逐端点 V05 已外移 G03／Q17／D04，不作为本条关闭条件。不把 Q04／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "Q04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "cf416a70a89bc913fbdfdb519c647b0d",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。这是 Q04 的关闭证据（2026-09-17 关闭门槛表第 1 行：现 V03，不是 V05）；逐端点 V05 已外移 G03／Q17／D04，不作为本条关闭条件。不把 Q04／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "Q04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_finish_reason",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "cf416a70a89bc913fbdfdb519c647b0d",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 5 passed / 0 failed。循环纵深：截断工具不得当作完整动作执行；含空正文+length 恢复。这是 Q04 的关闭证据（2026-09-17 关闭门槛表第 1 行：现 V03，不是 V05）；逐端点 V05 已外移 G03／Q17／D04，不作为本条关闭条件。不把 Q04／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "Q04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/final_answer_integrity.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib final_answer_integrity",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "cf416a70a89bc913fbdfdb519c647b0d",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 1 passed / 0 failed。length／unknown／max_tokens 不是正常结束；may_execute_tool_calls 仅放行 tool_calls／tool_use／stop。这是 Q04 的关闭证据（2026-09-17 关闭门槛表第 1 行：现 V03，不是 V05）；逐端点 V05 已外移 G03／Q17／D04，不作为本条关闭条件。不把 Q04／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::deepseek_reasoning",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "472dc5d2602bb72006315d53f50caeb9",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 2 passed / 0 failed。事实 2：DeepSeek thinking 写在 HTTP 顶层，不写 extra_body。这是 Q10 的关闭证据（2026-09-17 关闭门槛表第 2 行：现 V03，不是 V05）；服务端搜索事件与引用不算本条（→ G03），逐端点 V05 外移 G03／Q17／D04。不把 Q10／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib deepseek_tool_continuation_preserves_reasoning_content",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "472dc5d2602bb72006315d53f50caeb9",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 1 passed / 0 failed。事实 1：同一 Provider 工具续轮回放 reasoning_content。这是 Q10 的关闭证据（2026-09-17 关闭门槛表第 2 行：现 V03，不是 V05）；服务端搜索事件与引用不算本条（→ G03），逐端点 V05 外移 G03／Q17／D04。不把 Q10／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib messages_for_api_does_not_replay_reasoning",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "472dc5d2602bb72006315d53f50caeb9",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 1 passed / 0 failed。隐私不倒退：无工具历史不回放私有推理。这是 Q10 的关闭证据（2026-09-17 关闭门槛表第 2 行：现 V03，不是 V05）；服务端搜索事件与引用不算本条（→ G03），逐端点 V05 外移 G03／Q17／D04。不把 Q10／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::responses_",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "472dc5d2602bb72006315d53f50caeb9",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 3 passed / 0 failed。事实 3：Responses 续轮保留稳定 instructions 并把 Host 修复写入 input。这是 Q10 的关闭证据（2026-09-17 关闭门槛表第 2 行：现 V03，不是 V05）；服务端搜索事件与引用不算本条（→ G03），逐端点 V05 外移 G03／Q17／D04。不把 Q10／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "Q10",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib responses_double_preserves_instructions_and_host_repair_on_continuation",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "472dc5d2602bb72006315d53f50caeb9",
+      "at": "2026-09-19T04:47:00Z",
+      "applicability": "current",
+      "note": "本机 1 passed / 0 failed。事实 3 字节级替身。这是 Q10 的关闭证据（2026-09-17 关闭门槛表第 2 行：现 V03，不是 V05）；服务端搜索事件与引用不算本条（→ G03），逐端点 V05 外移 G03／Q17／D04。不把 Q10／C11 的 verification 标为通过。"
+    },
+    {
+      "object": "X01",
+      "kind": "V03",
+      "testPath": "scripts/agent-harness-check.mjs",
+      "command": "npm run agent-harness:check",
+      "environment": "local / macOS / node v26.0.0",
+      "fingerprint": "d316f690c28fe8b9a8e4db66f71e788e",
+      "at": "2026-09-19T05:05:00Z",
+      "applicability": "obsolete",
+      "note": "2026-09-19：X01 的正文（检查器职责表）与 P03 §六／§八 一同改写，原绑定指纹失效，按实际重跑补一条绑定当前指纹的记录：本机退出码 0（95 个托管文件、194 个已定义对象、194 个登记对象，0 violation）。本次同时修掉两处检查器缺陷——复核绑定文件级容器指纹被按对象指纹比对（误报「旧指纹」），以及容器登记键被二次拼接成 `X#file#file`；两条负例见 X02。【已被取代，保留为历史证据】2026-09-19 对象正文改写（含 Prettier 排版），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
+    },
+    {
+      "object": "X02",
+      "kind": "V03",
+      "testPath": "scripts/agent-harness-check.test.mjs",
+      "command": "node --test scripts/agent-harness-check.test.mjs",
+      "environment": "local / macOS / node v26.0.0",
+      "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869",
+      "at": "2026-09-19T05:05:00Z",
+      "applicability": "current",
+      "note": "2026-09-19：X02 覆盖清单新增两条负例并改写正文，原绑定指纹失效，按实际重跑补一条绑定当前指纹的记录：本机 24 passed / 0 failed（原 22 条 + 容器绑定 1 条 + obsolete 证据 1 条）。本机以 node --test 直接运行可过；经 npm 包装器运行会因沙箱 spawn 限制失败，属环境而非代码。"
+    },
+    {
+      "object": "K16",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_schema_feedback_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib schema_mismatch_feedback",
+      "environment": "local / macOS / node v26.0.0",
+      "fingerprint": "897922f16ba134494da949a65678dfd9",
+      "at": "2026-09-19T05:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 排版后重跑并重新绑定：本机 3 passed / 0 failed。K16「工具存在但参数无效」的字段级 Host 反馈机械覆盖；verification.state 仍 none。"
+    },
+    {
+      "object": "X01",
+      "kind": "V03",
+      "testPath": "scripts/agent-harness-check.mjs",
+      "command": "npm run agent-harness:check",
+      "environment": "local / macOS / node v26.0.0",
+      "fingerprint": "1c85b2afe464d3bd20f0d0913fac1fed",
+      "at": "2026-09-19T05:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 排版后重跑：本机退出码 0（95 个托管文件、194 个已定义对象、0 violation、0 缺口）。"
     }
   ],
   "changes": [
@@ -18073,6 +18315,99 @@
           "fingerprintTo": "4db38fb68d7362103f4c770134caf337"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-48",
+      "at": "2026-09-19T04:55:03.290Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "architecture",
+      "reason": "D02 收口：按 §三关闭门槛表与 §三之一时点表写 work.state=done 与 verification.state=passed，关闭 Q04／Q10／G06；不代标 C11／C14 passed，不关 Q13",
+      "review": "REV-2026-09-19-48",
+      "objects": [
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "d3f9b4790161401cec084cf57d747814",
+          "fingerprintTo": "0e087ee93f5c7446d762e43dfc0bd411"
+        },
+        {
+          "id": "P03",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "0e2620777b3fa206ebb05ddd5d16a5dc",
+          "fingerprintTo": "aba2d9631617a9617dc77b3ca52c276c"
+        },
+        {
+          "id": "X01",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "a351d9b85535d8e91447a82853ba9346",
+          "fingerprintTo": "d316f690c28fe8b9a8e4db66f71e788e"
+        },
+        {
+          "id": "X02",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "968d91c3d0251a4f3b76199b1e2d00dd",
+          "fingerprintTo": "4b3775188b1fad3fdf06e14ac64d5869"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-49",
+      "at": "2026-09-19T04:56:08.668Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "Prettier 排版：不改变承诺，仅调整表格与折行",
+      "review": null,
+      "objects": [
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "0e087ee93f5c7446d762e43dfc0bd411",
+          "fingerprintTo": "ed68c9f2e95842b1f2dcfb062ede63ea"
+        },
+        {
+          "id": "M05",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "858be576e0976d16b82862e5320c0c61",
+          "fingerprintTo": "4916a64b32a42ce902c54910c3e88d54"
+        },
+        {
+          "id": "K16",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "7f06ca6d8ae5b1b37a0cfc43c6383f0f",
+          "fingerprintTo": "897922f16ba134494da949a65678dfd9"
+        },
+        {
+          "id": "X01",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "d316f690c28fe8b9a8e4db66f71e788e",
+          "fingerprintTo": "1c85b2afe464d3bd20f0d0913fac1fed"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-50",
+      "at": "2026-09-19T04:57:01.952Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "D02 §三.5／§三之一／§五 与收口后的事实对齐（负例已实现、关闭已完成、证据均已重跑绑定）",
+      "review": null,
+      "objects": [
+        {
+          "id": "D02#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "ed68c9f2e95842b1f2dcfb062ede63ea",
+          "fingerprintTo": "af3d921b27b02d4f2aee384cf5ad509f"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18089,22 +18424,24 @@
         {
           "id": "P02",
           "revision": 11,
-          "fingerprint": "307cd1d4482aa3bd86fb4af0b1d4936b"
+          "fingerprint": "b621e56b5b165066fcd3fe18fb4b9b64"
         },
         {
           "id": "P03",
           "revision": 11,
-          "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
+          "fingerprint": "aba2d9631617a9617dc77b3ca52c276c"
         },
         {
           "id": "X01",
           "revision": 12,
-          "fingerprint": "a351d9b85535d8e91447a82853ba9346"
+          "fingerprint": "a351d9b85535d8e91447a82853ba9346",
+          "stale": true
         },
         {
           "id": "X02",
           "revision": 12,
-          "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd"
+          "fingerprint": "968d91c3d0251a4f3b76199b1e2d00dd",
+          "stale": true
         },
         {
           "id": "X03",
@@ -18137,7 +18474,7 @@
         {
           "id": "D01",
           "revision": 12,
-          "fingerprint": "0767ce792634a56cd54f1f82190cd319"
+          "fingerprint": "f49f234b4c5fbdd0536f7e68ce083feb"
         }
       ]
     },
@@ -18164,7 +18501,7 @@
         {
           "id": "D01",
           "revision": 12,
-          "fingerprint": "0767ce792634a56cd54f1f82190cd319"
+          "fingerprint": "f49f234b4c5fbdd0536f7e68ce083feb"
         }
       ]
     },
@@ -18181,12 +18518,12 @@
         {
           "id": "P06",
           "revision": 12,
-          "fingerprint": "6ad314659b015a4ca8656b93ad4fb386"
+          "fingerprint": "24294d94ac8dbeacbb891338b30d37c7"
         },
         {
           "id": "M05",
           "revision": 12,
-          "fingerprint": "509c4dbf3d72a991feb959e1c391bc96"
+          "fingerprint": "4916a64b32a42ce902c54910c3e88d54"
         },
         {
           "id": "C13",
@@ -18203,7 +18540,8 @@
         {
           "id": "D02",
           "revision": 13,
-          "fingerprint": "7d28dc5cddb628eadaff4907d503767b"
+          "fingerprint": "ed68c9f2e95842b1f2dcfb062ede63ea",
+          "stale": true
         },
         {
           "id": "N15",
@@ -18213,8 +18551,7 @@
         {
           "id": "FILE-DECISIONS",
           "revision": 13,
-          "fingerprint": "1feaab647b755f53b38fe04279231742",
-          "stale": true,
+          "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f",
           "staleNote": "索引增补 R13（已采用）；绑定停留在写入当时的指纹。"
         },
         {
@@ -18284,22 +18621,19 @@
         {
           "id": "P01#file",
           "revision": 0,
-          "fingerprint": "e86deb66e4a1c471efd94abf6bb94bf3",
-          "stale": true,
+          "fingerprint": "8e5cf807cea5dea36d77aa4eb19e96c9",
           "staleNote": "P01 对象计数由 R01–R12 改为 R01–R13，与 objects.md／FILE-DECISIONS 对齐；绑定停留在写入当时的指纹。"
         },
         {
           "id": "FILE-DECISIONS#file",
           "revision": 0,
-          "fingerprint": "6860295fce37",
-          "stale": true,
+          "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f",
           "staleNote": "本对象在本记录写入后被细化，绑定恢复为写入当时的指纹；当前状态由后续复核覆盖。"
         },
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "dfef0cfd448b",
-          "stale": true,
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f",
           "staleNote": "本对象在本记录写入后被细化，绑定恢复为写入当时的指纹；当前状态由后续复核覆盖。"
         },
         {
@@ -18317,7 +18651,8 @@
         {
           "id": "D02",
           "revision": 13,
-          "fingerprint": "7d28dc5cddb628eadaff4907d503767b"
+          "fingerprint": "ed68c9f2e95842b1f2dcfb062ede63ea",
+          "stale": true
         },
         {
           "id": "R11",
@@ -18339,8 +18674,7 @@
         {
           "id": "FILE-DECISIONS",
           "revision": 13,
-          "fingerprint": "1feaab647b755f53b38fe04279231742",
-          "stale": true,
+          "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f",
           "staleNote": "索引增补 R13（已采用）；绑定停留在写入当时的指纹。"
         },
         {
@@ -18371,7 +18705,8 @@
         {
           "id": "G06",
           "revision": 4,
-          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033"
+          "fingerprint": "14e5e3a010e0e2e23af6fb403bd70033",
+          "stale": true
         }
       ]
     },
@@ -18388,8 +18723,7 @@
         {
           "id": "FILE-DECISIONS#file",
           "revision": 0,
-          "fingerprint": "7a8c63d15194050096b33058991e02ed",
-          "stale": true,
+          "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f",
           "staleNote": "R13 由待定改为已采用，文件外围变化；绑定停留在写入当时的指纹。"
         },
         {
@@ -18414,8 +18748,7 @@
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "1e68ee021ed96ec81302eabede42066b",
-          "stale": true,
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f",
           "staleNote": "外围正文在 CHG-2026-09-17-42 细化后变化；绑定停留在写入当时的指纹。"
         },
         {
@@ -18467,8 +18800,7 @@
         {
           "id": "FILE-DECISIONS#file",
           "revision": 0,
-          "fingerprint": "7a8c63d15194050096b33058991e02ed",
-          "stale": true,
+          "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f",
           "staleNote": "R13 由待定改为已采用，容器外围变化；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         },
         {
@@ -18494,8 +18826,7 @@
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "1e68ee021ed96ec81302eabede42066b",
-          "stale": true,
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f",
           "staleNote": "D02 规则段移出 Q13 作用域并改写预算回归证据；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         },
         {
@@ -18532,7 +18863,8 @@
         {
           "id": "C14",
           "revision": 17,
-          "fingerprint": "4cff06c71076865d628dbaf2ecf557c1"
+          "fingerprint": "4cff06c71076865d628dbaf2ecf557c1",
+          "stale": true
         }
       ],
       "supersedesNote": "本条按 governance §5.2 第 6 条新增：旧复核记录保留写入当时的指纹并标记 stale，不改写其指纹；解封由本条针对当前指纹的复核完成。"
@@ -18557,8 +18889,7 @@
         {
           "id": "D02#file",
           "revision": 13,
-          "fingerprint": "a3d096d3ad4c4f62b75b1876069de5c9",
-          "stale": true,
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f",
           "staleNote": "D02 规则段移出 Q13 作用域并改写预算回归证据；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         },
         {
@@ -18584,8 +18915,7 @@
         {
           "id": "FILE-DECISIONS#file",
           "revision": 13,
-          "fingerprint": "7a8c63d15194050096b33058991e02ed",
-          "stale": true,
+          "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f",
           "staleNote": "R13 由待定改为已采用，容器外围变化；绑定停留在写入当时的指纹。当前状态由 REV-2026-09-17-48 覆盖。"
         }
       ],
@@ -18604,7 +18934,7 @@
         {
           "id": "P03",
           "revision": 11,
-          "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
+          "fingerprint": "aba2d9631617a9617dc77b3ca52c276c"
         }
       ]
     },
@@ -18626,8 +18956,7 @@
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "7cfd85337ba9c675c1a8979c68fb2de0",
-          "stale": true,
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f",
           "staleNote": "规则段补写检查器 acceptanceReady 不等于产品完成，并澄清 Q13 仍 open；绑定停留在写入当时的指纹。"
         },
         {
@@ -18643,12 +18972,13 @@
         {
           "id": "G06",
           "revision": 6,
-          "fingerprint": "d354e0ff2aabe94dc261ed860ae40340"
+          "fingerprint": "d354e0ff2aabe94dc261ed860ae40340",
+          "stale": true
         },
         {
           "id": "FILE-DECISIONS",
           "revision": 14,
-          "fingerprint": "bf4770015b45418173a54ce18269972c"
+          "fingerprint": "02c2c2040e6fbe2766f9f354d075ed3f"
         }
       ]
     },
@@ -18670,7 +19000,7 @@
         {
           "id": "D02#file",
           "revision": 0,
-          "fingerprint": "dc9b803108afd1177308fb788524fc19"
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
         }
       ]
     },
@@ -18680,24 +19010,26 @@
       "at": "2026-09-19T04:46:35.515Z",
       "author": "用户（Grok 方案授权人；技术核对记录见 registry.json.reviews 的 evidence 字段，仍待真人/独立复核）",
       "reviewer": "DeepSeek Harness（施工）",
-      "conclusion": "needs-reverification",
+      "conclusion": "synchronized",
       "reason": "D02 关闭门槛改写：Q04／Q10 关闭证据降至各自现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 需 host_authority 独立 verify 命令；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许（§4.1 属验收门槛，按治理/架构变更复核）。不标 done、不关 issue、不改 Q13。",
-      "evidence": "--reconcile 只登记待复核，不能作为独立复核完成依据",
+      "evidence": "技术核对（施工者 DeepSeek Harness，2026-09-19）：①Q04／Q10 的关闭门槛改写只降证据种类，不改变已确认事实与影响边界；V05 外移 G03／Q17／D04 与该三项现有 open 状态一致；②G06 关闭证据钉 host_authority 独立命令，已实跑 5 passed / 0 failed；③K16 §8.6 七例拆分不丢失任何一例，各例交付方与 D04／D05 的 scope 一致；④D02 §五 由一律禁止改为条件式允许属 P03 §4.1「验收门槛自身变化」，故本批按 architecture 复核。独立性声明：本条复核由施工者本人作出，不是 P03 §5.2 要求的独立复核——改写的是验收门槛本身，按 §5.2 规则 1、2 必须由未参与本变更编写的独立 AI 或人工重新复核；在此之前该门槛改写只算技术核对通过，不得作为解封依据。",
       "objects": [
         {
           "id": "D02",
           "revision": 0,
-          "fingerprint": "d3f9b4790161401cec084cf57d747814"
+          "fingerprint": "ed68c9f2e95842b1f2dcfb062ede63ea",
+          "stale": true
         },
         {
           "id": "D04",
           "revision": 0,
-          "fingerprint": "289c395dfe932f469066f1087ac580da"
+          "fingerprint": "289c395dfe932f469066f1087ac580da",
+          "stale": true
         },
         {
           "id": "M05",
           "revision": 0,
-          "fingerprint": "858be576e0976d16b82862e5320c0c61"
+          "fingerprint": "4916a64b32a42ce902c54910c3e88d54"
         },
         {
           "id": "C14",
@@ -18707,12 +19039,13 @@
         {
           "id": "K16",
           "revision": 15,
-          "fingerprint": "7f06ca6d8ae5b1b37a0cfc43c6383f0f"
+          "fingerprint": "210da012774420be2fd25635b5ea3d8b"
         },
         {
           "id": "D02",
           "revision": 14,
-          "fingerprint": "921617a8193a17d2738c106c2be595bc"
+          "fingerprint": "ed68c9f2e95842b1f2dcfb062ede63ea",
+          "stale": true
         },
         {
           "id": "Q04",
@@ -18740,19 +19073,53 @@
           "fingerprint": "4db38fb68d7362103f4c770134caf337"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-19-48",
+      "change": "CHG-2026-09-19-48",
+      "at": "2026-09-19T04:55:03.290Z",
+      "author": "用户（Grok 方案授权人）",
+      "reviewer": "DeepSeek Harness（施工）",
+      "conclusion": "synchronized",
+      "reason": "D02 收口：按 §三关闭门槛表与 §三之一时点表写 work.state=done 与 verification.state=passed，关闭 Q04／Q10／G06；不代标 C11／C14 passed，不关 Q13",
+      "evidence": "技术核对（施工者 DeepSeek Harness，2026-09-19）：①D02 对象自身有 applicability=current 的 verify；②关闭门槛表三行各有对应记录——Q04 四条 Chat Completions V03、Q10 五条事实 1–3 V03、G06 一条 host_authority 独立命令记录；③§三之一时点表已填，work.state=done 晚于本对象 verify；④issues 只关 Q04／Q10／G06，Q13 仍 open；⑤未代标 C11／C14 的 verification.state，未主张逐端点 V05。独立性声明：本条复核由施工者本人作出，不是 P03 §5.2 要求的独立复核——本变更改变验收门槛并翻转状态权威，按 §5.2 规则 1、2 必须由未参与本变更编写的独立 AI 或人工重新复核；在此之前只算技术核对通过。",
+      "objects": [
+        {
+          "id": "D02#file",
+          "revision": 0,
+          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
+        },
+        {
+          "id": "P03",
+          "revision": 0,
+          "fingerprint": "aba2d9631617a9617dc77b3ca52c276c",
+          "stale": true
+        },
+        {
+          "id": "X01",
+          "revision": 13,
+          "fingerprint": "d316f690c28fe8b9a8e4db66f71e788e",
+          "stale": true
+        },
+        {
+          "id": "X02",
+          "revision": 13,
+          "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869"
+        }
+      ]
     }
   ],
   "issues": {
     "Q01": { "state": "closed" },
     "Q02": { "state": "open" },
     "Q03": { "state": "closed" },
-    "Q04": { "state": "open" },
+    "Q04": { "state": "closed" },
     "Q05": { "state": "open" },
     "Q06": { "state": "open" },
     "Q07": { "state": "open" },
     "Q08": { "state": "open" },
     "Q09": { "state": "closed" },
-    "Q10": { "state": "open" },
+    "Q10": { "state": "closed" },
     "Q11": { "state": "closed" },
     "Q12": { "state": "closed" },
     "Q13": { "state": "open" },
@@ -18767,42 +19134,37 @@
     "G03": { "state": "open" },
     "G04": { "state": "closed" },
     "G05": { "state": "open" },
-    "G06": { "state": "open" }
+    "G06": { "state": "closed" }
   },
   "gaps": [
     {
-      "review": "REV-2026-09-16-24",
-      "object": "C14",
+      "review": "REV-2026-09-15-GOV1",
+      "object": "X01",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
       "review": "REV-2026-09-16-24",
-      "object": "G06",
+      "object": "D02",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
       "review": "REV-2026-09-16-32",
-      "object": "D02#file",
+      "object": "D02",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
-      "review": "REV-2026-09-16-32",
-      "object": "C14",
+      "review": "REV-2026-09-19-47",
+      "object": "D02",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
-      "review": "REV-2026-09-16-32",
-      "object": "G06",
+      "review": "REV-2026-09-19-47",
+      "object": "D02",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
-      "review": "REV-2026-09-17-37",
-      "object": "D02#file",
-      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
-    },
-    {
-      "review": "REV-2026-09-17-48",
-      "object": "D02#file",
+      "review": "REV-2026-09-19-48",
+      "object": "X01",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     }
   ],
@@ -18815,6 +19177,18 @@
     "CHG-2026-09-15-14 是规则计数更正与 X02 覆盖声明降级；REV-2026-09-15-GOV1 的 X02 绑定指纹随该次定义重写更新，结论仍是当时的 synchronized，不构成新的治理复核。",
     "本文件最后一次写入：2026-09-15T07:42:40Z。",
     "2026-09-16：`--reconcile` 的变更检测补上文件级容器指纹（登记为 `<ID>#file`）。此前 reconcile 会静默吸收容器正文变化（不产生 changes 记录），与 check 模式的 propagation 阻断口径不一致；该缺陷已修复。",
-    "2026-09-17（用户确认）：取消「改写旧复核指纹」的做法。复核记录保留写入当时的指纹；对象此后变化时该绑定标记 stale 并只影响该对象，当前状态必须由一条针对当前指纹的复核覆盖。此前三次 rebind 已按此形态整改（REV-2026-09-16-24／32／-35 恢复原指纹，新增 REV-2026-09-17-38／39／40）。Q13 的原指纹发生在登记表未提交时、未落盘，无法找回，已在记录中如实标注。"
+    "2026-09-17（用户确认）：取消「改写旧复核指纹」的做法。复核记录保留写入当时的指纹；对象此后变化时该绑定标记 stale 并只影响该对象，当前状态必须由一条针对当前指纹的复核覆盖。此前三次 rebind 已按此形态整改（REV-2026-09-16-24／32／-35 恢复原指纹，新增 REV-2026-09-17-38／39／40）。Q13 的原指纹发生在登记表未提交时、未落盘，无法找回，已在记录中如实标注。",
+    {
+      "at": "2026-09-19T04:47:00Z",
+      "author": "DeepSeek Harness（施工）",
+      "topic": "2026-09-19 D02 收口：手工写入的段落",
+      "detail": "verify 段新增 18 条记录（D02×5、G06×1、C14×2、K16×1、Q04×4、Q10×5），全部 applicability=current 并绑定当次 reconcile 后的当前指纹；reviews 段 REV-2026-09-19-47 的 conclusion 由 reconcile 默认的 needs-reverification 改为 synchronized，evidence 写明技术核对四项与「本复核由施工者本人作出、不是 P03 §5.2 独立复核」的独立性声明。两段都是作者字段，不由 --reconcile 计算，故按 X03 在此留痕；指纹、修订与行号仍全部由 --reconcile 计算。"
+    },
+    {
+      "at": "2026-09-19T05:05:00Z",
+      "author": "DeepSeek Harness（施工）",
+      "topic": "2026-09-19 D02 收口：issues 段手工改写",
+      "detail": "Q04／Q10／G06 的 state 由 open 改为 closed。检查器不会因 D02 的 closes 自动关 issue，必须手写（X03）。关闭依据见 D02 §三「关闭门槛」表与 §三之一 时点表；Q13 保持 open。"
+    }
   ]
 }
