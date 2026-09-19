@@ -497,6 +497,19 @@ const TOOLING_FILES = new Set(["catalog.mjs"]);
 
 // 单对象文件的文件级容器与子对象共用 ID；登记表中用 `<ID>#file` 与 `<ID>` 区分。
 const FILE_OBJECT_SUFFIX = "#file";
+/**
+ * 文件级容器的登记键：显式容器 `X#file` 归一化为 `X` 后重新拼，目录登记表直接
+ * 给出容器 ID 的单对象文件（`X` 同时是对象 ID 与容器 ID）保持 `X`。
+ *
+ * 归一化是必需的：`registry.files` 的 `registration` 字段本身可能就是 `X#file`，
+ * 直接再拼一次会造出 `X#file#file`——一个既不是对象也不是容器的登记键，任何复核
+ * 或变更记录绑上它都会被判「引用未登记对象」。
+ */
+const normalizeContainerId = (id) =>
+  id.endsWith(FILE_OBJECT_SUFFIX)
+    ? id.slice(0, -FILE_OBJECT_SUFFIX.length)
+    : id;
+
 const isContainerRegistration = (id) => id.endsWith(FILE_OBJECT_SUFFIX);
 
 function discoverManagedFiles(catalogFiles) {
@@ -901,11 +914,36 @@ function checkReviews(
   definitions,
   currentFingerprints,
   staleBindings,
+  fileEntries,
 ) {
   const changes = registry?.changes ?? [];
   const reviews = registry?.reviews ?? [];
   const changeById = new Map(changes.map((entry) => [entry.id, entry]));
   const reviewById = new Map(reviews.map((entry) => [entry.id, entry]));
+  // 「这条绑定代表文件级容器」的判据＝登记键命中容器键**且**指纹等于该文件的
+  // **文件级**指纹。
+  //
+  // 只看登记键不够：单对象文件的容器键与对象键是同一个字符串（`X` 既是对象又是
+  // 容器），按名字判会把该对象的真实绑定也当成容器，于是「复核绑定旧指纹不能解封」
+  // 这类守卫会被静默关掉——比原来的误报更糟。只看指纹也不够：把文件级指纹误当
+  // 对象指纹比对，会凭空报出「绑定的是旧指纹」这种修内容也消不掉的违规。
+  // 两者同时成立才是容器绑定；此时它不参与对象级比对，也不计入缺口台账。
+  const containerKeys = new Set();
+  const containerFingerprints = new Set();
+  for (const entry of Object.values(fileEntries ?? {})) {
+    if (entry?.registration) containerKeys.add(entry.registration);
+    if (entry?.container) containerKeys.add(entry.container);
+    if (entry?.fingerprint) containerFingerprints.add(entry.fingerprint);
+  }
+  // 历史上同类绑定也记过文件级指纹（带非零 revision），所以这些指纹要一并收进
+  // 「容器指纹」集合，否则它们会被当成对象指纹比对，报出修内容也消不掉的违规。
+  // 文件级指纹只会被文件级容器产生，不会与任何对象的指纹相等。
+  for (const entry of Object.values(registry?.files ?? {})) {
+    if (entry?.fingerprint) containerFingerprints.add(entry.fingerprint);
+  }
+  const isContainerBinding = (object) =>
+    containerKeys.has(object.id) &&
+    containerFingerprints.has(object.fingerprint);
 
   for (const change of changes) {
     if (
@@ -983,6 +1021,10 @@ function checkReviews(
         );
       }
       for (const object of review.objects ?? []) {
+        // 容器绑定的指纹是**文件级**指纹，它不是治理 §5.2 规则 6 说的「对象指纹」，
+        // 也没有任何「解封」语义：这里既不比对、也不计为缺口（缺口台账只登记
+        // 对象级陈旧绑定）。把它按对象指纹比对会制造无法通过修复内容消除的违规。
+        if (isContainerBinding(object)) continue;
         const recorded = currentFingerprints.get(object.id);
         if (!recorded) {
           violation("reviews", `复核 ${review.id} 引用未登记对象 ${object.id}`);
@@ -1078,6 +1120,12 @@ function checkReviews(
         `verify(${entry.object}) 的 applicability=${entry.applicability} 非法`,
       );
     }
+    // `obsolete` 是**已退役证据**：它不再声称覆盖当前内容，也不再计入必需维度
+    // （governance §6）。因此它的旧指纹是留痕而不是待修的违规——保留历史记录与
+    // 「只报告仍生效的条目」这两件事必须能同时成立，否则唯一的出路是删除证据，
+    // 而那正是 §5.2 规则 6 禁止的「改写/抹掉历史」。`needs-review` 不同：它仍然
+    // 声称适用、只是待复核，所以旧指纹照旧报错。
+    if (entry.applicability === "obsolete") continue;
     const recorded = currentFingerprints.get(entry.object);
     if (
       recorded &&
@@ -1086,7 +1134,7 @@ function checkReviews(
     ) {
       violation(
         "verify",
-        `verify(${entry.object}) 绑定的是旧指纹，当前版本不再适用`,
+        `verify(${entry.object}) 绑定的是旧指纹：需重新验证，或标为 needs-review／obsolete 说明其不再声称适用`,
       );
     }
   }
@@ -1586,6 +1634,7 @@ if (catalog && !infrastructure.length) {
     definitions,
     currentFingerprints,
     staleBindings,
+    fileEntries,
   );
   // 仍欠复核的陈旧条目（已被当前指纹的新复核覆盖的不再计入）。
   openStale = openStaleBindings(staleBindings, registry, currentFingerprints);
@@ -1642,7 +1691,10 @@ if (catalog && !infrastructure.length) {
       if (!current) continue;
       if (recorded.fingerprint === current.fingerprint) continue;
       const baseId = recorded.registration ?? recorded.container ?? rel;
-      const containerId = declaredRegistration(baseId, rel);
+      const containerId = declaredRegistration(
+        normalizeContainerId(baseId),
+        rel,
+      );
       changed.push({
         id: containerId,
         from: 0,

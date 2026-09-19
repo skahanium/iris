@@ -1498,6 +1498,168 @@ test("架构复核绑定旧指纹不能解封", () => {
   }
 });
 
+test("复核绑定文件级容器指纹时不得按对象指纹判违规", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    // 先制造一次真实变化，复核记录才会存在。
+    writeFileSync(
+      path.join(fixture.harness, "contracts", "K01.md"),
+      K01_BODY.replace(
+        "不变量：冻结确认绑定版本。",
+        "不变量：冻结确认绑定版本（容器绑定夹具）。",
+      ),
+    );
+    assert.equal(
+      reconcileFixture(fixture.root, "architecture"),
+      0,
+      "接受变化应能写入",
+    );
+
+    const registry = loadRegistry(fixture.harness);
+    const change = (registry.changes ?? []).at(-1);
+    const review = (registry.reviews ?? []).find(
+      (entry) => entry.id === change.review,
+    );
+    assert.ok(
+      review,
+      `夹具必须产生一条复核记录：${JSON.stringify(registry.changes)}`,
+    );
+    // 复现待修形状：复核绑定一个**容器登记键**，其指纹是**文件级**指纹。单对象
+    // 文件的容器键与对象键是同一个字符串，于是它会被拿去和对象指纹比对；两者
+    // 本来就不是同一类指纹，比对必然不等，凭空报出「绑定的是旧指纹」。
+    const containerFile = Object.entries(registry.files ?? {}).find(
+      ([, entry]) => entry.registration === entry.container,
+    );
+    assert.ok(
+      containerFile,
+      `夹具必须有一个「容器键等于对象键」的文件：${JSON.stringify(registry.files)}`,
+    );
+    const [rel, containerEntry] = containerFile;
+    const containerBinding = {
+      id: containerEntry.registration,
+      revision: 0,
+      fingerprint: containerEntry.fingerprint,
+    };
+    review.objects.push(containerBinding);
+    // 复核里真实的**对象**绑定（本次改动的是 K01 的对象正文）：它必须仍然被检查。
+    // 按名字判容器会把这类绑定一起跳掉，等于悄悄关掉「绑定旧指纹不能解封」这条守卫。
+    const objectBinding = review.objects.find(
+      (candidate) => candidate.id === "K01",
+    );
+    assert.ok(objectBinding, "复核必须保留 K01 的对象绑定");
+    assert.notEqual(
+      objectBinding.fingerprint,
+      containerEntry.fingerprint,
+      "对象指纹与文件级容器指纹必须不同，否则这条用例没有测到任何东西",
+    );
+    saveRegistry(fixture.harness, registry);
+
+    const { report } = runCheck(fixture.root);
+    assert.deepEqual(
+      (report.violations ?? []).filter(
+        (item) =>
+          item.check === "reviews" && String(item.message).includes("旧指纹"),
+      ),
+      [],
+      `容器指纹不得按对象指纹判定（${rel}）：${JSON.stringify(report.violations)}`,
+    );
+
+    // 反例：把**对象**绑定的指纹改坏，守卫必须仍然生效。
+    objectBinding.fingerprint = "deadbeefdeadbeefdeadbeefdeadbeef";
+    saveRegistry(fixture.harness, registry);
+    const tampered = runCheck(fixture.root);
+    assert.equal(tampered.exitCode, 1, "对象绑定旧指纹必须仍然阻断");
+    assert.ok(
+      (tampered.report.violations ?? []).some(
+        (item) =>
+          item.check === "reviews" && String(item.message).includes("旧指纹"),
+      ),
+      JSON.stringify(tampered.report.violations),
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("已退役证据保留旧指纹不算违规，needs-review 仍算", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    // 先接受一次**对象正文**变化。顺序很重要：reconcile 会先跑一遍检查，若此时
+    // 已存在绑定旧指纹的 verify 记录，reconcile 本身就会以退出码 1 拒绝写入。
+    // 必须只改对象块内的文字——改到容器块只换文件级指纹，对象指纹不变。
+    writeFileSync(
+      path.join(fixture.harness, "modules", "m01.md"),
+      defaultBodies()["modules/m01.md"].replace(
+        "测试：所需证据类别见 V01。",
+        "测试：所需证据类别见 V01（已变化）。",
+      ),
+    );
+    assert.equal(reconcileFixture(fixture.root), 0, "接受内容变化应能写入");
+
+    // 现在写入一条**绑定变更前指纹**的证据：这就是「改写后失绑」的形状，
+    // 不再依赖「边改内容边留旧记录」这个 reconcile 本来就不允许的顺序。
+    const registry = loadRegistry(fixture.harness);
+    const staleFingerprint = "22c25bceaa1444af3346b01eb2270870";
+    const current = registry.objects.M01.definition.fingerprint;
+    assert.notEqual(
+      staleFingerprint,
+      current,
+      "夹具必须让绑定与当前指纹不同，否则这条用例没有测到任何东西",
+    );
+    registry.verify = [
+      ...(registry.verify ?? []),
+      {
+        object: "M01",
+        kind: "V03",
+        testPath: "modules/m01.md",
+        command: "fixture",
+        environment: "fixture",
+        fingerprint: staleFingerprint,
+        at: "2026-01-01T00:00:00Z",
+        applicability: "current",
+        note: "夹具证据（绑定变更前指纹）",
+      },
+    ];
+    saveRegistry(fixture.harness, registry);
+
+    const asCurrent = runCheck(fixture.root);
+    assert.equal(asCurrent.exitCode, 1, "绑定旧指纹且声称 current 必须报错");
+    assert.ok(
+      (asCurrent.report.violations ?? []).some(
+        (entry) =>
+          entry.check === "verify" && String(entry.message).includes("旧指纹"),
+      ),
+      JSON.stringify(asCurrent.report.violations),
+    );
+
+    const record = registry.verify.at(-1);
+    record.applicability = "needs-review";
+    saveRegistry(fixture.harness, registry);
+    const needsReview = runCheck(fixture.root);
+    assert.equal(
+      needsReview.exitCode,
+      1,
+      "needs-review 仍声称适用，旧指纹要报错",
+    );
+
+    record.applicability = "obsolete";
+    saveRegistry(fixture.harness, registry);
+    const obsolete = runCheck(fixture.root);
+    const obsoleteViolations = (obsolete.report.violations ?? []).filter(
+      (entry) => entry.check === "verify",
+    );
+    assert.deepEqual(
+      obsoleteViolations,
+      [],
+      `obsolete 证据不再声称适用，保留旧指纹不得阻断：${JSON.stringify(obsolete.report.violations)}`,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("架构变更缺独立复核时阻断", () => {
   const { exitCode, report } = runFixture();
   assert.equal(exitCode, 0);

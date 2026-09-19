@@ -617,9 +617,7 @@ async fn cancellation_after_the_first_dispatch_opens_no_further_turn() {
     crate::ai_runtime::model_gateway::clear_abort(RUN_ID);
 
     assert_eq!(
-        result
-            .expect_err("a cancelled Run must stop")
-            .to_string(),
+        result.expect_err("a cancelled Run must stop").to_string(),
         "agent_run_cancelled"
     );
     assert_eq!(
