@@ -5,8 +5,14 @@ use chrono::Utc;
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::ai_runtime::dual_path_search::{
+    coordinate_dual_path_search, DualPathSearchOutcome, DualPathSearchRequest,
+    ProductionNativeSearchRoute, ProductionNativeSearchSupport, RouteAttemptOutcome,
+    RouteFailureClass, SearchActionIdentity, SearchChannel, SearchHit, SearchRoute,
+};
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::{
     ContextPacket, SourceType, TrustLevel, WebEvidenceMeta, WebSearchBackend, WebSourceRank,
@@ -53,6 +59,8 @@ pub struct WebEvidenceBrokerInput {
     /// Distinguishes a deliberately frozen absence from legacy callers that
     /// have not yet supplied a Run-local provider decision.
     pub provider_selection_frozen: bool,
+    /// K11 request identity for this search action. Empty in fetch-only callers.
+    pub(crate) search_identity: SearchActionIdentity,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -83,6 +91,9 @@ pub struct WebEvidenceItem {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct WebEvidenceSearchRequestUsage {
     pub mcp: u32,
+    /// Credentialed native-route successes. Stays 0 while the production native probe is unsupported.
+    #[serde(default)]
+    pub native: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -107,6 +118,8 @@ pub struct WebEvidenceUsage {
 pub struct WebEvidenceBrokerOutput {
     pub items: Vec<WebEvidenceItem>,
     pub usage: WebEvidenceUsage,
+    #[serde(default)]
+    pub(crate) dual_path: DualPathSearchOutcome,
 }
 
 pub async fn collect_web_evidence(
@@ -144,23 +157,33 @@ async fn collect_web_evidence_with_queries(
         return Ok(WebEvidenceBrokerOutput {
             items: Vec::new(),
             usage: WebEvidenceUsage::default(),
+            dual_path: DualPathSearchOutcome {
+                identity: input.search_identity,
+                ..DualPathSearchOutcome::default()
+            },
         });
     }
 
     let mut collected = Vec::new();
     let mut usage = WebEvidenceUsage::default();
+    let mut dual_path = DualPathSearchOutcome {
+        identity: input.search_identity.clone(),
+        ..DualPathSearchOutcome::default()
+    };
     // Zero discovery capacity is the fetch-only contract, not a request for
     // a search whose results are discarded. Never spend search quota here.
     if input.max_search_results > 0 && !planned_queries.is_empty() {
-        for fetch in collect_planned_query_fetches(
+        let collection = collect_planned_query_fetches(
             db,
             planned_queries,
             input.max_search_results,
             &input.provider_snapshots,
             input.provider_selection_frozen,
+            input.search_identity,
         )
-        .await
-        {
+        .await;
+        dual_path = collection.dual_path;
+        for fetch in collection.fetches {
             match fetch {
                 Ok(fetch) => {
                     let items = web_evidence_items_from_search_fetch(&fetch);
@@ -177,6 +200,9 @@ async fn collect_web_evidence_with_queries(
                 }
             }
         }
+        collected.extend(native_web_evidence_items(&dual_path));
+        usage.successful_search_requests.native = dual_path.usage.native;
+        usage.successful_search_requests.mcp = dual_path.usage.mcp;
     }
 
     suppress_search_provider_failures_if_success(&mut collected);
@@ -212,7 +238,11 @@ async fn collect_web_evidence_with_queries(
     for (provider_id, provider_kind) in successful_fetch_providers {
         record_successful_fetch_usage(&mut usage, &provider_id, &provider_kind);
     }
-    Ok(WebEvidenceBrokerOutput { items, usage })
+    Ok(WebEvidenceBrokerOutput {
+        items,
+        usage,
+        dual_path,
+    })
 }
 
 fn initial_run_search_queries(query: &str) -> Vec<String> {
@@ -587,27 +617,179 @@ fn is_retryable_search_failure_result(
     }
 }
 
+struct PlannedSearchCollection {
+    fetches: Vec<Result<SearchProviderFetch, String>>,
+    dual_path: DualPathSearchOutcome,
+}
+
+struct BrokerMcpSearchRoute<'a> {
+    db: &'a Database,
+    max_search_results: usize,
+    provider_snapshots:
+        &'a [crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+    provider_selection_frozen: bool,
+    captured: Mutex<Vec<Result<SearchProviderFetch, String>>>,
+}
+
+impl SearchRoute for BrokerMcpSearchRoute<'_> {
+    async fn execute(&self, query: &str) -> RouteAttemptOutcome {
+        let fetches = collect_search_provider_fetches(
+            self.db,
+            query,
+            self.max_search_results,
+            self.provider_snapshots,
+            self.provider_selection_frozen,
+        )
+        .await;
+        let outcome = mcp_fetches_to_route_outcome(&fetches);
+        *self
+            .captured
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = fetches;
+        outcome
+    }
+}
+
+impl BrokerMcpSearchRoute<'_> {
+    fn take_fetches(&self) -> Vec<Result<SearchProviderFetch, String>> {
+        std::mem::take(
+            &mut *self
+                .captured
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+}
+
+fn mcp_fetches_to_route_outcome(
+    fetches: &[Result<SearchProviderFetch, String>],
+) -> RouteAttemptOutcome {
+    let internal_provider_attempts = u32::try_from(fetches.len()).unwrap_or(u32::MAX).max(1);
+    if let Some(Ok(fetch)) = fetches
+        .iter()
+        .find(|fetch| matches!(fetch, Ok(fetch) if fetch.failure_reason.is_none()))
+    {
+        let rows = parse_search_result_rows(&fetch.body);
+        let candidates = rows
+            .into_iter()
+            .filter(|row| is_https_url(&row.url))
+            .map(|row| SearchHit {
+                url: row.url,
+                title: row.title,
+                snippet: row.snippet,
+            })
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            let parse_empty = classify_mcp_search_parse_empty(&fetch.body);
+            return RouteAttemptOutcome {
+                candidates: Vec::new(),
+                has_retrieval_credentials: false,
+                generated_text_only: parse_empty.contains("text_without_url"),
+                failure: Some(RouteFailureClass::ProtocolOrResultInsufficient),
+                internal_provider_attempts,
+            };
+        }
+        return RouteAttemptOutcome {
+            candidates,
+            has_retrieval_credentials: true,
+            generated_text_only: false,
+            failure: None,
+            internal_provider_attempts,
+        };
+    }
+    RouteAttemptOutcome {
+        candidates: Vec::new(),
+        has_retrieval_credentials: false,
+        generated_text_only: false,
+        failure: Some(RouteFailureClass::TransportOrProviderFailure),
+        internal_provider_attempts,
+    }
+}
+
+fn native_web_evidence_items(outcome: &DualPathSearchOutcome) -> Vec<WebEvidenceItem> {
+    if !outcome.native.succeeded {
+        return Vec::new();
+    }
+    outcome
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.channels.contains(&SearchChannel::Native))
+        .map(|candidate| WebEvidenceItem {
+            domain: domain_from_url(&candidate.url).unwrap_or_default(),
+            raw_result_hash: result_hash(&[&candidate.url, &candidate.title, &candidate.snippet]),
+            url: candidate.url.clone(),
+            canonical_url: candidate.canonical_url.clone(),
+            title: candidate.title.clone(),
+            snippet: candidate.snippet.clone(),
+            fetched_excerpt: None,
+            completeness: Default::default(),
+            provider_id: "native.search".into(),
+            provider_kind: "native".into(),
+            cost_class: "free".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: WebSearchBackend::Provider,
+            source_rank: WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        })
+        .collect()
+}
+
 async fn collect_planned_query_fetches(
     db: &Database,
     planned_queries: Vec<String>,
     max_search_results: usize,
     provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     provider_selection_frozen: bool,
-) -> Vec<Result<SearchProviderFetch, String>> {
-    let mut results = Vec::new();
-    for query in &planned_queries {
-        results.extend(
-            collect_search_provider_fetches(
-                db,
-                query,
-                max_search_results,
-                provider_snapshots,
-                provider_selection_frozen,
-            )
-            .await,
-        );
+    search_identity: SearchActionIdentity,
+) -> PlannedSearchCollection {
+    let mut fetches = Vec::new();
+    let mut dual_path = DualPathSearchOutcome {
+        identity: search_identity.clone(),
+        ..DualPathSearchOutcome::default()
+    };
+    let mut native_usage = 0_u32;
+    let mut mcp_usage = 0_u32;
+    for (index, query) in planned_queries.iter().enumerate() {
+        let mut identity = search_identity.clone();
+        if identity.action_id.trim().is_empty() {
+            identity.action_id = "web_search".into();
+        }
+        if index > 0 {
+            identity.action_id = format!("{}:variant-{index}", identity.action_id);
+        }
+        let mcp_route = BrokerMcpSearchRoute {
+            db,
+            max_search_results,
+            provider_snapshots,
+            provider_selection_frozen,
+            captured: Mutex::new(Vec::new()),
+        };
+        let outcome = coordinate_dual_path_search(
+            DualPathSearchRequest {
+                identity,
+                query: query.clone(),
+                allow_second_route: true,
+            },
+            &ProductionNativeSearchSupport,
+            &ProductionNativeSearchRoute,
+            &mcp_route,
+        )
+        .await;
+        native_usage = native_usage.saturating_add(outcome.usage.native);
+        mcp_usage = mcp_usage.saturating_add(outcome.usage.mcp);
+        fetches.extend(mcp_route.take_fetches());
+        if index == 0 {
+            dual_path = outcome;
+        }
     }
-    results
+    dual_path.usage.native = native_usage;
+    dual_path.usage.mcp = mcp_usage;
+    PlannedSearchCollection { fetches, dual_path }
 }
 
 #[cfg(test)]
@@ -1495,6 +1677,8 @@ fn record_successful_search_usage(
     }
     if fetch.provider_kind == "mcp" {
         usage.successful_search_requests.mcp += 1;
+    } else if fetch.provider_kind == "native" {
+        usage.successful_search_requests.native += 1;
     } else {
         return;
     }
@@ -2498,6 +2682,7 @@ mod tests {
                 max_fetches: 0,
                 provider_snapshots: Vec::new(),
                 provider_selection_frozen: false,
+                search_identity: SearchActionIdentity::default(),
             },
         )
         .await
@@ -2569,6 +2754,7 @@ mod tests {
         let usage = web_evidence_usage_from_search_fetches([&mcp_fetch, &empty_mcp_fetch]);
 
         assert_eq!(usage.successful_search_requests.mcp, 1);
+        assert_eq!(usage.successful_search_requests.native, 0);
         assert_eq!(usage.providers.len(), 1);
         assert!(usage.providers.iter().any(|provider| {
             provider.provider_id == "anysearch"
@@ -2683,6 +2869,7 @@ mod tests {
                 max_fetches: 1,
                 provider_snapshots: snapshots,
                 provider_selection_frozen: true,
+                search_identity: SearchActionIdentity::default(),
             },
         )
         .await
@@ -2757,12 +2944,20 @@ mod tests {
                 max_fetches: 0,
                 provider_snapshots: vec![snapshot],
                 provider_selection_frozen: true,
+                search_identity: SearchActionIdentity::default(),
             },
         )
         .await
         .expect("unusable search remains an actionable broker observation");
 
         assert_eq!(output.usage.successful_search_requests.mcp, 0);
+        assert_eq!(output.usage.successful_search_requests.native, 0);
+        assert!(!output.dual_path.native.supported);
+        assert!(!output.dual_path.native.attempted);
+        assert!(output.dual_path.mcp.supported);
+        assert!(output.dual_path.mcp.attempted);
+        assert!(!output.dual_path.mcp.succeeded);
+        assert!(!output.dual_path.both_available_routes_attempted());
         let health = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
             &db,
             "search-empty-health",
@@ -2836,6 +3031,7 @@ mod tests {
                 crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(&db)
                     .unwrap(),
             provider_selection_frozen: true,
+            search_identity: SearchActionIdentity::default(),
         };
         for output in [
             collect_initial_run_web_evidence_with_usage(&db, input.clone())

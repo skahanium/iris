@@ -552,6 +552,16 @@ impl<'a> NormalRunToolExecutor<'a> {
             max_fetches,
             provider_snapshots: provider_snapshots.clone(),
             provider_selection_frozen: true,
+            search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
+                run_id: self.accepted.run_id.clone(),
+                input_revision: u32::try_from(state_version).unwrap_or(u32::MAX),
+                action_id: if discovery_only {
+                    "web_search".into()
+                } else {
+                    "web_fetch".into()
+                },
+                attempt: 1,
+            },
         };
         let call_started = Instant::now();
         let mut attempts_for_search = 0_u32;
@@ -575,6 +585,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 attempt_input.max_search_results =
                     web_result_limit(discovery_only, remaining, attempts_for_search);
                 attempt_input.max_fetches = max_fetches;
+                attempt_input.search_identity.attempt = attempts_for_search;
                 let failure = match tokio::time::timeout(
                 remaining_time,
                 crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
@@ -619,6 +630,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
                 items: Vec::new(),
                 usage: Default::default(),
+                dual_path: crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default(),
             }
         };
         self.remember_web_provider_winner(tool_name, &output.usage)?;
@@ -715,19 +727,15 @@ impl<'a> NormalRunToolExecutor<'a> {
             return Ok(ToolCallResult {
                 tool_name: tool_name.to_string(),
                 success: true,
-                output: serde_json::json!({
-                    "results": observations,
-                    "sourceDomains": source_domains,
-                    "scopeCheck": WEB_SCOPE_CHECK_NOTE,
-                    "canonicalUrls": canonical_urls,
-                    "evidenceIds": [],
-                    "count": observations.len(),
-                    "newResourceCount": new_resource_count,
-                    "duplicateResourceCount": duplicate_resource_count,
-                    "observationDepth": "search_snippet",
-                    "requiresFetchForCitation": true,
-                    "budgetRemaining": remaining_web_tool_budget_ms(call_started.elapsed()) > 0,
-                }),
+                output: web_search_discovery_tool_output(
+                    observations,
+                    source_domains,
+                    canonical_urls,
+                    new_resource_count,
+                    duplicate_resource_count,
+                    remaining_web_tool_budget_ms(call_started.elapsed()) > 0,
+                    &output.dual_path,
+                ),
                 duration_ms: bounded_duration_ms(call_started.elapsed()),
                 tokens_used: None,
                 error: None,
@@ -3544,6 +3552,31 @@ fn distinct_source_domains<'a>(
     domains.into_iter().take(MAX_SOURCE_DOMAINS).collect()
 }
 
+fn web_search_discovery_tool_output(
+    observations: Vec<serde_json::Value>,
+    source_domains: Vec<String>,
+    canonical_urls: Vec<String>,
+    new_resource_count: usize,
+    duplicate_resource_count: usize,
+    budget_remaining: bool,
+    dual_path: &crate::ai_runtime::dual_path_search::DualPathSearchOutcome,
+) -> serde_json::Value {
+    serde_json::json!({
+        "results": observations,
+        "sourceDomains": source_domains,
+        "scopeCheck": WEB_SCOPE_CHECK_NOTE,
+        "canonicalUrls": canonical_urls,
+        "evidenceIds": [],
+        "count": observations.len(),
+        "newResourceCount": new_resource_count,
+        "duplicateResourceCount": duplicate_resource_count,
+        "observationDepth": "search_snippet",
+        "requiresFetchForCitation": true,
+        "budgetRemaining": budget_remaining,
+        "dualPath": crate::ai_runtime::dual_path_search::dual_path_status_json(dual_path),
+    })
+}
+
 fn pack_web_candidates_for_model(
     items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
     excluded_urls: &BTreeSet<String>,
@@ -3779,8 +3812,9 @@ mod tests {
         distinct_source_domains, emit_deferred_web_degradation, expected_post_content_hashes,
         normalize_fetch_url, pack_web_candidates_for_model, remember_candidate_urls,
         validate_public_fetch_urls, web_output_has_usable_result, web_result_limit,
-        web_search_result_limit, DeferredWebDegradationInput, NormalRunToolExecutor,
-        RunWebEvidenceState, CONFIRMATION_PENDING_ERROR, MAX_SOURCE_DOMAINS, WEB_SCOPE_CHECK_NOTE,
+        web_search_discovery_tool_output, web_search_result_limit, DeferredWebDegradationInput,
+        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR, MAX_SOURCE_DOMAINS,
+        WEB_SCOPE_CHECK_NOTE,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -5881,11 +5915,38 @@ mod tests {
         let output = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
             items: vec![item.clone()],
             usage: Default::default(),
+            dual_path: crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default(),
         };
 
         assert!(bounded_page_evidence(&item).is_none());
         assert!(web_output_has_usable_result(&output, true));
         assert!(!web_output_has_usable_result(&output, false));
+    }
+
+    #[test]
+    fn execute_web_tool_discovery_payload_exposes_route_status_not_mcp_failover_as_dual_path() {
+        let mut dual_path = crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default();
+        dual_path.mcp.supported = true;
+        dual_path.mcp.attempted = true;
+        dual_path.mcp.succeeded = true;
+        dual_path.mcp_internal_provider_attempts = 2;
+        let payload = web_search_discovery_tool_output(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            true,
+            &dual_path,
+        );
+        assert_eq!(payload["dualPath"]["native"]["supported"], false);
+        assert_eq!(payload["dualPath"]["native"]["attempted"], false);
+        assert_eq!(payload["dualPath"]["mcp"]["succeeded"], true);
+        assert_eq!(payload["dualPath"]["mcpInternalProviderAttempts"], 2);
+        assert_eq!(payload["dualPath"]["bothAvailableRoutesAttempted"], false);
+        let encoded = payload.to_string();
+        assert!(!encoded.contains("能力降级"));
+        assert!(!encoded.contains("模型出错"));
     }
 
     #[test]

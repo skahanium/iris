@@ -60,6 +60,7 @@ pub(crate) mod classified_document_policy_repository;
 pub(crate) mod classified_ephemeral;
 pub mod classified_retrieval;
 pub(crate) mod diagnostic_query;
+pub(crate) mod dual_path_search;
 #[cfg(test)]
 mod streaming_anthropic_finish_reason_sse_tests;
 #[cfg(test)]

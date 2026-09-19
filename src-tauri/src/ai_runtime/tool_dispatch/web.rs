@@ -31,7 +31,7 @@ fn web_search_tool_response(
         }
     }
 
-    Ok(serde_json::json!({
+    let mut payload = serde_json::json!({
         "broker": "网络证据代理",
         "results": packets,
         "count": packets.len(),
@@ -59,7 +59,14 @@ fn web_search_tool_response(
             "rawEvidenceOmitted": true,
         },
         "webUsage": output.usage,
-    }))
+    });
+    // dualPath is a web_search coordination fact (K11). web_fetch reuses this
+    // packetizer but must not present search-route status as if fetch were dual-path.
+    if !output.dual_path.identity.action_id.starts_with("web_fetch") {
+        payload["dualPath"] =
+            crate::ai_runtime::dual_path_search::dual_path_status_json(&output.dual_path);
+    }
+    Ok(payload)
 }
 
 pub(super) async fn web_search_tool(
@@ -83,6 +90,12 @@ pub(super) async fn web_search_tool(
             max_fetches: 0,
             provider_snapshots: Vec::new(),
             provider_selection_frozen: false,
+            search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
+                run_id: ctx.run_id.unwrap_or_default().to_string(),
+                input_revision: 0,
+                action_id: "web_search".into(),
+                attempt: 1,
+            },
         },
     )
     .await?;
@@ -120,6 +133,12 @@ pub(super) async fn web_fetch_tool(
             max_fetches: ctx.max_web_fetches,
             provider_snapshots: Vec::new(),
             provider_selection_frozen: false,
+            search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
+                run_id: ctx.run_id.unwrap_or_default().to_string(),
+                input_revision: 0,
+                action_id: "web_fetch".into(),
+                attempt: 1,
+            },
         },
     )
     .await?;
@@ -163,6 +182,7 @@ mod tests {
                 successful_page_fetches: 0,
                 providers: Vec::new(),
             },
+            dual_path: crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default(),
         }
     }
 
@@ -224,9 +244,20 @@ mod tests {
                 .map(|index| successful_provider_item(index, "长正文".repeat(4_000)))
                 .collect(),
             usage: WebEvidenceUsage {
-                successful_search_requests: WebEvidenceSearchRequestUsage { mcp: 1 },
+                successful_search_requests: WebEvidenceSearchRequestUsage { mcp: 1, native: 0 },
                 successful_page_fetches: 0,
                 providers: Vec::new(),
+            },
+            dual_path: {
+                let mut dual_path =
+                    crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default();
+                dual_path.identity.action_id = "web_search".into();
+                dual_path.mcp.supported = true;
+                dual_path.mcp.attempted = true;
+                dual_path.mcp.succeeded = true;
+                dual_path.mcp_internal_provider_attempts = 2;
+                dual_path.usage.mcp = 1;
+                dual_path
             },
         };
 
@@ -237,5 +268,33 @@ mod tests {
         assert_eq!(response["count"], serde_json::json!(8));
         assert_eq!(response["results"].as_array().unwrap().len(), 8);
         assert!(encoded.chars().count() < 50_000);
+        assert_eq!(response["dualPath"]["native"]["supported"], false);
+        assert_eq!(response["dualPath"]["native"]["attempted"], false);
+        assert_eq!(response["dualPath"]["mcp"]["succeeded"], true);
+        assert_eq!(response["dualPath"]["mcpInternalProviderAttempts"], 2);
+        assert_eq!(response["dualPath"]["bothAvailableRoutesAttempted"], false);
+        assert!(!encoded.contains("能力降级"));
+        assert!(!encoded.contains("模型出错"));
+    }
+
+    #[test]
+    fn web_fetch_response_does_not_present_search_dual_path() {
+        let mut dual_path = crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default();
+        dual_path.identity.action_id = "web_fetch".into();
+        let output = WebEvidenceBrokerOutput {
+            items: vec![successful_provider_item(0, "正文".into())],
+            usage: WebEvidenceUsage {
+                successful_search_requests: WebEvidenceSearchRequestUsage::default(),
+                successful_page_fetches: 1,
+                providers: Vec::new(),
+            },
+            dual_path,
+        };
+
+        let response =
+            web_search_tool_response("selected current-run web candidates", output).unwrap();
+
+        assert!(response.get("dualPath").is_none());
+        assert_eq!(response["count"], serde_json::json!(1));
     }
 }

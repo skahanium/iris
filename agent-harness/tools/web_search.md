@@ -87,15 +87,15 @@
 ## 源码落点
 
 - 目录定义：[tool_catalog/web.rs](../../src-tauri/src/ai_runtime/tool_catalog/web.rs)。
-- 主链路实现：[run_tool_loop.rs](../../src-tauri/src/ai_runtime/run_tool_loop.rs) 的 `execute_web_tool`（`discovery_only` 分支消费 `query`），经 `web_evidence_broker` 取回候选。
+- 主链路实现：[run_tool_loop.rs](../../src-tauri/src/ai_runtime/run_tool_loop.rs) 的 `execute_web_tool`（`discovery_only` 分支消费 `query`），经 `dual_path_search` 协调器与 `web_evidence_broker` 取回候选。
 - 备用派发入口：[tool_dispatch/web.rs](../../src-tauri/src/ai_runtime/tool_dispatch/web.rs) 的 `web_search_tool`（`dispatch_tool_inner` 的 `web_search` 分支）；它调用同一 broker，但不携带 Run 局部冻结的 provider 快照。
 - 契约测试：[tool_catalog/tests.rs](../../src-tauri/src/ai_runtime/tool_catalog/tests.rs)（`input_schema` 与预算分类断言）、[tool_dispatch/web.rs](../../src-tauri/src/ai_runtime/tool_dispatch/web.rs) 内联测试（失败与超长正文的截断行为）。
 
 ## 当前状态
 
 - 文档成熟度 `draft`（见「维护规则」：[README.md](../README.md) §八）。
-- 实现状态 `implementation.state = partial`：目录项为 `Dispatchable`，主链路与备用派发入口都能执行一次检索，但**双路协调是明确缺失、需新增的行为**——搜索候选只解析 MCP 路线，原生搜索事件尚未接入网关处理路径。源码事实：`collect_search_provider_fetches` 只把候选枚举为 MCP provider；网关侧未见服务端搜索事件／引用的接入。
-- 因此：**一个 `web_search` 动作当前不能保证原生与 MCP 两路都实际搜索**；目标合同（`N07`）与实现之间是已知缺口 `G02`（双路搜索协调的真实执行）、`G03`（原生搜索事件的接入与端点适配），阻断门槛均为 `at=acceptance`，主要工作包 `D03`。
+- 实现状态 `implementation.state = partial`：目录项为 `Dispatchable`，主链路与备用派发入口都能执行一次检索，并经 `C20` 协调器记录分路状态。生产原生按能力事实为 `unsupported`（尚无 `K12` 子请求），MCP 单路是正常配置，不是能力降级。搜索候选不再只枚举 MCP：入口走协调器，MCP failover（≤3、成功即停）仍是**一条**路线。网关侧未见服务端搜索事件／引用的接入（`G03`）。
+- 因此：**一个 `web_search` 动作当前不能保证原生与 MCP 两路都实际搜索**；目标合同（`N07`）与实现之间是已知缺口 `G02`（双路搜索协调的真实执行）、`G03`（原生搜索事件的接入与端点适配），阻断门槛均为 `at=acceptance`，主要工作包 **`D04`**。机械 `V03` 不是关闭，也不是 `V04`。
 - 端点、混合续轮、费用与权限适配待验证（`Q17`）；本卡片**不宣布** MiniMax、DeepSeek 或 Gemini 任一端点已通过。
 - 所需证据：生产入口的两路执行证据（`V04`），以供应商定义的实际搜索事件或可证明检索发生的结构化 grounding 元数据为执行证据；单纯发出带工具声明的请求、模型自行生成 URL 都不算已搜。
 - 验证结果：本卡片不声明任何验证结论；本轮为基线 `2670739f` 的静态核对，未执行新实验、未运行付费实网评测。

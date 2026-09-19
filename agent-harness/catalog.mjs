@@ -717,10 +717,11 @@ export const objects = {
       file: "modules/m07-retrieval-and-evidence.md",
       anchor: "C20",
     },
-    implementation: { state: "absent" },
+    implementation: { state: "partial" },
     verification: { state: "none" },
     implements: ["K11", "K12", "N07"],
     depends_on: ["C10", "C18", "C13", "C04"],
+    note: "协调器已接入生产 web_search；生产原生 unsupported，MCP 单路是正常配置。K12 不在，故 partial 不是 present。机械 V03 不是验收，不把 verification 标 passed，不关 G02。",
   },
   C21: {
     kind: "component",
@@ -1576,6 +1577,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G02" },
     blocks: blocks("acceptance", ["D04"]),
+    note: "2026-09-19 第一刀：协调器已接入，生产原生 unsupported，机械 V03 存在。机械覆盖不是验收；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。",
   },
   G03: {
     kind: "issue",

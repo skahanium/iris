@@ -75,18 +75,18 @@
 
 ## 源码落点
 
-| 组件  | 现有落点                                                                                                                      | 处置                                       |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `C19` | `src-tauri/src/ai_runtime/retrieval_broker.rs` 与子实现（`retrieval_broker/`）、`src-tauri/src/ai_runtime/retrieval_scope.rs` | 复用                                       |
-| `C20` | `src-tauri/src/ai_runtime/web_evidence_broker.rs` 与生产网页执行                                                              | 复用；**双路协调是明确缺失、需新增的行为** |
-| `C21` | 网页 broker、`src-tauri/src/ai_runtime/run_tool_loop/web_reading.rs`                                                          | 复用阅读与回退                             |
-| `C22` | `src-tauri/src/ai_runtime/agent_evidence_repository.rs`、`src-tauri/src/ai_runtime/provenance.rs`                             | 补原生来源接入与质量表达                   |
+| 组件  | 现有落点                                                                                                                                    | 处置                                                            |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `C19` | `src-tauri/src/ai_runtime/retrieval_broker.rs` 与子实现（`retrieval_broker/`）、`src-tauri/src/ai_runtime/retrieval_scope.rs`               | 复用                                                            |
+| `C20` | `src-tauri/src/ai_runtime/dual_path_search.rs`（协调器），由 `run_tool_loop.rs` `execute_web_tool` 与 `web_evidence_broker.rs` 搜索收集调用 | 协调器已接入；生产原生 `unsupported`；MCP failover 仍是一条路线 |
+| `C21` | 网页 broker、`src-tauri/src/ai_runtime/run_tool_loop/web_reading.rs`                                                                        | 复用阅读与回退                                                  |
+| `C22` | `src-tauri/src/ai_runtime/agent_evidence_repository.rs`、`src-tauri/src/ai_runtime/provenance.rs`                                           | 补原生来源接入与质量表达                                        |
 
 搜索的模型可见面使用两个单一职责动作：`web_search { query }` 只发现候选，`web_fetch { urls }` 只读取当前 Run 候选或用户显式 URL；两者共享同一授权、network 预算、Broker 与冻结 Provider 顺序（[ARCHITECTURE.md](../../ARCHITECTURE.md)）。
 
 ## 兼容
 
-- **`C20` 当前 `implementation.state=absent`**：双路协调是需要新增的目标行为（§10.1、`G02`）。
+- **`C20` 当前 `implementation.state=partial`**：协调器在源码中存在并接入生产 `web_search`；生产原生按能力 `unsupported`，MCP 单路是正常配置。`K12` 原生子请求仍缺，故不是 `present`。`G02` 仍 open。
 - 目标配置合同的兼容要求（§5.1）：保留总联网开关；开启后按任务及既有外发权限执行双路合同，**不再要求用户勾选两次**；原生能力配置、MCP 有序候选与抓取能力分别保存；`C20` 合成带配置版本的执行快照。
 - 用户明确要求：开启联网代表允许使用外部网页信息，**不等于**材料和数据外发限制全部解除；网页检索关闭与完全离线不同（讨论十）。
 - 旧非 CAS 快照与历史证据记录的读取按既有兼容路径保留；证据投影的兼容规则是显式空数组表示最终消息无来源，只有字段缺失的旧消息可以按历史 `SourceGroupFallback` 读取（[ARCHITECTURE.md](../../ARCHITECTURE.md)）。
@@ -103,13 +103,13 @@
 | 搜索片段不能升级为正文证据                               | `V02` 已登记不变量，检测位置 `C22`，恢复行为「拒绝登记并说明原因」，测试标注「待补充（`D04`）」 |
 | 纯编辑任务不触发检索                                     | 分别验证「需要联网材料的组合任务」与「纯编辑任务不触发检索」（`Q14`）                           |
 
-本模块 `M07` 与 `C19`、`C21`、`C22` 当前 `implementation.state=present`、`C20` 为 `absent`；全部 `verification.state=none`。**仅验证后端两个替身都被调用，不足以声明双路能力已接通**（§5.1）。
+本模块 `M07` 与 `C19`、`C21`、`C22` 当前 `implementation.state=present`、`C20` 为 `partial`；全部 `verification.state=none`。**仅验证后端两个替身都被调用，不足以声明双路能力已接通**（§5.1）。`G02` 仍 open。
 
 ## 依赖与缺口
 
 - 依赖合同：[`K09`](../contracts/K09-web-authorization.md)、[`K10`](../contracts/K10-tool-surface.md)、[`K11`](../contracts/K11-dual-path-search.md)（`applies_to`：`C20`、`C10`、`C18`、`C22`、`C25`）、[`K12`](../contracts/K12-native-search-subrequest.md)、[`K13`](../contracts/K13-web-reading-window.md)、[`K14`](../contracts/K14-evidence-and-provenance.md)。
 - 承接链路：`L02`（联网检索与核实链路）。
-- 相关缺口：`G02`（双路搜索协调的真实执行，责任人 `M07`）主要工作包 `D03`；`G03`（原生搜索事件接入）同属 `D03`。
+- 相关缺口：`G02`（双路搜索协调的真实执行，责任人 `M07`）主要工作包 `D04`；`G03`（原生搜索事件接入）同属 `D04`。
 - 相关未决问题：`Q14`（双路搜索对纯编辑任务的触发范围未单独确认）、`Q17`（原生搜索端点、混合续轮、费用与权限适配待验证）、`Q03`（评测零分母，影响证据维度表达）、`Q09`（诊断关联不完整）。
 - 尚未单独确认、不得自行推定：双路要求与纯润色等无需外部资料任务如何配合，以及「同时」是否还要求请求在时间上并行（讨论八）。这些不改变两路实际执行的已明确要求。
 - 当前建议、非已批准方案：按出处、时效、地域、口径与正文判断冲突来源；具体自动判断机制未确定（讨论八）。
@@ -206,7 +206,7 @@
 
 ## 源码落点
 
-现有基础与处置：复用 web_evidence_broker.rs 和生产网页执行；双路协调是明确缺失、需新增的行为（`G02`）。dual-path-web-search 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
+现有基础与处置：协调器在 `src-tauri/src/ai_runtime/dual_path_search.rs`，由生产 `web_search`（`execute_web_tool`／broker 搜索收集）调用。生产原生探针返回 `unsupported`（尚无 `K12`）；MCP 路径包装现有 failover，视为一条路线。`implementation.state=partial`，`verification.state=none`。机械 `V03` 不是关闭，也不是 `V04`。
 
 ## 兼容
 
@@ -214,7 +214,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`；本组件当前 `verification.state=none`，没有绑定指纹的证据记录。
+关键不变量与所需证据类别见 `V01`–`V07`。本组件当前 `verification.state=none`（不是 `passed`）。已有机械 `V03` 指纹绑定（`dual_path_search.rs` 等）；这不是 `V04`，也不关闭 `G02`。
 
 <!-- iris:end C20 -->
 

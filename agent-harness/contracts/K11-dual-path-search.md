@@ -6,7 +6,7 @@
 
 本合同只定义协调结果：两条路线的能力来源与状态含义见 [K04](./K04-provider-capability.md)，原生受控子请求的构造与适配见 [K12](./K12-native-search-subrequest.md)，正文读取窗口见 [K13](./K13-web-reading-window.md)，候选来源与支持关系见 [K14](./K14-evidence-and-provenance.md)，交付限制说明见 [K15](./K15-delivery-result.md)，外发授权与开关见 [K09](./K09-web-authorization.md)，额度与费用记录见 [K06](./K06-budget-ledger.md)，MCP 传输见 [K18](./K18-mcp-transport.md)。工具侧的统一入口是 `T11` `web_search`（工具卡见 [tools/README.md](../tools/README.md)），其自身合同不在本文件重复。
 
-**执行事实**：双路协调是明确缺失、需新增的行为（`G02`）；本文件定义目标合同，不表示它已经接通。原生端点的兼容与费用适配**仍未验证**（`Q17`／`G03`），本体系不宣布 MiniMax、DeepSeek 或 Gemini 任一端点已通过。
+**执行事实**：`C20` 协调器已在源码中存在并接入生产 `web_search`（`src-tauri/src/ai_runtime/dual_path_search.rs`）。生产原生按能力事实为 `unsupported`，MCP 单路是正常配置；两路组合有机械 `V03`。关闭仍等 `D04`／`G02`。`V04` 生产入口两路仍缺（因无真原生 `K12`）；不得把两个替身都被调用写成 `V04`，也不得把 MCP 主备写成双路。原生端点的兼容与费用适配**仍未验证**（`Q17`／`G03`），本体系不宣布 MiniMax、DeepSeek 或 Gemini 任一端点已通过。
 
 <!-- iris:end K11 -->
 
@@ -104,6 +104,6 @@
 - `V07`：分路状态、失败分类与不足说明在诊断中的可定位性（「两路只执行了一路」的直接检查交接为 `C10` → `C20` → `C12`／`C18`）。
 - `V06`：双路对最终核实结果的语义贡献属于待验证问题，不是本合同的前置条件。
 
-`V03`–`V07` 当前状态一律为「未运行」或「待执行」（见 [evidence.md](../testing/evidence.md)）；`G02` 的阻断门槛为 `at=acceptance`。
+`V03` 机械负例已落在 `dual_path_search.rs`（注入双倍，不是生产入口两路）；`V04`–`V07` 当前仍为「未运行」或「待执行」（见 [evidence.md](../testing/evidence.md)）；`G02` 的阻断门槛为 `at=acceptance`。机械覆盖不是关闭。
 
 <!-- iris:end K11 -->
