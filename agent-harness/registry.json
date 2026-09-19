@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 96,
+  "registryRevision": 97,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T04:59:36.795Z"
+    "recordedAt": "2026-09-19T05:20:48.082Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "ae8a212204b340c850c18f19a8985ebb"
+      "fingerprint": "710e72312aa2fde606eba5cdcbf36031"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -4492,13 +4492,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 24,
+      "revision": 25,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 82,
-        "fingerprint": "711f7ebd52047f55f46a4d052ffaf72f"
+        "fingerprint": "8cefe8dc86a6c2c5720be7c16481ed22"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -18406,6 +18406,23 @@
           "revisionTo": 0,
           "fingerprintFrom": "ed68c9f2e95842b1f2dcfb062ede63ea",
           "fingerprintTo": "af3d921b27b02d4f2aee384cf5ad509f"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-51",
+      "at": "2026-09-19T05:20:48.082Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "证据台账文字修正：Q04／D02／G06 已收口关闭，原文「不关闭」已为假",
+      "review": null,
+      "objects": [
+        {
+          "id": "V02",
+          "revisionFrom": 24,
+          "revisionTo": 25,
+          "fingerprintFrom": "711f7ebd52047f55f46a4d052ffaf72f",
+          "fingerprintTo": "8cefe8dc86a6c2c5720be7c16481ed22"
         }
       ]
     }
