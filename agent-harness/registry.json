@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 102,
+  "registryRevision": 108,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T05:43:42.823Z"
+    "recordedAt": "2026-09-19T05:47:46.201Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -56,7 +56,7 @@
     "contracts/K03-instruction-revision.md": {
       "container": "K03",
       "registration": "K03#file",
-      "fingerprint": "e3ed3cec7a907808d59fb2151c835591"
+      "fingerprint": "c5a6f12e0d66a4aaf5bb730d0f0cc88b"
     },
     "contracts/K04-provider-capability.md": {
       "container": "K04",
@@ -81,7 +81,7 @@
     "contracts/K08-compaction-and-memory.md": {
       "container": "K08",
       "registration": "K08#file",
-      "fingerprint": "cef96b2a968ed5ace8bf4712d8db7013"
+      "fingerprint": "11cfe1dca744a6ecfe0f30383f0e73e0"
     },
     "contracts/K09-web-authorization.md": {
       "container": "K09",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "6907f649f58c4599a932709912ec62e8"
+      "fingerprint": "c42828c9994c3c83ea87ae00024c22c6"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -276,7 +276,7 @@
     "requirements/open-items.md": {
       "container": "P05",
       "registration": "P05",
-      "fingerprint": "c0cda77892bee67005467da25a1be32d"
+      "fingerprint": "9ad63c736f7303c781b0e47010dd6bf0"
     },
     "requirements/requirements.md": {
       "container": "P06",
@@ -1165,19 +1165,7 @@
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": { "state": "planned" },
-      "scope": [
-        "N05",
-        "N12",
-        "N13",
-        "N14",
-        "N22",
-        "Q02",
-        "Q08",
-        "Q15",
-        "Q16",
-        "G01",
-        "G05"
-      ],
+      "scope": ["N05", "N12", "N13", "N14", "N22", "Q02", "Q08", "G01", "G05"],
       "relations": {
         "depends_on": ["D01", "K01", "K03", "K05", "K07", "K08"],
         "closes": ["Q08", "G05"]
@@ -1312,7 +1300,7 @@
       "name": "eval-scoring-and-calibration",
       "title": "E03 评分与校准",
       "owner": "M08",
-      "maturity": "draft",
+      "maturity": "defined",
       "revision": 13,
       "definition": {
         "file": "modules/eval-system.md",
@@ -1573,13 +1561,13 @@
       "title": "K03 输入修订与取消",
       "owner": "C03",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 14,
       "definition": {
         "file": "contracts/K03-instruction-revision.md",
         "anchor": "K03",
         "line": 13,
-        "endLine": 99,
-        "fingerprint": "950b239eba0664428f21925365a03787"
+        "endLine": 120,
+        "fingerprint": "aca78336e194a43bb90f39d52537fc73"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1678,13 +1666,13 @@
       "title": "K08 压缩覆盖与长期记忆条目",
       "owner": "C08",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "contracts/K08-compaction-and-memory.md",
         "anchor": "K08",
         "line": 13,
-        "endLine": 107,
-        "fingerprint": "d2253154c3a79a098cdd0594c23f503a"
+        "endLine": 109,
+        "fingerprint": "7916cc7f30f7ada7a877d41d9e90ec5c"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2801,8 +2789,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 271,
-        "endLine": 284,
+        "line": 275,
+        "endLine": 288,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": { "state": "unknown" },
@@ -3190,20 +3178,20 @@
       "title": "长期记忆的写入时机、有效期与冲突管理未确定",
       "owner": "M03",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
         "line": 213,
-        "endLine": 222,
-        "fingerprint": "ea1bd203615f48134fd541c7e6dd97d3"
+        "endLine": 225,
+        "fingerprint": "7cc5877f380f3e19067a225eef7264a9"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D05", "at": "acceptance" }] },
-      "note": null
+      "relations": {},
+      "note": "2026-09-19 关闭：写入只能由 memory_write 显式发起且需确认、默认不自动把聊天写成事实、作用域 global／vault、clear_scope 不越界；**有效期与冲突呈现明确不实现**（表无过期列、无冲突裁决界面），需要单独的功能决定与工作包。blocks 边与 D03／D05 的 scope 一并移出，不再阻断验收。"
     },
     "Q16": {
       "kind": "issue",
@@ -3211,20 +3199,20 @@
       "title": "运行中追加／修改指令的交互未确定",
       "owner": "M01",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 224,
-        "endLine": 234,
-        "fingerprint": "a83fa39367eb8f9b575a46e6886015f3"
+        "line": 227,
+        "endLine": 238,
+        "fingerprint": "0be98a33d79789919db2818c4b319190"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D03", "at": "acceptance" }] },
-      "note": null
+      "relations": {},
+      "note": "2026-09-19 交互形态确定并关闭：Host 在 Run 进行中拒绝新指令（agent_run_active_run_exists），用户等待、取消或完成后重发；两条性质（取消不启动新副作用、未发布候选不得发布）各有绑定证据，形态写入 K03 §一。blocks 边与 D03 scope 一并移出——本条不再阻断 D03 验收。关闭是「选择已作出」，不是「运行中修订已实现」。"
     },
     "Q17": {
       "kind": "issue",
@@ -3236,8 +3224,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 236,
-        "endLine": 246,
+        "line": 240,
+        "endLine": 250,
         "fingerprint": "92b7c3c0bc05f7ea8f3936562dd24eba"
       },
       "implementation": { "state": "unknown" },
@@ -3257,8 +3245,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 248,
-        "endLine": 258,
+        "line": 252,
+        "endLine": 262,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": { "state": "unknown" },
@@ -3278,8 +3266,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 260,
-        "endLine": 269,
+        "line": 264,
+        "endLine": 273,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": { "state": "unknown" },
@@ -4492,13 +4480,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 27,
+      "revision": 28,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 84,
-        "fingerprint": "bceb40dd8443e1145dc611b00b8d8d6c"
+        "fingerprint": "e687a11a356306e6afd5cf5807411513"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -5469,6 +5457,61 @@
       "at": "2026-09-19T06:35:00Z",
       "applicability": "current",
       "note": "工具卡 T03 与目录／处理器事实的一致性核对：schema 声明 request_tools，处理器消费并四类拒绝。不把 T03 的 verification.state 标为通过，不声称 §6.5 的「申请后安装」已生效。"
+    },
+    {
+      "object": "Q16",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/run_engine/publication_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib cancellation_after_candidate_but_before_commit_cannot_publish_it",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "0be98a33d79789919db2818c4b319190",
+      "at": "2026-09-19T07:00:00Z",
+      "applicability": "current",
+      "note": "Q16 性质一的绑定证据：取消发生在候选产生之后、提交之前时该候选不得发布——Run 终态 Cancelled、final_message_id 为空、事件流无 ContentDelta／Completed、呈现流无 AnswerDelta／AnswerReset／AnswerComplete。本机 1 passed / 0 failed。跨组件组合证据。不把 Q16 关闭读成「运行中修订已实现」。"
+    },
+    {
+      "object": "Q16",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib cancelled_run_never_starts_a_model_or_tool_turn",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "0be98a33d79789919db2818c4b319190",
+      "at": "2026-09-19T07:00:00Z",
+      "applicability": "current",
+      "note": "Q16 性质二的绑定证据之一：取消后不得再开模型轮或工具轮。本机 1 passed / 0 failed。"
+    },
+    {
+      "object": "Q16",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib cancelled_run_never_commits_a_markdown_patch",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "0be98a33d79789919db2818c4b319190",
+      "at": "2026-09-19T07:00:00Z",
+      "applicability": "current",
+      "note": "Q16 性质二的绑定证据之二：取消后不得提交写盘。本机 1 passed / 0 failed。"
+    },
+    {
+      "object": "Q15",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/memory.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib 'tool_dispatch::implementation::memory_impl'",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "7cc5877f380f3e19067a225eef7264a9",
+      "at": "2026-09-19T07:00:00Z",
+      "applicability": "current",
+      "note": "Q15 关闭证据：本机 3 passed / 0 failed。作用域优先级 vault→global、clear_scope 只清自身作用域、无活动 Vault 时 scope=vault 按 memory_vault_scope_unavailable 明确拒绝且不回退到 global、未知作用域按 memory_scope_invalid 拒绝。**不覆盖有效期与冲突呈现**——那两项已明确不实现。"
+    },
+    {
+      "object": "E03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_core_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib aggregate_capacity_scorecard",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "5e7399bdb840f642ae74f5f89cde62ce",
+      "at": "2026-09-19T07:00:00Z",
+      "applicability": "current",
+      "note": "E03 提升为 defined 的机械证据：本机 3 passed / 0 failed。零分母维度必须标为未覆盖而不是满分通过（Q03 的两个负例）。verification.state 仍 none——不声称语义或组合质量通过。"
     }
   ],
   "changes": [
@@ -18582,6 +18625,89 @@
           "fingerprintTo": "b986104f45bf9423de87c9004d39c9d2"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-54",
+      "at": "2026-09-19T05:46:21.562Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "architecture",
+      "reason": "Q16 交互形态确定（运行中拒绝新指令）、Q15 写入与作用域语义确定并明确不实现有效期／冲突呈现、E03 提升为 defined；同步 K03／K08 正文。属承诺与判据变化，按架构变更复核",
+      "review": "REV-2026-09-19-54",
+      "objects": [
+        {
+          "id": "K03#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "e3ed3cec7a907808d59fb2151c835591",
+          "fingerprintTo": "c5a6f12e0d66a4aaf5bb730d0f0cc88b"
+        },
+        {
+          "id": "K08#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "cef96b2a968ed5ace8bf4712d8db7013",
+          "fingerprintTo": "11cfe1dca744a6ecfe0f30383f0e73e0"
+        },
+        {
+          "id": "K03",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "950b239eba0664428f21925365a03787",
+          "fingerprintTo": "56f187cb0178873efbd8f8a694f2acf0"
+        },
+        {
+          "id": "K08",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "d2253154c3a79a098cdd0594c23f503a",
+          "fingerprintTo": "7916cc7f30f7ada7a877d41d9e90ec5c"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 27,
+          "revisionTo": 28,
+          "fingerprintFrom": "bceb40dd8443e1145dc611b00b8d8d6c",
+          "fingerprintTo": "e687a11a356306e6afd5cf5807411513"
+        },
+        {
+          "id": "Q15",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "ea1bd203615f48134fd541c7e6dd97d3",
+          "fingerprintTo": "7cc5877f380f3e19067a225eef7264a9"
+        },
+        {
+          "id": "Q16",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "a83fa39367eb8f9b575a46e6886015f3",
+          "fingerprintTo": "0be98a33d79789919db2818c4b319190"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-55",
+      "at": "2026-09-19T05:47:33.765Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "未确定事项表更新：Q15 有效期／冲突呈现明确不实现，Q16 就地通道已确定不做；Prettier 排版",
+      "review": null,
+      "objects": [
+        {
+          "id": "P05",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "c0cda77892bee67005467da25a1be32d",
+          "fingerprintTo": "9ad63c736f7303c781b0e47010dd6bf0"
+        },
+        {
+          "id": "K03",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "56f187cb0178873efbd8f8a694f2acf0",
+          "fingerprintTo": "aca78336e194a43bb90f39d52537fc73"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -18771,7 +18897,8 @@
         {
           "id": "Q16",
           "revision": 12,
-          "fingerprint": "a83fa39367eb8f9b575a46e6886015f3"
+          "fingerprint": "a83fa39367eb8f9b575a46e6886015f3",
+          "stale": true
         }
       ],
       "reverification_required": [
@@ -19279,6 +19406,53 @@
           "id": "X02",
           "revision": 13,
           "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-19-54",
+      "change": "CHG-2026-09-19-54",
+      "at": "2026-09-19T05:46:21.562Z",
+      "author": "用户（已批准的遗留收口方案授权人）",
+      "reviewer": "DeepSeek Harness（施工）",
+      "conclusion": "synchronized",
+      "reason": "Q16 交互形态确定（运行中拒绝新指令）、Q15 写入与作用域语义确定并明确不实现有效期／冲突呈现、E03 提升为 defined；同步 K03／K08 正文。属承诺与判据变化，按架构变更复核",
+      "evidence": "技术核对（施工者 DeepSeek Harness，2026-09-19）：①Q16 的交互形态取自代码事实——ensure_session_idle／ensure_no_active_top_level_run 以 agent_run_active_run_exists 拒绝运行中指令，UI 文案见 useUnifiedAssistantSend.ts 的 normalSubmissionError；两条性质各有绑定证据，取消仅留 interrupted partial 而非发布答案（settle_cancelled_run_with_partial）。这是**把源码已有的选择写成权威**，不是新增运行中修订能力——K03 §一 明确不承诺就地修订通道。②Q15 的确定语义同样取自代码：ai_memories 全仓唯一写入路径是 memory_write，requires_confirmation=true 且 default_enabled_without_skill=false；有效期与冲突呈现**明确写成不实现**，没有把它们算作已完成。③E03 提升为 defined 只改 maturity：正文已具备 eval 种类的输入输出与判据要素，verification.state 仍 none，未声称语义质量通过。④scope／blocks 收敛：Q15／Q16 移出 D03 scope、Q15 移出 D05 blocks；closes 保持 [\"Q08\",\"G05\"]，未把 Q02／G01 写进 closes——避免出现「先宣布关闭、再补证据」的顺序。独立性声明：本条复核由施工者本人作出，不是 P03 §5.2 要求的独立复核——本变更改变用户承诺与判据，按 §5.2 规则 1、2 必须由未参与本变更编写的独立 AI 或人工重新复核；在此之前只算技术核对通过。",
+      "objects": [
+        {
+          "id": "K03#file",
+          "revision": 0,
+          "fingerprint": "c5a6f12e0d66a4aaf5bb730d0f0cc88b"
+        },
+        {
+          "id": "K08#file",
+          "revision": 0,
+          "fingerprint": "11cfe1dca744a6ecfe0f30383f0e73e0"
+        },
+        {
+          "id": "K03",
+          "revision": 13,
+          "fingerprint": "c5a6f12e0d66a4aaf5bb730d0f0cc88b"
+        },
+        {
+          "id": "K08",
+          "revision": 13,
+          "fingerprint": "7916cc7f30f7ada7a877d41d9e90ec5c"
+        },
+        {
+          "id": "V02",
+          "revision": 28,
+          "fingerprint": "e687a11a356306e6afd5cf5807411513"
+        },
+        {
+          "id": "Q15",
+          "revision": 12,
+          "fingerprint": "7cc5877f380f3e19067a225eef7264a9"
+        },
+        {
+          "id": "Q16",
+          "revision": 13,
+          "fingerprint": "0be98a33d79789919db2818c4b319190"
         }
       ]
     }

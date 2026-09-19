@@ -850,7 +850,7 @@ export const objects = {
     name: "eval-scoring-and-calibration",
     title: "E03 评分与校准",
     owner: "M08",
-    maturity: "draft",
+    maturity: "defined",
     definition: { file: "modules/eval-system.md", anchor: "E03" },
     implementation: { state: "partial" },
     verification: { state: "none" },
@@ -1226,19 +1226,14 @@ export const objects = {
       anchor: "D03",
     },
     work: { state: "planned" },
-    scope: [
-      "N05",
-      "N12",
-      "N13",
-      "N14",
-      "N22",
-      "Q02",
-      "Q08",
-      "Q15",
-      "Q16",
-      "G01",
-      "G05",
-    ],
+    // Q15／Q16 于 2026-09-19 确定并关闭，据此移出 scope：它们不再是本包「尚未收清」的
+    // 范围。
+    //
+    // `closes` 是 D03 **自身宣布关闭**的项，保持 ["Q08","G05"] 不动。Q02／G01 虽由本包
+    // 施工修复并作为证据绑定，但它们的 `blocks` 边指向本包验收；先宣布 closes、再写证据，
+    // 等于用声明换豁免（D02 收口时明确禁止的顺序）。因此它们在 scope 内、不在 closes 内，
+    // 由 `registry.issues` 在验收时独立写 closed。
+    scope: ["N05", "N12", "N13", "N14", "N22", "Q02", "Q08", "G01", "G05"],
     depends_on: ["D01", "K01", "K03", "K05", "K07", "K08"],
     closes: ["Q08", "G05"],
   },
@@ -1527,7 +1522,7 @@ export const objects = {
     owner: "M03",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q15" },
-    blocks: blocks("acceptance", ["D05"]),
+    note: "2026-09-19 关闭：写入只能由 memory_write 显式发起且需确认、默认不自动把聊天写成事实、作用域 global／vault、clear_scope 不越界；**有效期与冲突呈现明确不实现**（表无过期列、无冲突裁决界面），需要单独的功能决定与工作包。blocks 边与 D03／D05 的 scope 一并移出，不再阻断验收。",
   },
   Q16: {
     kind: "issue",
@@ -1535,7 +1530,7 @@ export const objects = {
     owner: "M01",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q16" },
-    blocks: blocks("acceptance", ["D03"]),
+    note: "2026-09-19 交互形态确定并关闭：Host 在 Run 进行中拒绝新指令（agent_run_active_run_exists），用户等待、取消或完成后重发；两条性质（取消不启动新副作用、未发布候选不得发布）各有绑定证据，形态写入 K03 §一。blocks 边与 D03 scope 一并移出——本条不再阻断 D03 验收。关闭是「选择已作出」，不是「运行中修订已实现」。",
   },
   Q17: {
     kind: "issue",

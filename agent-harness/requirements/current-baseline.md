@@ -215,9 +215,12 @@
 ### Q15 长期记忆的写入时机、有效期、冲突与用户管理未确定
 
 - **已确认事实**：当前存在独立存储与读写工具（`memory_read`／`memory_write`）；具体产品行为未确定。
-- **不能推出**：把尚未确定的交互写成已实现能力。
+- **已确定的语义（2026-09-19）**：写入只能由 `memory_write` 显式发起，该工具 `requires_confirmation = true` 且 `default_enabled_without_skill = false`——**默认不把任意聊天内容自动写成长期事实**；`ai_memories` 在全仓只有这一条写入路径（`tool_dispatch/memory.rs`），会话压缩与运行引擎都不写它。作用域由入参 `scope` 决定：`global` 与 `vault`（`vault` 需有活动 Vault，否则 `memory_vault_scope_unavailable`）；`clear_scope` 只清自身作用域，不越界；迁移 `071` 使同 key 在不同作用域互不冲突。
+- **明确不实现（本条关闭后仍不承诺）**：条目**有效期**与**冲突呈现**。表结构没有过期列，也没有面向用户的冲突裁决界面。把这两项写成已实现是错的；它们需要单独的功能决定与工作包。
+- **不能推出**：把尚未确定的交互写成已实现能力；也不能因为本条关闭就宣布「长期记忆的产品行为已完整确定」。
 - **影响边界**：`C09`、`K08`、`T13`、`T14`。
 - **所需证据**：确认合同下的读写、作用域与失效表达；默认不把任意聊天内容自动写成长期事实。
+- **覆盖**：`V03` 机械记录见 `registry.json.verify`；本条由 `D03`／`D05` 的验收不再需要它阻断（`blocks` 边与 `scope` 一并移出），关闭依据是上列已确定语义与「明确不实现」的边界。
 
 <!-- iris:end Q15 -->
 
@@ -225,11 +228,12 @@
 
 ### Q16 运行中追加／修改指令的交互与状态处理未确定
 
-- **已确认事实**：架构已确定「输入修订在安全点生效」的方向；具体交互未确定。
-- **不能推出**：把安全点吸收写成已经实现的端到端交互。
+- **已确认事实**：架构已确定「输入修订在安全点生效」的方向。**交互形态于 2026-09-19 确定**：Host 在 Run 进行中拒绝新的用户指令，返回稳定错误码 `agent_run_active_run_exists`，界面文案为「当前会话已有任务运行，请等待、取消或完成后重试」（`normal_session_repository.rs` 的 `ensure_session_idle`、`agent_run_repository.rs` 的 `ensure_no_active_top_level_run`、`useUnifiedAssistantSend.ts` 的 `normalSubmissionError`）。用户要追加或修改要求，只能等待、显式取消或在完成后重发。
+- **不能推出**：把安全点吸收写成已经实现的端到端交互；也不能把「取消后留下的 interrupted partial」读成「本 Run 已发布答案」——它只是下一轮的上下文痕迹，Run 终态仍是 `Cancelled` 且无 `final_message_id`。
 - **影响边界**：`C03`、`K03`、`C25`。
 - **所需证据**：旧修订未发布答案不能覆盖新要求；取消后不启动新副作用（由 `D03` 承接）。
-- **归属**：本方 2026-09-16 经治理修复迁入 `D03`：交互形态仍未确定，但「修订不让旧答案覆盖新要求、取消不启动新副作用」两条性质由 `D03` 验收；`blocks` 由 `D02` 改指 `D03`，不再阻断 `D02` 验收。
+- **覆盖**：两条性质各有绑定证据——`cancellation_after_candidate_but_before_commit_cannot_publish_it`（候选产生后取消不得发布）、`cancelled_run_never_starts_a_model_or_tool_turn`／`cancellation_after_the_first_dispatch_opens_no_further_turn`（取消后不再开轮）、`cancelled_run_never_commits_a_markdown_patch`（取消不提交写盘）。形态与性质写进 [`K03`](../contracts/K03-instruction-revision.md) §一。**本条不承诺**运行中就地修订通道、修订队列或相应 UI：要做到那些必须先确定其交互形态并作为新决定登记。
+- **归属**：2026-09-16 经治理修复由 `D02` 迁入 `D03`；2026-09-19 形态确定后本条关闭。关闭是「选择已作出」，不是「运行中修订已实现」。
 
 <!-- iris:end Q16 -->
 
