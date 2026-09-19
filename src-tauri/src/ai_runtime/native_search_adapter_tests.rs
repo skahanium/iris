@@ -1,4 +1,5 @@
-//! TDD coverage for the MiniMax-M3 Responses native-search adapter.
+//! TDD coverage for per-model native-search adapters (MiniMax-M3 Responses and
+//! DeepSeek-Flash Anthropic Messages).
 
 use super::dual_path_search::{
     coordinate_dual_path_search, DualPathSearchRequest, NativeSearchSupport,
@@ -80,6 +81,7 @@ struct ScriptedTransport {
     recorded_url: Mutex<Option<String>>,
     recorded_body: Mutex<Option<Value>>,
     recorded_auth: Mutex<Option<bool>>,
+    recorded_headers: Mutex<Option<Vec<(String, String)>>>,
 }
 
 impl ScriptedTransport {
@@ -91,6 +93,7 @@ impl ScriptedTransport {
             recorded_url: Mutex::new(None),
             recorded_body: Mutex::new(None),
             recorded_auth: Mutex::new(None),
+            recorded_headers: Mutex::new(None),
         }
     }
 }
@@ -100,11 +103,16 @@ impl NativeSearchTransport for ScriptedTransport {
         &self,
         url: &str,
         body: &Value,
-        bearer: Option<&str>,
+        headers: &[(String, String)],
     ) -> NativeSearchHttpResult {
         *self.recorded_url.lock().expect("url") = Some(url.to_string());
         *self.recorded_body.lock().expect("body") = Some(body.clone());
-        *self.recorded_auth.lock().expect("auth") = Some(bearer.is_some());
+        *self.recorded_headers.lock().expect("headers") = Some(headers.to_vec());
+        *self.recorded_auth.lock().expect("auth") = Some(headers.iter().any(|(name, value)| {
+            !value.is_empty()
+                && (name.eq_ignore_ascii_case("authorization")
+                    || name.eq_ignore_ascii_case("x-api-key"))
+        }));
         NativeSearchHttpResult {
             status: self.status,
             body: self.body.clone(),
@@ -141,7 +149,7 @@ impl NativeSearchTransport for SequentialTransport {
         &self,
         _url: &str,
         _body: &Value,
-        _bearer: Option<&str>,
+        _headers: &[(String, String)],
     ) -> NativeSearchHttpResult {
         *self.recorded_count.lock().expect("count") += 1;
         self.responses
@@ -379,6 +387,7 @@ async fn http_401_is_temporary_failure_not_unsupported() {
         recorded_url: Mutex::new(None),
         recorded_body: Mutex::new(None),
         recorded_auth: Mutex::new(None),
+        recorded_headers: Mutex::new(None),
     };
     let outcome = execute_native_search(
         draft("approved query", None),
@@ -493,6 +502,7 @@ async fn http_429_is_temporary_failure_not_unsupported() {
         recorded_url: Mutex::new(None),
         recorded_body: Mutex::new(None),
         recorded_auth: Mutex::new(None),
+        recorded_headers: Mutex::new(None),
     };
     let outcome = execute_native_search(
         draft("approved query", None),
@@ -514,6 +524,7 @@ async fn transport_failed_flag_is_transport_failure() {
         recorded_url: Mutex::new(None),
         recorded_body: Mutex::new(None),
         recorded_auth: Mutex::new(None),
+        recorded_headers: Mutex::new(None),
     };
     let outcome = execute_native_search(
         draft("approved query", None),
@@ -549,7 +560,8 @@ fn web_search_call_deadline_extends_only_when_native_adapter_is_available() {
             "deepseek-v4-flash",
             EndpointFamily::OpenAiCompatibleChatCompletions,
         ))),
-        Duration::from_secs(20)
+        Duration::from_secs(90),
+        "DeepSeek Available must reserve MCP 20s + native 60s + buffer"
     );
 }
 
@@ -562,6 +574,7 @@ async fn http_500_is_transport_failure_not_unsupported() {
         recorded_url: Mutex::new(None),
         recorded_body: Mutex::new(None),
         recorded_auth: Mutex::new(None),
+        recorded_headers: Mutex::new(None),
     };
     let outcome = execute_native_search(
         draft("approved query", None),
@@ -603,13 +616,16 @@ fn production_registry_matches_model_id_not_provider_brand() {
     assert!(lookup_production_adapter("minimax-m3").is_some());
     assert!(lookup_production_adapter("minimax").is_none());
     assert!(lookup_production_adapter("MiniMax-M2").is_none());
-    assert!(lookup_production_adapter("deepseek-v4-flash").is_none());
+    assert!(lookup_production_adapter("deepseek-v4-flash").is_some());
+    assert!(lookup_production_adapter("deepseek-flash").is_some());
+    assert!(lookup_production_adapter("deepseek").is_none());
+    assert!(lookup_production_adapter("deepseek-v4-pro").is_none());
     assert!(lookup_production_adapter("qwen2.5:7b").is_none());
 }
 
 #[test]
 fn minimax_m3_production_adapter_is_available_without_inferring_other_models() {
-    assert_eq!(production_native_search_adapter_count(), 1);
+    assert_eq!(production_native_search_adapter_count(), 2);
     let probe = ProductionNativeSearchSupport {
         endpoint: Some(minimax_endpoint()),
     };
@@ -663,6 +679,69 @@ async fn minimax_m3_production_probe_attempts_native_and_mcp() {
     assert!(outcome.both_available_routes_attempted());
 }
 
+fn deepseek_endpoint() -> NativeSearchEndpointRef {
+    NativeSearchEndpointRef::new(
+        "deepseek-v4-flash",
+        EndpointFamily::OpenAiCompatibleChatCompletions,
+    )
+}
+
+fn deepseek_draft(query: &str, private_material: Option<&str>) -> NativeSearchSubrequestDraft {
+    NativeSearchSubrequestDraft {
+        query: query.into(),
+        public_scope: NativeSearchPublicScope {
+            date: Some("2026-09".into()),
+            region: Some("CN".into()),
+            language: Some("zh".into()),
+        },
+        identity: NativeSearchRequestIdentity {
+            run_id: "run-adapter".into(),
+            input_revision: 4,
+            parent_call_id: "web_search".into(),
+            attempt: 1,
+        },
+        endpoint: deepseek_endpoint(),
+        private_material: private_material.map(str::to_string),
+    }
+}
+
+fn deepseek_anthropic_live_shape() -> Value {
+    json!({
+        "id": "msg-scripted",
+        "type": "message",
+        "role": "assistant",
+        "model": "deepseek-flash",
+        "stop_reason": "end_turn",
+        "content": [
+            {
+                "type": "server_tool_use",
+                "name": "web_search",
+                "input": { "query": "approved query" }
+            },
+            {
+                "type": "web_search_tool_result",
+                "content": [{
+                    "type": "web_search_result",
+                    "title": "example weather",
+                    "url": "https://weather.example/shanghai"
+                }]
+            },
+            { "type": "text", "text": "summary" }
+        ]
+    })
+}
+
+fn deepseek_anthropic_text_only() -> Value {
+    json!({
+        "id": "msg-no-search",
+        "type": "message",
+        "role": "assistant",
+        "model": "deepseek-flash",
+        "stop_reason": "end_turn",
+        "content": [{ "type": "text", "text": "I don't have access to real-time weather data." }]
+    })
+}
+
 struct CountingNativeRoute;
 
 impl SearchRoute for CountingNativeRoute {
@@ -679,6 +758,179 @@ impl SearchRoute for CountingNativeRoute {
             internal_provider_attempts: 0,
         }
     }
+}
+
+#[test]
+fn deepseek_flash_outbound_uses_anthropic_hosted_search_not_minimax_responses() {
+    let sub = construct_native_search_subrequest(deepseek_draft(
+        "approved query",
+        Some("这是笔记正文\npath: notes/vault/secret.md"),
+    ))
+    .expect("approved query must construct");
+    let adapter = lookup_production_adapter("deepseek-v4-flash").expect("DeepSeek adapter");
+    assert_eq!(adapter.id(), "deepseek-v4-flash");
+    let body = adapter.outbound_body(&sub);
+    assert_eq!(body["model"], "deepseek-flash");
+    assert_eq!(body["messages"][0]["content"], "approved query");
+    assert_eq!(body["tools"][0]["type"], "web_search_20250305");
+    assert_eq!(body["tools"][0]["name"], "web_search");
+    assert_eq!(body["tool_choice"]["type"], "tool");
+    assert_eq!(body["thinking"]["type"], "disabled");
+    assert_eq!(body["max_tokens"], 2048);
+    assert!(body.get("input").is_none(), "{body}");
+    assert!(body.get("store").is_none(), "{body}");
+    assert!(body.get("max_output_tokens").is_none(), "{body}");
+    assert_ne!(body["tools"][0]["type"], "web_search");
+    let blob = body.to_string();
+    assert!(!blob.contains("笔记正文"), "{blob}");
+    assert!(!blob.contains("notes/vault/secret.md"), "{blob}");
+    assert!(!blob.contains("run-adapter"), "{blob}");
+    let headers = adapter.http_headers("secret-must-not-appear-in-body");
+    assert!(headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("x-api-key")));
+    assert!(!headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("authorization")));
+}
+
+#[tokio::test]
+async fn deepseek_flash_scripted_http_posts_anthropic_messages() {
+    let transport = ScriptedTransport::ok(deepseek_anthropic_live_shape());
+    let outcome = execute_native_search(
+        deepseek_draft("approved query", Some("笔记正文")),
+        &transport,
+        Some("secret-must-not-be-recorded"),
+        "https://api.deepseek.com",
+    )
+    .await;
+    assert_eq!(
+        transport.recorded_url.lock().expect("url").as_deref(),
+        Some("https://api.deepseek.com/anthropic/v1/messages")
+    );
+    let headers = transport
+        .recorded_headers
+        .lock()
+        .expect("headers")
+        .clone()
+        .expect("recorded");
+    assert!(headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("x-api-key") && !value.is_empty()));
+    assert!(!headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("authorization")));
+    let sent = transport
+        .recorded_body
+        .lock()
+        .expect("body")
+        .clone()
+        .expect("recorded");
+    let sent_blob = sent.to_string();
+    assert!(
+        !sent_blob.contains("secret-must-not-be-recorded"),
+        "{sent_blob}"
+    );
+    assert!(!sent_blob.contains("笔记正文"), "{sent_blob}");
+    assert_eq!(sent["tools"][0]["type"], "web_search_20250305");
+    assert!(outcome.has_retrieval_credentials);
+    assert_eq!(outcome.failure, None);
+    assert_eq!(outcome.candidates.len(), 1);
+    assert_eq!(
+        outcome.candidates[0].url,
+        "https://weather.example/shanghai"
+    );
+}
+
+#[tokio::test]
+async fn deepseek_chat_completions_api_base_still_posts_anthropic_messages() {
+    let transport = ScriptedTransport::ok(deepseek_anthropic_live_shape());
+    let outcome = execute_native_search(
+        deepseek_draft("approved query", None),
+        &transport,
+        Some("secret"),
+        "https://api.deepseek.com/v1/chat/completions",
+    )
+    .await;
+    assert_eq!(
+        transport.recorded_url.lock().expect("url").as_deref(),
+        Some("https://api.deepseek.com/anthropic/v1/messages")
+    );
+    assert!(outcome.has_retrieval_credentials);
+}
+
+#[tokio::test]
+async fn deepseek_text_only_200_retries_once_and_keeps_later_results() {
+    let transport = SequentialTransport::new(vec![
+        (200, deepseek_anthropic_text_only()),
+        (200, deepseek_anthropic_live_shape()),
+    ]);
+    let outcome = execute_native_search(
+        deepseek_draft("approved query", None),
+        &transport,
+        Some("secret"),
+        "https://api.deepseek.com",
+    )
+    .await;
+    assert_eq!(*transport.recorded_count.lock().expect("count"), 2);
+    assert!(outcome.has_retrieval_credentials);
+    assert_eq!(
+        outcome.candidates[0].url,
+        "https://weather.example/shanghai"
+    );
+}
+
+#[tokio::test]
+async fn deepseek_responses_tools_echo_is_not_used_as_native_search() {
+    let transport = ScriptedTransport::ok(json!({
+        "status": "completed",
+        "error": null,
+        "tools": [{ "type": "web_search" }],
+        "output": [{
+            "type": "message",
+            "content": [{ "type": "output_text", "text": "memory answer" }]
+        }]
+    }));
+    let outcome = execute_native_search(
+        deepseek_draft("approved query", None),
+        &transport,
+        Some("secret"),
+        "https://api.deepseek.com",
+    )
+    .await;
+    assert_eq!(
+        transport.recorded_url.lock().expect("url").as_deref(),
+        Some("https://api.deepseek.com/anthropic/v1/messages")
+    );
+    assert!(!outcome.has_retrieval_credentials);
+}
+
+#[tokio::test]
+async fn deepseek_flash_production_probe_attempts_native_and_mcp() {
+    let native = CountingNativeRoute;
+    let outcome = coordinate_dual_path_search(
+        DualPathSearchRequest {
+            identity: SearchActionIdentity {
+                run_id: "run-deepseek".into(),
+                input_revision: 1,
+                action_id: "web_search".into(),
+                attempt: 1,
+            },
+            query: "approved query".into(),
+            allow_second_route: true,
+        },
+        &ProductionNativeSearchSupport {
+            endpoint: Some(deepseek_endpoint()),
+        },
+        &native,
+        &CountingMcpRoute,
+    )
+    .await;
+    assert!(outcome.native.supported);
+    assert!(outcome.native.attempted);
+    assert!(outcome.native.succeeded);
+    assert!(outcome.mcp.succeeded);
+    assert!(outcome.both_available_routes_attempted());
 }
 
 #[tokio::test]
@@ -710,6 +962,305 @@ async fn live_minimax_m3_adapter_returns_https_citations() {
     assert!(
         outcome.has_retrieval_credentials,
         "native MiniMax search must return retrieval credentials: {outcome:?}; {}",
+        super::native_search_adapter::last_live_native_search_trace()
+    );
+    assert!(outcome
+        .candidates
+        .iter()
+        .all(|hit| hit.url.starts_with("https://")));
+    assert!(!outcome.candidates.is_empty());
+}
+
+fn install_deepseek_live_dirs() {
+    let home = std::env::var("HOME").expect("HOME");
+    std::env::set_var(
+        "IRIS_CONFIG_DIR",
+        format!("{home}/Library/Application Support/Iris/config"),
+    );
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root");
+    let candidates = [
+        repo_root.join(".iris-dev/app-data"),
+        std::path::PathBuf::from(format!(
+            "{home}/Library/Application Support/com.iris.notes/app-data"
+        )),
+    ];
+    for data_dir in candidates {
+        std::env::set_var("IRIS_DATA_DIR", &data_dir);
+        if crate::credentials::credential_available("iris.llm.deepseek").unwrap_or(false) {
+            return;
+        }
+    }
+}
+
+fn summarize_deepseek_probe(
+    name: &str,
+    url: &str,
+    status: u16,
+    elapsed_ms: u128,
+    raw_len: usize,
+    body: &Value,
+) -> String {
+    let mut types = Vec::new();
+    let mut https_citations = 0_u32;
+    let mut flags = (false, false, false);
+    fn walk(
+        value: &Value,
+        types: &mut Vec<String>,
+        https_citations: &mut u32,
+        flags: &mut (bool, bool, bool),
+    ) {
+        if let Some(kind) = value.get("type").and_then(Value::as_str) {
+            match kind {
+                "web_search_call" => flags.0 = true,
+                "server_tool_use" => flags.1 = true,
+                "web_search_tool_result" => flags.2 = true,
+                _ => {}
+            }
+            if !types.iter().any(|existing| existing == kind) {
+                types.push(kind.to_string());
+            }
+            if (kind == "url_citation" || kind == "web_search_result")
+                && value
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| url.starts_with("https://"))
+            {
+                *https_citations += 1;
+            }
+        }
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, types, https_citations, flags);
+                }
+            }
+            Value::Object(object) => {
+                for child in object.values() {
+                    walk(child, types, https_citations, flags);
+                }
+            }
+            _ => {}
+        }
+    }
+    walk(body, &mut types, &mut https_citations, &mut flags);
+    let keys = body
+        .as_object()
+        .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","))
+        .unwrap_or_else(|| "-".into());
+    let error_code = body
+        .get("error")
+        .and_then(|error| {
+            error
+                .get("code")
+                .or_else(|| error.get("type"))
+                .or_else(|| error.get("param"))
+        })
+        .and_then(Value::as_str)
+        .unwrap_or("-");
+    format!(
+        "{name} host_path={} status={status} ms={elapsed_ms} raw_len={raw_len} keys={keys} output_status={} error={} error_code={error_code} types={} web_search_call={} server_tool_use={} web_search_tool_result={} https_citations={https_citations} usage_in={} usage_out={}",
+        url.trim_start_matches("https://api.deepseek.com"),
+        body.get("status")
+            .or_else(|| body.get("stop_reason"))
+            .or_else(|| body.get("finish_reason"))
+            .and_then(Value::as_str)
+            .unwrap_or("-"),
+        match body.get("error") {
+            None => "absent",
+            Some(Value::Null) => "null",
+            Some(_) => "present",
+        },
+        types.join(","),
+        flags.0,
+        flags.1,
+        flags.2,
+        body.get("usage")
+            .and_then(|usage| usage
+                .get("input_tokens")
+                .or_else(|| usage.get("prompt_tokens")))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        body.get("usage")
+            .and_then(|usage| usage
+                .get("output_tokens")
+                .or_else(|| usage.get("completion_tokens")))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    )
+}
+
+#[tokio::test]
+#[ignore = "live DeepSeek protocol probe; requires local iris.llm.deepseek"]
+async fn live_deepseek_flash_native_search_protocol_probe() {
+    install_deepseek_live_dirs();
+    let secret = crate::credentials::get_runtime_secret("iris.llm.deepseek")
+        .expect("iris.llm.deepseek must decrypt");
+    let client = crate::network::cert_pinning::https_client_builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .read_timeout(std::time::Duration::from_secs(90))
+        .build()
+        .expect("https client");
+    let query = "What is the weather in Shanghai?";
+    let responses_auto = json!({
+        "model": "deepseek-flash",
+        "input": query,
+        "instructions": "This is an isolated web search subrequest. Use web_search and return URL citations. Do not answer from memory.",
+        "stream": false,
+        "max_output_tokens": 2048,
+        "reasoning": { "effort": "none" },
+        "tools": [{ "type": "web_search" }],
+        "tool_choice": "auto",
+    });
+    let cases = [
+        (
+            "responses_root_auto",
+            "https://api.deepseek.com/responses",
+            responses_auto.clone(),
+            false,
+        ),
+        (
+            "responses_root_forced",
+            "https://api.deepseek.com/responses",
+            json!({
+                "model": "deepseek-flash",
+                "input": query,
+                "stream": false,
+                "max_output_tokens": 2048,
+                "reasoning": { "effort": "none" },
+                "tools": [{ "type": "web_search" }],
+                "tool_choice": { "type": "web_search" },
+            }),
+            false,
+        ),
+        (
+            "responses_v1_auto",
+            "https://api.deepseek.com/v1/responses",
+            responses_auto,
+            false,
+        ),
+        (
+            "chat_v1_web_search_tool",
+            "https://api.deepseek.com/v1/chat/completions",
+            json!({
+                "model": "deepseek-flash",
+                "messages": [{ "role": "user", "content": query }],
+                "stream": false,
+                "thinking": { "type": "disabled" },
+                "tools": [{ "type": "web_search" }],
+            }),
+            false,
+        ),
+        (
+            "anthropic_web_search_20250305",
+            "https://api.deepseek.com/anthropic/v1/messages",
+            json!({
+                "model": "deepseek-flash",
+                "max_tokens": 2048,
+                "thinking": { "type": "disabled" },
+                "messages": [{ "role": "user", "content": query }],
+                "tools": [{ "type": "web_search_20250305", "name": "web_search" }],
+            }),
+            true,
+        ),
+        (
+            "responses_root_required",
+            "https://api.deepseek.com/responses",
+            json!({
+                "model": "deepseek-flash",
+                "input": query,
+                "stream": false,
+                "max_output_tokens": 2048,
+                "reasoning": { "effort": "none" },
+                "tools": [{ "type": "web_search" }],
+                "tool_choice": "required",
+            }),
+            false,
+        ),
+        (
+            "responses_root_web_search_2025_08_26",
+            "https://api.deepseek.com/responses",
+            json!({
+                "model": "deepseek-flash",
+                "input": query,
+                "stream": false,
+                "max_output_tokens": 2048,
+                "reasoning": { "effort": "none" },
+                "tools": [{ "type": "web_search_2025_08_26" }],
+                "tool_choice": { "type": "web_search_2025_08_26" },
+            }),
+            false,
+        ),
+        (
+            "anthropic_type_web_search",
+            "https://api.deepseek.com/anthropic/v1/messages",
+            json!({
+                "model": "deepseek-flash",
+                "max_tokens": 2048,
+                "thinking": { "type": "disabled" },
+                "messages": [{ "role": "user", "content": query }],
+                "tools": [{ "type": "web_search", "name": "web_search" }],
+            }),
+            true,
+        ),
+    ];
+    let mut lines = Vec::new();
+    for (name, url, body, anthropic) in cases {
+        let started = std::time::Instant::now();
+        let mut request = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .json(&body);
+        request = if anthropic {
+            request
+                .header("x-api-key", secret.as_str())
+                .header("anthropic-version", "2023-06-01")
+        } else {
+            request.header("Authorization", format!("Bearer {}", secret.as_str()))
+        };
+        let response = request.send().await;
+        let elapsed_ms = started.elapsed().as_millis();
+        let line = match response {
+            Err(_) => format!("{name} transport_failed ms={elapsed_ms}"),
+            Ok(response) => {
+                let status = response.status().as_u16();
+                let raw = response.text().await.unwrap_or_default();
+                let parsed = serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
+                summarize_deepseek_probe(name, url, status, elapsed_ms, raw.len(), &parsed)
+            }
+        };
+        eprintln!("{line}");
+        lines.push(line);
+    }
+    assert!(
+        lines.iter().any(|line| line.contains("status=")),
+        "DeepSeek probe produced no HTTP statuses: {lines:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "live DeepSeek native search; requires local iris.llm.deepseek"]
+async fn live_deepseek_flash_adapter_returns_https_citations() {
+    install_deepseek_live_dirs();
+    let mut endpoint = deepseek_endpoint();
+    endpoint.api_base = Some("https://api.deepseek.com".into());
+    endpoint.credential_service = Some("iris.llm.deepseek".into());
+    let outcome = execute_production_route(
+        Some(&endpoint),
+        &SearchActionIdentity {
+            run_id: "live-deepseek-adapter".into(),
+            input_revision: 1,
+            action_id: "web_search".into(),
+            attempt: 1,
+        },
+        "What is the weather in Shanghai?",
+    )
+    .await;
+    assert!(
+        outcome.has_retrieval_credentials,
+        "native DeepSeek search must return retrieval credentials: {outcome:?}; {}",
         super::native_search_adapter::last_live_native_search_trace()
     );
     assert!(outcome

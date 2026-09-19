@@ -2,8 +2,8 @@
 //!
 //! This module constructs an isolated native-search payload and maps protocol
 //! fixtures onto K11 route-attempt fields. Production adapters are registered
-//! per model in `native_search_adapter` (MiniMax-M3 today). Streaming search
-//! events are not admitted into `streaming.rs`.
+//! per model in `native_search_adapter`. Streaming search events are not
+//! admitted into `streaming.rs`.
 
 #![cfg_attr(
     not(test),
@@ -118,10 +118,12 @@ pub(crate) struct NativeSearchSubrequest {
 }
 
 /// Mechanical fixture family. Shape samples, not V05 endpoint acceptance.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NativeSearchPayloadFamily {
     OpenAiShaped,
     GeminiShaped,
+    AnthropicShaped,
 }
 
 /// Parser output mapped onto K11 `RouteAttemptOutcome` fields.
@@ -170,6 +172,7 @@ pub(crate) fn parse_native_search_payload(
     let structured = match family {
         NativeSearchPayloadFamily::OpenAiShaped => has_openai_structured_search(value),
         NativeSearchPayloadFamily::GeminiShaped => has_gemini_structured_search(value),
+        NativeSearchPayloadFamily::AnthropicShaped => has_anthropic_structured_search(value),
     };
     if !structured {
         return NativeSearchParse {
@@ -269,6 +272,18 @@ fn has_openai_structured_search(value: &Value) -> bool {
     found
 }
 
+fn has_anthropic_structured_search(value: &Value) -> bool {
+    let mut found = false;
+    walk_json(
+        value,
+        &mut |node| match node.get("type").and_then(Value::as_str) {
+            Some("server_tool_use") | Some("web_search_tool_result") => found = true,
+            _ => {}
+        },
+    );
+    found
+}
+
 fn has_gemini_structured_search(value: &Value) -> bool {
     let mut found = false;
     walk_json(value, &mut |node| {
@@ -289,7 +304,9 @@ fn collect_structured_https_hits(value: &Value) -> Vec<SearchHit> {
         let Some(object) = node.as_object() else {
             return;
         };
-        if object.get("type").and_then(Value::as_str) == Some("url_citation") {
+        if object.get("type").and_then(Value::as_str) == Some("url_citation")
+            || object.get("type").and_then(Value::as_str) == Some("web_search_result")
+        {
             if let Some(url) = object.get("url").and_then(Value::as_str) {
                 let title = object
                     .get("title")
@@ -533,6 +550,37 @@ mod tests {
         })
     }
 
+    /// Shape taken from the 2026-09-20 DeepSeek Anthropic Messages live probe:
+    /// `web_search_20250305` produced `server_tool_use` + `web_search_result`.
+    fn deepseek_anthropic_live_shape_fixture() -> Value {
+        json!({
+            "id": "msg-fixture",
+            "type": "message",
+            "role": "assistant",
+            "model": "deepseek-flash",
+            "stop_reason": "end_turn",
+            "content": [
+                {
+                    "type": "server_tool_use",
+                    "name": "web_search",
+                    "input": { "query": "Shanghai weather today" }
+                },
+                {
+                    "type": "web_search_tool_result",
+                    "content": [{
+                        "type": "web_search_result",
+                        "title": "example weather",
+                        "url": "https://weather.example/shanghai"
+                    }]
+                },
+                {
+                    "type": "text",
+                    "text": "summary"
+                }
+            ]
+        })
+    }
+
     /// Shape taken from the 2026-09-20 MiniMax Anthropic Messages live probe:
     /// HTTP 200, `stop_reason=end_turn`, only a `text` block. Not native search.
     fn minimax_anthropic_messages_text_only_fixture() -> Value {
@@ -645,6 +693,36 @@ mod tests {
         );
         assert_eq!(sub.budget_claim.parent_call_id, "call-parent");
         assert!(!sub.budget_claim.is_network_tool_dispatch());
+    }
+
+    #[test]
+    fn anthropic_shaped_fixture_yields_https_credentials() {
+        let parse = parse_native_search_payload(
+            NativeSearchPayloadFamily::AnthropicShaped,
+            &deepseek_anthropic_live_shape_fixture(),
+        );
+        assert!(parse.has_retrieval_credentials);
+        assert!(!parse.generated_text_only);
+        assert_eq!(parse.failure, None);
+        assert_eq!(parse.candidates.len(), 1);
+        assert_eq!(parse.candidates[0].url, "https://weather.example/shanghai");
+    }
+
+    #[test]
+    fn deepseek_anthropic_shape_is_not_openai_web_search_call() {
+        let openai = parse_native_search_payload(
+            NativeSearchPayloadFamily::OpenAiShaped,
+            &deepseek_anthropic_live_shape_fixture(),
+        );
+        assert!(
+            !openai.has_retrieval_credentials,
+            "DeepSeek hosted search is Anthropic blocks, not Responses web_search_call"
+        );
+        let anthropic = parse_native_search_payload(
+            NativeSearchPayloadFamily::AnthropicShaped,
+            &deepseek_anthropic_live_shape_fixture(),
+        );
+        assert!(anthropic.has_retrieval_credentials);
     }
 
     #[test]
@@ -823,7 +901,7 @@ mod tests {
             NativeSearchSupport::Available
         );
         assert_eq!(native_search_unsupported_reason_for(Some(&endpoint)), None);
-        assert_eq!(production_native_search_adapter_count(), 1);
+        assert_eq!(production_native_search_adapter_count(), 2);
     }
 
     #[test]
@@ -893,25 +971,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn production_registry_does_not_adapt_deepseek_and_still_calls_mcp() {
-        assert_eq!(production_native_search_adapter_count(), 1);
+    async fn production_registry_adapts_deepseek_flash_and_still_calls_mcp() {
+        assert_eq!(production_native_search_adapter_count(), 2);
         let chat = endpoint(
             "deepseek-v4-flash",
             EndpointFamily::OpenAiCompatibleChatCompletions,
         );
         let probe = ProductionNativeSearchSupport {
-            endpoint: Some(chat),
+            endpoint: Some(chat.clone()),
         };
         assert_eq!(
             probe.native_search_support(),
-            NativeSearchSupport::Unsupported
+            NativeSearchSupport::Available
         );
-        assert_eq!(
-            probe.native_search_unsupported_reason(),
-            Some(NativeSearchUnsupportedReason::AdapterAbsent)
-        );
+        assert_eq!(probe.native_search_unsupported_reason(), None);
         let mcp = CountingMcpRoute {
             calls: AtomicU32::new(0),
+        };
+        let native = ParsedNativeRoute {
+            family: NativeSearchPayloadFamily::AnthropicShaped,
+            payload: deepseek_anthropic_live_shape_fixture(),
+            endpoint: chat,
         };
         let outcome = coordinate_dual_path_search(
             DualPathSearchRequest {
@@ -920,18 +1000,18 @@ mod tests {
                 allow_second_route: true,
             },
             &probe,
-            &ProductionNativeSearchRoute::default(),
+            &native,
             &mcp,
         )
         .await;
         assert_eq!(mcp.calls.load(Ordering::SeqCst), 1);
-        assert!(!outcome.native.supported);
-        assert!(!outcome.native.attempted);
+        assert!(outcome.native.supported);
+        assert!(outcome.native.attempted);
+        assert!(outcome.native.succeeded);
         assert!(outcome.mcp.succeeded);
         let json = dual_path_status_json(&outcome);
-        assert_eq!(json["native"]["unsupportedReason"], "adapter_absent");
-        assert_eq!(json["native"]["supported"], false);
-        assert_eq!(json["native"]["attempted"], false);
+        assert!(json["native"]["unsupportedReason"].is_null());
+        assert_eq!(json["native"]["supported"], true);
         assert_no_degradation(&json);
     }
 }

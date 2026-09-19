@@ -5,6 +5,7 @@
 //! DeepSeek, or Gemini field names. Add a new model by adding a sibling file
 //! and one line in [`PRODUCTION_ADAPTERS`].
 
+mod deepseek_flash;
 mod minimax_m3;
 
 use std::time::Duration;
@@ -21,11 +22,12 @@ use crate::ai_runtime::native_search_subrequest::{
 };
 use crate::credentials::llm_credential_service;
 
+use self::deepseek_flash::DeepSeekFlashNativeSearchAdapter;
 use self::minimax_m3::MinimaxM3NativeSearchAdapter;
 
-/// MCP-only web_search stays at 20s. MiniMax native search is a second serial
-/// HTTPS Responses call (live probe ~4s, hang bound 60s), so the outer tool
-/// deadline must cover both or MCP success is cancelled with the native call.
+/// MCP-only web_search stays at 20s. An Available native adapter is a second
+/// serial HTTPS call (hang bound 60s), so the outer tool deadline must cover
+/// both or MCP success is cancelled with the native call.
 const MCP_SEARCH_DEADLINE: Duration = Duration::from_secs(20);
 const NATIVE_SEARCH_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 const NATIVE_SEARCH_DEADLINE_BUFFER: Duration = Duration::from_secs(10);
@@ -53,27 +55,38 @@ pub(crate) trait NativeSearchTransport {
         &self,
         url: &str,
         body: &Value,
-        bearer: Option<&str>,
+        headers: &[(String, String)],
     ) -> NativeSearchHttpResult;
 }
 
 /// Protocol surface for one adapted model. Keep implementations in sibling files.
 pub(crate) trait NativeSearchModelAdapter: Send + Sync {
-    /// Stable adapter identity. Used by registry tests and future diagnostics.
+    /// Catalog model id. `find_model` is case-sensitive; this must match catalog.
     #[allow(dead_code)]
     fn id(&self) -> &'static str;
     fn matches(&self, model_id: &str) -> bool;
     fn request_url(&self, api_base: &str) -> Result<String, RouteFailureClass>;
     fn outbound_body(&self, subrequest: &NativeSearchSubrequest) -> Value;
     fn parse_response(&self, body: &Value) -> NativeSearchParse;
-    /// MiniMax Responses sometimes returns HTTP 200 without `web_search_call`.
+    /// HTTP headers including the credential. Must not be logged.
+    fn http_headers(&self, token: &str) -> Vec<(String, String)> {
+        vec![
+            ("Authorization".into(), format!("Bearer {token}")),
+            ("Content-Type".into(), "application/json".into()),
+            ("Accept".into(), "application/json".into()),
+        ]
+    }
+    /// Retry once on HTTP 200 generated-text-only (model skipped hosted search).
     fn retry_text_only_once(&self) -> bool {
         false
     }
 }
 
 /// Production adapters. Order does not imply priority; lookup is exclusive match.
-const PRODUCTION_ADAPTERS: &[&dyn NativeSearchModelAdapter] = &[&MinimaxM3NativeSearchAdapter];
+const PRODUCTION_ADAPTERS: &[&dyn NativeSearchModelAdapter] = &[
+    &MinimaxM3NativeSearchAdapter,
+    &DeepSeekFlashNativeSearchAdapter,
+];
 
 /// Number of production native-search adapters. Not a capability advertisement.
 pub(crate) fn production_adapter_count() -> usize {
@@ -112,7 +125,8 @@ pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
         return temporary_failure();
     };
     let body = adapter.outbound_body(&constructed);
-    let mut result = transport.post_json(&url, &body, Some(token)).await;
+    let headers = adapter.http_headers(token);
+    let mut result = transport.post_json(&url, &body, &headers).await;
     if result.transport_failed {
         return transport_failure();
     }
@@ -126,7 +140,7 @@ pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
         && outcome.generated_text_only
         && !outcome.has_retrieval_credentials
     {
-        result = transport.post_json(&url, &body, Some(token)).await;
+        result = transport.post_json(&url, &body, &headers).await;
         if result.transport_failed {
             return transport_failure();
         }
@@ -213,11 +227,14 @@ fn summarize_native_search_http(
         .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","));
     let output_types = collect_json_type_names(body);
     format!(
-        "url_ok={} status={status} content_type={} raw_len={raw_len} json_ok={json_ok} keys={} output_status={} error={} types={}",
-        url.starts_with("https://") && url.contains("/responses"),
+        "https={} status={status} content_type={} raw_len={raw_len} json_ok={json_ok} keys={} output_status={} error={} types={}",
+        url.starts_with("https://"),
         content_type.unwrap_or("-"),
         keys.unwrap_or_else(|| "-".into()),
-        body.get("status").and_then(Value::as_str).unwrap_or("-"),
+        body.get("status")
+            .or_else(|| body.get("stop_reason"))
+            .and_then(Value::as_str)
+            .unwrap_or("-"),
         match body.get("error") {
             None => "absent",
             Some(Value::Null) => "null",
@@ -259,30 +276,31 @@ impl NativeSearchTransport for LiveNativeSearchTransport {
         &self,
         url: &str,
         body: &Value,
-        bearer: Option<&str>,
+        headers: &[(String, String)],
     ) -> NativeSearchHttpResult {
         let failed = NativeSearchHttpResult {
             status: 0,
             body: Value::Null,
             transport_failed: true,
         };
-        let Some(token) = bearer.filter(|value| !value.is_empty()) else {
+        if !headers.iter().any(|(name, value)| {
+            !value.is_empty()
+                && (name.eq_ignore_ascii_case("authorization")
+                    || name.eq_ignore_ascii_case("x-api-key"))
+        }) {
             return failed;
-        };
+        }
         if !url.starts_with("https://") {
             return failed;
         }
         let Ok(client) = native_search_https_client() else {
             return failed;
         };
-        let request = client
-            .post(url)
-            .header("Authorization", format!("Bearer {token}"))
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .json(body)
-            .send()
-            .await;
+        let mut request = client.post(url);
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        let request = request.json(body).send().await;
         let Ok(response) = request else {
             return failed;
         };

@@ -182,6 +182,11 @@ pub(crate) fn is_minimax_m3_model(model: &str) -> bool {
     model.trim().eq_ignore_ascii_case("MiniMax-M3")
 }
 
+pub(crate) fn is_deepseek_flash_model(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    model == "deepseek-flash" || model == "deepseek-v4-flash"
+}
+
 pub(crate) fn is_minimax_m2_model(model: &str) -> bool {
     let model = model.trim().to_ascii_lowercase();
     model == "minimax-m2" || model.starts_with("minimax-m2.") || model.starts_with("minimax-m2-")
@@ -691,6 +696,16 @@ mod tests {
     fn deepseek_v4_has_one_m_context() {
         let flash = find_model("deepseek-v4-flash").unwrap();
         assert_eq!(flash.context_window, 1_048_576);
+    }
+
+    #[test]
+    fn deepseek_flash_matcher_accepts_catalog_and_api_names_not_brand_or_pro() {
+        assert!(is_deepseek_flash_model("deepseek-v4-flash"));
+        assert!(is_deepseek_flash_model("deepseek-flash"));
+        assert!(is_deepseek_flash_model("DeepSeek-Flash"));
+        assert!(!is_deepseek_flash_model("deepseek"));
+        assert!(!is_deepseek_flash_model("deepseek-v4-pro"));
+        assert!(!is_deepseek_flash_model("deepseek-chat"));
     }
 
     #[test]

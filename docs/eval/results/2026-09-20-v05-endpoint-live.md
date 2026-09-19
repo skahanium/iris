@@ -69,5 +69,5 @@
 
 1. MiniMax-M3 生产适配器：对获准查询发 Responses 子请求，把 live 形状映射到 `SearchHit`，**不得**把 Anthropic 200 当成功。
 2. 将服务端搜索事件纳入网关流式路径（`G03` 仍缺）。
-3. DeepSeek 在 Key／费用／live 批准后再探针；不得用本文件代替。
+3. DeepSeek-Flash 原生搜索探针与适配器见 [2026-09-20 V05 DeepSeek-Flash 原生搜索](./2026-09-20-v05-deepseek-native-search-live.md)；不得用本 MiniMax 记录代替。
 4. 流式、截断、混合续轮、K06 入账仍缺，本文件不补跑。
