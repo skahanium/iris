@@ -82,7 +82,7 @@
 ## 兼容
 
 - **设置写入语义必须统一**（§10.2 `F01`、`Q02`）：`McpProfilesPanel` 保存完整有序候选数组，`useAiSidecarBridge` 的 `setWebSearchProviderId` 写单元素数组；缺陷是两个设置入口的写入语义不一致，会丢失已有备用项。目标：MCP 主服务和备用顺序只有一个编辑语义；完整设置、简略设置、IPC 和持久配置必须往返一致（§5.1）。
-- **读取路径不得隐藏写库**（§10.2 `F04`、`Q05`）：`mcp_runtime_registry.rs` 的 `list_web_evidence_providers` 调用 `heal_legacy_search_result_limit_mappings`，为匹配的旧配置补字段并 UPDATE 映射、哈希与时间。目标将其移到明确的配置升级／保存边界，保留变更身份和兼容处理；查询保持只读，既有信任与快照不能随新哈希自动扩权。
+- **读取路径不得隐藏写库**（§10.2 `F04`、`Q05`）：`list_web_evidence_providers` 已只读列举，不再在读取路径 UPDATE 映射、哈希与时间。兼容补字段发生在显式 `upsert`／`normalize_provider_input`；调用侧 overlay 不写库。既有信任与快照不能随新哈希自动扩权。`Q05` 仍 open，关闭等 `D04` 验收。
 - `resolve_web_search_provider_route` 只返回启用的 MCP 搜索候选，最多 3 个（§5.1）。
 - MCP 列表内部的主备转移仍是同一路线的服务选择，不默认向全部 MCP 服务并发请求（§5.1）。
 - 读边界兼容策略见 [ARCHITECTURE.md](../../ARCHITECTURE.md) Compatibility boundaries。
@@ -103,9 +103,9 @@
 - 依赖合同：[`K05`](../contracts/K05-authorization-and-confirmation.md)、[`K10`](../contracts/K10-tool-surface.md)、[`K18`](../contracts/K18-mcp-transport.md)（`applies_to`：`C18`、`C16`、`C20`、`C21`）。
 - 工具清单与暴露规则见 [架构定义](../../docs/agent-architecture.md) §6；逐工具合同在 [工具卡片](../tools/README.md)，本文件不重复定义。
 - 相关缺口：`G01`（工具目录目标与现状的差异，责任人 `M06`）主要工作包 `D03`。
-- 相关未决问题：`Q02`（设置写入冲突）、`Q05`（读取路径写入数据库）、`Q06`（子任务参数声明与执行不一致）、`Q01`／`Q12`（工具名来源无法区分）。
+- 相关未决问题：`Q02`（设置写入冲突）、`Q05`（读取路径写库的 list 路径已从源码消除，关闭仍等 `D04`）、`Q06`（子任务参数声明与执行不一致）、`Q01`／`Q12`（工具名来源无法区分）。
 - `Q02` 的范围限制：不能推出「整个前端从来只能配置一条路线」。
-- `Q05` 的范围限制：`mcp_external_tools.rs` 仍比较绑定哈希与当前 provider 哈希，不一致时拒绝，因此**未被证明绕过所有漂移拒绝**；是否已导致某次用户故障仍需关联运行证据。
+- `Q05` 的范围限制：源码 list 写库已消除，机械 `V03` 见 `registry.json.verify`；不把 `C18` `verification.state` 标为通过，也不关闭本条。漂移拒绝闸门仍在：显式保存改哈希后必须重新审查，列举不得换哈希。
 - 版本排期唯一来源是 [ROADMAP.md](../../ROADMAP.md)。
 <!-- iris:end M06 -->
 
@@ -224,7 +224,7 @@
 ## 决定权与不变量
 
 - **决定权**：连接健康、工具发现成功和业务结果有效是不同事实；配置、超时、取消和密钥不绕开公共边界。
-- **不变量**：只执行冻结配置；用 live provider hash／enablement 作撤销检查（`Q05` 要求查询保持只读）。
+- **不变量**：只执行冻结配置；用 live provider hash／enablement 作撤销检查；查询保持只读（`Q05` 源码 list 写库已消除，关闭仍等 `D04`）。
 - **禁止行为**：越权改写其他模块的权威状态；把提议当作执行；把缺失当作成功。
 
 ## 状态
@@ -249,6 +249,6 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`；本组件当前 `verification.state=none`，没有绑定指纹的证据记录。
+关键不变量与所需证据类别见 `V01`–`V07`。查询只读的机械 `V03` 见 `registry.json.verify`（对象 `C18`／`Q05`）。本组件当前 `verification.state=none`：已绑定指纹的证据记录不构成合同已通过，也不关闭 `Q05`／`D04`。
 
 <!-- iris:end C18 -->

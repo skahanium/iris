@@ -2220,6 +2220,88 @@ mod tests {
         );
     }
 
+    #[test]
+    fn list_does_not_invalidate_existing_binding_hash() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO web_evidence_providers
+                 (id, name, kind, enabled, transport_kind, transport_config_json,
+                  credential_refs_json, web_search_mapping_json, web_fetch_mapping_json,
+                  provider_config_hash, updated_at)
+                 VALUES (?1, ?2, 'mcp', 1, 'stdio', ?3, '{}', ?4, NULL, 'legacy', datetime('now'))",
+                params![
+                    "readonly-legacy",
+                    "AnySearch",
+                    r#"{"command":"/bin/true"}"#,
+                    r#"{"tool":"search"}"#,
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let mut input = McpCapabilityBindingInput {
+            id: None,
+            provider_id: "readonly-legacy".into(),
+            mcp_tool_name: "read_record".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+            argument_mapping: serde_json::json!({}),
+            risk_class: "read_only".into(),
+            read_only: true,
+            user_trusted: true,
+            attested_binding_config_hash: String::new(),
+            domain_operation: None,
+            output_mapping: None,
+        };
+        let reviewed =
+            review_discovered_tool(&input.mcp_tool_name, &input.input_schema, Some(true))
+                .expect("read-only review");
+        input.attested_binding_config_hash = attest_reviewed_tool(
+            &db,
+            &input.provider_id,
+            &reviewed,
+            "legacy",
+            &input.argument_mapping,
+        )
+        .expect("attest stored hash")
+        .binding_config_hash;
+        upsert_binding(&db, &input, &reviewed, "legacy").expect("bind to stored hash");
+
+        crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&db)
+            .expect("list must stay readable");
+        assert!(
+            list_bindings(&db, Some("readonly-legacy")).unwrap()[0].config_matches,
+            "listing providers must not rotate the stored provider hash"
+        );
+
+        upsert_web_evidence_provider(
+            &db,
+            &WebEvidenceProviderInput {
+                id: "readonly-legacy".into(),
+                name: "AnySearch".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: r#"{"command":"/bin/true"}"#.into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+        )
+        .expect("explicit save upgrades mapping");
+        assert!(
+            !list_bindings(&db, Some("readonly-legacy")).unwrap()[0].config_matches,
+            "explicit save may change the hash and must not auto-expand trust"
+        );
+        assert_eq!(
+            upsert_binding(&db, &input, &reviewed, "legacy")
+                .expect_err("stale review hash must be rejected after save")
+                .to_string(),
+            "external_tool_provider_config_changed"
+        );
+    }
+
     fn snapshot() -> FrozenMcpToolSnapshot {
         let input_schema = serde_json::json!({
             "type":"object",

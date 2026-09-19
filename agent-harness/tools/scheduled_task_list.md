@@ -47,7 +47,7 @@
 
 - 不写索引、不产生版本快照、不落证据账本（`register_local_tool_evidence` 的登记分支不含本工具）。
 - 工具审计只记录参数与结果的**形状摘要**（`shape=object, keys=N`），不记录 `title`／`prompt`／`schedule` 的取值（[tool_audit.rs](../../src-tauri/src/ai_runtime/tool_audit.rs) 的 `sanitize_arguments`／`sanitize_result` 回落分支）。
-- 对照记录：已知的「读取路径写库」问题位于 MCP provider 列举（`F04`／`Q05`），不在本工具路径上。
+- 对照记录：MCP provider 列举的 list 写库（`F04`／`Q05`）已从源码消除，关闭仍等 `D04`；不在本工具路径上。
 
 ## 预算
 

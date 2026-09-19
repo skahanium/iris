@@ -3174,21 +3174,22 @@ mod tests {
     fn legacy_anysearch_mapping_gets_a_runtime_result_limit_without_mutation() {
         let db = Database::open_in_memory().unwrap();
         let legacy_mapping = r#"{"tool":"search","queryArg":"query"}"#;
-        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
-            &db,
-            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
-                id: "anysearch-legacy".into(),
-                name: "AnySearch".into(),
-                kind: "mcp".into(),
-                enabled: true,
-                transport_kind: "https".into(),
-                transport_config_json:
-                    r#"{"url":"https://api.anysearch.com/mcp","allow_localhost_dev":false}"#.into(),
-                credential_refs_json: "{}".into(),
-                web_search_mapping_json: Some(legacy_mapping.into()),
-                web_fetch_mapping_json: Some(r#"{"tool":"extract","urlArg":"url"}"#.into()),
-            },
-        )
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO web_evidence_providers
+                 (id, name, kind, enabled, transport_kind, transport_config_json,
+                  credential_refs_json, web_search_mapping_json, web_fetch_mapping_json,
+                  provider_config_hash, updated_at)
+                 VALUES (?1, ?2, 'mcp', 1, 'https', ?3, '{}', ?4, NULL, 'legacy', datetime('now'))",
+                rusqlite::params![
+                    "anysearch-legacy",
+                    "AnySearch",
+                    r#"{"url":"https://api.anysearch.com/mcp"}"#,
+                    legacy_mapping,
+                ],
+            )?;
+            Ok(())
+        })
         .unwrap();
 
         let effective = effective_mcp_search_mapping(&db, "anysearch-legacy", legacy_mapping);
@@ -3196,23 +3197,22 @@ mod tests {
 
         assert_eq!(arguments["query"], "latest news");
         assert_eq!(arguments["max_results"], 5);
-        let stored_mapping: String = db
+        let (stored_mapping, stored_hash): (String, String) = db
             .with_read_conn(|conn| {
                 conn.query_row(
-                    "SELECT web_search_mapping_json FROM web_evidence_providers WHERE id = ?1",
+                    "SELECT web_search_mapping_json, provider_config_hash
+                     FROM web_evidence_providers WHERE id = ?1",
                     ["anysearch-legacy"],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .map_err(Into::into)
             })
             .unwrap();
-        let stored: serde_json::Value = serde_json::from_str(&stored_mapping).unwrap();
-        let expected: serde_json::Value = serde_json::json!({
-            "tool": "search",
-            "queryArg": "query",
-            "maxResultsArg": "max_results",
-        });
-        assert_eq!(stored, expected);
+        assert!(
+            !stored_mapping.contains("maxResultsArg"),
+            "runtime overlay must not persist mapping upgrades"
+        );
+        assert_eq!(stored_hash, "legacy");
     }
 
     #[test]

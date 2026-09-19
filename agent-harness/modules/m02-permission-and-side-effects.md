@@ -103,7 +103,7 @@
 - 依赖合同：[`K05`](../contracts/K05-authorization-and-confirmation.md)、[`K06`](../contracts/K06-budget-ledger.md)、[`K09`](../contracts/K09-web-authorization.md)、[`K16`](../contracts/K16-verification-report.md)。
 - 承接链路：`L03`（编辑链路）、`L04`（格式保持链路）。
 - 相关缺口：`G01`（工具真实副作用分类，与 `M06` 交叉）、`G05`（修订与确认失效）。
-- 相关未决问题：`Q05`（读取路径写入数据库，可能使既有绑定或快照失效）、`Q14`（双路搜索对纯编辑任务的触发范围未单独确认，涉及外发授权边界）。
+- 相关未决问题：`Q05`（读取路径写库的 list 路径已从源码消除，关闭仍等 `D04`）、`Q14`（双路搜索对纯编辑任务的触发范围未单独确认，涉及外发授权边界）。
 - 未设定事项：新预算数值、费用上限（[缺口与未决项](../requirements/open-items.md) §三）；本文件不设数值门槛。
 - 版本排期唯一来源是 [ROADMAP.md](../../ROADMAP.md)。
 <!-- iris:end M02 -->

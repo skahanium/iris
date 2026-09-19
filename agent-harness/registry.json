@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 120,
+  "registryRevision": 124,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T11:01:38.333Z"
+    "recordedAt": "2026-09-19T11:45:40.917Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -20,7 +20,7 @@
       "kind": "architecture-definition",
       "role": "上位架构决定；模块、组件、工具身份由它派生",
       "refs": ["P01", "P02", "P03"],
-      "fingerprint": "c090b5eea675e4ce9bf76f7f45f32aeb"
+      "fingerprint": "1f71477892d7ceee7eac1d35f6b2733d"
     },
     "SRC-ARCH-REPO": {
       "path": "ARCHITECTURE.md",
@@ -131,7 +131,7 @@
     "contracts/K18-mcp-transport.md": {
       "container": "K18",
       "registration": "K18#file",
-      "fingerprint": "6bdbf080eff8abd3300244fc27297d8c"
+      "fingerprint": "3c7b1028069a05aacfc492e4c554ed72"
     },
     "contracts/README.md": {
       "container": "README-CONTRACTS",
@@ -196,7 +196,7 @@
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "c598d9ffc87975d81e762707bd6b6465"
+      "fingerprint": "486f6febbdb22486e9212581d0bd6203"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
@@ -226,7 +226,7 @@
     "modules/m02-permission-and-side-effects.md": {
       "container": "M02",
       "registration": "M02",
-      "fingerprint": "d63244fc4885dfbb46e6c467b5205155"
+      "fingerprint": "fcde5d2569bbaa8110b54f638e47225e"
     },
     "modules/m03-context-and-memory.md": {
       "container": "M03",
@@ -246,7 +246,7 @@
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
       "registration": "M06",
-      "fingerprint": "0bcba3af91980f08b31e05a12703e2fa"
+      "fingerprint": "53ec730210597da73734f1ac725f0315"
     },
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
@@ -261,12 +261,12 @@
     "modules/m09-audit-and-diagnostics.md": {
       "container": "M09",
       "registration": "M09",
-      "fingerprint": "736baf6428af5136748e252b33d748a5"
+      "fingerprint": "35c065779e5084eca295b7f7553b6812"
     },
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "a7d1552d2839c1080cf9003ce61e9ef4"
+      "fingerprint": "339447559a3c8c2d2361724956145149"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -879,13 +879,13 @@
       "title": "C18 MCP 连接与传输",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 13,
       "definition": {
         "file": "modules/m06-tools-and-connectors.md",
         "anchor": "C18",
         "line": 214,
         "endLine": 254,
-        "fingerprint": "729f1227294ffe6353c21967ce46311f"
+        "fingerprint": "d837e9389cba8780513641777fed6022"
       },
       "implementation": { "state": "present" },
       "verification": { "state": "none" },
@@ -1876,13 +1876,13 @@
       "title": "K18 MCP 传输与外部工具边界",
       "owner": "C18",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 14,
       "definition": {
         "file": "contracts/K18-mcp-transport.md",
         "anchor": "K18",
         "line": 13,
         "endLine": 114,
-        "fingerprint": "29b3cfcd4748c8dfa8899560294a4e78"
+        "fingerprint": "27f597579cb531d8a3e0b0357fe14fd4"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1921,13 +1921,13 @@
       "title": "L02 联网检索与核实链路",
       "owner": "M07",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "flows/L02-web-retrieval.md",
         "anchor": "L02",
         "line": 11,
         "endLine": 126,
-        "fingerprint": "dcbd011a875a5fb7d3f50dbc8e41e95e"
+        "fingerprint": "6fa0f271ce03e80e5bfa3467c6139a0b"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2789,8 +2789,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 277,
-        "endLine": 290,
+        "line": 278,
+        "endLine": 291,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": { "state": "unknown" },
@@ -2963,20 +2963,20 @@
       "title": "读取路径写入数据库触发隐藏配置变更",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q05",
         "line": 93,
-        "endLine": 102,
-        "fingerprint": "a5da417706fc9b514dab65dbcc0a8223"
+        "endLine": 103,
+        "fingerprint": "f0930d544a9b54e390832911b3147e39"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": null
+      "note": "源码 list 只读已有机械 V03；关闭仍等 D04 验收。不把 C18 verification 标为通过。"
     },
     "Q06": {
       "kind": "issue",
@@ -2988,8 +2988,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q06",
-        "line": 104,
-        "endLine": 113,
+        "line": 105,
+        "endLine": 114,
         "fingerprint": "cc701424e395c94c887aab555656a2f8"
       },
       "implementation": { "state": "unknown" },
@@ -3009,8 +3009,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q07",
-        "line": 115,
-        "endLine": 124,
+        "line": 116,
+        "endLine": 125,
         "fingerprint": "b5520ca814a1c858c44ab7cde7906f9b"
       },
       "implementation": { "state": "unknown" },
@@ -3030,8 +3030,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q08",
-        "line": 126,
-        "endLine": 138,
+        "line": 127,
+        "endLine": 139,
         "fingerprint": "c736fb0184f9145115544091c5c9764a"
       },
       "implementation": { "state": "unknown" },
@@ -3051,8 +3051,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q09",
-        "line": 140,
-        "endLine": 150,
+        "line": 141,
+        "endLine": 151,
         "fingerprint": "9d25a63f3fe8285bff6462ef33cb42d5"
       },
       "implementation": { "state": "unknown" },
@@ -3072,8 +3072,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q10",
-        "line": 152,
-        "endLine": 162,
+        "line": 153,
+        "endLine": 163,
         "fingerprint": "472dc5d2602bb72006315d53f50caeb9"
       },
       "implementation": { "state": "unknown" },
@@ -3093,8 +3093,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q11",
-        "line": 164,
-        "endLine": 174,
+        "line": 165,
+        "endLine": 175,
         "fingerprint": "a29a814ce8718467ddb68e0a0584ed1b"
       },
       "implementation": { "state": "unknown" },
@@ -3119,8 +3119,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q12",
-        "line": 176,
-        "endLine": 186,
+        "line": 177,
+        "endLine": 187,
         "fingerprint": "dd85c6176ec4acb041710e3b22b4aaeb"
       },
       "implementation": { "state": "unknown" },
@@ -3140,8 +3140,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q13",
-        "line": 188,
-        "endLine": 200,
+        "line": 189,
+        "endLine": 201,
         "fingerprint": "9cea6ab3ebd14c74b64bfba30194436e"
       },
       "implementation": { "state": "unknown" },
@@ -3161,8 +3161,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
-        "line": 202,
-        "endLine": 211,
+        "line": 203,
+        "endLine": 212,
         "fingerprint": "8035af42528aa4ff15a5cc256098c345"
       },
       "implementation": { "state": "unknown" },
@@ -3182,8 +3182,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 213,
-        "endLine": 225,
+        "line": 214,
+        "endLine": 226,
         "fingerprint": "7cc5877f380f3e19067a225eef7264a9"
       },
       "implementation": { "state": "unknown" },
@@ -3203,8 +3203,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 227,
-        "endLine": 238,
+        "line": 228,
+        "endLine": 239,
         "fingerprint": "0be98a33d79789919db2818c4b319190"
       },
       "implementation": { "state": "unknown" },
@@ -3224,8 +3224,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 240,
-        "endLine": 252,
+        "line": 241,
+        "endLine": 253,
         "fingerprint": "f1a0d7927b2d69d7f4ae6fb2e1484376"
       },
       "implementation": { "state": "unknown" },
@@ -3245,8 +3245,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 254,
-        "endLine": 264,
+        "line": 255,
+        "endLine": 265,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": { "state": "unknown" },
@@ -3266,8 +3266,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 266,
-        "endLine": 275,
+        "line": 267,
+        "endLine": 276,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": { "state": "unknown" },
@@ -3682,13 +3682,13 @@
       "title": "capabilities_read",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "tools/capabilities_read.md",
         "anchor": "T03",
         "line": 9,
         "endLine": 110,
-        "fingerprint": "b986104f45bf9423de87c9004d39c9d2"
+        "fingerprint": "9330379cac99ff5690a116916d4ef804"
       },
       "implementation": { "state": "partial" },
       "verification": { "state": "none" },
@@ -3766,13 +3766,13 @@
       "title": "list_vault",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "tools/list_vault.md",
         "anchor": "T07",
         "line": 9,
         "endLine": 102,
-        "fingerprint": "5a29b8cc4b3e1c4d13523bcc5837fed1"
+        "fingerprint": "e4d0f028521bb195575c887742d69868"
       },
       "implementation": { "state": "present" },
       "verification": { "state": "none" },
@@ -4312,13 +4312,13 @@
       "title": "scheduled_task_list",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "tools/scheduled_task_list.md",
         "anchor": "T33",
         "line": 9,
         "endLine": 105,
-        "fingerprint": "4b97296f44dc7f906e65a16b3d559c50"
+        "fingerprint": "cb1074a050699cc05c907d79146422b0"
       },
       "implementation": { "state": "present" },
       "verification": { "state": "none" },
@@ -4438,13 +4438,13 @@
       "title": "vault_version_list",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "tools/vault_version_list.md",
         "anchor": "T39",
         "line": 9,
         "endLine": 120,
-        "fingerprint": "70cf50054be59679e7de7fa11c65cae3"
+        "fingerprint": "d8920cc7d44485c3523641328ff81ec2"
       },
       "implementation": { "state": "present" },
       "verification": { "state": "none" },
@@ -4480,13 +4480,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 28,
+      "revision": 30,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 84,
-        "fingerprint": "e687a11a356306e6afd5cf5807411513"
+        "endLine": 85,
+        "fingerprint": "4855efe9980b1beca08e7ac2142f23ed"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4610,8 +4610,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 86,
-        "endLine": 108,
+        "line": 87,
+        "endLine": 109,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": { "state": "unknown" },
@@ -5455,8 +5455,8 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "b986104f45bf9423de87c9004d39c9d2",
       "at": "2026-09-19T06:35:00Z",
-      "applicability": "current",
-      "note": "工具卡 T03 与目录／处理器事实的一致性核对：schema 声明 request_tools，处理器消费并四类拒绝。不把 T03 的 verification.state 标为通过，不声称 §6.5 的「申请后安装」已生效。"
+      "applicability": "obsolete",
+      "note": "工具卡 T03 与目录／处理器事实的一致性核对：schema 声明 request_tools，处理器消费并四类拒绝。不把 T03 的 verification.state 标为通过，不声称 §6.5 的「申请后安装」已生效。【已被取代，保留为历史证据】2026-09-19 Q05 自检只改对照句（list 写库已从源码消除，关闭仍等 D04），本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
     },
     {
       "object": "Q16",
@@ -5611,6 +5611,94 @@
       "at": "2026-09-19T10:51:08Z",
       "applicability": "current",
       "note": "2026-09-19 缺口正文按已关闭改写后重绑：取消后候选不得发布仍是关闭证据之一。关闭不等于运行中修订已实现。"
+    },
+    {
+      "object": "Q05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_runtime_registry.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_persist_legacy",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "f0930d544a9b54e390832911b3147e39",
+      "at": "2026-09-19T11:36:00Z",
+      "applicability": "current",
+      "note": "本机 2 passed / 0 failed。列举旧 AnySearch／Firecrawl 行不持久化 maxResultsArg，hash 与 updated_at 不变。不关闭 Q05，不把 C18 verification 标 passed。"
+    },
+    {
+      "object": "Q05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_external_tools.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_invalidate_existing_binding_hash",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "f0930d544a9b54e390832911b3147e39",
+      "at": "2026-09-19T11:36:00Z",
+      "applicability": "current",
+      "note": "本机 1 passed / 0 failed。list 不使既有 binding 的 config_matches 失败；显式 upsert 改哈希后仍拒绝旧审查哈希。不关闭 Q05。"
+    },
+    {
+      "object": "Q05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/web_evidence_broker.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib legacy_anysearch_mapping_gets_a_runtime_result_limit_without_mutation",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "f0930d544a9b54e390832911b3147e39",
+      "at": "2026-09-19T11:36:00Z",
+      "applicability": "current",
+      "note": "本机 1 passed / 0 failed。SQL 插入的旧 mapping 经 runtime overlay 仍带 max_results，库内 mapping／hash 不变。"
+    },
+    {
+      "object": "C18",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_runtime_registry.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_persist_legacy",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "636af295c5f86abdd249ed5a99dd56a1",
+      "at": "2026-09-19T11:36:00Z",
+      "applicability": "obsolete",
+      "note": "本机 2 passed / 0 failed。C18 查询路径不写 provider 配置。不把 C18 verification.state 标为 passed，不关闭 Q05／D04。【已被取代，保留为历史证据】2026-09-19 自检补全不变量「已消除」措辞，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
+    },
+    {
+      "object": "C18",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_external_tools.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_invalidate_existing_binding_hash",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "636af295c5f86abdd249ed5a99dd56a1",
+      "at": "2026-09-19T11:36:00Z",
+      "applicability": "obsolete",
+      "note": "本机 1 passed / 0 failed。列举不旋转冻结 hash；显式保存后漂移拒绝仍在。不把 C18 verification 标 passed。【已被取代，保留为历史证据】2026-09-19 自检补全不变量「已消除」措辞，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 标出并另立绑定当前指纹的记录。"
+    },
+    {
+      "object": "T03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/runtime.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib capabilities_read",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "9330379cac99ff5690a116916d4ef804",
+      "at": "2026-09-19T11:50:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 Q05 自检后重绑：本机 5 passed / 0 failed。对照句改为 list 写库已从源码消除、关闭仍等 D04；capabilities_read 询问／拒绝语义未改。不把 T03 verification.state 标为通过，不声称 §6.5「申请后安装」已生效。"
+    },
+    {
+      "object": "C18",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_runtime_registry.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_persist_legacy",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "d837e9389cba8780513641777fed6022",
+      "at": "2026-09-19T11:50:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 自检补全不变量措辞后重绑：本机 2 passed / 0 failed。C18 查询路径不写 provider 配置。不把 C18 verification.state 标为 passed，不关闭 Q05／D04。"
+    },
+    {
+      "object": "C18",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_external_tools.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_invalidate_existing_binding_hash",
+      "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
+      "fingerprint": "d837e9389cba8780513641777fed6022",
+      "at": "2026-09-19T11:50:00Z",
+      "applicability": "current",
+      "note": "2026-09-19 自检补全不变量措辞后重绑：本机 1 passed / 0 failed。列举不旋转冻结 hash；显式保存后漂移拒绝仍在。不把 C18 verification 标 passed。"
     }
   ],
   "changes": [
@@ -18955,6 +19043,172 @@
           "fingerprintTo": "36902d79edaa626ee01948a5ceb6edb5"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-65",
+      "at": "2026-09-19T11:34:23.471Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "Q05 源码 list 只读：删除列举路径 heal 写库，升级保留在 upsert，runtime overlay 不写库；对齐 Q05/F04/K18/M06/L02/m09/V02 阅读面。不关 Q05、不标 D04 done、不把 C18 verification 标 passed。",
+      "review": null,
+      "objects": [
+        {
+          "id": "K18#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "6bdbf080eff8abd3300244fc27297d8c",
+          "fingerprintTo": "3c7b1028069a05aacfc492e4c554ed72"
+        },
+        {
+          "id": "M02",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "d63244fc4885dfbb46e6c467b5205155",
+          "fingerprintTo": "fcde5d2569bbaa8110b54f638e47225e"
+        },
+        {
+          "id": "M06",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "0bcba3af91980f08b31e05a12703e2fa",
+          "fingerprintTo": "71ec50005303dcea72e5a6553e81d066"
+        },
+        {
+          "id": "M09",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "736baf6428af5136748e252b33d748a5",
+          "fingerprintTo": "35c065779e5084eca295b7f7553b6812"
+        },
+        {
+          "id": "C18",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "729f1227294ffe6353c21967ce46311f",
+          "fingerprintTo": "636af295c5f86abdd249ed5a99dd56a1"
+        },
+        {
+          "id": "K18",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "29b3cfcd4748c8dfa8899560294a4e78",
+          "fingerprintTo": "054c01e3d089ea8909985f10b8574a7e"
+        },
+        {
+          "id": "L02",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "dcbd011a875a5fb7d3f50dbc8e41e95e",
+          "fingerprintTo": "6fa0f271ce03e80e5bfa3467c6139a0b"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 28,
+          "revisionTo": 29,
+          "fingerprintFrom": "e687a11a356306e6afd5cf5807411513",
+          "fingerprintTo": "783b76dac3b6a51b5e6dee3c9e7acf63"
+        },
+        {
+          "id": "Q05",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "a5da417706fc9b514dab65dbcc0a8223",
+          "fingerprintTo": "f0930d544a9b54e390832911b3147e39"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-66",
+      "at": "2026-09-19T11:37:24.222Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "Q05 第一刀阅读面 Prettier 重排，不改语义；不关 Q05、不标 D04 done。",
+      "review": null,
+      "objects": [
+        {
+          "id": "K18",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "054c01e3d089ea8909985f10b8574a7e",
+          "fingerprintTo": "27f597579cb531d8a3e0b0357fe14fd4"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 29,
+          "revisionTo": 30,
+          "fingerprintFrom": "783b76dac3b6a51b5e6dee3c9e7acf63",
+          "fingerprintTo": "4855efe9980b1beca08e7ac2142f23ed"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-67",
+      "at": "2026-09-19T11:43:32.531Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "Q05 第一刀自检：D04 §五与工具卡不再把 list 写库写成现行事实；不关 Q05、不标 D04 done、不改关闭门槛。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D04#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "c598d9ffc87975d81e762707bd6b6465",
+          "fingerprintTo": "486f6febbdb22486e9212581d0bd6203"
+        },
+        {
+          "id": "M06",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "71ec50005303dcea72e5a6553e81d066",
+          "fingerprintTo": "53ec730210597da73734f1ac725f0315"
+        },
+        {
+          "id": "T03",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "b986104f45bf9423de87c9004d39c9d2",
+          "fingerprintTo": "9330379cac99ff5690a116916d4ef804"
+        },
+        {
+          "id": "T07",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "5a29b8cc4b3e1c4d13523bcc5837fed1",
+          "fingerprintTo": "e4d0f028521bb195575c887742d69868"
+        },
+        {
+          "id": "T33",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "4b97296f44dc7f906e65a16b3d559c50",
+          "fingerprintTo": "cb1074a050699cc05c907d79146422b0"
+        },
+        {
+          "id": "T39",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "70cf50054be59679e7de7fa11c65cae3",
+          "fingerprintTo": "d8920cc7d44485c3523641328ff81ec2"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-19-68",
+      "at": "2026-09-19T11:45:40.917Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "Q05 第一刀自检：C18 不变量措辞补全为「已消除」；不关 Q05、不标 D04 done。",
+      "review": null,
+      "objects": [
+        {
+          "id": "C18",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "636af295c5f86abdd249ed5a99dd56a1",
+          "fingerprintTo": "d837e9389cba8780513641777fed6022"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19882,7 +20136,9 @@
         {
           "id": "V02",
           "revision": 28,
-          "fingerprint": "e687a11a356306e6afd5cf5807411513"
+          "fingerprint": "e687a11a356306e6afd5cf5807411513",
+          "stale": true,
+          "staleNote": "2026-09-19 Q05 第一刀在 V02 增补「查询路径不写 provider 配置」行后对象指纹变化；按 §5.2 规则 6 不改写本条旧指纹。REV-62 未复核该行，不另绑当前指纹。"
         },
         {
           "id": "Q15",
@@ -19962,6 +20218,11 @@
     {
       "review": "REV-2026-09-16-32",
       "object": "P01#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-19-62",
+      "object": "V02",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     }
   ],

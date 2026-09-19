@@ -365,57 +365,6 @@ fn ensure_search_mapping_result_limit(mapping_json: &str, max_results_arg: &str)
     serde_json::to_string(&mapping).ok()
 }
 
-fn heal_legacy_search_result_limit_mappings(conn: &rusqlite::Connection) -> AppResult<()> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, kind, enabled, transport_kind, transport_config_json,
-                credential_refs_json, web_search_mapping_json, web_fetch_mapping_json
-         FROM web_evidence_providers
-         WHERE kind = 'mcp' AND web_search_mapping_json IS NOT NULL",
-    )?;
-    let candidates = stmt
-        .query_map([], |row| {
-            Ok(WebEvidenceProviderInput {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                kind: row.get(2)?,
-                enabled: row.get::<_, i64>(3)? != 0,
-                transport_kind: row.get(4)?,
-                transport_config_json: row.get(5)?,
-                credential_refs_json: row.get(6)?,
-                web_search_mapping_json: row.get(7)?,
-                web_fetch_mapping_json: row.get(8)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(stmt);
-
-    for mut input in candidates {
-        let Some(max_results_arg) = crate::config_manifest::resolve_mcp_search_result_limit_arg(
-            &input.transport_config_json,
-            &input.name,
-        ) else {
-            continue;
-        };
-        let Some(current) = input.web_search_mapping_json.as_deref() else {
-            continue;
-        };
-        let Some(healed) = ensure_search_mapping_result_limit(current, &max_results_arg) else {
-            continue;
-        };
-        input.web_search_mapping_json = Some(healed.clone());
-        let config_hash = provider_config_hash(&input);
-        conn.execute(
-            "UPDATE web_evidence_providers
-             SET web_search_mapping_json = ?2,
-                 provider_config_hash = ?3,
-                 updated_at = datetime('now')
-             WHERE id = ?1",
-            params![input.id, healed, config_hash],
-        )?;
-    }
-    Ok(())
-}
-
 fn normalize_provider_input(
     input: &WebEvidenceProviderInput,
 ) -> AppResult<WebEvidenceProviderInput> {
@@ -656,8 +605,7 @@ pub fn web_evidence_provider_health(
 }
 
 pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidenceProviderSummary>> {
-    db.with_conn(|conn| {
-        heal_legacy_search_result_limit_mappings(conn)?;
+    db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT id, name, kind, enabled, transport_kind,
                     transport_config_json, credential_refs_json,
@@ -691,7 +639,7 @@ pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidencePr
 pub fn list_enabled_web_provider_mappings(
     db: &Database,
 ) -> AppResult<Vec<WebEvidenceProviderMappingSummary>> {
-    db.with_conn(|conn| {
+    db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT id, kind, transport_kind, provider_config_hash,
                     web_search_mapping_json, web_fetch_mapping_json
@@ -726,7 +674,7 @@ pub fn list_enabled_web_search_provider_mappings(
 }
 
 fn read_selected_web_search_provider_id(db: &Database) -> AppResult<Option<String>> {
-    db.with_conn(|conn| {
+    db.with_read_conn(|conn| {
         let raw: Option<String> = conn
             .query_row(
                 "SELECT value FROM settings WHERE key = ?1",
@@ -906,7 +854,7 @@ pub fn delete_web_evidence_provider(db: &Database, provider_id: &str) -> AppResu
 
 pub fn web_evidence_provider_exists(db: &Database, provider_id: &str) -> AppResult<bool> {
     let provider_id = validate_provider_identifier("provider id", provider_id)?;
-    db.with_conn(|conn| {
+    db.with_read_conn(|conn| {
         conn.query_row(
             "SELECT 1 FROM web_evidence_providers WHERE id = ?1",
             [provider_id],
@@ -936,6 +884,19 @@ mod tests {
         }
     }
 
+    fn stored_provider_row(db: &Database, id: &str) -> (String, String, String) {
+        db.with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT web_search_mapping_json, provider_config_hash, updated_at
+                 FROM web_evidence_providers WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(Into::into)
+        })
+        .unwrap()
+    }
+
     #[test]
     fn upsert_persists_anysearch_max_results_arg_without_runtime_patch() {
         let db = Database::open_in_memory().unwrap();
@@ -961,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn list_silently_heals_legacy_anysearch_mappings() {
+    fn list_does_not_persist_legacy_anysearch_result_limit() {
         let db = Database::open_in_memory().unwrap();
         db.with_conn(|conn| {
             conn.execute(
@@ -980,16 +941,21 @@ mod tests {
             Ok(())
         })
         .unwrap();
-
-        let stored = list_web_evidence_providers(&db).unwrap();
-        let mapping = stored[0]
-            .web_search_mapping_json
-            .as_deref()
-            .expect("search mapping");
+        let before = stored_provider_row(&db, "anysearch-legacy");
+        let listed = list_web_evidence_providers(&db).unwrap();
+        let after = stored_provider_row(&db, "anysearch-legacy");
         assert!(
-            mapping.contains("maxResultsArg"),
-            "expected healed mapping, got {mapping}"
+            !listed[0]
+                .web_search_mapping_json
+                .as_deref()
+                .unwrap()
+                .contains("maxResultsArg"),
+            "list must not persist a healed mapping"
         );
+        assert_eq!(listed[0].provider_config_hash, "legacy");
+        assert_eq!(after.0, r#"{"tool":"search"}"#);
+        assert_eq!(after.1, "legacy");
+        assert_eq!(after.2, before.2);
     }
 
     #[test]
@@ -1025,7 +991,7 @@ mod tests {
     }
 
     #[test]
-    fn list_silently_heals_legacy_firecrawl_mappings() {
+    fn list_does_not_persist_legacy_firecrawl_result_limit() {
         let db = Database::open_in_memory().unwrap();
         db.with_conn(|conn| {
             conn.execute(
@@ -1044,17 +1010,21 @@ mod tests {
             Ok(())
         })
         .unwrap();
-
-        let stored = list_web_evidence_providers(&db).unwrap();
-        let mapping = stored[0]
-            .web_search_mapping_json
-            .as_deref()
-            .expect("search mapping");
+        let before = stored_provider_row(&db, "firecrawl-legacy");
+        let listed = list_web_evidence_providers(&db).unwrap();
+        let after = stored_provider_row(&db, "firecrawl-legacy");
         assert!(
-            mapping.contains(r#""maxResultsArg":"limit""#)
-                || mapping.contains(r#""maxResultsArg": "limit""#),
-            "expected healed mapping, got {mapping}"
+            !listed[0]
+                .web_search_mapping_json
+                .as_deref()
+                .unwrap()
+                .contains("maxResultsArg"),
+            "list must not persist a healed mapping"
         );
+        assert_eq!(listed[0].provider_config_hash, "legacy");
+        assert_eq!(after.0, r#"{"tool":"firecrawl_search","queryArg":"query"}"#);
+        assert_eq!(after.1, "legacy");
+        assert_eq!(after.2, before.2);
     }
 
     #[test]

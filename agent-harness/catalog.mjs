@@ -1445,6 +1445,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q05" },
     blocks: blocks("acceptance", ["D04"]),
+    note: "源码 list 只读已有机械 V03；关闭仍等 D04 验收。不把 C18 verification 标为通过。",
   },
   Q06: {
     kind: "issue",
