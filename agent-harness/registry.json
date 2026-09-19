@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 115,
+  "registryRevision": 117,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-19T05:55:04.832Z"
+    "recordedAt": "2026-09-19T06:09:05.697Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -196,7 +196,7 @@
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "289c395dfe932f469066f1087ac580da"
+      "fingerprint": "c598d9ffc87975d81e762707bd6b6465"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "1b9b370902677bfd19d71d47adc75295"
+      "fingerprint": "ed518ecd306bb0cae1ed18d7450637e7"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1182,8 +1182,8 @@
       "definition": {
         "file": "implementation/D04-dual-path-search.md",
         "anchor": "D04",
-        "line": 72,
-        "endLine": 85,
+        "line": 74,
+        "endLine": 87,
         "fingerprint": "dfa6dc6f683960bdd2826b5095156bd6"
       },
       "implementation": { "state": "unknown" },
@@ -1435,13 +1435,13 @@
       "title": "原生搜索事件的接入与端点适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G03",
         "line": 44,
-        "endLine": 54,
-        "fingerprint": "0fbae3744e287dc38569f950d2a599a4"
+        "endLine": 55,
+        "fingerprint": "93ad8de50829f74844178c1fafca9df7"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1460,8 +1460,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G04",
-        "line": 56,
-        "endLine": 67,
+        "line": 57,
+        "endLine": 68,
         "fingerprint": "e266f35bd09c892a8a8d8df299b9ae62"
       },
       "implementation": { "state": "unknown" },
@@ -1481,8 +1481,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G05",
-        "line": 69,
-        "endLine": 79,
+        "line": 70,
+        "endLine": 80,
         "fingerprint": "554d41dc4e13f6eed48903dae3ad6b37"
       },
       "implementation": { "state": "unknown" },
@@ -1502,8 +1502,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G06",
-        "line": 81,
-        "endLine": 91,
+        "line": 82,
+        "endLine": 92,
         "fingerprint": "4db38fb68d7362103f4c770134caf337"
       },
       "implementation": { "state": "unknown" },
@@ -2789,8 +2789,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 275,
-        "endLine": 288,
+        "line": 277,
+        "endLine": 290,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": { "state": "unknown" },
@@ -2810,8 +2810,8 @@
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "P05",
-        "line": 93,
-        "endLine": 107,
+        "line": 94,
+        "endLine": 108,
         "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
       "implementation": { "state": "unknown" },
@@ -3220,13 +3220,13 @@
       "title": "原生搜索端点与混合续轮适配待验证",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
         "line": 240,
-        "endLine": 250,
-        "fingerprint": "92b7c3c0bc05f7ea8f3936562dd24eba"
+        "endLine": 252,
+        "fingerprint": "f1a0d7927b2d69d7f4ae6fb2e1484376"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -3245,8 +3245,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 252,
-        "endLine": 262,
+        "line": 254,
+        "endLine": 264,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": { "state": "unknown" },
@@ -3266,8 +3266,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 264,
-        "endLine": 273,
+        "line": 266,
+        "endLine": 275,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": { "state": "unknown" },
@@ -18826,6 +18826,37 @@
           "fingerprintTo": "6c207d405fbdbb6cf3a06603f1f159f1"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-19-58",
+      "at": "2026-09-19T06:08:54.263Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "登记 V05 授权前置窗口并接入 Q17／G03／D04；不改变任何验收门槛",
+      "review": null,
+      "objects": [
+        {
+          "id": "D04#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "289c395dfe932f469066f1087ac580da",
+          "fingerprintTo": "c598d9ffc87975d81e762707bd6b6465"
+        },
+        {
+          "id": "Q17",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "92b7c3c0bc05f7ea8f3936562dd24eba",
+          "fingerprintTo": "f1a0d7927b2d69d7f4ae6fb2e1484376"
+        },
+        {
+          "id": "G03",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "0fbae3744e287dc38569f950d2a599a4",
+          "fingerprintTo": "93ad8de50829f74844178c1fafca9df7"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -19475,12 +19506,14 @@
         {
           "id": "Q17",
           "revision": 12,
-          "fingerprint": "92b7c3c0bc05f7ea8f3936562dd24eba"
+          "fingerprint": "92b7c3c0bc05f7ea8f3936562dd24eba",
+          "stale": true
         },
         {
           "id": "G03",
           "revision": 12,
-          "fingerprint": "0fbae3744e287dc38569f950d2a599a4"
+          "fingerprint": "0fbae3744e287dc38569f950d2a599a4",
+          "stale": true
         },
         {
           "id": "G06",
@@ -19624,6 +19657,21 @@
     {
       "review": "REV-2026-09-15-GOV1",
       "object": "X01",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-19-47",
+      "object": "D04",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-19-47",
+      "object": "Q17",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-19-47",
+      "object": "G03",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {
