@@ -72,10 +72,10 @@
 ### G05 运行中输入修订与压缩覆盖一致性
 
 - **目标**：输入修订在安全点生效（`K03`）；摘要覆盖必须与真实裁剪边界一致，被裁剪区间有可解释的覆盖或缺口（`K08`）。
-- **现状**：取消有基础，**运行中指令修订需补齐**；压缩按消息条数确定覆盖终点，与 token 裁剪边界不同源（`Q08`）。
-- **差异**：运行中追加要求的吸收路径与覆盖清单尚未接通。
+- **现状**：取消有基础。运行中就地修订通道已确定不做（`Q16` 关闭：Host 在 Run 进行中拒绝新指令）；压缩覆盖终点与 token 裁剪边界不同源（`Q08` 已知限制，关闭时保留显式缺口）。
+- **差异**：本缺口已关闭。关闭依据是 `Q16`「就地通道不做」加上取消后候选不得发布的证据，**不是**「运行中修订已实现」。覆盖终点与裁剪边界同源是独立改进，不在本条关闭条件内。
 - **阻断门槛**：`at=acceptance`（`D03`）。
-- **所需证据**：旧修订产生的未发布答案不能覆盖新要求；摘要不得把旧线索变成新证据或覆盖用户后来的纠正。
+- **所需证据**：旧修订产生的未发布答案不能覆盖新要求；摘要不得把旧线索变成新证据或覆盖用户后来的纠正。关闭证据见 `registry.json.verify` 的 `G05`／`Q08`／`D03` 记录。
 
 <!-- iris:end G05 -->
 
@@ -85,9 +85,9 @@
 
 - **目标**：`C14` 不再因无进展身份或两轮拒绝，在任务未完成且信封仍允许时强制 `synthesis_required`。完成额度预留触达后不提供业务工具属信封（`R12`），不得与无进展关面共用关面指令。观察之后下一步由模型提议（`R11`、`N15`、`N21`）。
 - **现状**：`agent_tool_loop.rs` 只按信封收窄业务工具面：末轮、`max_tool_calls`、以及 remaining ≤ 完成额度预留（`R12`）。预留触达把 remaining 留给表达轮，不注入 `tool_surface_closed_instruction`。`rejected_rounds`／`no_progress_rounds`／`failed_service_rounds` 仍写入诊断，但不再强制 `synthesis_required`、不再注入关面或「repair is exhausted」指令，也不再仅因 `rejected_rounds >= 2` 把退出标成 `recovery_exhausted`。负例见 `src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs`。进展身份仍由 `agent_tool_loop/observations.rs` 的 `safe_progress_identities` 定义：有 span 时为 `[resource, revision, start, end, span_kind]`；搜索结果常无 span，退化成 URL／hash，换查询撞同一 URL 会被记为无进展。
-- **差异**：循环已不再用配方计数当第二规划器（三处闸门与 `recovery_exhausted` 退出分支均已按 `R11`／`R12` 改写，负例见 `agent_tool_loop_host_authority_tests.rs`）。本缺口仍 open，随 `D02` 验收关闭（`closes`）；`closes` 豁免不等于已关闭。字段级参数反馈属 `K16`／`C14`，不构成本缺口的关闭条件。Anthropic 五类终止负例属 `C11`／`K04` 后续，不是 `Q04` 本条范围，也不写入本缺口关闭条件。`Q13` 已移出 `D02` 作用域，不构成本缺口关闭条件。
+- **差异**：循环已不再用配方计数当第二规划器（三处闸门与 `recovery_exhausted` 退出分支均已按 `R11`／`R12` 改写，负例见 `agent_tool_loop_host_authority_tests.rs`）。本缺口已关闭。关闭依据是 `host_authority` 的独立 `verify` 命令绑定，不是写在 `C14` 备注里代替。字段级参数反馈属 `K16`／`C14`，不构成本缺口的关闭条件。Anthropic 五类终止负例属 `C11`／`K04` 后续，不是 `Q04` 本条范围，也不写入本缺口关闭条件。`Q13` 已移出 `D02` 作用域，不构成本缺口关闭条件。
 - **阻断门槛**：`at=acceptance`（只阻断 `D02` 验收，不阻断开始）。
-- **所需证据**：`D02` 工作包登记的过早收束负例已实现并通过，且**由独立 `verify` 命令绑定**（不是写在 `C14` 备注里代替）：`src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs` 绑定 `cargo test --lib agent_tool_loop_host_authority`——两轮已反馈的未知工具不得强制综合、无进展／服务失败计数不得关面、预留触达不得注入关面指令；旧的 `:699`／`:877` 已按新契约改写。关闭本缺口仍待 `D02` 验收，不另要求字段级 mismatch 或 Anthropic 终止绑定。
+- **所需证据**：`D02` 工作包登记的过早收束负例已实现并通过，且**由独立 `verify` 命令绑定**（不是写在 `C14` 备注里代替）：`src-tauri/src/ai_runtime/agent_tool_loop_host_authority_tests.rs` 绑定 `cargo test --lib agent_tool_loop_host_authority`——两轮已反馈的未知工具不得强制综合、无进展／服务失败计数不得关面、预留触达不得注入关面指令；旧的 `:699`／`:877` 已按新契约改写。本缺口已随 `D02` 验收关闭，不另要求字段级 mismatch 或 Anthropic 终止绑定。
 
 <!-- iris:end G06 -->
 

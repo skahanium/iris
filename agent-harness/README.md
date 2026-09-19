@@ -94,7 +94,7 @@ CI 不允许对文档门使用忽略失败或成功兜底；只有全部检查�
 
 - `T*`、`M*`、`C*` 的 `implementation.state` 只描述静态源码事实；
 - 只有 `X01`／`X02` 声明 `verification.state=passed`；C26／C27／E01–E03／V07 的通过与否以 `registry.json.verify` 为准，不把机械记录标成语义质量通过；
-- 工作包 `D01` 的 `work.state` 以 `catalog.mjs` 为准；`D02`–`D06` 仍为 `planned`。
+- 工作包 `work.state` 以 `catalog.mjs` 为准：`D01`–`D03` 为 `done`，`D04`–`D06` 仍为 `planned`。
 
 **本轮不把以下事项冒充为已解决**：具体供应商／模型端点的原生搜索兼容与性能；具体第三方协议库或整体 agent 框架的最终依赖选择；新预算数值、费用上限、发布分数与版本排期；每个组件未来对应多少 Rust 文件或 React 组件；现有所有工具已正确工作，或此架构已通过真实用户任务验收。
 
