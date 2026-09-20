@@ -708,6 +708,7 @@ async fn execute_confirmed_change_with_sink(
     vault: Option<std::path::PathBuf>,
     sink: &impl RunEventSink,
 ) {
+    let _inflight = crate::ai_runtime::run_inflight::InflightGuard::new(run_id.clone());
     let db = Arc::clone(&state.db);
     let fail = || {
         RunEngine::fail_active_with_sink(&db, &session, &run_id, sink)
@@ -819,7 +820,6 @@ async fn execute_confirmed_change_with_sink(
     match executor.execute_confirmed_frozen_change_set(&plan).await {
         Ok(results) if !results.is_empty() => {
             let applied = results.iter().filter(|result| result.success).count();
-            let complete = applied == plan.operations().len();
             let executed_operations = plan
                 .operations()
                 .iter()
@@ -834,6 +834,16 @@ async fn execute_confirmed_change_with_sink(
                 })
                 .collect::<Vec<_>>()
                 .join("；");
+            let applied_paths: std::collections::BTreeSet<&str> = plan
+                .operations()
+                .iter()
+                .zip(results.iter())
+                .filter(|(_, result)| result.success)
+                .flat_map(|(operation, _)| operation.relative_paths().iter().map(String::as_str))
+                .collect();
+            let frozen_paths: std::collections::BTreeSet<&str> =
+                plan.relative_paths().iter().map(String::as_str).collect();
+            let complete = applied == plan.operations().len() && applied_paths == frozen_paths;
             let content = if complete {
                 format!(
                     "已按确认顺序执行 {applied}/{} 项变更。\n已执行操作：{executed_operations}",
@@ -851,6 +861,7 @@ async fn execute_confirmed_change_with_sink(
                     accepted.clone(),
                     vault.clone(),
                     plan.relative_paths(),
+                    &plan.all_expected_post_content_hashes(),
                     &content,
                     sink,
                 )
@@ -1214,6 +1225,20 @@ mod normal_run_desktop_adapter_tests {
 
     impl RunEventSink for NoopSink {
         fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
+            Ok(())
+        }
+    }
+
+    struct InflightProbeSink {
+        run_id: String,
+        saw_inflight: std::sync::Mutex<bool>,
+    }
+
+    impl RunEventSink for InflightProbeSink {
+        fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
+            if crate::ai_runtime::run_inflight::is_marked(&self.run_id) {
+                *self.saw_inflight.lock().expect("inflight probe") = true;
+            }
             Ok(())
         }
     }
@@ -2047,6 +2072,55 @@ mod normal_run_desktop_adapter_tests {
             .expect("run");
         assert_eq!(replay.run.state, RunState::Failed);
         assert_zero_write_and_dispatch(&state, &accepted, &directory);
+    }
+
+    #[tokio::test]
+    async fn confirmed_change_worker_marks_inflight_while_emitting_failure() {
+        let (_directory, state, accepted, plan) = durable_apply_fixture();
+        tamper_consumed_confirmation(&state, &plan);
+        let sink = InflightProbeSink {
+            run_id: accepted.run_id.clone(),
+            saw_inflight: std::sync::Mutex::new(false),
+        };
+        execute_confirmed_change_with_sink(
+            Arc::clone(&state),
+            accepted.session.clone(),
+            accepted.run_id.clone(),
+            plan.confirmation_id().into(),
+            state.vault_path().ok(),
+            &sink,
+        )
+        .await;
+        assert!(
+            *sink.saw_inflight.lock().expect("inflight probe"),
+            "confirmation worker must hold InflightGuard for the whole execute"
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_confirmation_does_not_write_after_vault_switch() {
+        let (directory, state, accepted, plan) = durable_apply_fixture();
+        let original = directory.path().join("vault/note.md");
+        let other = directory.path().join("other-vault");
+        std::fs::create_dir_all(&other).expect("switched vault");
+        state.set_vault(other).expect("switch vault");
+        execute_confirmed_change_with_sink(
+            Arc::clone(&state),
+            accepted.session.clone(),
+            accepted.run_id.clone(),
+            plan.confirmation_id().into(),
+            state.vault_path().ok(),
+            &NoopSink,
+        )
+        .await;
+        assert_eq!(
+            std::fs::read_to_string(&original).expect("original vault note"),
+            "base"
+        );
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::Failed);
     }
 
     #[tokio::test]

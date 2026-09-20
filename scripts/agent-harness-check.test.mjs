@@ -1167,42 +1167,34 @@ test("声明 defined 但缺少必备要素时阻断", () => {
 
 // ── 变更、复核与阻断 ─────────────────────────────────────────
 
-test("一个问题关闭但另一阻断仍存在，工作包不能解封", () => {
-  const fixture = buildFixture({
-    files: { "implementation/D01.md": "D01" },
-    objects: {
-      Q01: {
-        kind: "issue",
-        name: "Q01",
-        title: "夹具问题甲",
-        owner: "M01",
-        maturity: "draft",
-        definition: { file: "requirements/current-baseline.md", anchor: "Q01" },
-        blocks: [{ id: "D01", at: "acceptance" }],
-      },
-      Q02: {
-        kind: "issue",
-        name: "Q02",
-        title: "夹具问题乙",
-        owner: "M01",
-        maturity: "draft",
-        definition: { file: "requirements/current-baseline.md", anchor: "Q02" },
-        blocks: [{ id: "D01", at: "acceptance" }],
-      },
-      D01: {
-        kind: "work",
-        name: "work",
-        title: "夹具工作包",
-        owner: "M01",
-        maturity: "defined",
-        definition: { file: "implementation/D01.md", anchor: "D01" },
-        work: { state: "planned" },
-        scope: ["N01", "Q01", "Q02"],
-        closes: [],
-      },
-    },
-    overrides: {
-      "requirements/current-baseline.md": `# 夹具基线
+function issue(id, title, at) {
+  return {
+    kind: "issue",
+    name: id,
+    title,
+    owner: "M01",
+    maturity: "draft",
+    definition: { file: "requirements/current-baseline.md", anchor: id },
+    blocks: [{ id: "D01", at }],
+  };
+}
+
+function workPackage(closes) {
+  return {
+    kind: "work",
+    name: "work",
+    title: "夹具工作包",
+    owner: "M01",
+    maturity: "defined",
+    definition: { file: "implementation/D01.md", anchor: "D01" },
+    work: { state: "planned" },
+    scope: ["N01", "Q01", "Q02"],
+    closes,
+  };
+}
+
+const WORK_PACKAGE_OVERRIDES = {
+  "requirements/current-baseline.md": `# 夹具基线
 
 <!-- iris:object W04 kind=rules file=true -->
 
@@ -1236,7 +1228,7 @@ test("一个问题关闭但另一阻断仍存在，工作包不能解封", () =>
 
 <!-- iris:end Q02 -->
 `,
-      "implementation/D01.md": `# 夹具工作包
+  "implementation/D01.md": `# 夹具工作包
 
 <!-- iris:object D01 kind=work owner=M01 file=true -->
 
@@ -1264,7 +1256,17 @@ test("一个问题关闭但另一阻断仍存在，工作包不能解封", () =>
 
 <!-- iris:end D01 -->
 `,
+};
+
+test("一个问题关闭但另一阻断仍存在，工作包不能解封", () => {
+  const fixture = buildFixture({
+    files: { "implementation/D01.md": "D01" },
+    objects: {
+      Q01: issue("Q01", "夹具问题甲", "acceptance"),
+      Q02: issue("Q02", "夹具问题乙", "acceptance"),
+      D01: workPackage([]),
     },
+    overrides: WORK_PACKAGE_OVERRIDES,
   });
   try {
     assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
@@ -1284,6 +1286,95 @@ test("一个问题关闭但另一阻断仍存在，工作包不能解封", () =>
       reasons.includes("Q01"),
       false,
       `Q01 已关闭，不应再出现在验收阻断里：${reasons}`,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("closes 只豁免开始阻断，不能把未关问题写成可验收", () => {
+  const fixture = buildFixture({
+    files: { "implementation/D01.md": "D01" },
+    objects: {
+      Q01: issue("Q01", "夹具开始阻断", "start"),
+      Q02: issue("Q02", "夹具验收阻断", "acceptance"),
+      D01: workPackage(["Q01", "Q02"]),
+    },
+    overrides: WORK_PACKAGE_OVERRIDES,
+  });
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    const { report } = runCheck(fixture.root);
+    const ready = report.readiness?.D01;
+    assert.ok(ready, JSON.stringify(report.readiness));
+    assert.equal(
+      ready.startReady,
+      true,
+      `closes 应豁免 start 阻断：${JSON.stringify(ready)}`,
+    );
+    assert.equal(
+      ready.acceptanceReady,
+      false,
+      `closes 不得豁免验收：${JSON.stringify(ready)}`,
+    );
+    const reasons = ready.acceptanceReasons.join(" ");
+    assert.ok(reasons.includes("Q02"), reasons);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("passed 不能只靠 obsolete 或缺失指纹的证据", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    const registry = loadRegistry(fixture.harness);
+    const current = registry.objects.K01.definition.fingerprint;
+    const catalogPath = path.join(fixture.harness, "catalog.mjs");
+    const objects = {
+      ...BASE_CATALOG.objects,
+      K01: {
+        ...BASE_CATALOG.objects.K01,
+        verification: { state: "passed" },
+      },
+    };
+    writeFileSync(
+      catalogPath,
+      `export const sources = ${JSON.stringify(BASE_CATALOG.sources)};\n` +
+        `export const files = ${JSON.stringify(BASE_CATALOG.files)};\n` +
+        `export const fileContainers = ${JSON.stringify(BASE_CATALOG.fileContainers)};\n` +
+        `export const objects = ${JSON.stringify(objects)};\n` +
+        `export const tools = {};\nexport const toolPlacement = {};\nexport const toolIdByName = {};\n`,
+    );
+    registry.verify = [
+      {
+        object: "K01",
+        kind: "V03",
+        testPath: "contracts/K01.md",
+        command: "fixture",
+        environment: "fixture",
+        fingerprint: current,
+        at: "2026-01-01T00:00:00Z",
+        applicability: "obsolete",
+        note: "夹具：仅 obsolete",
+      },
+      {
+        object: "K01",
+        kind: "V03",
+        testPath: "contracts/K01.md",
+        command: "fixture",
+        environment: "fixture",
+        at: "2026-01-02T00:00:00Z",
+        applicability: "current",
+        note: "夹具：current 但缺指纹",
+      },
+    ];
+    saveRegistry(fixture.harness, registry);
+    const { exitCode, report } = runCheck(fixture.root);
+    assert.equal(exitCode, 1);
+    assert.ok(
+      hasViolation(report, "evidence"),
+      JSON.stringify(report.violations),
     );
   } finally {
     fixture.cleanup();

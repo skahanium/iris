@@ -6,6 +6,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
+use crate::ai_runtime::ToolCallResult;
 use crate::error::{AppError, AppResult};
 
 const MAX_CHANGE_OPERATIONS: usize = 6;
@@ -272,6 +273,11 @@ impl FrozenChangePlan {
         Ok(())
     }
 
+    /// Reject execution when the live vault is no longer the frozen identity.
+    pub(crate) fn assert_live_vault(&self, vault: &std::path::Path) -> AppResult<()> {
+        assert_live_vault_id(vault, self.vault_id())
+    }
+
     /// Ordered operations are the only authority for batch execution and recovery.
     pub(crate) fn operations(&self) -> &[FrozenChangeOperation] {
         &self.operations
@@ -292,6 +298,62 @@ impl FrozenChangePlan {
             .flat_map(|o| o.expected_post_content_hashes().iter().cloned())
             .collect()
     }
+}
+
+/// Align recovered suffix results to frozen operations by index and tool_call_id.
+///
+/// The executor only returns `skip(start)` results. Prefix operations already
+/// applied at the checkpoint must stay successful and a later failure must not
+/// be pasted onto operation 0.
+pub(crate) fn merge_confirmed_results(
+    plan: &FrozenChangePlan,
+    start: usize,
+    suffix: &[ToolCallResult],
+) -> Vec<ToolCallResult> {
+    plan.operations()
+        .iter()
+        .enumerate()
+        .map(|(index, operation)| {
+            if index < start {
+                return ToolCallResult {
+                    tool_name: operation.operation().to_string(),
+                    success: true,
+                    output: serde_json::json!({
+                        "tool_call_id": operation.tool_call_id(),
+                        "recovered_prefix": true,
+                    }),
+                    duration_ms: 0,
+                    tokens_used: None,
+                    error: None,
+                };
+            }
+            let suffix_index = index.saturating_sub(start);
+            if let Some(result) = suffix.get(suffix_index) {
+                let id = result.output.get("tool_call_id").and_then(Value::as_str);
+                if id.is_none_or(|id| id == operation.tool_call_id()) {
+                    return result.clone();
+                }
+            }
+            suffix
+                .iter()
+                .find(|result| {
+                    result.output.get("tool_call_id").and_then(Value::as_str)
+                        == Some(operation.tool_call_id())
+                })
+                .cloned()
+                .unwrap_or_else(|| ToolCallResult {
+                    tool_name: operation.operation().to_string(),
+                    success: false,
+                    output: serde_json::json!({
+                        "error": "confirmed_operation_not_executed",
+                        "tool_call_id": operation.tool_call_id(),
+                    }),
+                    duration_ms: 0,
+                    tokens_used: None,
+                    error: Some("confirmed_operation_not_executed".into()),
+                })
+        })
+        .collect()
 }
 
 fn validate_legacy_input(input: &FrozenChangePlanInput) -> AppResult<()> {
@@ -479,6 +541,22 @@ fn legacy_plan_value(input: &FrozenChangePlanInput) -> Value {
 fn operation_value(input: &FrozenChangeOperationInput) -> Value {
     serde_json::json!({ "toolCallId": input.tool_call_id, "operation": input.operation, "relativePaths": input.relative_paths, "baseContentHashes": input.base_content_hashes, "expectedPostContentHashes": input.expected_post_content_hashes, "change": input.change, "rollbackSummary": input.rollback_summary })
 }
+/// Hash identity used to bind a frozen confirmation to one live vault.
+pub(crate) fn live_vault_id(vault: &std::path::Path) -> String {
+    crate::cas::hash::content_hash_str(&vault.to_string_lossy())
+}
+
+/// Fail closed when a confirmed write would land in a different vault.
+pub(crate) fn assert_live_vault_id(
+    vault: &std::path::Path,
+    expected_vault_id: &str,
+) -> AppResult<()> {
+    if live_vault_id(vault) != expected_vault_id {
+        return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
+    }
+    Ok(())
+}
+
 fn unique_input_paths(operations: &[FrozenChangeOperationInput]) -> Vec<String> {
     let mut seen = BTreeSet::new();
     operations

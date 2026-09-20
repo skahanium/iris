@@ -817,11 +817,11 @@ function computeReadiness(
     }
 
     for (const blocker of blocked.get(id) ?? []) {
-      if ((entry.closes ?? []).includes(blocker.issue)) continue;
       const blockerOpen =
         (registryObjects?.get(blocker.issue)?.state ?? "open") === "open";
       if (!blockerOpen) continue;
       if (blocker.at === "start") {
+        if ((entry.closes ?? []).includes(blocker.issue)) continue;
         startReasons.push(`被 ${blocker.issue} 阻断开始`);
       } else {
         acceptanceReasons.push(`被 ${blocker.issue} 阻断验收（at=acceptance）`);
@@ -832,7 +832,6 @@ function computeReadiness(
       const scopedEntry = catalog.objects[scoped];
       if (!scopedEntry || scopedEntry.kind !== "issue") continue;
       if ((registryObjects?.get(scoped)?.state ?? "open") !== "open") continue;
-      if ((entry.closes ?? []).includes(scoped)) continue;
       acceptanceReasons.push(
         `作用域内未决问题 ${scoped} 处于 open 且未被本工作包关闭`,
       );
@@ -1087,23 +1086,18 @@ function checkReviews(
     const records = (registry?.verify ?? []).filter(
       (record) => record.object === id,
     );
-    if (records.length === 0) {
-      violation(
-        "evidence",
-        `${id} 声明 verification.state=passed，但没有 verify 证据记录（历史通过不足以支持当前验收）`,
-      );
-      continue;
-    }
     const current = currentFingerprints.get(id)?.fingerprint;
-    if (
-      current &&
-      records.every(
-        (record) => record.fingerprint && record.fingerprint !== current,
-      )
-    ) {
+    const currentBound = records.some(
+      (record) =>
+        record.applicability === "current" &&
+        Boolean(record.fingerprint) &&
+        Boolean(current) &&
+        record.fingerprint === current,
+    );
+    if (!currentBound) {
       violation(
         "evidence",
-        `${id} 的证据绑定的是旧指纹：当前版本不再适用（需重新验证或标为 needs-review）`,
+        `${id} 声明 verification.state=passed，但没有绑定当前指纹的 current 证据（仅 obsolete 或缺失指纹不能支持当前验收）`,
       );
     }
   }

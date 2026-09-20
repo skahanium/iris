@@ -51,6 +51,7 @@ pub(super) fn markdown_write_patch_apply(
     let vault = state.vault_path()?;
     let receipt = apply_edit(state, &vault, &edit, || {
         ctx.ensure_run_active()?;
+        ctx.ensure_confirmed_vault(&vault)?;
         ctx.ensure_write_target_matches(target)?;
         ctx.ensure_document_capability(
             target,

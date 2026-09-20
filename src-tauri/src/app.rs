@@ -600,6 +600,11 @@ impl AppState {
             )?;
             Ok(())
         })?;
+        let live_vault_id = crate::ai_runtime::frozen_change_plan::live_vault_id(&canonical);
+        crate::ai_runtime::agent_run_repository::AgentRunRepository::expire_pending_confirmations_for_foreign_vault(
+            &self.db,
+            &live_vault_id,
+        )?;
         self.ai.replace_skill_activation_snapshot(
             &embedding_scheduler,
             canonical,

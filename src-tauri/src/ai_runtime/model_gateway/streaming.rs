@@ -30,6 +30,10 @@ use super::{
     GatewayResponse,
 };
 
+#[path = "streaming_sse.rs"]
+mod streaming_sse;
+use streaming_sse::{decode_sse_utf8, finish_sse_utf8};
+
 /// A provider must acknowledge a streaming request promptly. This deadline covers
 /// waiting for response headers, which reqwest's per-read timeout does not bound.
 const STREAM_FIRST_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -788,6 +792,7 @@ pub async fn send_streaming_request_to_observer(
     let mut stream = response.bytes_stream();
     use futures_util::StreamExt;
     let mut carry = String::new();
+    let mut pending_utf8 = Vec::new();
     let mut carry_truncated = false;
     let mut chunk_count: u64 = 0;
     let mut byte_count: u64 = 0;
@@ -871,7 +876,18 @@ pub async fn send_streaming_request_to_observer(
         chunk_count = chunk_count.saturating_add(1);
         byte_count = byte_count.saturating_add(chunk.len() as u64);
 
-        let chunk_text = String::from_utf8_lossy(&chunk);
+        let chunk_text = decode_sse_utf8(&mut pending_utf8, &chunk).map_err(|error| {
+            finish_stream_with_error(
+                observer,
+                &request,
+                request_id,
+                error.to_string(),
+                classified,
+                surface,
+                token_index,
+                emit_error_event,
+            )
+        })?;
         if carry.len() + chunk_text.len() > MAX_CARRY_BYTES {
             if !carry_truncated {
                 tracing::warn!(
@@ -1032,6 +1048,19 @@ pub async fn send_streaming_request_to_observer(
             }
         }
     }
+
+    finish_sse_utf8(&pending_utf8).map_err(|error| {
+        finish_stream_with_error(
+            observer,
+            &request,
+            request_id,
+            error.to_string(),
+            classified,
+            surface,
+            token_index,
+            emit_error_event,
+        )
+    })?;
 
     // Flush remaining carry buffer
     if !carry.trim().is_empty() {
@@ -1340,6 +1369,7 @@ async fn send_openai_responses_stream(
     use futures_util::StreamExt;
     let mut stream = response.bytes_stream();
     let mut carry = String::new();
+    let mut pending_utf8 = Vec::new();
     let mut state = ResponsesStreamState::default();
     let mut tracker = SseJsonFailureTracker::default();
     let mut visible_sanitizer = surface
@@ -1392,7 +1422,19 @@ async fn send_openai_responses_stream(
                 emit_error_event,
             )
         })?;
-        carry.push_str(&String::from_utf8_lossy(&chunk));
+        let chunk_text = decode_sse_utf8(&mut pending_utf8, &chunk).map_err(|error| {
+            finish_stream_with_error(
+                observer,
+                &request,
+                request_id,
+                error.to_string(),
+                classified,
+                surface,
+                token_index,
+                emit_error_event,
+            )
+        })?;
+        carry.push_str(&chunk_text);
 
         while let Some(line_end) = carry.find('\n') {
             let line: String = carry.drain(..=line_end).collect();
@@ -1466,6 +1508,19 @@ async fn send_openai_responses_stream(
             }
         }
     }
+
+    finish_sse_utf8(&pending_utf8).map_err(|error| {
+        finish_stream_with_error(
+            observer,
+            &request,
+            request_id,
+            error.to_string(),
+            classified,
+            surface,
+            token_index,
+            emit_error_event,
+        )
+    })?;
 
     if !completed {
         return Err(finish_stream_with_error(
@@ -1925,5 +1980,19 @@ mod tests {
     #[test]
     fn sanitized_surface_is_visible_to_the_frontend() {
         assert!(StreamSurface::VisibleAnswerSanitized.is_visible());
+    }
+
+    #[test]
+    fn sse_rejects_illegal_utf8_instead_of_replacing_it() {
+        let mut pending = Vec::new();
+        decode_sse_utf8(&mut pending, &[0xff]).expect_err("illegal utf-8");
+        pending.clear();
+        let first = decode_sse_utf8(&mut pending, &[0xe4]).expect("incomplete prefix");
+        assert!(first.is_empty());
+        let rest = decode_sse_utf8(&mut pending, &[0xb8, 0xad]).expect("complete 中");
+        assert_eq!(rest, "中");
+        finish_sse_utf8(&pending).expect("complete sequence");
+        decode_sse_utf8(&mut pending, &[0xe4]).expect("incomplete prefix");
+        finish_sse_utf8(&pending).expect_err("truncated sequence at eof");
     }
 }

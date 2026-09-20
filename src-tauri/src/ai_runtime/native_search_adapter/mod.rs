@@ -194,6 +194,9 @@ pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
     };
     let body = adapter.outbound_body(&constructed);
     let headers = adapter.http_headers(token);
+    if crate::ai_runtime::model_turn_ledger::claim(&constructed.identity.run_id).is_err() {
+        return protocol_insufficient();
+    }
     let mut result = transport.post_json(&url, &body, &headers).await;
     if result.transport_failed {
         return transport_failure();
@@ -212,6 +215,9 @@ pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
         && outcome.generated_text_only
         && !outcome.has_retrieval_credentials
     {
+        if crate::ai_runtime::model_turn_ledger::claim(&constructed.identity.run_id).is_err() {
+            return outcome;
+        }
         result = transport.post_json(&url, &body, &headers).await;
         if result.transport_failed {
             return transport_failure();
@@ -254,17 +260,15 @@ pub(crate) async fn execute_production_route(
     let secret = {
         #[cfg(test)]
         {
-            recorded_bearer_for_run(&identity.run_id).or_else(|| {
-                crate::credentials::get_runtime_secret(&binding.credential_service)
-                    .ok()
-                    .map(|value| value.to_string())
-            })
+            recorded_bearer_for_run(&identity.run_id)
+                .map(zeroize::Zeroizing::new)
+                .or_else(|| {
+                    crate::credentials::get_runtime_secret(&binding.credential_service).ok()
+                })
         }
         #[cfg(not(test))]
         {
-            crate::credentials::get_runtime_secret(&binding.credential_service)
-                .ok()
-                .map(|value| value.to_string())
+            crate::credentials::get_runtime_secret(&binding.credential_service).ok()
         }
     };
     let draft = NativeSearchSubrequestDraft {
@@ -281,13 +285,18 @@ pub(crate) async fn execute_production_route(
     };
     #[cfg(test)]
     if let Some(transport) = recorded_transport_for_run(&identity.run_id) {
-        return execute_native_search(draft, &transport, secret.as_deref(), &binding.api_base)
-            .await;
+        return execute_native_search(
+            draft,
+            &transport,
+            secret.as_ref().map(|value| value.as_str()),
+            &binding.api_base,
+        )
+        .await;
     }
     execute_native_search(
         draft,
         &LiveNativeSearchTransport,
-        secret.as_deref(),
+        secret.as_ref().map(|value| value.as_str()),
         &binding.api_base,
     )
     .await

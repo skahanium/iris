@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::time::Duration;
 
 use crate::ai_runtime::native_search_subrequest::{
     native_search_support_for, native_search_unsupported_reason_for, NativeSearchEndpointRef,
@@ -22,6 +23,12 @@ pub(crate) struct SearchActionIdentity {
     pub input_revision: u32,
     pub action_id: String,
     pub attempt: u32,
+}
+
+/// Content-hash identity for one search query. Stable across retries of the same query.
+pub(crate) fn input_revision_from_query(query: &str) -> u32 {
+    let digest = crate::cas::hash::content_hash_str(query);
+    u32::from_str_radix(digest.get(..8).unwrap_or(""), 16).unwrap_or(u32::MAX)
 }
 
 /// Native search capability fact from C10's minimal surface.
@@ -277,8 +284,10 @@ where
     // MCP is the existing production route and is attempted first. Native, when
     // allowed, is the second route and runs after MCP in this serial slice.
     let mcp_outcome = mcp.execute(&request.query).await;
-    let native_outcome = if attempt_native {
-        Some(native.execute(&request.query).await)
+    let native_outcome = if attempt_native
+        && !crate::ai_runtime::model_gateway::is_abort_requested(&request.identity.run_id)
+    {
+        Some(execute_native_with_timeout(native, &request.query).await)
     } else {
         None
     };
@@ -319,6 +328,31 @@ where
         native_has_retrieval_credentials: native_outcome
             .as_ref()
             .is_some_and(|outcome| outcome.has_retrieval_credentials),
+    }
+}
+
+fn native_route_timeout() -> Duration {
+    #[cfg(test)]
+    {
+        Duration::from_millis(80)
+    }
+    #[cfg(not(test))]
+    {
+        Duration::from_secs(60)
+    }
+}
+
+async fn execute_native_with_timeout<N: SearchRoute>(
+    native: &N,
+    query: &str,
+) -> RouteAttemptOutcome {
+    match tokio::time::timeout(native_route_timeout(), native.execute(query)).await {
+        Ok(outcome) => outcome,
+        Err(_) => RouteAttemptOutcome {
+            failure: Some(RouteFailureClass::TemporaryFailure),
+            internal_provider_attempts: 1,
+            ..RouteAttemptOutcome::default()
+        },
     }
 }
 
@@ -988,5 +1022,94 @@ mod tests {
         assert_eq!(json["usage"]["native"], 1);
         assert!(json["usage"].get("nativePromptTokens").is_some());
         assert!(json["usage"].get("nativeCompletionTokens").is_some());
+    }
+
+    struct AbortAfterMcpRoute {
+        outcome: RouteAttemptOutcome,
+        run_id: String,
+    }
+
+    impl SearchRoute for AbortAfterMcpRoute {
+        async fn execute(&self, _query: &str) -> RouteAttemptOutcome {
+            crate::ai_runtime::model_gateway::request_abort(&self.run_id);
+            self.outcome.clone()
+        }
+    }
+
+    struct MustNotRunRoute {
+        calls: AtomicU32,
+    }
+
+    impl SearchRoute for MustNotRunRoute {
+        async fn execute(&self, _query: &str) -> RouteAttemptOutcome {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            panic!("native search must not start after the run was cancelled");
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_success_then_cancel_must_not_start_native() {
+        let run_id = "run-cancel-after-mcp";
+        crate::ai_runtime::model_gateway::clear_abort(run_id);
+        let mcp = AbortAfterMcpRoute {
+            outcome: credentialed(vec![hit("https://mcp.example/keep")], 1),
+            run_id: run_id.into(),
+        };
+        let native = MustNotRunRoute {
+            calls: AtomicU32::new(0),
+        };
+        let mut request = request(true);
+        request.identity.run_id = run_id.into();
+
+        let outcome =
+            coordinate_dual_path_search(request, &NativeSearchSupport::Available, &native, &mcp)
+                .await;
+
+        crate::ai_runtime::model_gateway::clear_abort(run_id);
+        assert_eq!(native.calls.load(Ordering::SeqCst), 0);
+        assert!(outcome.mcp.succeeded);
+        assert!(!outcome.native.attempted);
+        assert_eq!(outcome.candidates.len(), 1);
+        assert!(channels_of(&outcome, "https://mcp.example/keep").contains(&SearchChannel::Mcp));
+    }
+
+    struct HangNativeRoute;
+
+    impl SearchRoute for HangNativeRoute {
+        async fn execute(&self, _query: &str) -> RouteAttemptOutcome {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_success_is_kept_when_native_times_out() {
+        let mcp = ScriptedSearchRoute::new(credentialed(vec![hit("https://mcp.example/keep")], 1));
+        let outcome = coordinate_dual_path_search(
+            request(true),
+            &NativeSearchSupport::Available,
+            &HangNativeRoute,
+            &mcp,
+        )
+        .await;
+
+        assert!(outcome.mcp.succeeded);
+        assert!(outcome.native.attempted);
+        assert!(!outcome.native.succeeded);
+        assert_eq!(
+            outcome.native.failed,
+            Some(RouteFailureClass::TemporaryFailure)
+        );
+        assert_eq!(outcome.candidates.len(), 1);
+        assert!(channels_of(&outcome, "https://mcp.example/keep").contains(&SearchChannel::Mcp));
+    }
+
+    #[test]
+    fn search_input_revision_is_query_content_hash() {
+        let first = input_revision_from_query("上海天气");
+        let same = input_revision_from_query("上海天气");
+        let other = input_revision_from_query("北京天气");
+        assert_eq!(first, same);
+        assert_ne!(first, other);
+        assert_ne!(first, 0);
     }
 }

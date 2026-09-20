@@ -92,7 +92,9 @@ pub(super) async fn web_search_tool(
             provider_selection_frozen: false,
             search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
                 run_id: ctx.run_id.unwrap_or_default().to_string(),
-                input_revision: 0,
+                input_revision: crate::ai_runtime::dual_path_search::input_revision_from_query(
+                    query,
+                ),
                 action_id: "web_search".into(),
                 attempt: 1,
             },
@@ -136,7 +138,9 @@ pub(super) async fn web_fetch_tool(
             provider_selection_frozen: false,
             search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
                 run_id: ctx.run_id.unwrap_or_default().to_string(),
-                input_revision: 0,
+                input_revision: crate::ai_runtime::dual_path_search::input_revision_from_query(
+                    query,
+                ),
                 action_id: "web_fetch".into(),
                 attempt: 1,
             },

@@ -86,16 +86,19 @@ pub(crate) async fn execute_post_confirmation_verification(
     accepted: AssistantRunAccepted,
     vault: Option<PathBuf>,
     targets: &[String],
+    expected_post_hashes: &[(String, String)],
     execution_report: &str,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     let db = Arc::clone(&state.db);
-    let context = crate::ai_runtime::run_context::RunContextAssembler::assemble(
-        &db,
-        vault.as_deref(),
-        &accepted.session.session_key,
-        &accepted.run_id,
-    )?;
+    let context =
+        crate::ai_runtime::run_context::RunContextAssembler::assemble_with_expected_hashes(
+            &db,
+            vault.as_deref(),
+            &accepted.session.session_key,
+            &accepted.run_id,
+            expected_post_hashes,
+        )?;
     let decision = evaluate_normal_run_policy(&db, &accepted)?;
     if decision.denial_code.is_some() {
         return Err(AppError::msg("post_confirmation_verification_unavailable"));

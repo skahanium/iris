@@ -21,6 +21,7 @@ async fn rejected_patch_is_not_a_successful_dispatch_and_creates_no_version() {
         run_id: None,
         write_target_path: Some("note.md"),
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: None,
         web_search_enabled: false,
         available_tool_names: &[],
@@ -71,5 +72,58 @@ async fn rejected_patch_is_not_a_successful_dispatch_and_creates_no_version() {
             .unwrap()
             .is_empty(),
         "locked edits must be rejected before snapshot creation"
+    );
+}
+
+#[tokio::test]
+async fn confirmed_write_rejects_a_live_vault_that_does_not_match_the_frozen_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(&vault).unwrap();
+    std::fs::write(vault.join("note.md"), "before\n").unwrap();
+    let state = AppState::new(dir.path().to_path_buf()).unwrap();
+    state.set_vault(vault.clone()).unwrap();
+    state
+        .db
+        .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &vault.join("note.md")))
+        .unwrap();
+    let scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+    let ctx = ToolDispatchContext {
+        db: Some(&state.db),
+        selected_web_provider_id: None,
+        note_path: None,
+        file_id: None,
+        run_id: None,
+        write_target_path: Some("note.md"),
+        confirmed_write_targets: Some(&["note.md".to_string()]),
+        confirmed_vault_id: Some("not-the-live-vault"),
+        document_policy: None,
+        web_search_enabled: false,
+        available_tool_names: &[],
+        max_web_fetches: 0,
+        cold_start_packets: &[],
+        retrieval_scope: &scope,
+        runtime_documents: &[],
+        app_handle: None,
+        attachment_count: 0,
+        skill_activation_plan: None,
+    };
+    let result = dispatch_tool(
+        &state,
+        &ctx,
+        "replace_selection",
+        &serde_json::json!({
+            "target_path": "note.md",
+            "base_content_hash": crate::cas::hash::content_hash_str("before\n"),
+            "range": {"start": 0, "end": 6},
+            "original_text": "before",
+            "replacement": "after"
+        }),
+    )
+    .await;
+    assert!(!result.success);
+    assert_eq!(
+        std::fs::read_to_string(vault.join("note.md")).unwrap(),
+        "before\n"
     );
 }

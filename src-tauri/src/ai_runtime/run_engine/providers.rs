@@ -691,8 +691,10 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
             // A Run gets one same-route retry, then advances through remaining
             // failover candidates without retrying each fallback.
             let mut dispatch_attempt = 0_u32;
+            let mut accumulated_usage = crate::ai_types::TokenUsage::default();
             loop {
                 dispatch_attempt = dispatch_attempt.saturating_add(1);
+                crate::ai_runtime::model_turn_ledger::claim(parent_run_id)?;
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
@@ -760,6 +762,9 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                 let attempt = provider
                     .answer_turn(provider_state_key, messages, tools, budget, observer)
                     .await;
+                if let Ok(response) = &attempt {
+                    accumulated_usage.saturating_acc(&response.usage);
+                }
                 let attempt = match attempt {
                     Ok(response)
                         if response
@@ -776,7 +781,8 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                     other => other,
                 };
                 match attempt {
-                    Ok(response) => {
+                    Ok(mut response) => {
+                        response.usage = accumulated_usage.clone();
                         record_model_route_diagnostic(
                             self.db,
                             parent_run_id,

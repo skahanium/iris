@@ -285,25 +285,37 @@ fn test_adapter_registry() -> &'static std::sync::Mutex<std::collections::HashSe
 }
 
 fn has_openai_structured_search(value: &Value) -> bool {
-    let mut found = false;
+    let mut completed_call = false;
+    let mut citation = false;
     walk_json(value, &mut |node| {
-        if node.get("type").and_then(Value::as_str) == Some("web_search_call") {
-            found = true;
+        if node.get("type").and_then(Value::as_str) == Some("web_search_call")
+            && node.get("status").and_then(Value::as_str) == Some("completed")
+        {
+            completed_call = true;
+        }
+        if node.get("type").and_then(Value::as_str) == Some("url_citation") {
+            citation = true;
         }
     });
-    found
+    completed_call && citation
 }
 
 fn has_anthropic_structured_search(value: &Value) -> bool {
-    let mut found = false;
+    let mut web_search_use = false;
+    let mut tool_result = false;
     walk_json(
         value,
         &mut |node| match node.get("type").and_then(Value::as_str) {
-            Some("server_tool_use") | Some("web_search_tool_result") => found = true,
+            Some("server_tool_use")
+                if node.get("name").and_then(Value::as_str) == Some("web_search") =>
+            {
+                web_search_use = true;
+            }
+            Some("web_search_tool_result") => tool_result = true,
             _ => {}
         },
     );
-    found
+    web_search_use && tool_result
 }
 
 fn has_gemini_structured_search(value: &Value) -> bool {
@@ -995,11 +1007,69 @@ mod tests {
             &structured_empty_openai_fixture(),
         );
         assert!(parse.candidates.is_empty());
-        assert!(!parse.generated_text_only);
-        assert_ne!(
+        assert!(parse.generated_text_only);
+        assert_eq!(
             parse.failure,
-            Some(RouteFailureClass::TransportOrProviderFailure)
+            Some(RouteFailureClass::ProtocolOrResultInsufficient)
         );
+    }
+
+    #[test]
+    fn openai_in_progress_call_with_citation_is_not_retrieval() {
+        let parse = parse_native_search_payload(
+            NativeSearchPayloadFamily::OpenAiShaped,
+            &json!({
+                "output": [
+                    { "type": "web_search_call", "status": "in_progress" },
+                    {
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "annotations": [{
+                                "type": "url_citation",
+                                "url": "https://openai-shaped.example/a"
+                            }]
+                        }]
+                    }
+                ]
+            }),
+        );
+        assert!(!parse.has_retrieval_credentials);
+        assert!(parse.generated_text_only);
+    }
+
+    #[test]
+    fn anthropic_server_tool_use_without_result_is_not_retrieval() {
+        let parse = parse_native_search_payload(
+            NativeSearchPayloadFamily::AnthropicShaped,
+            &json!({
+                "content": [{
+                    "type": "server_tool_use",
+                    "name": "web_search",
+                    "input": { "query": "q" }
+                }]
+            }),
+        );
+        assert!(!parse.has_retrieval_credentials);
+        assert!(parse.generated_text_only);
+    }
+
+    #[test]
+    fn anthropic_tool_result_without_web_search_use_is_not_retrieval() {
+        let parse = parse_native_search_payload(
+            NativeSearchPayloadFamily::AnthropicShaped,
+            &json!({
+                "content": [{
+                    "type": "web_search_tool_result",
+                    "content": [{
+                        "type": "web_search_result",
+                        "url": "https://weather.example/shanghai"
+                    }]
+                }]
+            }),
+        );
+        assert!(!parse.has_retrieval_credentials);
+        assert!(parse.generated_text_only);
     }
 
     #[test]

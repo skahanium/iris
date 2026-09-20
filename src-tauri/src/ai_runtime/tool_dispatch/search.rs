@@ -107,7 +107,14 @@ pub(super) async fn regulation_lookup(
     let article = args["article"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing article"))?;
-    let query = format!("《{regulation_name}》{article}");
+    let paragraph = args["paragraph"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let query = match paragraph {
+        Some(paragraph) => format!("《{regulation_name}》{article}{paragraph}"),
+        None => format!("《{regulation_name}》{article}"),
+    };
     let packets = state.db.with_read_conn(|conn| {
         let request = RetrievalRequest {
             query,
@@ -135,12 +142,26 @@ pub(super) async fn regulation_lookup(
                 .is_ok()
             })
         });
+        if let Some(paragraph) = paragraph {
+            packets.retain(|packet| packet_covers_requested_paragraph(packet, paragraph));
+        }
         Ok(packets)
     })?;
     Ok(serde_json::json!({
         "regulation": packets.first(),
         "found": !packets.is_empty(),
     }))
+}
+
+fn packet_covers_requested_paragraph(
+    packet: &crate::ai_runtime::ContextPacket,
+    paragraph: &str,
+) -> bool {
+    packet.citation_label.contains(paragraph)
+        || packet
+            .heading_path
+            .as_deref()
+            .is_some_and(|path| path.contains(paragraph))
 }
 
 #[cfg(test)]
@@ -179,6 +200,7 @@ mod tests {
         assert_eq!(layers[0]["layer"], serde_json::json!("fts"));
         assert_eq!(layers[0]["status"], serde_json::json!("ok"));
         assert_eq!(layers[1]["status"], serde_json::json!("index_not_ready"));
+
         // No free-text diagnostics, identifiers, or paths reach the model.
         let rendered = status.to_string();
         for leaked in [
@@ -207,5 +229,34 @@ mod tests {
             .collect();
         let status = retrieval_status(&many);
         assert_eq!(status["layers"].as_array().expect("layers").len(), 8);
+    }
+
+    fn article_packet() -> crate::ai_runtime::ContextPacket {
+        crate::ai_runtime::ContextPacket {
+            id: "exact-1".into(),
+            source_type: crate::ai_runtime::SourceType::Regulation,
+            source_path: Some("regs/a.md".into()),
+            title: "条例".into(),
+            heading_path: Some("《纪律处分条例》 > 第六条".into()),
+            source_span: None,
+            content_hash: String::new(),
+            excerpt: "整条正文".into(),
+            retrieval_reason: "exact_regulation_lookup".into(),
+            score: 0.99,
+            trust_level: crate::ai_runtime::TrustLevel::UserNote,
+            citation_label: "《纪律处分条例》 第六条".into(),
+            stale: false,
+            web: None,
+            corpus: None,
+        }
+    }
+
+    #[test]
+    fn requested_paragraph_does_not_accept_the_whole_article() {
+        let article = article_packet();
+        assert!(!packet_covers_requested_paragraph(&article, "第一款"));
+        let mut matching = article;
+        matching.citation_label = "《纪律处分条例》 第六条第一款".into();
+        assert!(packet_covers_requested_paragraph(&matching, "第一款"));
     }
 }

@@ -491,6 +491,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         args: &serde_json::Value,
         state_version: u64,
         user_authored_bootstrap: bool,
+        persisted_tool_call_id: &str,
     ) -> AppResult<ToolCallResult> {
         let discovery_only = tool_name == WEB_SEARCH_TOOL_NAME;
         let query = if discovery_only {
@@ -596,11 +597,17 @@ impl<'a> NormalRunToolExecutor<'a> {
             provider_selection_frozen: true,
             search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
                 run_id: self.accepted.run_id.clone(),
-                input_revision: u32::try_from(state_version).unwrap_or(u32::MAX),
-                action_id: if discovery_only {
-                    "web_search".into()
+                input_revision: crate::ai_runtime::dual_path_search::input_revision_from_query(
+                    &query,
+                ),
+                action_id: if persisted_tool_call_id.trim().is_empty() {
+                    if discovery_only {
+                        "web_search".into()
+                    } else {
+                        "web_fetch".into()
+                    }
                 } else {
-                    "web_fetch".into()
+                    persisted_tool_call_id.to_string()
                 },
                 attempt: 1,
             },
@@ -890,6 +897,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
         plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
+        plan.assert_live_vault(&self.state.vault_path()?)?;
         AgentRunRepository::validate_durable_apply_checkpoint_binding(
             &self.state.db,
             &self.accepted.run_id,
@@ -963,6 +971,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                         entry.name,
                         operation.change(),
                         Some(plan.relative_paths()),
+                        Some(plan.vault_id()),
                     )
                     .await;
                 if result.success {
@@ -1004,7 +1013,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 break;
             }
         }
-        Ok(results)
+        Ok(crate::ai_runtime::frozen_change_plan::merge_confirmed_results(plan, start, &results))
     }
 
     async fn dispatch_non_web_tool(
@@ -1012,6 +1021,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         tool_name: &str,
         args: &serde_json::Value,
         confirmed_write_targets: Option<&[String]>,
+        confirmed_vault_id: Option<&str>,
     ) -> ToolCallResult {
         let dispatch_context = ToolDispatchContext {
             db: Some(&self.state.db),
@@ -1023,6 +1033,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             run_id: Some(&self.accepted.run_id),
             write_target_path: self.context.write_target_path.as_deref(),
             confirmed_write_targets,
+            confirmed_vault_id,
             document_policy: Some(&self.context.document_policy),
             web_search_enabled: self.has_capability("web.search"),
             available_tool_names: &self.allowed_tool_names,
@@ -2114,10 +2125,11 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     &args,
                     state_version,
                     call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX),
+                    &persisted_tool_call_id,
                 )
                 .await?
             } else {
-                self.dispatch_non_web_tool(&call.function.name, &args, None)
+                self.dispatch_non_web_tool(&call.function.name, &args, None, None)
                     .await
             };
             self.record_tool_loop_diagnostic(serde_json::json!({"event":"result", "tool":entry.name,
@@ -5681,6 +5693,7 @@ mod tests {
             .dispatch_non_web_tool(
                 "read_note",
                 &serde_json::json!({"path": "blocked.md"}),
+                None,
                 None,
             )
             .await;

@@ -10,6 +10,7 @@ use std::pin::Pin;
 
 use crate::ai_runtime::final_answer_submission::{FinalAnswerSubmission, FINAL_ANSWER_TOOL_NAME};
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
+use crate::ai_runtime::model_turn_ledger;
 use crate::ai_runtime::run_context::{
     conversation_memory_prompt_fragment, CONVERSATION_HISTORY_COVERAGE_WARNING,
 };
@@ -29,7 +30,8 @@ use observations::ExecutionRecord;
 #[path = "agent_tool_loop/loop_projection.rs"]
 mod loop_projection;
 pub(crate) use loop_projection::{
-    observation_failure_type, LoopProjection, NEXT_ACTION_CONTINUE, NEXT_ACTION_SYNTHESIZE,
+    observation_failure_type, project_loop, LoopProjection, NEXT_ACTION_CONTINUE,
+    NEXT_ACTION_SYNTHESIZE,
 };
 
 #[path = "agent_tool_loop/payload_fit.rs"]
@@ -487,34 +489,23 @@ impl AgentToolLoop {
         }
     }
 
-    /// Project the Host's exact counters onto what the model may know.
-    ///
-    /// The Host keeps the real numbers; the model only learns whether another
-    /// action is affordable and which action to take next. Publishing exact
-    /// remaining quotas made the model narrate internal budget to the user and
-    /// treat a numeric allowance as a target.
     fn loop_projection(
         &self,
         remaining_model_turns: u32,
         tool_calls: u32,
         tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
+        tools: &[ToolSpec],
     ) -> LoopProjection {
-        let category_remaining = [
-            ToolBudgetClass::Local,
-            ToolBudgetClass::Network,
-            ToolBudgetClass::ExternalRead,
-            ToolBudgetClass::Runtime,
-            ToolBudgetClass::ConfirmedChange,
-        ]
-        .into_iter()
-        .all(|class| {
-            let used = tool_calls_by_class.get(&class).copied().unwrap_or_default();
-            used < self.tool_call_limit(class)
-        });
-        LoopProjection::for_observation(
-            remaining_model_turns > 1 && tool_calls < self.max_tool_calls && category_remaining,
-            None,
-            false,
+        project_loop(
+            remaining_model_turns,
+            tool_calls,
+            self.max_tool_calls,
+            tool_calls_by_class,
+            |class| self.tool_call_limit(class),
+            &tools
+                .iter()
+                .filter_map(|tool| catalog_tool_budget_class(&tool.name))
+                .collect::<HashSet<_>>(),
         )
     }
 
@@ -672,6 +663,7 @@ impl AgentToolLoop {
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
         mut usage: Option<&mut AgentToolLoopUsage>,
     ) -> AppResult<AgentToolLoopOutcome> {
+        let _ledger = model_turn_ledger::BindGuard::new(run_id, self.max_model_turns);
         let allowed_tools = tools
             .iter()
             .map(|tool| tool.name.as_str())
@@ -846,7 +838,8 @@ impl AgentToolLoop {
             .iter()
             .rposition(|message| matches!(message.role, MessageRole::User))
             .unwrap_or(messages.len());
-        while model_turns < self.max_model_turns {
+        while model_turns < self.max_model_turns
+            && model_turn_ledger::used(run_id) < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
             let is_final_model_turn = model_turns.saturating_add(1) >= self.max_model_turns;
             let remaining_completion_tokens = self
@@ -919,10 +912,10 @@ impl AgentToolLoop {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
             model_turns += 1;
-            executor.record_tool_loop_diagnostic(serde_json::json!({"event":"model", "modelTurns":model_turns}));
             if let Some(usage) = usage.as_deref_mut() {
-                usage.model_turns = model_turns;
+                usage.model_turns = model_turn_ledger::used(run_id).max(model_turns);
             }
+            executor.record_tool_loop_diagnostic(serde_json::json!({"event":"model", "modelTurns":model_turns}));
             let model_started_at = std::time::Instant::now();
             if executor.requires_web_observation() && !web_observation_performed {
                 observer.on_tools_starting()?;
@@ -935,7 +928,13 @@ impl AgentToolLoop {
                 observer,
             );
             let mut response = match provider_turn.await {
-                Ok(response) => response,
+                Ok(response) => {
+                    if let Some(usage) = usage.as_deref_mut() {
+                        usage.model_turns = model_turn_ledger::used(run_id)
+                            .max(model_turns);
+                    }
+                    response
+                }
                 Err(error) => {
                     let visible_draft = observer.visible_content_snapshot();
                     if !can_recover_visible_stream_error(&error, visible_draft.as_deref())
@@ -1304,7 +1303,7 @@ impl AgentToolLoop {
                 let (message, _) = tool_result_message(
                     call,
                     &result,
-                    self.loop_projection(self.max_model_turns.saturating_sub(model_turns), tool_calls, &tool_calls_by_class),
+                    self.loop_projection(self.max_model_turns.saturating_sub(model_turns), tool_calls, &tool_calls_by_class, active_tools),
                 )?;
                 messages.push(message);
                 continue;
@@ -1554,6 +1553,7 @@ impl AgentToolLoop {
                         self.max_model_turns.saturating_sub(model_turns),
                         tool_calls,
                         &tool_calls_by_class,
+                        active_tools,
                     )
                     .with_failure_type(observation_failure_type(&result));
                 let projected = tool_result_message(call, &result, projection);
@@ -1592,6 +1592,9 @@ impl AgentToolLoop {
                 ));
             }
             observer.on_tools_finished()?;
+            if let Some(usage) = usage.as_deref_mut() {
+                usage.model_turns = model_turn_ledger::used(run_id).max(model_turns);
+            }
             if round_had_success {
                 failed_service_rounds = 0;
                 no_progress_rounds = if round_made_progress { 0 } else { no_progress_rounds.saturating_add(1) };

@@ -9,6 +9,10 @@
 //! the user and treat a numeric allowance as a target. Both projections are
 //! derived from the same frozen Host counters, so they cannot disagree.
 
+use std::collections::{HashMap, HashSet};
+
+use crate::ai_runtime::tool_catalog::ToolBudgetClass;
+
 /// The model-visible half of one loop state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LoopProjection {
@@ -103,6 +107,25 @@ impl LoopProjection {
 pub(crate) const NEXT_ACTION_CONTINUE: &str = "continue_with_available_tools";
 pub(crate) const NEXT_ACTION_SYNTHESIZE: &str = "synthesize_from_current_observations";
 
+/// Project Host counters onto the model-visible continue/synthesize bit.
+pub(crate) fn project_loop(
+    remaining_model_turns: u32,
+    tool_calls: u32,
+    max_tool_calls: u32,
+    tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
+    class_limit: impl Fn(ToolBudgetClass) -> u32,
+    authorized_classes: &HashSet<ToolBudgetClass>,
+) -> LoopProjection {
+    let category_remaining = authorized_classes.iter().copied().any(|class| {
+        tool_calls_by_class.get(&class).copied().unwrap_or_default() < class_limit(class)
+    });
+    LoopProjection::for_observation(
+        remaining_model_turns > 1 && tool_calls < max_tool_calls && category_remaining,
+        None,
+        false,
+    )
+}
+
 /// Stable bounded failure kind for one tool result. Only closed Host vocabulary
 /// values are returned; an unmapped failure keeps the generic kind so Provider
 /// or resource text can never become the model-visible classification.
@@ -126,4 +149,38 @@ pub(crate) fn observation_failure_type(
         "deferred_for_feedback" => "deferred_for_feedback",
         _ => "failed",
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    fn limit(class: ToolBudgetClass) -> u32 {
+        match class {
+            ToolBudgetClass::Local => 12,
+            ToolBudgetClass::Network => 6,
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn remaining_authorized_class_still_allows_continue() {
+        let mut used = HashMap::new();
+        used.insert(ToolBudgetClass::Local, 12);
+        used.insert(ToolBudgetClass::Network, 1);
+        let authorized = HashSet::from([ToolBudgetClass::Local, ToolBudgetClass::Network]);
+        let projection = project_loop(4, 5, 24, &used, limit, &authorized);
+        assert!(projection.can_continue);
+    }
+
+    #[test]
+    fn exhausted_authorized_classes_must_synthesize() {
+        let mut used = HashMap::new();
+        used.insert(ToolBudgetClass::Network, 6);
+        let authorized = HashSet::from([ToolBudgetClass::Network]);
+        let projection = project_loop(4, 5, 24, &used, limit, &authorized);
+        assert!(!projection.can_continue);
+        assert_eq!(projection.next_action, NEXT_ACTION_SYNTHESIZE);
+    }
 }

@@ -6,7 +6,7 @@
 //! scans a vault unless Request Intake has resolved the Run to the
 //! `ImplicitVault` boundary.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::OptionalExtension;
@@ -382,8 +382,11 @@ pub(crate) fn history_coverage_is_incomplete(
     memory: Option<&ConversationMemory>,
     recent_messages: &[NormalSessionMessage],
 ) -> bool {
-    let Some(memory) = memory else {
+    if recent_messages.is_empty() {
         return false;
+    }
+    let Some(memory) = memory else {
+        return true;
     };
     let Some(first_recent) = recent_messages.first() else {
         return false;
@@ -799,6 +802,12 @@ mod history_selection_tests {
             &pair(5, "recent", 10)
         ));
     }
+
+    #[test]
+    fn missing_memory_with_recent_history_is_a_coverage_gap() {
+        assert!(history_coverage_is_incomplete(None, &pair(1, "recent", 2)));
+        assert!(!history_coverage_is_incomplete(None, &[]));
+    }
 }
 
 impl RunContextAssembler {
@@ -809,6 +818,19 @@ impl RunContextAssembler {
         session_key: &str,
         run_id: &str,
     ) -> AppResult<RunSituation> {
+        Self::assemble_with_expected_hashes(db, vault, session_key, run_id, &[])
+    }
+
+    /// Assemble after a confirmed write using the frozen expected post hashes.
+    pub(crate) fn assemble_with_expected_hashes(
+        db: &crate::storage::db::Database,
+        vault: Option<&Path>,
+        session_key: &str,
+        run_id: &str,
+        expected_post_hashes: &[(String, String)],
+    ) -> AppResult<RunSituation> {
+        let expected_post_hashes: HashMap<String, String> =
+            expected_post_hashes.iter().cloned().collect();
         let input = AgentRunRepository::prompt_input_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if input.explicit_references.len() > MAX_EXPLICIT_MATERIALS {
@@ -868,7 +890,7 @@ impl RunContextAssembler {
             }) {
                 return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
             }
-            match resolve_explicit_reference(vault, reference)? {
+            match resolve_explicit_reference(vault, reference, &expected_post_hashes)? {
                 ResolvedExplicitReference::Material(material) => {
                     let material_key = (
                         material.source_path.clone(),
@@ -1342,6 +1364,7 @@ struct ExactScopeFallback {
 fn resolve_explicit_reference(
     vault: Option<&Path>,
     reference: &StoredExplicitReference,
+    expected_post_hashes: &HashMap<String, String>,
 ) -> AppResult<ResolvedExplicitReference> {
     if reference.stale || reference.invalid_reason.is_some() {
         return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
@@ -1359,10 +1382,15 @@ fn resolve_explicit_reference(
     let full_content = std::fs::read_to_string(&resolved)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     let actual_hash = crate::cas::hash::content_hash_str(&full_content);
-    let expected_hash = reference
-        .content_hash
-        .as_deref()
-        .filter(|hash| !hash.trim().is_empty())
+    let expected_hash = expected_post_hashes
+        .get(&path)
+        .map(String::as_str)
+        .or_else(|| {
+            reference
+                .content_hash
+                .as_deref()
+                .filter(|hash| !hash.trim().is_empty())
+        })
         .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     if expected_hash != actual_hash {
         return Err(AppError::run(SafeRunErrorCode::ExplicitReferenceChanged));
@@ -1757,7 +1785,7 @@ mod fallback_version_tests {
             stale: false,
             invalid_reason: None,
         };
-        let fallback = match resolve_explicit_reference(Some(&vault), &reference)
+        let fallback = match resolve_explicit_reference(Some(&vault), &reference, &HashMap::new())
             .expect("first read validates version A")
         {
             ResolvedExplicitReference::ExactScopeFallback(fallback) => fallback,
@@ -1798,6 +1826,38 @@ mod fallback_version_tests {
             .expect_err("fallback must remain bound to initially validated version A");
 
         assert_eq!(error.to_string(), "agent_run_explicit_reference_changed");
+    }
+
+    #[test]
+    fn expected_post_hash_accepts_the_file_written_by_confirmation() {
+        let dir = tempfile::tempdir().expect("vault");
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+        let before = "before confirmation";
+        let after = "after confirmation";
+        std::fs::write(vault.join("notes/target.md"), after).expect("written file");
+        let reference = StoredExplicitReference {
+            id: "target".into(),
+            kind: ContextReferenceKind::Note,
+            file_path: Some("notes/target.md".into()),
+            content_hash: Some(crate::cas::hash::content_hash_str(before)),
+            utf8_range: None,
+            stale: false,
+            invalid_reason: None,
+        };
+        assert!(
+            resolve_explicit_reference(Some(&vault), &reference, &HashMap::new()).is_err(),
+            "pre-write hash must still fail"
+        );
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "notes/target.md".into(),
+            crate::cas::hash::content_hash_str(after),
+        );
+        assert!(
+            resolve_explicit_reference(Some(&vault), &reference, &overrides).is_ok(),
+            "post-write hash must assemble the confirmed file"
+        );
     }
 }
 

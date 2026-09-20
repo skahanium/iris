@@ -203,3 +203,93 @@ fn frozen_change_set_requires_a_hash_chain_when_an_operation_revisits_a_target()
         "agent_run_invalid_change_plan"
     );
 }
+
+#[test]
+fn frozen_plan_rejects_a_live_vault_that_does_not_match_the_frozen_identity() {
+    let plan = FrozenChangePlan::freeze(input(serde_json::json!({ "replacement": "new" })))
+        .expect("freeze");
+    let matching = tempfile::tempdir().expect("matching vault");
+    let matching_id = crate::cas::hash::content_hash_str(&matching.path().to_string_lossy());
+    let mut matching_input = input(serde_json::json!({ "replacement": "new" }));
+    matching_input.vault_id = matching_id;
+    let matching_plan = FrozenChangePlan::freeze(matching_input).expect("freeze matching vault");
+    matching_plan
+        .assert_live_vault(matching.path())
+        .expect("frozen vault identity must accept the live vault it was bound to");
+
+    let switched = tempfile::tempdir().expect("switched vault");
+    assert_eq!(
+        plan.assert_live_vault(switched.path())
+            .expect_err("a different live vault must expire the frozen plan")
+            .to_string(),
+        "agent_run_confirmation_expired"
+    );
+}
+
+#[test]
+fn recovered_suffix_failure_stays_on_the_unfinished_operation() {
+    let plan = FrozenChangePlan::freeze_set(set_input(vec![
+        operation("tool-1", "notes/a.md", "a0", "a1"),
+        operation("tool-2", "notes/b.md", "b0", "b1"),
+    ]))
+    .expect("freeze two operations");
+    let suffix = vec![crate::ai_runtime::ToolCallResult {
+        tool_name: "insert_text_at_cursor".into(),
+        success: false,
+        output: serde_json::json!({
+            "error": "frozen_change_base_hash_drift",
+            "tool_call_id": "tool-2",
+        }),
+        duration_ms: 4,
+        tokens_used: None,
+        error: Some("frozen_change_base_hash_drift".into()),
+    }];
+    let merged = super::frozen_change_plan::merge_confirmed_results(&plan, 1, &suffix);
+    assert_eq!(merged.len(), 2);
+    assert!(merged[0].success, "checkpoint prefix must stay successful");
+    assert_eq!(merged[0].output["tool_call_id"], "tool-1");
+    assert!(!merged[1].success);
+    assert_eq!(merged[1].output["tool_call_id"], "tool-2");
+    assert_eq!(
+        merged[1].error.as_deref(),
+        Some("frozen_change_base_hash_drift")
+    );
+}
+
+#[test]
+fn swapped_suffix_results_align_by_tool_call_id_not_operation_name() {
+    let plan = FrozenChangePlan::freeze_set(set_input(vec![
+        operation("tool-1", "notes/a.md", "a0", "a1"),
+        operation("tool-2", "notes/b.md", "b0", "b1"),
+    ]))
+    .expect("freeze two operations");
+    let suffix = vec![
+        crate::ai_runtime::ToolCallResult {
+            tool_name: "insert_text_at_cursor".into(),
+            success: false,
+            output: serde_json::json!({
+                "error": "frozen_change_base_hash_drift",
+                "tool_call_id": "tool-2",
+            }),
+            duration_ms: 4,
+            tokens_used: None,
+            error: Some("frozen_change_base_hash_drift".into()),
+        },
+        crate::ai_runtime::ToolCallResult {
+            tool_name: "insert_text_at_cursor".into(),
+            success: true,
+            output: serde_json::json!({ "tool_call_id": "tool-1" }),
+            duration_ms: 2,
+            tokens_used: None,
+            error: None,
+        },
+    ];
+    let merged = super::frozen_change_plan::merge_confirmed_results(&plan, 0, &suffix);
+    assert!(merged[0].success, "tool-1 must stay on operation 0");
+    assert_eq!(merged[0].output["tool_call_id"], "tool-1");
+    assert!(
+        !merged[1].success,
+        "tool-2 failure must stay on operation 1"
+    );
+    assert_eq!(merged[1].output["tool_call_id"], "tool-2");
+}

@@ -404,6 +404,46 @@ async fn minimax_request_uses_canonical_model_id_when_casing_differs() {
 }
 
 #[tokio::test]
+async fn native_search_does_not_post_when_c13_ledger_is_exhausted() {
+    let run_id = "run-native-c13-exhausted";
+    let _guard = crate::ai_runtime::model_turn_ledger::BindGuard::new(run_id, 0);
+    let transport = ScriptedTransport::ok(responses_live_shape());
+    let mut subrequest = draft("approved query", None);
+    subrequest.identity.run_id = run_id.into();
+    let outcome = execute_native_search(
+        subrequest,
+        &transport,
+        Some("secret"),
+        "https://api.minimaxi.com/v1",
+    )
+    .await;
+    assert!(transport.recorded_url.lock().expect("url").is_none());
+    assert_eq!(
+        outcome.failure,
+        Some(RouteFailureClass::ProtocolOrResultInsufficient)
+    );
+}
+
+#[tokio::test]
+async fn native_search_posts_claim_the_c13_ledger() {
+    let run_id = "run-native-c13-claim";
+    let _guard = crate::ai_runtime::model_turn_ledger::BindGuard::new(run_id, 8);
+    let transport = ScriptedTransport::ok(responses_live_shape());
+    let mut subrequest = draft("approved query", None);
+    subrequest.identity.run_id = run_id.into();
+    let outcome = execute_native_search(
+        subrequest,
+        &transport,
+        Some("secret"),
+        "https://api.minimaxi.com/v1",
+    )
+    .await;
+    assert!(transport.recorded_url.lock().expect("url").is_some());
+    assert!(outcome.has_retrieval_credentials);
+    assert_eq!(crate::ai_runtime::model_turn_ledger::used(run_id), 1);
+}
+
+#[tokio::test]
 async fn http_401_is_temporary_failure_not_unsupported() {
     let transport = ScriptedTransport {
         status: 401,

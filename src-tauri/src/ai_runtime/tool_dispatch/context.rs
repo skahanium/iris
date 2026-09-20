@@ -21,6 +21,9 @@ pub struct ToolDispatchContext<'a> {
     /// Exact paths from a consumed frozen change set. This exists only during
     /// deterministic post-confirmation dispatch and never widens a model turn.
     pub confirmed_write_targets: Option<&'a [String]>,
+    /// Frozen vault identity for confirmed writes. Present only with
+    /// `confirmed_write_targets` so a vault switch cannot reuse the plan.
+    pub confirmed_vault_id: Option<&'a str>,
     /// Immutable per-Run document policy evaluated before content can cross a
     /// tool boundary. `None` is reserved for isolated unit tests only.
     pub document_policy:
@@ -57,6 +60,13 @@ impl<'a> ToolDispatchContext<'a> {
             return Err(AppError::run(SafeRunErrorCode::Cancelled));
         }
         Ok(())
+    }
+
+    pub(crate) fn ensure_confirmed_vault(&self, vault: &std::path::Path) -> AppResult<()> {
+        let Some(expected) = self.confirmed_vault_id else {
+            return Ok(());
+        };
+        crate::ai_runtime::frozen_change_plan::assert_live_vault_id(vault, expected)
     }
 
     pub(crate) fn ensure_write_target_matches(&self, path: &str) -> AppResult<()> {

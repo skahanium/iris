@@ -1096,6 +1096,23 @@ pub struct TokenUsage {
     pub prompt_cache_miss_tokens: u32,
 }
 
+impl TokenUsage {
+    /// Add another attempt's tokens without replacing earlier retries.
+    pub fn saturating_acc(&mut self, other: &TokenUsage) {
+        self.prompt_tokens = self.prompt_tokens.saturating_add(other.prompt_tokens);
+        self.completion_tokens = self
+            .completion_tokens
+            .saturating_add(other.completion_tokens);
+        self.total_tokens = self.total_tokens.saturating_add(other.total_tokens);
+        self.prompt_cache_hit_tokens = self
+            .prompt_cache_hit_tokens
+            .saturating_add(other.prompt_cache_hit_tokens);
+        self.prompt_cache_miss_tokens = self
+            .prompt_cache_miss_tokens
+            .saturating_add(other.prompt_cache_miss_tokens);
+    }
+}
+
 /// LLM provider configuration prepared for one immediate dispatch.
 ///
 /// Configuration stored in settings and model registries is deliberately

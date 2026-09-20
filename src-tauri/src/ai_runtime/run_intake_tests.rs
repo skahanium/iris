@@ -1710,6 +1710,38 @@ fn rejected_confirmation_cancels_without_write() {
 }
 
 #[test]
+fn foreign_vault_expires_unconsumed_confirmation() {
+    let (db, accepted, confirmation_id, awaiting_state_version) =
+        accepted_run_awaiting_frozen_change_confirmation();
+    AgentRunRepository::expire_pending_confirmations_for_foreign_vault(&db, "other-vault")
+        .expect("expire foreign-vault plans");
+    let plan_hash: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT plan_hash FROM agent_run_confirmations WHERE confirmation_id = ?1",
+                [&confirmation_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("plan hash");
+    let approval = AgentRunRepository::approve_frozen_confirmation(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+        &confirmation_id,
+        &plan_hash,
+        awaiting_state_version,
+        0,
+    );
+    assert_eq!(
+        approval.err().map(|error| error.to_string()),
+        Some("agent_run_confirmation_expired".to_string()),
+        "unconsumed confirmation must not survive a vault switch"
+    );
+}
+
+#[test]
 fn resume_is_cas_guarded_and_only_available_for_paused_durable_apply() {
     let (db, accepted, confirmation_id, awaiting_state_version) =
         accepted_run_awaiting_frozen_change_confirmation();

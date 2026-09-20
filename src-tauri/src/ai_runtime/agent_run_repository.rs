@@ -1737,6 +1737,45 @@ impl AgentRunRepository {
             })
         })
     }
+
+    /// Drop unconsumed confirmations whose frozen vault is no longer live.
+    pub(crate) fn expire_pending_confirmations_for_foreign_vault(
+        db: &Database,
+        live_vault_id: &str,
+    ) -> AppResult<usize> {
+        db.with_conn(|conn| {
+            let pending: Vec<(String, String)> = {
+                let mut statement = conn.prepare(
+                    "SELECT confirmation_id, plan_json
+                     FROM agent_run_confirmations WHERE status = 'pending'",
+                )?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            let now = chrono::Utc::now().to_rfc3339();
+            let mut expired = 0usize;
+            for (confirmation_id, plan_json) in pending {
+                let Ok(plan) =
+                    crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
+                        &plan_json,
+                    )
+                else {
+                    continue;
+                };
+                if plan.vault_id() == live_vault_id {
+                    continue;
+                }
+                expired += conn.execute(
+                    "UPDATE agent_run_confirmations
+                     SET status = 'rejected', consumed_at = ?1
+                     WHERE confirmation_id = ?2 AND status = 'pending'",
+                    rusqlite::params![now, confirmation_id],
+                )?;
+            }
+            Ok(expired)
+        })
+    }
+
     /// Return only the safe Run snapshot and ordered persisted events.
     pub(crate) fn get(db: &Database, run_id: &str) -> AppResult<Option<AssistantRunGetResponse>> {
         Self::get_scoped(db, run_id, None)

@@ -19,12 +19,20 @@ struct AnthropicToolUseBlock {
     input_json: String,
 }
 
+#[derive(Default)]
+struct AnthropicThinkingBlock {
+    thinking: String,
+    signature: String,
+    redacted_data: Option<String>,
+}
+
 /// Incremental Anthropic Messages stream: text, tool_use blocks, usage, and
 /// the provider's last non-empty `delta.stop_reason`.
 #[derive(Default)]
 pub(crate) struct AnthropicStreamState {
     content: String,
     tool_blocks: BTreeMap<usize, AnthropicToolUseBlock>,
+    thinking_blocks: BTreeMap<usize, AnthropicThinkingBlock>,
     pub(crate) usage: TokenUsage,
     finish_reason: Option<String>,
     retrieval_observation: Option<RetrievalObservation>,
@@ -57,6 +65,19 @@ impl AnthropicStreamState {
                             }
                         }
                     }
+                    Some("thinking") => {
+                        let entry = self.thinking_blocks.entry(index).or_default();
+                        if let Some(text) = block["thinking"].as_str() {
+                            entry.thinking.push_str(text);
+                        }
+                        if let Some(signature) = block["signature"].as_str() {
+                            entry.signature.push_str(signature);
+                        }
+                    }
+                    Some("redacted_thinking") => {
+                        self.thinking_blocks.entry(index).or_default().redacted_data =
+                            block["data"].as_str().map(str::to_string);
+                    }
                     _ => {}
                 }
             }
@@ -77,6 +98,24 @@ impl AnthropicStreamState {
                                 .or_default()
                                 .input_json
                                 .push_str(partial);
+                        }
+                    }
+                    Some("thinking_delta") => {
+                        if let Some(text) = delta["thinking"].as_str() {
+                            self.thinking_blocks
+                                .entry(index)
+                                .or_default()
+                                .thinking
+                                .push_str(text);
+                        }
+                    }
+                    Some("signature_delta") => {
+                        if let Some(signature) = delta["signature"].as_str() {
+                            self.thinking_blocks
+                                .entry(index)
+                                .or_default()
+                                .signature
+                                .push_str(signature);
                         }
                     }
                     _ => {}
@@ -144,10 +183,37 @@ impl AnthropicStreamState {
             tool_calls,
             usage: self.usage,
             finish_reason,
-            reasoning_content: None,
+            reasoning_content: encode_thinking_blocks(self.thinking_blocks),
             continuation: None,
             retrieval_observation: self.retrieval_observation,
         }
+    }
+}
+
+fn encode_thinking_blocks(blocks: BTreeMap<usize, AnthropicThinkingBlock>) -> Option<String> {
+    let values: Vec<serde_json::Value> = blocks
+        .into_values()
+        .filter_map(|block| {
+            if let Some(data) = block.redacted_data.filter(|value| !value.is_empty()) {
+                return Some(serde_json::json!({
+                    "type": "redacted_thinking",
+                    "data": data,
+                }));
+            }
+            if block.thinking.is_empty() && block.signature.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({
+                "type": "thinking",
+                "thinking": block.thinking,
+                "signature": block.signature,
+            }))
+        })
+        .collect();
+    if values.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&values).ok()
     }
 }
 
@@ -465,5 +531,47 @@ mod tests {
             .candidates
             .iter()
             .any(|hit| hit.url == "https://example.com/anthropic"));
+    }
+
+    #[test]
+    fn thinking_deltas_are_collected_for_tool_continuation() {
+        let response = apply_all(&[
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "thinking",
+                    "thinking": "",
+                    "signature": ""
+                }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": { "type": "thinking_delta", "thinking": "先核验来源。" }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": { "type": "signature_delta", "signature": "sig_abc" }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": { "type": "text_delta", "text": "已检索。" }
+            }),
+            serde_json::json!({
+                "type": "message_delta",
+                "delta": { "stop_reason": "end_turn" }
+            }),
+        ]);
+        let reasoning = response
+            .reasoning_content
+            .expect("thinking must be replayable");
+        let blocks: serde_json::Value = serde_json::from_str(&reasoning).expect("json blocks");
+        assert_eq!(blocks[0]["type"], "thinking");
+        assert_eq!(blocks[0]["thinking"], "先核验来源。");
+        assert_eq!(blocks[0]["signature"], "sig_abc");
+        assert_eq!(response.content.as_deref(), Some("已检索。"));
     }
 }

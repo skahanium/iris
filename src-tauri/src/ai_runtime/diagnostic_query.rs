@@ -131,6 +131,31 @@ fn payload_reason(event: &BoundaryEventRecord) -> Option<&str> {
         .and_then(serde_json::Value::as_str)
 }
 
+fn payload_success(event: &BoundaryEventRecord) -> Option<bool> {
+    event
+        .payload
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+}
+
+fn is_direct_failure_event(event: &BoundaryEventRecord) -> bool {
+    matches!(payload_event(event), Some("tool_error"))
+        || (payload_event(event) == Some("result") && payload_success(event) == Some(false))
+}
+
+fn is_successful_result_event(event: &BoundaryEventRecord) -> bool {
+    payload_event(event) == Some("result") && payload_success(event) == Some(true)
+}
+
+fn later_success_cleared_a_failure(events: &[BoundaryEventRecord]) -> bool {
+    let Some(last_failure) = events.iter().rposition(is_direct_failure_event) else {
+        return false;
+    };
+    events[last_failure.saturating_add(1)..]
+        .iter()
+        .any(is_successful_result_event)
+}
+
 fn payload_tool(event: &BoundaryEventRecord) -> Option<&str> {
     event.tool_instance.as_deref().or_else(|| {
         event
@@ -583,7 +608,7 @@ pub(crate) fn interpret_events(
         evidence_gaps.len(),
     );
 
-    let recovered = !direct_failures.is_empty() && !recovery_results.is_empty();
+    let recovered = later_success_cleared_a_failure(events);
     let clean_pass = record_completeness == RecordCompleteness::Complete
         && evidence_gaps.is_empty()
         && pending_root_causes.is_empty()
@@ -941,6 +966,44 @@ mod tests {
                 .any(|item| { item.confirmed_source.as_deref() == Some("recovery_exhausted") }),
             "{:?}",
             report.pending_root_causes
+        );
+    }
+
+    #[test]
+    fn a_repair_event_alone_is_not_recovered() {
+        let repair = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"repair","round":1}),
+        );
+        let report = interpret_events("run-1", &[repair], false);
+        assert!(
+            !report.headline.contains("已恢复"),
+            "repair is an attempt, not a recovered outcome: {}",
+            report.headline
+        );
+    }
+
+    #[test]
+    fn a_failure_plus_repair_without_later_success_is_not_recovered() {
+        let failure = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"tool_error","tool":"web_fetch","reason":"provider_timeout"}),
+        );
+        let repair = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"repair","round":1}),
+        );
+        let report = interpret_events("run-1", &[failure, repair], false);
+        assert!(
+            !report.headline.contains("已恢复"),
+            "repair without a later successful result is not recovered: {}",
+            report.headline
         );
     }
 

@@ -92,6 +92,7 @@ pub mod mcp_runtime_registry;
 #[cfg(test)]
 pub(crate) mod mcp_stdio_test_support;
 pub mod model_gateway;
+pub(crate) mod model_turn_ledger;
 pub(crate) mod normal_run_service;
 #[cfg(test)]
 mod normal_run_service_tests;
