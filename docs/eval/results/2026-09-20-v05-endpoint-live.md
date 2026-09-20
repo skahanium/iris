@@ -11,32 +11,32 @@
 
 ## 一、本轮批准对照
 
-| # | 窗口要求 | 本轮事实 |
-| - | -------- | -------- |
-| 1 | 端点范围 | MiniMax-M3 原生搜索协议探针；DeepSeek 不在本轮 |
-| 2 | 费用上限 | 用户声明本轮 MiniMax 无上限；实际只发了 **2** 次诊断请求 |
-| 3 | 凭据 | 本地加密存储 `iris.llm.minimax` 密文存在且可解密；值未写入本文件、日志或仓库 |
-| 4 | 原生搜索厂商 | MiniMax-M3；主对话目录族仍是 `OpenAiCompatibleChatCompletions`（`https://api.minimaxi.com/v1`） |
+| #   | 窗口要求     | 本轮事实                                                                                        |
+| --- | ------------ | ----------------------------------------------------------------------------------------------- |
+| 1   | 端点范围     | MiniMax-M3 原生搜索协议探针；DeepSeek 不在本轮                                                  |
+| 2   | 费用上限     | 用户声明本轮 MiniMax 无上限；实际只发了 **2** 次诊断请求                                        |
+| 3   | 凭据         | 本地加密存储 `iris.llm.minimax` 密文存在且可解密；值未写入本文件、日志或仓库                    |
+| 4   | 原生搜索厂商 | MiniMax-M3；主对话目录族仍是 `OpenAiCompatibleChatCompletions`（`https://api.minimaxi.com/v1`） |
 
 ## 二、调用摘要
 
 诊断提示（厂商文档示例，非用户笔记）：`What is the weather in Shanghai?`；`model=MiniMax-M3`；`stream=false`；超时 180s。
 
-| 项 | 调用 1 | 调用 2 |
-| -- | ------ | ------ |
-| 名称 | `anthropic_minimaxi_com` | `responses_minimaxi_com` |
-| 主机／路径 | `api.minimaxi.com/anthropic/v1/messages` | `api.minimaxi.com/v1/responses` |
-| 协议 | Anthropic Messages | OpenAI Responses |
-| 工具声明 | `tools: [{type:web_search_20250305, name:web_search}]` | `tools: [{type:web_search}]` |
-| 请求结构 | 角色 `user`×1；`max_tokens=2048`；未流式 | `input` 字段存在；未流式 |
-| HTTP | 200 | 200 |
-| 耗时 | 1909 ms | 4324 ms |
-| 关联 id | `06fde7b6018967af796cc0a8c8757978` | `06fde7b817051d34180063d32f4cf78a` |
-| 终止／状态 | `stop_reason=end_turn` | `status=completed`（无 `stop_reason`） |
-| 用量 | in 558 / out 139 / cache_read 128 | in 6276 / out 415 / total 6691 / cached 1292 |
-| 内容块类型 | `message`, `text` | `web_search_call`, `search`, `message`, `output_text`, `url_citation`×10, `web_search` |
-| 检索凭据 | **无** | **有**：`web_search_call`×1（`action.query=Shanghai weather today`，`status=completed`）；message 内 `url_citation`×10 |
-| 引用主机（去重） | （无） | `www.msn.com`, `m.gmw.cn`, `th.thetimenow.com`, `www.toutiao.com`, `www.thepaper.cn`, `www.shhuangpu.gov.cn`, `www.shobserver.com`, `www.weather.com.cn`, `www.163.com` |
+| 项               | 调用 1                                                 | 调用 2                                                                                                                                                                  |
+| ---------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 名称             | `anthropic_minimaxi_com`                               | `responses_minimaxi_com`                                                                                                                                                |
+| 主机／路径       | `api.minimaxi.com/anthropic/v1/messages`               | `api.minimaxi.com/v1/responses`                                                                                                                                         |
+| 协议             | Anthropic Messages                                     | OpenAI Responses                                                                                                                                                        |
+| 工具声明         | `tools: [{type:web_search_20250305, name:web_search}]` | `tools: [{type:web_search}]`                                                                                                                                            |
+| 请求结构         | 角色 `user`×1；`max_tokens=2048`；未流式               | `input` 字段存在；未流式                                                                                                                                                |
+| HTTP             | 200                                                    | 200                                                                                                                                                                     |
+| 耗时             | 1909 ms                                                | 4324 ms                                                                                                                                                                 |
+| 关联 id          | `06fde7b6018967af796cc0a8c8757978`                     | `06fde7b817051d34180063d32f4cf78a`                                                                                                                                      |
+| 终止／状态       | `stop_reason=end_turn`                                 | `status=completed`（无 `stop_reason`）                                                                                                                                  |
+| 用量             | in 558 / out 139 / cache_read 128                      | in 6276 / out 415 / total 6691 / cached 1292                                                                                                                            |
+| 内容块类型       | `message`, `text`                                      | `web_search_call`, `search`, `message`, `output_text`, `url_citation`×10, `web_search`                                                                                  |
+| 检索凭据         | **无**                                                 | **有**：`web_search_call`×1（`action.query=Shanghai weather today`，`status=completed`）；message 内 `url_citation`×10                                                  |
+| 引用主机（去重） | （无）                                                 | `www.msn.com`, `m.gmw.cn`, `th.thetimenow.com`, `www.toutiao.com`, `www.thepaper.cn`, `www.shhuangpu.gov.cn`, `www.shobserver.com`, `www.weather.com.cn`, `www.163.com` |
 
 未调用：`api.minimax.io`（国内生产主机已给出可判定结果，未做第三跳）。
 
@@ -44,17 +44,17 @@
 
 本轮是 **G03 原生搜索协议探针**，不是 MiniMax 全协议矩阵。未跑的项记「未运行」，不得用调用 2 的 200 填绿。
 
-| 检查项 | Anthropic Messages（调用 1） | Responses（调用 2） |
-| ------ | ---------------------------- | ------------------- |
-| 正常结束 | `stop_reason=end_turn` 原样保留 | `status=completed`；无 Messages 式 `stop_reason` |
-| 长度截断 | 未运行 | 未运行 |
-| 工具结束（客户端 `tool_use`） | 未运行（服务端工具，无客户端续轮） | 未运行（单请求内完成搜索） |
-| 缺失终止事件 | 未运行 | 未运行 |
-| 尾事件 | 未运行（非流式） | 未运行（非流式） |
-| 工具续轮字段 | 未运行 | 未运行 |
-| 稳定指令 | 未运行 | 响应含 `instructions=null`；未做续轮 |
-| **原生搜索事件／引用（G03）** | **协议／结果不足**：200 且只有 `text`，无 `server_tool_use`／`web_search_tool_result`／URL。模型正文表示没有实时天气——这是生成文字，**不是**「已搜」，也**不得**写成「模型不支持」 | **有可核实检索凭据**：`web_search_call` + HTTPS `url_citation`。模型自行编造 URL 不能解释该结构 |
-| 计费与权限（Q17） | 用量可关联到本次调用 id；未扩大权限范围 | 同左；input_tokens 明显高于调用 1，与服务端检索一致。未把用量记入 Iris `K06` 账本（探针在运行时外） |
+| 检查项                        | Anthropic Messages（调用 1）                                                                                                                                                       | Responses（调用 2）                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 正常结束                      | `stop_reason=end_turn` 原样保留                                                                                                                                                    | `status=completed`；无 Messages 式 `stop_reason`                                                    |
+| 长度截断                      | 未运行                                                                                                                                                                             | 未运行                                                                                              |
+| 工具结束（客户端 `tool_use`） | 未运行（服务端工具，无客户端续轮）                                                                                                                                                 | 未运行（单请求内完成搜索）                                                                          |
+| 缺失终止事件                  | 未运行                                                                                                                                                                             | 未运行                                                                                              |
+| 尾事件                        | 未运行（非流式）                                                                                                                                                                   | 未运行（非流式）                                                                                    |
+| 工具续轮字段                  | 未运行                                                                                                                                                                             | 未运行                                                                                              |
+| 稳定指令                      | 未运行                                                                                                                                                                             | 响应含 `instructions=null`；未做续轮                                                                |
+| **原生搜索事件／引用（G03）** | **协议／结果不足**：200 且只有 `text`，无 `server_tool_use`／`web_search_tool_result`／URL。模型正文表示没有实时天气——这是生成文字，**不是**「已搜」，也**不得**写成「模型不支持」 | **有可核实检索凭据**：`web_search_call` + HTTPS `url_citation`。模型自行编造 URL 不能解释该结构     |
+| 计费与权限（Q17）             | 用量可关联到本次调用 id；未扩大权限范围                                                                                                                                            | 同左；input_tokens 明显高于调用 1，与服务端检索一致。未把用量记入 Iris `K06` 账本（探针在运行时外） |
 
 ## 四、适用范围结论
 

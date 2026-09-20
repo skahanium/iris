@@ -10,24 +10,24 @@
 
 ## 一、本轮批准对照
 
-| # | 窗口要求 | 本轮事实 |
-| - | -------- | -------- |
-| 1 | 端点范围 | DeepSeek-Flash 原生搜索协议探针；模型出站名 `deepseek-flash`，目录 id `deepseek-v4-flash` |
-| 2 | 费用上限 | 用户声明本轮 DeepSeek 无上限 |
-| 3 | 凭据 | 本地加密存储 `iris.llm.deepseek` 密文存在且可解密；值未写入本文件、日志或仓库 |
-| 4 | 原生搜索厂商 | DeepSeek-Flash；**不得**套用 MiniMax-M3 的 Responses `/v1/responses` 协议 |
+| #   | 窗口要求     | 本轮事实                                                                                  |
+| --- | ------------ | ----------------------------------------------------------------------------------------- |
+| 1   | 端点范围     | DeepSeek-Flash 原生搜索协议探针；模型出站名 `deepseek-flash`，目录 id `deepseek-v4-flash` |
+| 2   | 费用上限     | 用户声明本轮 DeepSeek 无上限                                                              |
+| 3   | 凭据         | 本地加密存储 `iris.llm.deepseek` 密文存在且可解密；值未写入本文件、日志或仓库             |
+| 4   | 原生搜索厂商 | DeepSeek-Flash；**不得**套用 MiniMax-M3 的 Responses `/v1/responses` 协议                 |
 
 ## 二、与 MiniMax-M3 的协议差别（文档 + live）
 
 官方现页（2026-09-20 抓取 `api-docs.deepseek.com`）：
 
-| 面 | DeepSeek 现页 | MiniMax-M3 live（对照） |
-| -- | ------------- | ---------------------- |
-| Chat Completions 工具 | 仅 `function` | 主对话仍是 Chat Completions |
-| Responses | `POST https://api.deepseek.com/responses`（`/v1/responses` live 也 200）；`web_search` **忽略**；`tool_choice` 无 `{type:web_search}` | `POST https://api.minimaxi.com/v1/responses` + `{type:web_search}` **有** `web_search_call` |
-| Anthropic | `https://api.deepseek.com/anthropic`；Claude Code 文档声称服务端 Web Search；消息块支持回传 `server_tool_use`／`web_search_tool_result` | 同主机 Anthropic `web_search_20250305` 为 200 纯文本，**无**检索 |
-| 思考 | 默认开启；子请求需 `thinking.disabled` / `reasoning.effort=none` | Responses 无此默认思考字段 |
-| 模型名 | 出站 `deepseek-flash`；遗留 `deepseek-v4-flash` 仍接受 | 出站 `MiniMax-M3` |
+| 面                    | DeepSeek 现页                                                                                                                           | MiniMax-M3 live（对照）                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Chat Completions 工具 | 仅 `function`                                                                                                                           | 主对话仍是 Chat Completions                                                                 |
+| Responses             | `POST https://api.deepseek.com/responses`（`/v1/responses` live 也 200）；`web_search` **忽略**；`tool_choice` 无 `{type:web_search}`   | `POST https://api.minimaxi.com/v1/responses` + `{type:web_search}` **有** `web_search_call` |
+| Anthropic             | `https://api.deepseek.com/anthropic`；Claude Code 文档声称服务端 Web Search；消息块支持回传 `server_tool_use`／`web_search_tool_result` | 同主机 Anthropic `web_search_20250305` 为 200 纯文本，**无**检索                            |
+| 思考                  | 默认开启；子请求需 `thinking.disabled` / `reasoning.effort=none`                                                                        | Responses 无此默认思考字段                                                                  |
+| 模型名                | 出站 `deepseek-flash`；遗留 `deepseek-v4-flash` 仍接受                                                                                  | 出站 `MiniMax-M3`                                                                           |
 
 搜索引擎与旧归档仍可能显示 DeepSeek Responses 服务端 `web_search`。**以现页 + 本轮 live 为准**，不得按旧索引接线。
 
@@ -35,16 +35,16 @@
 
 诊断提示：`What is the weather in Shanghai?`；`model=deepseek-flash`；`stream=false`。
 
-| 名称 | 路径 | 工具声明 | HTTP | 耗时 | 结构 | 检索凭据 |
-| ---- | ---- | -------- | ---- | ---- | ---- | -------- |
-| `responses_root_auto` | `/responses` | `{type:web_search}` + `tool_choice=auto` + `reasoning.effort=none` | 200 | ~0.1–0.2s | `message,output_text,text,web_search`（工具回声） | **无** `web_search_call` |
-| `responses_root_forced` | `/responses` | `{type:web_search}` + `tool_choice={type:web_search}` | 200 | ~0.1s | 同上 | **无**（forced 被静默忽略） |
-| `responses_root_required` | `/responses` | `{type:web_search}` + `tool_choice=required` | 200 | ~0.1s | 同上 | **无** |
-| `responses_root_web_search_2025_08_26` | `/responses` | `{type:web_search_2025_08_26}` | 200 | ~0.1s | 工具回声 `web_search_2025_08_26` | **无** |
-| `responses_v1_auto` | `/v1/responses` | 同 auto | 200 | ~0.1s | 同工具回声 | **无**（路径可通，仍无检索） |
-| `chat_v1_web_search_tool` | `/v1/chat/completions` | `{type:web_search}` | **422** | ~0.06s | `invalid_request_error` | 无 |
-| `anthropic_web_search_20250305` | `/anthropic/v1/messages` | `web_search_20250305` + `name=web_search` | 200 | 一次跳过（纯 `text`）；一次命中 | 命中：`server_tool_use`,`web_search_tool_result`,`web_search_result` | **有**（Anthropic 块，不是 `url_citation`） |
-| `anthropic_type_web_search` | `/anthropic/v1/messages` | `{type:web_search,name:web_search}` | **422** | ~0.1s | `invalid_request_error` | 无 |
+| 名称                                   | 路径                     | 工具声明                                                           | HTTP    | 耗时                            | 结构                                                                 | 检索凭据                                    |
+| -------------------------------------- | ------------------------ | ------------------------------------------------------------------ | ------- | ------------------------------- | -------------------------------------------------------------------- | ------------------------------------------- |
+| `responses_root_auto`                  | `/responses`             | `{type:web_search}` + `tool_choice=auto` + `reasoning.effort=none` | 200     | ~0.1–0.2s                       | `message,output_text,text,web_search`（工具回声）                    | **无** `web_search_call`                    |
+| `responses_root_forced`                | `/responses`             | `{type:web_search}` + `tool_choice={type:web_search}`              | 200     | ~0.1s                           | 同上                                                                 | **无**（forced 被静默忽略）                 |
+| `responses_root_required`              | `/responses`             | `{type:web_search}` + `tool_choice=required`                       | 200     | ~0.1s                           | 同上                                                                 | **无**                                      |
+| `responses_root_web_search_2025_08_26` | `/responses`             | `{type:web_search_2025_08_26}`                                     | 200     | ~0.1s                           | 工具回声 `web_search_2025_08_26`                                     | **无**                                      |
+| `responses_v1_auto`                    | `/v1/responses`          | 同 auto                                                            | 200     | ~0.1s                           | 同工具回声                                                           | **无**（路径可通，仍无检索）                |
+| `chat_v1_web_search_tool`              | `/v1/chat/completions`   | `{type:web_search}`                                                | **422** | ~0.06s                          | `invalid_request_error`                                              | 无                                          |
+| `anthropic_web_search_20250305`        | `/anthropic/v1/messages` | `web_search_20250305` + `name=web_search`                          | 200     | 一次跳过（纯 `text`）；一次命中 | 命中：`server_tool_use`,`web_search_tool_result`,`web_search_result` | **有**（Anthropic 块，不是 `url_citation`） |
+| `anthropic_type_web_search`            | `/anthropic/v1/messages` | `{type:web_search,name:web_search}`                                | **422** | ~0.1s                           | `invalid_request_error`                                              | 无                                          |
 
 归类：
 
