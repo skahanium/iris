@@ -792,6 +792,31 @@ pub fn save_web_search_route_config(db: &Database, route: &WebSearchRouteConfig)
     })
 }
 
+/// Move `provider_id` to the front of the persisted MCP route.
+///
+/// Reads the current stored order so a primary-only UI cannot submit a stale
+/// failover list. Empty ids are rejected; clearing the route remains `save` of
+/// an empty array. Unknown or disabled ids are dropped by normalization.
+pub fn promote_web_search_route_primary(
+    db: &Database,
+    provider_id: &str,
+) -> AppResult<WebSearchRouteConfig> {
+    let trimmed = provider_id.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::msg("web_search_route_primary_missing"));
+    }
+    let mut ids = get_web_search_route_config(db)?.candidate_provider_ids;
+    ids.retain(|id| id != trimmed);
+    ids.insert(0, trimmed.to_string());
+    save_web_search_route_config(
+        db,
+        &WebSearchRouteConfig {
+            candidate_provider_ids: ids,
+        },
+    )?;
+    get_web_search_route_config(db)
+}
+
 /// Resolve at most three enabled MCP search providers in user-defined order.
 pub fn resolve_web_search_provider_route(
     db: &Database,
@@ -869,6 +894,30 @@ pub fn web_evidence_provider_exists(db: &Database, provider_id: &str) -> AppResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn search_provider(id: &str) -> WebEvidenceProviderInput {
+        let mut input = provider();
+        input.id = id.into();
+        input.name = format!("{id} Search");
+        input.web_search_mapping_json = Some(format!(r#"{{"tool":"{id}_search"}}"#));
+        input
+    }
+
+    fn seed_enabled_search_providers(db: &Database, ids: &[&str]) {
+        for id in ids {
+            upsert_web_evidence_provider(db, &search_provider(id)).unwrap();
+        }
+    }
+
+    fn save_route(db: &Database, ids: &[&str]) {
+        save_web_search_route_config(
+            db,
+            &WebSearchRouteConfig {
+                candidate_provider_ids: ids.iter().map(|id| (*id).to_string()).collect(),
+            },
+        )
+        .unwrap();
+    }
 
     fn provider() -> WebEvidenceProviderInput {
         WebEvidenceProviderInput {
@@ -1274,6 +1323,95 @@ mod tests {
                 .map(|item| item.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["brave", "anysearch"]
+        );
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_keeps_failovers() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &["alpha", "beta", "gamma"]);
+
+        let route = promote_web_search_route_primary(&db, "beta").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["beta", "alpha", "gamma"]);
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_reads_server_state_not_client_memory() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &["gamma", "alpha"]);
+
+        let route = promote_web_search_route_primary(&db, "alpha").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["alpha", "gamma"]);
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_inserts_enabled_id_and_drops_fourth() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma", "delta"]);
+        save_route(&db, &["alpha", "beta", "gamma"]);
+
+        let route = promote_web_search_route_primary(&db, "delta").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["delta", "alpha", "beta"]);
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_rejects_empty_id_without_mutating() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta"]);
+        save_route(&db, &["alpha", "beta"]);
+
+        let err = promote_web_search_route_primary(&db, "  ").unwrap_err();
+        assert!(err.to_string().contains("web_search_route_primary_missing"));
+        assert_eq!(
+            get_web_search_route_config(&db)
+                .unwrap()
+                .candidate_provider_ids,
+            vec!["alpha", "beta"]
+        );
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_drops_unknown_id_without_mutating() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta"]);
+        save_route(&db, &["alpha", "beta"]);
+
+        let route = promote_web_search_route_primary(&db, "missing").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_drops_disabled_id_without_inserting() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta"]);
+        let mut disabled = search_provider("gamma");
+        disabled.enabled = false;
+        upsert_web_evidence_provider(&db, &disabled).unwrap();
+        save_route(&db, &["alpha", "beta"]);
+
+        let route = promote_web_search_route_primary(&db, "gamma").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn save_web_search_route_config_still_replaces_with_single_id() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &["beta"]);
+
+        assert_eq!(
+            get_web_search_route_config(&db)
+                .unwrap()
+                .candidate_provider_ids,
+            vec!["beta"]
         );
     }
 

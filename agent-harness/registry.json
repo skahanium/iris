@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 132,
+  "registryRevision": 134,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-20T03:07:10.638Z"
+    "recordedAt": "2026-09-20T07:09:49.814Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -131,7 +131,7 @@
     "contracts/K18-mcp-transport.md": {
       "container": "K18",
       "registration": "K18#file",
-      "fingerprint": "e53db119cf6064403a6905db024e3429"
+      "fingerprint": "b1c6765eb03ef4d7444571c0e1c08776"
     },
     "contracts/README.md": {
       "container": "README-CONTRACTS",
@@ -196,7 +196,7 @@
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "14b439401b1d7c0004400230fcdf3eb3"
+      "fingerprint": "fbb1c7c822ca6c82535f15b330686505"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
@@ -246,7 +246,7 @@
     "modules/m06-tools-and-connectors.md": {
       "container": "M06",
       "registration": "M06",
-      "fingerprint": "a8b33bf35327424923df11dfef0a1218"
+      "fingerprint": "9d6b358f32a53918ebe3691e598ec930"
     },
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "40b05165a87c215a79e86c7fb385bc63"
+      "fingerprint": "4e2b2784598b12fa8d46d5e0dd72667f"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1178,13 +1178,13 @@
       "title": "D04 接通双路搜索完整链路",
       "owner": "C20",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "implementation/D04-dual-path-search.md",
         "anchor": "D04",
         "line": 76,
         "endLine": 89,
-        "fingerprint": "dfa6dc6f683960bdd2826b5095156bd6"
+        "fingerprint": "231abe077396d4f660fc5bfcc5282f82"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1205,7 +1205,7 @@
       ],
       "relations": {
         "depends_on": ["D02", "D03", "K09", "K11", "K12", "K13", "K14", "K18"],
-        "closes": ["Q02", "Q05", "Q17", "G02", "G03"]
+        "closes": ["Q05", "Q17", "G02", "G03"]
       },
       "note": null
     },
@@ -1876,13 +1876,13 @@
       "title": "K18 MCP 传输与外部工具边界",
       "owner": "C18",
       "maturity": "defined",
-      "revision": 15,
+      "revision": 16,
       "definition": {
         "file": "contracts/K18-mcp-transport.md",
         "anchor": "K18",
         "line": 13,
         "endLine": 114,
-        "fingerprint": "520c45968e7bcfc10f558b942f527452"
+        "fingerprint": "69b42dc96c3cd0aadee0ea6c5c18484a"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -1921,13 +1921,13 @@
       "title": "L02 联网检索与核实链路",
       "owner": "M07",
       "maturity": "defined",
-      "revision": 18,
+      "revision": 19,
       "definition": {
         "file": "flows/L02-web-retrieval.md",
         "anchor": "L02",
         "line": 11,
         "endLine": 126,
-        "fingerprint": "e704648bed249352bd37837327dccbc0"
+        "fingerprint": "0f87472e3767e57b6535c51cdd6f8dbf"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2890,13 +2890,13 @@
       "title": "两个设置入口的 MCP 搜索候选写入语义不一致",
       "owner": "M06",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q02",
         "line": 58,
         "endLine": 67,
-        "fingerprint": "f1c5075a0bc8bca566f28b5a4ae91414"
+        "fingerprint": "9df9d5e4e1a8f60ebc3dbbe9c995fe33"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2908,7 +2908,7 @@
           { "id": "D04", "at": "acceptance" }
         ]
       },
-      "note": null
+      "note": "D03 验收已 closed。F01 promote 切片不重开、不重关；V04 双路仍归 G02／D04。"
     },
     "Q03": {
       "kind": "issue",
@@ -20225,6 +20225,82 @@
           "fingerprintTo": "0479a43a0a27de355982a34507b561ad"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-20-73",
+      "at": "2026-09-20T07:03:08.272Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "F01 写入协议：web_search_route_promote 只改主服务、不接受客户端备用列表；Q02 保持 closed，D04 closes 去掉 Q02。",
+      "review": null,
+      "objects": [
+        {
+          "id": "K18#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "e53db119cf6064403a6905db024e3429",
+          "fingerprintTo": "b1c6765eb03ef4d7444571c0e1c08776"
+        },
+        {
+          "id": "D04#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "14b439401b1d7c0004400230fcdf3eb3",
+          "fingerprintTo": "fbb1c7c822ca6c82535f15b330686505"
+        },
+        {
+          "id": "M06",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "a8b33bf35327424923df11dfef0a1218",
+          "fingerprintTo": "9d6b358f32a53918ebe3691e598ec930"
+        },
+        {
+          "id": "K18",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "520c45968e7bcfc10f558b942f527452",
+          "fingerprintTo": "69b42dc96c3cd0aadee0ea6c5c18484a"
+        },
+        {
+          "id": "L02",
+          "revisionFrom": 18,
+          "revisionTo": 19,
+          "fingerprintFrom": "e704648bed249352bd37837327dccbc0",
+          "fingerprintTo": "0f87472e3767e57b6535c51cdd6f8dbf"
+        },
+        {
+          "id": "D04",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "dfa6dc6f683960bdd2826b5095156bd6",
+          "fingerprintTo": "231abe077396d4f660fc5bfcc5282f82"
+        },
+        {
+          "id": "Q02",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "f1c5075a0bc8bca566f28b5a4ae91414",
+          "fingerprintTo": "820a72528f655216b2172ab8588520ad"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-20-74",
+      "at": "2026-09-20T07:09:49.814Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "对照检查：Q02 所需证据补挂载中 set/promote 并发负例；不重开 Q02，不关 D04/G02。",
+      "review": null,
+      "objects": [
+        {
+          "id": "Q02",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "820a72528f655216b2172ab8588520ad",
+          "fingerprintTo": "9df9d5e4e1a8f60ebc3dbbe9c995fe33"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -21061,7 +21137,9 @@
         {
           "id": "D04",
           "revision": 11,
-          "fingerprint": "dfa6dc6f683960bdd2826b5095156bd6"
+          "fingerprint": "dfa6dc6f683960bdd2826b5095156bd6",
+          "stale": true,
+          "staleNote": "2026-09-20 F01 写入协议：Q02 从 D04 closes 拿掉（已由 D03 独立 closed），主服务入口改为 web_search_route_promote。按 governance §5.2 规则 6 不改写本条旧指纹，只标 stale。"
         },
         {
           "id": "Q17",
@@ -21238,6 +21316,11 @@
     {
       "review": "REV-2026-09-16-32",
       "object": "P01#file",
+      "reason": "复核写入后对象又变化，绑定停留在旧指纹"
+    },
+    {
+      "review": "REV-2026-09-19-60",
+      "object": "D04",
       "reason": "复核写入后对象又变化，绑定停留在旧指纹"
     },
     {

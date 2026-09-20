@@ -1270,7 +1270,7 @@ export const objects = {
       "G03",
     ],
     depends_on: ["D02", "D03", "K09", "K11", "K12", "K13", "K14", "K18"],
-    closes: ["Q02", "Q05", "Q17", "G02", "G03"],
+    closes: ["Q05", "Q17", "G02", "G03"],
   },
   D05: {
     kind: "work",
@@ -1424,6 +1424,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q02" },
     blocks: blocks("acceptance", ["D03", "D04"]),
+    note: "D03 验收已 closed。F01 promote 切片不重开、不重关；V04 双路仍归 G02／D04。",
   },
   Q03: {
     kind: "issue",

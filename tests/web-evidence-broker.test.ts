@@ -23,10 +23,15 @@ describe("web evidence broker contract", () => {
     expect(ipc).toContain(
       'invoke<WebSearchRouteConfig>("web_search_route_set"',
     );
+    expect(ipc).toContain(
+      'invoke<WebSearchRouteConfig>("web_search_route_promote"',
+    );
     expect(commands).toContain("pub async fn web_search_route_get");
     expect(commands).toContain("pub async fn web_search_route_set");
+    expect(commands).toContain("pub async fn web_search_route_promote");
     expect(lib).toContain("commands::ai_commands::web_search_route_get");
     expect(lib).toContain("commands::ai_commands::web_search_route_set");
+    expect(lib).toContain("commands::ai_commands::web_search_route_promote");
   });
 
   it("defines a unified broker and keeps low-level fetch details out of chat UI", () => {

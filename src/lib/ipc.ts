@@ -1022,6 +1022,14 @@ export async function webSearchRouteSet(
   return invoke<WebSearchRouteConfig>("web_search_route_set", { route });
 }
 
+export async function webSearchRoutePromote(
+  providerId: string,
+): Promise<WebSearchRouteConfig> {
+  return invoke<WebSearchRouteConfig>("web_search_route_promote", {
+    providerId,
+  });
+}
+
 export async function webEvidenceProviderToggle(
   providerId: string,
   enabled: boolean,

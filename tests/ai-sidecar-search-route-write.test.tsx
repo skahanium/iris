@@ -7,6 +7,7 @@ import {
   settingsGet,
   webEvidenceProvidersList,
   webSearchRouteGet,
+  webSearchRoutePromote,
   webSearchRouteSet,
   type WebEvidenceProviderSummary,
 } from "@/lib/ipc";
@@ -17,6 +18,7 @@ vi.mock("@/lib/ipc", () => ({
   webEvidenceProvidersList: vi.fn(),
   webSearchRouteGet: vi.fn(),
   webSearchRouteSet: vi.fn(),
+  webSearchRoutePromote: vi.fn(),
 }));
 
 function provider(id: string): WebEvidenceProviderSummary {
@@ -50,6 +52,12 @@ function installRoute(initial: string[]) {
     stored = [...new Set(route.candidateProviderIds)].slice(0, 3);
     return { candidateProviderIds: [...stored] };
   });
+  vi.mocked(webSearchRoutePromote).mockImplementation(async (providerId) => {
+    const trimmed = providerId.trim();
+    stored = [trimmed, ...stored.filter((id) => id !== trimmed)];
+    stored = [...new Set(stored)].slice(0, 3);
+    return { candidateProviderIds: [...stored] };
+  });
   return () => [...stored];
 }
 
@@ -71,17 +79,17 @@ describe("Q02 两个设置入口的 MCP 搜索候选写入语义", () => {
     vi.mocked(webEvidenceProvidersList).mockResolvedValue([A, B, C]);
   });
 
-  it("侧栏改主服务时保留备用项，并把它提到首位", async () => {
+  it("侧栏改主服务时走 promote，保留备用项并提到首位", async () => {
     const stored = installRoute([A.id, B.id, C.id]);
     const { result } = await mountBridge();
+    const setCallsBefore = vi.mocked(webSearchRouteSet).mock.calls.length;
 
     await act(async () => {
       result.current.setWebSearchProviderId(B.id);
     });
 
-    // The sidecar offers the selection UI for the primary only; the route file
-    // is what holds the failover order. Writing `[B]` would delete alpha and
-    // gamma, which is the defect: the two settings entries then disagree.
+    expect(vi.mocked(webSearchRoutePromote)).toHaveBeenCalledWith(B.id);
+    expect(vi.mocked(webSearchRouteSet).mock.calls.length).toBe(setCallsBefore);
     expect(stored()).toEqual([B.id, A.id, C.id]);
     expect(result.current.webSearchProviderId).toBe(B.id);
   });
@@ -91,8 +99,6 @@ describe("Q02 两个设置入口的 MCP 搜索候选写入语义", () => {
     const first = await mountBridge();
 
     await act(async () => {
-      // Simulates the management-centre order being persisted while the
-      // sidecar is mounted: the primary is gamma, with alpha as the backup.
       await webSearchRouteSet({
         candidateProviderIds: [C.id, A.id],
       });
@@ -105,8 +111,48 @@ describe("Q02 两个设置入口的 MCP 搜索候选写入语义", () => {
       result.current.setWebSearchProviderId(A.id);
     });
 
-    // alpha becomes primary; gamma must survive as the failover entry.
     expect(stored()).toEqual([A.id, C.id]);
+  });
+
+  it("挂载中的面板 set 之后侧栏 promote 读服务端路线，不把已删项写回", async () => {
+    const stored = installRoute([A.id, B.id, C.id]);
+    const { result } = await mountBridge();
+
+    await act(async () => {
+      await webSearchRouteSet({
+        candidateProviderIds: [C.id, A.id],
+      });
+    });
+    expect(stored()).toEqual([C.id, A.id]);
+    const setCallsAfterPanel = vi.mocked(webSearchRouteSet).mock.calls.length;
+
+    await act(async () => {
+      result.current.setWebSearchProviderId(A.id);
+    });
+
+    await waitFor(() => expect(stored()).toEqual([A.id, C.id]));
+    expect(vi.mocked(webSearchRoutePromote)).toHaveBeenCalledWith(A.id);
+    expect(vi.mocked(webSearchRouteSet).mock.calls.length).toBe(
+      setCallsAfterPanel,
+    );
+    expect(stored()).not.toEqual([A.id, B.id, C.id]);
+    expect(stored()).not.toEqual([A.id, C.id, B.id]);
+    expect(stored()).not.toContain(B.id);
+  });
+
+  it("promote 失败时从服务端回读，不把乐观主服务留在界面", async () => {
+    const stored = installRoute([A.id, B.id]);
+    const { result } = await mountBridge();
+    vi.mocked(webSearchRoutePromote).mockRejectedValueOnce(
+      new Error("promote failed"),
+    );
+
+    await act(async () => {
+      result.current.setWebSearchProviderId(B.id);
+    });
+
+    await waitFor(() => expect(result.current.webSearchProviderId).toBe(A.id));
+    expect(stored()).toEqual([A.id, B.id]);
   });
 
   it("两个入口交替保存后候选集合稳定，不产生重复项", async () => {
@@ -135,13 +181,15 @@ describe("Q02 两个设置入口的 MCP 搜索候选写入语义", () => {
       result.current.setWebSearchProviderId(null);
     });
 
+    expect(vi.mocked(webSearchRouteSet)).toHaveBeenCalledWith({
+      candidateProviderIds: [],
+    });
+    expect(vi.mocked(webSearchRoutePromote)).not.toHaveBeenCalled();
     expect(stored()).toEqual([]);
     expect(result.current.webSearchProviderId).toBeNull();
   });
 
   it("所选主服务已禁用时，可用性回退到仍启用的备用项而不是报无提供方", async () => {
-    // `webSearchProviderId` 只是主服务投影；备用项仍启用时，整个联网开关不应被判成
-    // 不可用——这正是把备用数组写没之后会出现的用户可见后果。
     vi.mocked(webEvidenceProvidersList).mockResolvedValue([
       { ...A, enabled: false },
       B,

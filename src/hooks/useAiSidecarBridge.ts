@@ -21,6 +21,7 @@ import {
   settingsSet,
   webEvidenceProvidersList,
   webSearchRouteGet,
+  webSearchRoutePromote,
   webSearchRouteSet,
 } from "@/lib/ipc";
 import {
@@ -91,11 +92,6 @@ export function useAiSidecarBridge({
   isDocumentDirtyRef.current = isDocumentDirty;
   const mountedRef = useRef(true);
   const webSearchPreferenceTouchedRef = useRef(false);
-  /**
-   * Last known ordered MCP search route. Held in a ref so a burst of selections
-   * cannot interleave stale server reads and drop a failover entry (`Q02`).
-   */
-  const webSearchRouteCandidatesRef = useRef<string[]>([]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -117,7 +113,6 @@ export function useAiSidecarBridge({
         webEvidenceProvidersList(),
         webSearchRouteGet(),
       ]);
-      webSearchRouteCandidatesRef.current = route.candidateProviderIds ?? [];
       setWebSearchProviders(providers);
       setWebSearchProviderIdState(route.candidateProviderIds[0] ?? null);
     } catch {
@@ -137,7 +132,6 @@ export function useAiSidecarBridge({
       if (cancelled) return;
       const normalizedSelectedProviderId =
         route.candidateProviderIds[0] ?? null;
-      webSearchRouteCandidatesRef.current = route.candidateProviderIds ?? [];
       setWebSearchProviders(providers);
       setWebSearchProviderIdState(normalizedSelectedProviderId);
       if (!webSearchPreferenceTouchedRef.current) {
@@ -165,29 +159,30 @@ export function useAiSidecarBridge({
   }, []);
 
   /**
-   * Select the primary MCP search route and keep the remaining entries as
-   * failover candidates.
+   * Select the primary MCP search route.
    *
-   * The route is one ordered array; the sidecar only offers the primary for
-   * selection, while the management centre edits the whole order. Writing
-   * `[selected]` here deleted every backup entry, so the two settings entries
-   * disagreed and failover silently degraded to a single provider (`Q02`).
-   * Instead this moves the selection to the front and preserves the rest,
-   * then re-reads the normalized route so a candidate dropped by the backend
-   * (disabled, unknown, duplicate, beyond the third) is not kept in memory.
+   * The sidecar and management-centre dropdown only offer the primary. Writing
+   * a reconstructed `[selected, ...localBackups]` via `web_search_route_set`
+   * used a stale in-memory order and could restore a provider the panel had
+   * already removed (`F01`). Promote reads the persisted route on the server.
+   * Clearing the primary still replaces with an empty array.
    */
   const setWebSearchProviderId = useCallback(
     (providerId: string | null) => {
       const normalized = providerId?.trim() || null;
       setWebSearchProviderIdState(normalized);
-      const preserved = webSearchRouteCandidatesRef.current.filter(
-        (candidate) => candidate !== normalized,
-      );
-      const candidateProviderIds = normalized ? [normalized, ...preserved] : [];
-      webSearchRouteCandidatesRef.current = candidateProviderIds;
-      void webSearchRouteSet({ candidateProviderIds })
-        .then(() => refreshWebSearchProviders())
-        .catch(() => undefined);
+      if (!normalized) {
+        void webSearchRouteSet({ candidateProviderIds: [] })
+          .then(() => refreshWebSearchProviders())
+          .catch(() => refreshWebSearchProviders());
+        return;
+      }
+      void webSearchRoutePromote(normalized)
+        .then((route) => {
+          setWebSearchProviderIdState(route.candidateProviderIds[0] ?? null);
+          return refreshWebSearchProviders();
+        })
+        .catch(() => refreshWebSearchProviders());
     },
     [refreshWebSearchProviders],
   );

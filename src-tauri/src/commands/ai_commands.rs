@@ -215,6 +215,20 @@ pub async fn web_search_route_set(
     crate::ai_runtime::mcp_runtime_registry::get_web_search_route_config(&state.db)
 }
 
+/// Move one MCP provider to the front of the persisted search route.
+///
+/// Primary-only UIs must use this instead of replacing the whole ordered array.
+#[tauri::command]
+pub async fn web_search_route_promote(
+    state: State<'_, Arc<AppState>>,
+    provider_id: String,
+) -> AppResult<crate::ai_runtime::mcp_runtime_registry::WebSearchRouteConfig> {
+    crate::ai_runtime::mcp_runtime_registry::promote_web_search_route_primary(
+        &state.db,
+        &provider_id,
+    )
+}
+
 #[tauri::command]
 pub async fn web_evidence_provider_toggle(
     state: State<'_, Arc<AppState>>,
