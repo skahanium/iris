@@ -2,6 +2,8 @@
 
 本文件是 [2026-09-19 V05 逐端点实网验证窗口](./2026-09-19-v05-live-window.md) 授权后的**执行记录**，不是关闭证明。
 
+> **此后状态（适配器落地后）**：`production_native_search_adapter_count() == 2`（MiniMax-M3 + DeepSeek-Flash）；C10 对 DeepSeek-Flash 为 `Available`。下文仍是探针当天观察。不关闭 `G02`／`G03`／`Q17`／`D04`。`Available` 不是 `V05`。
+
 - 承接：`G03`／`Q17`／`K12`／`D04`
 - 本轮只跑 **DeepSeek-Flash** 原生搜索协议探针与适配器 live（诊断调用，非全矩阵）
 - 主对话目录族仍是 `OpenAiCompatibleChatCompletions`（`https://api.deepseek.com`）

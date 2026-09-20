@@ -134,6 +134,10 @@ pub(crate) fn bind_production_route(
 }
 
 /// Trim, require `https://`, strip each suffix at most once (longer first).
+/// Longer first is required because `/messages` is a suffix of `/v1/messages`;
+/// stripping the shorter token first would leave `/v1` and the next join would
+/// 404. The reverse-order case is pinned by
+/// `https_api_base_strips_known_suffixes_once`.
 /// Must not mention vendor JSON field names or hosted-search tool types.
 pub(super) fn https_api_base_without_suffixes(
     api_base: &str,
