@@ -1044,6 +1044,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             app_handle: self.app_handle.clone(),
             attachment_count: 0,
             skill_activation_plan: self.skill_activation_plan.as_ref(),
+            native_search_endpoint: self.native_search_endpoint.clone(),
         };
         dispatch_tool_with_retry(self.state.as_ref(), &dispatch_context, tool_name, args).await
     }

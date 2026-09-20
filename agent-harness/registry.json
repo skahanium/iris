@@ -1,7 +1,7 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 136,
+  "registryRevision": 137,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
@@ -196,7 +196,7 @@
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "d3c5080d00c755d2d1700be031455e93"
+      "fingerprint": "9fa22052f441004a91eebd8fd776795b"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
@@ -1182,13 +1182,13 @@
       "definition": {
         "file": "implementation/D04-dual-path-search.md",
         "anchor": "D04",
-        "line": 76,
-        "endLine": 89,
+        "line": 83,
+        "endLine": 96,
         "fingerprint": "231abe077396d4f660fc5bfcc5282f82"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
-      "work": { "state": "planned" },
+      "work": { "state": "active" },
       "scope": [
         "N06",
         "N07",
@@ -1207,7 +1207,7 @@
         "depends_on": ["D02", "D03", "K09", "K11", "K12", "K13", "K14", "K18"],
         "closes": ["Q05", "Q17", "G02", "G03"]
       },
-      "note": null
+      "note": "2026-09-20 差距收口开工：work.state=active；不关 Q05/Q17/G02/G03；V04≠V05；Available≠端点通过；子请求仍 stream:false；V05 live 未获四项批准，本波跳过。"
     },
     "D05": {
       "kind": "work",
@@ -6568,6 +6568,94 @@
       "at": "2026-09-20T10:30:00Z",
       "applicability": "current",
       "note": "CHG-2026-09-20-75：隔离子请求凭据与 NativeSearchRequestIdentity 进入 dualPath／C26；usage 挂父调用，不占 model_turn／network_tool。不是 V05，不关 G03。"
+    },
+    {
+      "object": "D04",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path_v04",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "231abe077396d4f660fc5bfcc5282f82",
+      "at": "2026-09-20T15:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-20 差距收口：生产入口 search V04、dispatch_tool native 身份、web_fetch 部分失败。不是 V05 live，不关 D04，不把 verification 标 passed。"
+    },
+    {
+      "object": "D04",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib v04_web_fetch_keeps_successful_body",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "231abe077396d4f660fc5bfcc5282f82",
+      "at": "2026-09-20T15:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-20 差距收口：生产入口 web_fetch 一批两 URL，成功正文保留、失败单独分类。K13 交接，不重写抓取。不关 D04。"
+    },
+    {
+      "object": "D04",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib v04_dispatch_tool_web_search",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "231abe077396d4f660fc5bfcc5282f82",
+      "at": "2026-09-20T15:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-20 差距收口：dispatch_tool(web_search) 冻结 MiniMax-M3 endpoint 时 native.attempted=true；缺 endpoint 时 attempted=false 且无能力降级。不关 D04。"
+    },
+    {
+      "object": "G02",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path_v04",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "812829141d7fe58e661239383fa0f165",
+      "at": "2026-09-20T15:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-20 差距收口：生产入口 V04（含 dispatch 身份与 web_fetch 部分失败）。不是 V05 live，不关 G02／D04，不把 verification 标 passed。"
+    },
+    {
+      "object": "C20",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path_v04",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "dcc588e93cf7aef60a06f3c79942182a",
+      "at": "2026-09-20T15:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-20 差距收口：生产入口 V04 含第二调度路径身份绑定。不是 V05，不把 C20 verification 标 passed，不关 G02／D04。"
+    },
+    {
+      "object": "K11",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib v04_dispatch_tool_web_search",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "a9e4a9d5fc619f4708fce9d4bf4583b8",
+      "at": "2026-09-20T15:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-20 差距收口：K11 不变量 1——Available 模型不得因 dispatch_tool 第二路径静默单 MCP。串行 MCP→native 仍是允许策略。不关 G02／D04。"
+    },
+    {
+      "object": "K12",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/native_search_adapter_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib native_search_attaches_reported_tokens_without_counting_as_network_tool",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "91b94fe0837f4c3c218d7838bcf55b62",
+      "at": "2026-09-20T15:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-20 差距收口：子请求仍 stream:false，不经 streaming.rs。不是 V05，不把 K12 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "Q05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/mcp_runtime_registry.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib list_does_not_persist_legacy",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "efbee7d33f48bf7b6dfd70193f99e735",
+      "at": "2026-09-20T15:20:00Z",
+      "applicability": "current",
+      "note": "2026-09-20 差距收口：保留既有 V03 机械负例（落点 058366ea）。不关闭 Q05，不把 C18 verification 标 passed。"
     }
   ],
   "changes": [
@@ -20695,6 +20783,23 @@
           "fingerprintTo": "d3c5080d00c755d2d1700be031455e93"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-20-77",
+      "at": "2026-09-20T15:00:00.000Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "D04 差距收口开工：work.state=active 与本波执行事实写入文件外围；不关包，不标 passed。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D04#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "d3c5080d00c755d2d1700be031455e93",
+          "fingerprintTo": "9fa22052f441004a91eebd8fd776795b"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -21778,6 +21883,12 @@
       "author": "Cursor Grok 4.6（施工）",
       "topic": "2026-09-20 G03 处理路径与 V04 生产入口：verify 重绑",
       "detail": "CHG-2026-09-20-75 细化后，将 G02／C20／G03／C11 的 current V03 标 obsolete 并重绑当前定义指纹；新增 kind=V04 绑 dual_path_v04_tests.rs。不把 verification.state 标 passed，不关 G02／G03／Q17／D04。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-20T15:20:00Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "topic": "2026-09-20 D04 差距收口：current V03/V04 重绑",
+      "detail": "CHG-2026-09-20-77 接受 D04#file 外围执行事实。verify 段为 D04／G02／C20／K11／K12／Q05 追加绑定当前定义指纹的 current 记录（含 dual_path_v04、dispatch 身份、web_fetch 部分失败、Q05 list 只读机械负例）。不把 verification.state 标 passed，不关 Q05／Q17／G02／G03／D04。V05 live 未获四项批准，本波跳过。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ]
 }

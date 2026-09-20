@@ -100,6 +100,7 @@ fn dispatch_context_with_plan<'a>(
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: plan,
+        native_search_endpoint: None,
     }
 }
 
@@ -127,6 +128,7 @@ fn dispatch_context_with_retrieval_scope<'a>(
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        native_search_endpoint: None,
     }
 }
 
@@ -337,6 +339,7 @@ async fn read_note_rejects_document_policy_before_opening_the_file() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        native_search_endpoint: None,
     };
 
     let error = note_impl::read_note(
@@ -577,6 +580,7 @@ fn write_tool_approval_applies_patch_with_cas() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        native_search_endpoint: None,
     };
     let result = markdown_impl::markdown_write_patch_apply(
         &state,
@@ -658,6 +662,7 @@ fn write_tool_rejects_a_target_other_than_the_explicit_run_target() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        native_search_endpoint: None,
     };
 
     let result = markdown_impl::markdown_write_patch_apply(
@@ -705,6 +710,7 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        native_search_endpoint: None,
     };
     let result = markdown_impl::markdown_write_patch_apply(
         &state,
@@ -756,6 +762,7 @@ async fn cancelled_run_never_commits_a_markdown_patch() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        native_search_endpoint: None,
     };
     crate::ai_runtime::model_gateway::request_abort("cancelled-markdown-write");
 

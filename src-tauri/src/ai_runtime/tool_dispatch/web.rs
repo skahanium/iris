@@ -98,7 +98,7 @@ pub(super) async fn web_search_tool(
                 action_id: "web_search".into(),
                 attempt: 1,
             },
-            native_endpoint: None,
+            native_endpoint: ctx.native_search_endpoint.clone(),
         },
     )
     .await?;
@@ -144,7 +144,7 @@ pub(super) async fn web_fetch_tool(
                 action_id: "web_fetch".into(),
                 attempt: 1,
             },
-            native_endpoint: None,
+            native_endpoint: ctx.native_search_endpoint.clone(),
         },
     )
     .await?;

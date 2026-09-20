@@ -150,6 +150,7 @@ mod tests {
             app_handle: None,
             attachment_count: 2,
             skill_activation_plan: None,
+            native_search_endpoint: None,
         };
 
         let time = dispatch_tool(&state, &ctx, "system_time_now", &serde_json::json!({})).await;
@@ -219,6 +220,7 @@ mod tests {
             app_handle: None,
             attachment_count: 0,
             skill_activation_plan: None,
+            native_search_endpoint: None,
         };
 
         let capabilities =
@@ -263,6 +265,7 @@ mod tests {
             app_handle: None,
             attachment_count: 0,
             skill_activation_plan: None,
+            native_search_endpoint: None,
         }
     }
 

@@ -214,6 +214,7 @@ mod tests {
             app_handle: None,
             attachment_count: 0,
             skill_activation_plan: None,
+            native_search_endpoint: None,
         }
     }
 

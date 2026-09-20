@@ -260,9 +260,59 @@ impl V04Harness {
             &self.sink,
             snapshots,
         )
-        .with_allowed_tool_names(&["web_search".into()])
+        .with_allowed_tool_names(&["web_search".into(), "web_fetch".into()])
         .with_native_search_endpoint(endpoint)
     }
+}
+
+fn dispatch_search_ctx<'a>(
+    harness: &'a V04Harness,
+    retrieval_scope: &'a crate::ai_runtime::retrieval_scope::RetrievalScope,
+    endpoint: Option<NativeSearchEndpointRef>,
+) -> crate::ai_runtime::tool_dispatch::ToolDispatchContext<'a> {
+    let mut ctx = crate::ai_runtime::tool_dispatch::ToolDispatchContext::for_tests(retrieval_scope);
+    ctx.db = Some(&harness.state.db);
+    ctx.run_id = Some(&harness.accepted.run_id);
+    ctx.web_search_enabled = true;
+    ctx.max_web_fetches = 5;
+    ctx.native_search_endpoint = endpoint;
+    ctx
+}
+
+fn seed_page(db: &Database, url: &str, body: &str) {
+    use crate::llm::fetch_web_page::{PageFetchCacheScope, PAGE_FETCH_CACHE_BROKER_VERSION};
+    use sha2::{Digest, Sha256};
+    let scope = PageFetchCacheScope::native(None, PAGE_FETCH_CACHE_BROKER_VERSION);
+    let mut hash = Sha256::new();
+    for part in [
+        "default",
+        &scope.provider_id,
+        &scope.provider_kind,
+        &scope.provider_config_hash,
+        &scope.broker_version,
+    ] {
+        hash.update(part.as_bytes());
+        hash.update(b"\0");
+    }
+    hash.update(url.as_bytes());
+    let key = hex::encode(hash.finalize());
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT OR REPLACE INTO web_page_cache
+            (url_hash,title,body_text,fetched_at,expires_at,provider_id,provider_kind,provider_config_hash,broker_version)
+            VALUES (?1,'Fixture',?2,datetime('now'),datetime('now','+1 day'),?3,?4,?5,?6)",
+            rusqlite::params![
+                key,
+                body,
+                scope.provider_id,
+                scope.provider_kind,
+                scope.provider_config_hash,
+                scope.broker_version
+            ],
+        )?;
+        Ok(())
+    })
+    .unwrap();
 }
 
 fn search_call(id: &str) -> ToolCall {
@@ -335,7 +385,9 @@ async fn v04_native_plus_single_mcp_merges_shared_https_url() {
         })
         .expect("native witness");
     assert_eq!(witness.run_id, harness.accepted.run_id);
-    assert_eq!(witness.call_id, "web_search");
+    // C26 correlates to the persisted tool-call id (SearchActionIdentity.action_id),
+    // not the catalog tool name.
+    assert_eq!(witness.call_id, "v04-both");
     assert_eq!(witness.payload["isNetworkToolDispatch"], false);
     assert_eq!(witness.payload["hasRetrievalCredentials"], true);
     let encoded = witness.payload.to_string();
@@ -557,4 +609,117 @@ async fn v04_both_routes_failed_is_not_forged_success() {
         .expect("native witness");
     assert_eq!(witness.payload["hasRetrievalCredentials"], false);
     assert_ne!(witness.payload["statusClass"], "2xx");
+}
+
+#[tokio::test]
+async fn v04_dispatch_tool_web_search_attempts_native_when_endpoint_is_frozen() {
+    let harness = V04Harness::new();
+    upsert_mcp(&harness.state.db, "v04-dispatch-native", "search-only");
+    let _snapshots = freeze_route(&harness.state.db, &["v04-dispatch-native"]);
+    let recorded = install_native(
+        &harness.accepted.run_id,
+        vec![ok_http(recorded_minimax_body())],
+    );
+    let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+    let ctx = dispatch_search_ctx(&harness, &retrieval_scope, Some(minimax_endpoint()));
+    let result = crate::ai_runtime::tool_dispatch::dispatch_tool(
+        harness.state.as_ref(),
+        &ctx,
+        "web_search",
+        &json!({ "query": "contract" }),
+    )
+    .await;
+    assert!(
+        result.success,
+        "{:?} output={}",
+        result.error, result.output
+    );
+    let dual = &result.output["dualPath"];
+    assert_eq!(dual["native"]["attempted"], true);
+    assert_eq!(dual["mcp"]["attempted"], true);
+    assert!(recorded.call_count() >= 1);
+    assert_no_degradation(&result.output);
+}
+
+#[tokio::test]
+async fn v04_dispatch_tool_web_search_skips_native_when_endpoint_is_absent() {
+    let harness = V04Harness::new();
+    upsert_mcp(&harness.state.db, "v04-dispatch-absent", "search-only");
+    let _snapshots = freeze_route(&harness.state.db, &["v04-dispatch-absent"]);
+    let recorded = install_native(
+        &harness.accepted.run_id,
+        vec![ok_http(recorded_minimax_body())],
+    );
+    let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+    let ctx = dispatch_search_ctx(&harness, &retrieval_scope, None);
+    let result = crate::ai_runtime::tool_dispatch::dispatch_tool(
+        harness.state.as_ref(),
+        &ctx,
+        "web_search",
+        &json!({ "query": "contract" }),
+    )
+    .await;
+    assert!(
+        result.success,
+        "{:?} output={}",
+        result.error, result.output
+    );
+    let dual = &result.output["dualPath"];
+    assert_eq!(dual["native"]["attempted"], false);
+    assert_eq!(dual["mcp"]["attempted"], true);
+    assert_eq!(recorded.call_count(), 0);
+    assert_no_degradation(&result.output);
+}
+
+#[tokio::test]
+async fn v04_web_fetch_keeps_successful_body_when_one_url_fails() {
+    let harness = V04Harness::new();
+    let ok_url = "https://example.com/v04-fetch-ok";
+    // Public HTTPS with an empty cached body: K13 empty, not a private-host
+    // reject, and no live TLS. The reading fixture's mixed batch uses startChar
+    // and therefore never fetches the missing URL.
+    let fail_url = "https://example.com/v04-fetch-empty";
+    const BODY: &str = "FETCH_BODY_NOT_SNIPPET unique-v04-body";
+    seed_page(&harness.state.db, ok_url, BODY);
+    seed_page(&harness.state.db, fail_url, "   ");
+    let executor = harness.executor(Vec::new(), None);
+    let result = executor
+        .execute(
+            &harness.accepted.run_id,
+            &ToolCall::new(
+                "v04-fetch-partial",
+                "web_fetch",
+                json!({ "urls": [ok_url, fail_url] }).to_string(),
+            ),
+            1,
+        )
+        .await
+        .expect("execute");
+    assert!(
+        result.success,
+        "partial fetch must not fail the whole batch: {:?} output={}",
+        result.error, result.output
+    );
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["failedUrls"], json!([fail_url]));
+    assert_eq!(result.output["observationDepth"], "fetched_body");
+    let results = result.output["results"].as_array().expect("results");
+    let success = results
+        .iter()
+        .find(|item| item["canonicalUrl"] == ok_url)
+        .expect("successful page");
+    let excerpt = success["excerpt"].as_str().expect("excerpt");
+    assert_eq!(excerpt, BODY);
+    assert_ne!(excerpt, "Fixture");
+    let method = success
+        .pointer("/web/extraction_method")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert_ne!(method, "search_snippet", "{success}");
+    let failed = results
+        .iter()
+        .find(|item| item["canonicalUrl"] == fail_url)
+        .expect("failed url status");
+    assert_eq!(failed["status"], "snapshot_unavailable");
+    assert!(failed.get("excerpt").and_then(Value::as_str).is_none());
 }

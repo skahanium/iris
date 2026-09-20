@@ -1,3 +1,4 @@
+use crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef;
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::{retrieval_scope::RetrievalScope, ContextPacket, RuntimeDocumentSnapshot};
 use crate::error::{AppError, AppResult};
@@ -39,9 +40,41 @@ pub struct ToolDispatchContext<'a> {
     pub app_handle: Option<tauri::AppHandle>,
     pub attachment_count: usize,
     pub skill_activation_plan: Option<&'a crate::ai_types::SkillActivationPlanSummary>,
+    /// Frozen C10 native-search endpoint for this Run. `None` means the
+    /// dispatcher must not invent a native route (adapter_absent), not that the
+    /// model is unsupported.
+    pub(crate) native_search_endpoint: Option<NativeSearchEndpointRef>,
 }
 
 impl<'a> ToolDispatchContext<'a> {
+    /// Isolated dispatch context for tests that do not exercise native search.
+    ///
+    /// Production ToolLoop must copy the frozen C10 endpoint from the executor;
+    /// this constructor leaves that identity absent (`adapter_absent`).
+    pub fn for_tests(retrieval_scope: &'a RetrievalScope) -> Self {
+        Self {
+            db: None,
+            selected_web_provider_id: None,
+            note_path: None,
+            file_id: None,
+            run_id: None,
+            write_target_path: None,
+            confirmed_write_targets: None,
+            confirmed_vault_id: None,
+            document_policy: None,
+            web_search_enabled: false,
+            available_tool_names: &[],
+            max_web_fetches: 3,
+            cold_start_packets: &[],
+            retrieval_scope,
+            runtime_documents: &[],
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+            native_search_endpoint: None,
+        }
+    }
+
     pub(crate) fn ensure_note_write_allowed(&self, db: &Database, path: &str) -> AppResult<()> {
         self.ensure_run_active()?;
         self.ensure_write_target_matches(path)?;

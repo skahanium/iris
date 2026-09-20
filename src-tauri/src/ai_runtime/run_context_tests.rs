@@ -1521,6 +1521,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
         app_handle: None,
         attachment_count: context.materials.len(),
         skill_activation_plan: None,
+        native_search_endpoint: None,
     };
     let tool_arguments = serde_json::json!({});
     let tool_entry = crate::ai_runtime::tool_catalog::catalog_find("get_context_packets")

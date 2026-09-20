@@ -19,7 +19,14 @@
 | `K14` 证据身份、来源与支持关系 | 提供来源身份与 `Wn` 登记规则                                                                              |
 | `K18` MCP 传输与外部工具边界   | 提供 MCP 连接、发现与调用结果的分层表达                                                                   |
 
-可施工与可验收**由计算得出**，不读历史标签：见 [治理规则](../rules/governance.md) §2.5。本轮该工作包状态是 `planned`，登记不等于已施工。
+可施工与可验收**由计算得出**，不读历史标签：见 [治理规则](../rules/governance.md) §2.5。本轮该工作包状态是 `active`，登记不等于已验收；`acceptanceReady` 仍由未决问题计算，本波不关闭。
+
+**本波执行事实（2026-09-20 差距收口，不关闭）**
+
+- **已落地（本波不重做）**：生产 `web_search` 走 `execute_web_tool` → 双路协调器 → 隔离子请求（`stream:false`，不经 `streaming.rs`）；V04 生产入口五组已在 `dual_path_v04_tests.rs`；K12 两适配器（MiniMax-M3 Responses、DeepSeek-Flash Anthropic）；主对话 SSE 夹带为 `MainStreamLeak`，不驱动 K11 native `succeeded`；Q05 list 只读机械负例（落点 `058366ea`）；K13 `startChar` 窗口是 V03 形状，不是 V04 生产入口。`V04` ≠ `V05`。C10 `Available` ≠ 端点通过。
+- **本波做**：第二调度路径冻结 `native_search_endpoint`，禁止 Available 模型因 `dispatch_tool("web_search")` 静默单 MCP；生产入口补 `web_fetch` 部分失败 V04（K13 交接，不重写抓取）；把已有机械/V04 绑到当前指纹。不把 D04／G02／G03／Q05／Q17 标 closed 或 `verification.passed`，不把 C20／C11／K12 标 passed。
+- **本波明确不做**：隔离子请求经 `streaming.rs`／主对话改 Responses；新 Gemini 或其他 native 适配器；把串行改并发；D05、D06、HR-7 live campaign；为「看起来完成」reconcile 无关对象指纹。
+- **V05 live（本波跳过）**：未同时获得端点范围、费用上限、允许使用的本地凭据、只用已登记两适配器这四项书面批准前，不跑付费 live。即使以后跑完窄范围 live，也不关闭 Q17／G03／D04（窗口其余端点、流式、截断、混合续轮仍缺）；探针文件不得拿来关 G02。子请求保持 `stream:false`。
 
 **`V05` 授权前置（2026-09-19）**：本工作包的「回归证据要求 4」（与端点的真实调用记录）与 `Q17`／`G03` 的 live 部分，需要先获得端点范围、费用上限、凭据与原生搜索端点四项批准；窗口、待验证矩阵与逐端点检查项见 [2026-09-19 V05 逐端点实网验证窗口](../../docs/eval/results/2026-09-19-v05-live-window.md)。**未获批准前该证据缺失，本工作包不因机械记录先行而宣布端点已通过。**
 

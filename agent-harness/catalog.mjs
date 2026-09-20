@@ -1254,7 +1254,7 @@ export const objects = {
       file: "implementation/D04-dual-path-search.md",
       anchor: "D04",
     },
-    work: { state: "planned" },
+    work: { state: "active" },
     scope: [
       "N06",
       "N07",
@@ -1271,6 +1271,7 @@ export const objects = {
     ],
     depends_on: ["D02", "D03", "K09", "K11", "K12", "K13", "K14", "K18"],
     closes: ["Q05", "Q17", "G02", "G03"],
+    note: "2026-09-20 差距收口开工：work.state=active；不关 Q05/Q17/G02/G03；V04≠V05；Available≠端点通过；子请求仍 stream:false；V05 live 未获四项批准，本波跳过。",
   },
   D05: {
     kind: "work",
