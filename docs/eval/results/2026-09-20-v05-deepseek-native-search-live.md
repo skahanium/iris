@@ -56,7 +56,7 @@
 
 `live_deepseek_flash_adapter_returns_https_citations`：K12 隔离子请求走 Anthropic Messages，主对话仍是 Chat Completions。HTTP 200 且解析出 HTTPS `web_search_result` URL 后视为检索凭据。本轮该测试 **3/3** 通过（约 4.8s / 6.7s / 5.8s）。
 
-生产登记：`production_native_search_adapter_count() == 2`（MiniMax-M3 + DeepSeek-Flash）。匹配目录 id / API 名，**不**匹配品牌 `deepseek` 或 `deepseek-v4-pro`。
+生产登记：`production_native_search_adapter_count() == 2`（MiniMax-M3 + DeepSeek-Flash）。匹配目录 id / API 名，**不**匹配品牌 `deepseek` 或 `deepseek-v4-pro`。C10 `Available` 不是「支持且已适配」，也不是 `V05`。
 
 ## 五、适用范围结论
 

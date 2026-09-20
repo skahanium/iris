@@ -4,7 +4,7 @@
 
 本链路说明**交接顺序**：谁在什么时候把什么交给谁。它**不重复定义**合同（K*）、组件（C*）或工具（T\*）的正式定义，只引用它们。对象身份与标记规则见 [objects.md](../rules/objects.md)，权威边界与状态语义见 [governance.md](../rules/governance.md)；上位依据是 [Agent 架构定义](../../docs/agent-architecture.md) §5 的八步与 §5.1 的配置合同，当前实现事实以 [ARCHITECTURE.md](../../ARCHITECTURE.md) 的「搜索、联网与 Skills」一节为准。
 
-**先说明本链路的事实边界**：`C20` 协调器已接入生产 `web_search`（`implementation.state=partial`）；生产原生按能力 `unsupported`，MCP 单路是正常配置。**双路尚未接通**（`G02` 仍 open，见 [open-items.md](../requirements/open-items.md)）；服务端搜索事件与引用尚未完整进入网关处理路径（`G03`）；原生端点、混合续轮、费用与权限适配**待验证**（`Q17`）。本体系**不宣布** MiniMax、DeepSeek 或 Gemini 任一端点已通过。本文件定义交接顺序，不代表双路已经接通。机械 `V03` 不是 `V04`。
+**先说明本链路的事实边界**：`C20` 协调器已接入生产 `web_search`（`implementation.state=partial`）。原生可达性与适配器登记见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实；未登记模型 MCP 单路是正常配置。**双路尚未接通**（`G02` 仍 open，见 [open-items.md](../requirements/open-items.md)）；服务端搜索事件与引用尚未完整进入网关处理路径（`G03`）；原生端点、混合续轮、费用与权限适配**待验证**（`Q17`）。本体系**不宣布** MiniMax、DeepSeek 或 Gemini 任一端点已通过。本文件定义交接顺序，不代表双路已经接通。机械 `V03` 不是 `V04`。
 
 <!-- iris:end L02 -->
 
@@ -97,7 +97,7 @@ MCP 路线经 `C18`（`K18`）调用选定搜索服务；原生路线经 `C11` �
 | `V07` | 诊断可定位性：路线的失败与不足说明可见，且不显示成「能力降级」                                                       |
 | `V02` | 登记关联：已登记条目「搜索片段不能升级为正文证据」（检测位置 `C22`）与本链路同一口径；**未补齐即表示该项尚无证据**   |
 
-**仅验证后端两个替身都被调用，不足以声明双路能力已接通**（§5.1）。本体系本轮没有执行任何新实验、未运行付费实网评测。
+**仅验证后端两个替身都被调用，不足以声明双路能力已接通**（§5.1）。live 探针不是 `V05`，也不关闭 `G02`／`G03`。
 
 ## 需求覆盖
 

@@ -61,9 +61,12 @@ pub(crate) trait NativeSearchTransport {
 
 /// Protocol surface for one adapted model. Keep implementations in sibling files.
 pub(crate) trait NativeSearchModelAdapter: Send + Sync {
-    /// Catalog model id. `find_model` is case-sensitive; this must match catalog.
-    #[allow(dead_code)]
+    /// Catalog primary key; must exist in `find_model`.
     fn id(&self) -> &'static str;
+    /// Wire model name. Default: `self.id()`.
+    fn outbound_model(&self) -> &'static str {
+        self.id()
+    }
     fn matches(&self, model_id: &str) -> bool;
     fn request_url(&self, api_base: &str) -> Result<String, RouteFailureClass>;
     fn outbound_body(&self, subrequest: &NativeSearchSubrequest) -> Value;
@@ -88,9 +91,66 @@ const PRODUCTION_ADAPTERS: &[&dyn NativeSearchModelAdapter] = &[
     &DeepSeekFlashNativeSearchAdapter,
 ];
 
+/// Production adapter slice. Tests assert catalog ids; lookup stays exclusive match.
+pub(crate) fn production_adapters() -> &'static [&'static dyn NativeSearchModelAdapter] {
+    PRODUCTION_ADAPTERS
+}
+
 /// Number of production native-search adapters. Not a capability advertisement.
 pub(crate) fn production_adapter_count() -> usize {
-    PRODUCTION_ADAPTERS.len()
+    production_adapters().len()
+}
+
+/// HTTPS base and credential service for one production native-search call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProductionRouteBinding {
+    pub api_base: String,
+    pub credential_service: String,
+}
+
+/// Bind catalog identity before any billed request. Catalog miss is protocol, not temporary.
+pub(crate) fn bind_production_route(
+    adapter: &dyn NativeSearchModelAdapter,
+    endpoint: &NativeSearchEndpointRef,
+) -> Result<ProductionRouteBinding, RouteFailureClass> {
+    let Some(entry) = crate::llm::model_catalog::find_model(adapter.id()) else {
+        return Err(RouteFailureClass::ProtocolOrResultInsufficient);
+    };
+    let api_base = endpoint
+        .api_base
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::llm::providers::api_base(entry.provider_id, None));
+    let credential_service = endpoint
+        .credential_service
+        .clone()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| llm_credential_service(entry.provider_id));
+    Ok(ProductionRouteBinding {
+        api_base,
+        credential_service,
+    })
+}
+
+/// Trim, require `https://`, strip each suffix at most once (longer first).
+/// Must not mention vendor JSON field names or hosted-search tool types.
+pub(super) fn https_api_base_without_suffixes(
+    api_base: &str,
+    suffixes: &[&str],
+) -> Result<String, RouteFailureClass> {
+    let mut base = api_base.trim().trim_end_matches('/').to_string();
+    if !base.starts_with("https://") {
+        return Err(RouteFailureClass::TransportOrProviderFailure);
+    }
+    let mut ordered: Vec<&str> = suffixes.to_vec();
+    ordered.sort_by_key(|suffix| std::cmp::Reverse(suffix.len()));
+    for suffix in ordered {
+        if let Some(stripped) = base.strip_suffix(suffix) {
+            base = stripped.trim_end_matches('/').to_string();
+        }
+    }
+    Ok(base)
 }
 
 /// Resolve the adapter for one model id. Never matches on provider brand alone.
@@ -165,21 +225,17 @@ pub(crate) async fn execute_production_route(
     let Some(adapter) = lookup_production_adapter(&endpoint.model_id) else {
         return protocol_insufficient();
     };
-    let provider_id = crate::llm::model_catalog::find_model(adapter.id())
-        .map(|entry| entry.provider_id.to_string())
-        .unwrap_or_default();
-    let api_base = endpoint
-        .api_base
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| crate::llm::providers::api_base(&provider_id, None));
-    let service = endpoint
-        .credential_service
-        .clone()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| llm_credential_service(&provider_id));
-    let secret = crate::credentials::get_runtime_secret(&service).ok();
+    let binding = match bind_production_route(adapter, &endpoint) {
+        Ok(binding) => binding,
+        Err(RouteFailureClass::ProtocolOrResultInsufficient) => {
+            return protocol_insufficient();
+        }
+        Err(RouteFailureClass::TransportOrProviderFailure) => {
+            return transport_failure();
+        }
+        Err(RouteFailureClass::TemporaryFailure) => return temporary_failure(),
+    };
+    let secret = crate::credentials::get_runtime_secret(&binding.credential_service).ok();
     let draft = NativeSearchSubrequestDraft {
         query: query.to_string(),
         public_scope: NativeSearchPublicScope::default(),
@@ -196,7 +252,7 @@ pub(crate) async fn execute_production_route(
         draft,
         &LiveNativeSearchTransport,
         secret.as_ref().map(|value| value.as_str()),
-        &api_base,
+        &binding.api_base,
     )
     .await
 }

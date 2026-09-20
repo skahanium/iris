@@ -68,11 +68,11 @@
 
 ## 源码落点
 
-| 组件  | 现有落点                                                                                                                                                                                                                                                                                                                  | 处置                                                                         |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `C10` | `src-tauri/src/ai_runtime/provider_router.rs`、`src-tauri/src/ai_runtime/capability_resolver.rs`、`src-tauri/src/ai_runtime/native_search_subrequest.rs`（`native_search_support_for` 按端点探针）                                                                                                                        | 收清 Provider 与工具能力来源；原生搜索按端点声明，生产无适配器故 unsupported |
-| `C11` | `src-tauri/src/ai_runtime/model_gateway.rs` 及其子文件（`body.rs`、`messages.rs`、`streaming.rs`、`streaming_chat_completions.rs`、`streaming_anthropic.rs`、`responses.rs`、`anthropic_response.rs`、`usage.rs`、`abort.rs`、`http_backend.rs`、`minimax_tool_call.rs`）；fixture 解析器在 `native_search_subrequest.rs` | 修正现有合同；流式主路径仍未保真搜索事件                                     |
-| `C12` | 网关、`src-tauri/src/ai_runtime/run_engine/providers.rs`、`src-tauri/src/ai_runtime/circuit_breaker.rs`                                                                                                                                                                                                                   | 统一执行报告                                                                 |
+| 组件  | 现有落点                                                                                                                                                                                                                                                                                                                  | 处置                                                                                                                      |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `C10` | `src-tauri/src/ai_runtime/provider_router.rs`、`src-tauri/src/ai_runtime/capability_resolver.rs`、`src-tauri/src/ai_runtime/native_search_subrequest.rs`（`native_search_support_for` 按端点探针）                                                                                                                        | 收清 Provider 与工具能力来源；原生搜索按端点声明，现行登记见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实 |
+| `C11` | `src-tauri/src/ai_runtime/model_gateway.rs` 及其子文件（`body.rs`、`messages.rs`、`streaming.rs`、`streaming_chat_completions.rs`、`streaming_anthropic.rs`、`responses.rs`、`anthropic_response.rs`、`usage.rs`、`abort.rs`、`http_backend.rs`、`minimax_tool_call.rs`）；fixture 解析器在 `native_search_subrequest.rs` | 修正现有合同；流式主路径仍未保真搜索事件                                                                                  |
+| `C12` | 网关、`src-tauri/src/ai_runtime/run_engine/providers.rs`、`src-tauri/src/ai_runtime/circuit_breaker.rs`                                                                                                                                                                                                                   | 统一执行报告                                                                                                              |
 
 ## 兼容
 
@@ -150,7 +150,7 @@
 
 ## 源码落点
 
-现有基础与处置：provider_router.rs、capability_resolver.rs；`native_search_support_for`（`native_search_subrequest.rs`）按端点声明原生搜索支持，生产注册表为空故 `unsupported`（`adapter_absent` 或 ASR／TTS `capability_absent`）。不得从 `supports_tools=true` 或品牌名推断 `Available`。capability-and-routing 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
+现有基础与处置：provider_router.rs、capability_resolver.rs；`native_search_support_for`（`native_search_subrequest.rs`）按端点声明原生搜索支持，现行适配器与 Available／unsupported 分流见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实。不得从 `supports_tools=true` 或品牌名推断 `Available`。capability-and-routing 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
 
 ## 兼容
 
@@ -158,7 +158,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`；本组件当前 `verification.state=none`。已有机械 `V03`（按端点探针：ASR／TTS `capability_absent`、无适配器 `adapter_absent`、`supports_tools` 不推断 `Available`），不是 `passed`，也不是逐端点 `V05`。
+关键不变量与所需证据类别见 `V01`–`V07`；本组件当前 `verification.state=none`。已有机械 `V03`（按端点探针：ASR／TTS `capability_absent`、无适配器的模型 `adapter_absent`、已登记模型 `Available`、`supports_tools` 不推断其它模型 `Available`），不是 `passed`，也不是逐端点 `V05`。
 
 <!-- iris:end C10 -->
 

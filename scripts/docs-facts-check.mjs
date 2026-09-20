@@ -448,6 +448,52 @@ function lineContainsPhrase(line, phrase) {
   return line.includes(phrase) && !isNegationContext(line);
 }
 
+function checkStaleNativeSearchExecutionFacts() {
+  const stalePhrases = [
+    "生产无适配器",
+    "生产注册表为空",
+    "production_native_search_adapter_count() == 0",
+    "生产原生按能力",
+    "生产原生 unsupported",
+    "生产原生 `unsupported`",
+  ];
+  const authorityFiles = [
+    ...walk(path.join(activeHarnessRoot, "contracts"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "modules"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "requirements"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "tools"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "implementation"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "flows"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    path.join(activeHarnessRoot, "catalog.mjs"),
+    path.join(root, "docs", "agent-architecture.md"),
+  ];
+  for (const filePath of authorityFiles) {
+    if (!existsSync(filePath)) continue;
+    const lines = readFileSync(filePath, "utf8").split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      for (const phrase of stalePhrases) {
+        if (lines[i].includes(phrase)) {
+          fail(
+            `${path.relative(root, filePath)}:${i + 1} — stale native-search execution fact: ${phrase}`,
+          );
+        }
+      }
+    }
+  }
+}
+
 function checkForbiddenPhrases() {
   const phrases = forbiddenPhrases.length > 0 ? forbiddenPhrases : [];
 
@@ -622,6 +668,7 @@ checkDocsArchive();
 checkAgentHarnessDocumentation();
 checkRetiredArchitectureReferences();
 checkForbiddenPhrases();
+checkStaleNativeSearchExecutionFacts();
 checkIpcIndex();
 
 if (failures.length > 0) {

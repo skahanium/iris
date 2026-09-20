@@ -75,18 +75,18 @@
 
 ## 源码落点
 
-| 组件  | 现有落点                                                                                                                                    | 处置                                                            |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `C19` | `src-tauri/src/ai_runtime/retrieval_broker.rs` 与子实现（`retrieval_broker/`）、`src-tauri/src/ai_runtime/retrieval_scope.rs`               | 复用                                                            |
-| `C20` | `src-tauri/src/ai_runtime/dual_path_search.rs`（协调器），由 `run_tool_loop.rs` `execute_web_tool` 与 `web_evidence_broker.rs` 搜索收集调用 | 协调器已接入；生产原生 `unsupported`；MCP failover 仍是一条路线 |
-| `C21` | 网页 broker、`src-tauri/src/ai_runtime/run_tool_loop/web_reading.rs`                                                                        | 复用阅读与回退                                                  |
-| `C22` | `src-tauri/src/ai_runtime/agent_evidence_repository.rs`、`src-tauri/src/ai_runtime/provenance.rs`                                           | 补原生来源接入与质量表达                                        |
+| 组件  | 现有落点                                                                                                                                    | 处置                                                                          |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `C19` | `src-tauri/src/ai_runtime/retrieval_broker.rs` 与子实现（`retrieval_broker/`）、`src-tauri/src/ai_runtime/retrieval_scope.rs`               | 复用                                                                          |
+| `C20` | `src-tauri/src/ai_runtime/dual_path_search.rs`（协调器），由 `run_tool_loop.rs` `execute_web_tool` 与 `web_evidence_broker.rs` 搜索收集调用 | 协调器已接入；现行适配器与 C10 探针见 K12 执行事实；MCP failover 仍是一条路线 |
+| `C21` | 网页 broker、`src-tauri/src/ai_runtime/run_tool_loop/web_reading.rs`                                                                        | 复用阅读与回退                                                                |
+| `C22` | `src-tauri/src/ai_runtime/agent_evidence_repository.rs`、`src-tauri/src/ai_runtime/provenance.rs`                                           | 补原生来源接入与质量表达                                                      |
 
 搜索的模型可见面使用两个单一职责动作：`web_search { query }` 只发现候选，`web_fetch { urls }` 只读取当前 Run 候选或用户显式 URL；两者共享同一授权、network 预算、Broker 与冻结 Provider 顺序（[ARCHITECTURE.md](../../ARCHITECTURE.md)）。
 
 ## 兼容
 
-- **`C20` 当前 `implementation.state=partial`**：协调器在源码中存在并接入生产 `web_search`；`K12` 构造器与解析器已落地，但生产无适配器故原生 `unsupported`，MCP 单路是正常配置。`K12` 未进生产执行，故不是 `present`。`G02` 仍 open。
+- **`C20` 当前 `implementation.state=partial`**：协调器已接入生产 `web_search`。原生适配器与 C10 探针见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实。`partial` 不是 `present`：`G02` 仍 open（`V04` 缺），流式事件归 `G03`，未登记模型仍 MCP 单路。
 - 目标配置合同的兼容要求（§5.1）：保留总联网开关；开启后按任务及既有外发权限执行双路合同，**不再要求用户勾选两次**；原生能力配置、MCP 有序候选与抓取能力分别保存；`C20` 合成带配置版本的执行快照。
 - 用户明确要求：开启联网代表允许使用外部网页信息，**不等于**材料和数据外发限制全部解除；网页检索关闭与完全离线不同（讨论十）。
 - 旧非 CAS 快照与历史证据记录的读取按既有兼容路径保留；证据投影的兼容规则是显式空数组表示最终消息无来源，只有字段缺失的旧消息可以按历史 `SourceGroupFallback` 读取（[ARCHITECTURE.md](../../ARCHITECTURE.md)）。
@@ -206,7 +206,7 @@
 
 ## 源码落点
 
-现有基础与处置：协调器在 `src-tauri/src/ai_runtime/dual_path_search.rs`，由生产 `web_search`（`execute_web_tool`／broker 搜索收集）调用。`K12` 构造器与凭据解析器在 `src-tauri/src/ai_runtime/native_search_subrequest.rs`；生产适配器注册表为空，原生探针返回 `unsupported`（`adapter_absent` 或 ASR／TTS 的 `capability_absent`）。MCP 路径包装现有 failover，视为一条路线。`implementation.state=partial`，`verification.state=none`。机械 `V03` 不是关闭，也不是 `V04`。`K12` 未进生产执行。
+现有基础与处置：协调器在 `src-tauri/src/ai_runtime/dual_path_search.rs`，由生产 `web_search`（`execute_web_tool`／broker 搜索收集）调用。`K12` 构造器与凭据解析器在 `src-tauri/src/ai_runtime/native_search_subrequest.rs`；生产适配器与探针见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实。MCP 路径包装现有 failover，视为一条路线。`implementation.state=partial`，`verification.state=none`。机械 `V03` 不是关闭，也不是 `V04`。
 
 ## 兼容
 

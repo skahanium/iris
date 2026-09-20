@@ -28,12 +28,19 @@ use crate::llm::providers::ANTHROPIC_API_VERSION;
 const CATALOG_ID: &str = "deepseek-v4-flash";
 const OUTBOUND_MODEL: &str = "deepseek-flash";
 const MAX_TOKENS: u32 = 2048;
+/// Unversioned Anthropic-compatible shim. Behaviour changes should surface as
+/// protocol/result insufficient, not as a silent success.
+const ANTHROPIC_MESSAGES_PATH: &str = "/anthropic/v1/messages";
 
 pub(super) struct DeepSeekFlashNativeSearchAdapter;
 
 impl NativeSearchModelAdapter for DeepSeekFlashNativeSearchAdapter {
     fn id(&self) -> &'static str {
         CATALOG_ID
+    }
+
+    fn outbound_model(&self) -> &'static str {
+        OUTBOUND_MODEL
     }
 
     fn matches(&self, model_id: &str) -> bool {
@@ -46,7 +53,7 @@ impl NativeSearchModelAdapter for DeepSeekFlashNativeSearchAdapter {
 
     fn outbound_body(&self, subrequest: &NativeSearchSubrequest) -> Value {
         json!({
-            "model": OUTBOUND_MODEL,
+            "model": self.outbound_model(),
             "max_tokens": MAX_TOKENS,
             "stream": false,
             "thinking": { "type": "disabled" },
@@ -100,26 +107,21 @@ fn deepseek_protocol_insufficient() -> NativeSearchParse {
 }
 
 fn deepseek_anthropic_messages_url(api_base: &str) -> Result<String, RouteFailureClass> {
-    let mut base = api_base.trim().trim_end_matches('/').to_string();
-    if !base.starts_with("https://") {
-        return Err(RouteFailureClass::TransportOrProviderFailure);
-    }
-    for suffix in [
-        "/chat/completions",
-        "/responses",
-        "/v1/messages",
-        "/messages",
-    ] {
-        if let Some(stripped) = base.strip_suffix(suffix) {
-            base = stripped.trim_end_matches('/').to_string();
-        }
-    }
+    let mut base = super::https_api_base_without_suffixes(
+        api_base,
+        &[
+            "/chat/completions",
+            "/responses",
+            "/v1/messages",
+            "/messages",
+        ],
+    )?;
     if let Some(stripped) = base.strip_suffix("/v1") {
         base = stripped.trim_end_matches('/').to_string();
     }
     if base.ends_with("/anthropic") {
         Ok(format!("{base}/v1/messages"))
     } else {
-        Ok(format!("{base}/anthropic/v1/messages"))
+        Ok(format!("{base}{ANTHROPIC_MESSAGES_PATH}"))
     }
 }

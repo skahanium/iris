@@ -7,13 +7,15 @@ use super::dual_path_search::{
     SearchActionIdentity, SearchHit, SearchRoute,
 };
 use super::native_search_adapter::{
-    execute_native_search, execute_production_route, lookup_production_adapter,
+    bind_production_route, execute_native_search, execute_production_route,
+    https_api_base_without_suffixes, lookup_production_adapter, production_adapters,
     NativeSearchHttpResult, NativeSearchModelAdapter, NativeSearchTransport,
 };
 use super::native_search_subrequest::{
     construct_native_search_subrequest, production_native_search_adapter_count,
-    NativeSearchEndpointRef, NativeSearchPublicScope, NativeSearchRequestIdentity,
-    NativeSearchSubrequestDraft, NativeSearchUnsupportedReason,
+    NativeSearchEndpointRef, NativeSearchParse, NativeSearchPublicScope,
+    NativeSearchRequestIdentity, NativeSearchSubrequest, NativeSearchSubrequestDraft,
+    NativeSearchUnsupportedReason,
 };
 use crate::ai_types::EndpointFamily;
 use serde_json::{json, Value};
@@ -621,6 +623,137 @@ fn production_registry_matches_model_id_not_provider_brand() {
     assert!(lookup_production_adapter("deepseek").is_none());
     assert!(lookup_production_adapter("deepseek-v4-pro").is_none());
     assert!(lookup_production_adapter("qwen2.5:7b").is_none());
+}
+
+#[test]
+fn every_production_adapter_id_exists_in_catalog_and_matches_aliases() {
+    let mut saw_deepseek = false;
+    let mut saw_minimax = false;
+    for adapter in production_adapters() {
+        let id = adapter.id();
+        assert!(
+            crate::llm::model_catalog::find_model(id).is_some(),
+            "adapter id must exist in catalog: {id}"
+        );
+        assert!(
+            adapter.matches(id),
+            "adapter must match its catalog id: {id}"
+        );
+        assert!(
+            adapter.matches(adapter.outbound_model()),
+            "adapter must match its outbound model: {} / {}",
+            id,
+            adapter.outbound_model()
+        );
+        if id == "deepseek-v4-flash" {
+            saw_deepseek = true;
+            assert_eq!(adapter.outbound_model(), "deepseek-flash");
+        }
+        if id == "MiniMax-M3" {
+            saw_minimax = true;
+            assert_eq!(adapter.outbound_model(), "MiniMax-M3");
+        }
+    }
+    assert!(saw_deepseek, "DeepSeek-Flash adapter must stay registered");
+    assert!(saw_minimax, "MiniMax-M3 adapter must stay registered");
+    assert!(lookup_production_adapter("deepseek").is_none());
+    assert!(lookup_production_adapter("minimax").is_none());
+}
+
+struct CatalogMissAdapter;
+
+impl NativeSearchModelAdapter for CatalogMissAdapter {
+    fn id(&self) -> &'static str {
+        "not-in-catalog"
+    }
+
+    fn matches(&self, model_id: &str) -> bool {
+        model_id == "not-in-catalog"
+    }
+
+    fn request_url(&self, _api_base: &str) -> Result<String, RouteFailureClass> {
+        Ok("https://example.invalid/v1".into())
+    }
+
+    fn outbound_body(&self, _subrequest: &NativeSearchSubrequest) -> Value {
+        json!({})
+    }
+
+    fn parse_response(&self, _body: &Value) -> NativeSearchParse {
+        NativeSearchParse {
+            candidates: Vec::new(),
+            has_retrieval_credentials: false,
+            generated_text_only: true,
+            failure: None,
+        }
+    }
+}
+
+#[test]
+fn catalog_miss_is_protocol_insufficient_not_temporary() {
+    let mut endpoint = NativeSearchEndpointRef::new(
+        "not-in-catalog",
+        EndpointFamily::OpenAiCompatibleChatCompletions,
+    );
+    endpoint.api_base = Some("https://example.invalid/v1".into());
+    endpoint.credential_service = Some("iris.llm.example".into());
+    assert_eq!(
+        bind_production_route(&CatalogMissAdapter, &endpoint),
+        Err(RouteFailureClass::ProtocolOrResultInsufficient)
+    );
+}
+
+#[test]
+fn https_api_base_strips_known_suffixes_once() {
+    assert_eq!(
+        https_api_base_without_suffixes(
+            "https://api.example.com/v1/chat/completions",
+            &["/chat/completions", "/responses", "/messages"],
+        ),
+        Ok("https://api.example.com/v1".into())
+    );
+    assert_eq!(
+        https_api_base_without_suffixes("https://api.example.com/v1/", &["/chat/completions"]),
+        Ok("https://api.example.com/v1".into())
+    );
+    assert_eq!(
+        https_api_base_without_suffixes(
+            "https://api.example.com/v1/responses",
+            &["/chat/completions", "/responses", "/messages"],
+        ),
+        Ok("https://api.example.com/v1".into())
+    );
+    assert_eq!(
+        https_api_base_without_suffixes("http://api.example.com/v1", &["/responses"]),
+        Err(RouteFailureClass::TransportOrProviderFailure)
+    );
+    assert_eq!(
+        https_api_base_without_suffixes(
+            "https://api.example.com/anthropic/v1/messages",
+            &["/messages", "/v1/messages"],
+        ),
+        Ok("https://api.example.com/anthropic".into())
+    );
+}
+
+#[test]
+fn bind_production_route_fills_catalog_base_when_endpoint_omits_it() {
+    let minimax = lookup_production_adapter("MiniMax-M3").expect("registered");
+    let binding = bind_production_route(minimax, &minimax_endpoint()).expect("catalog hit");
+    assert_eq!(binding.api_base, "https://api.minimaxi.com/v1");
+    assert_eq!(binding.credential_service, "iris.llm.minimax");
+
+    let deepseek = lookup_production_adapter("deepseek-flash").expect("registered");
+    let binding = bind_production_route(deepseek, &deepseek_endpoint()).expect("catalog hit");
+    assert_eq!(binding.api_base, "https://api.deepseek.com");
+    assert_eq!(binding.credential_service, "iris.llm.deepseek");
+
+    let mut overridden = minimax_endpoint();
+    overridden.api_base = Some("https://override.example.com/v1".into());
+    overridden.credential_service = Some("iris.llm.override".into());
+    let binding = bind_production_route(minimax, &overridden).expect("endpoint wins");
+    assert_eq!(binding.api_base, "https://override.example.com/v1");
+    assert_eq!(binding.credential_service, "iris.llm.override");
 }
 
 #[test]

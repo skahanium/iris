@@ -6,7 +6,7 @@
 
 本合同只定义子请求本身；两条路线的协调结果与合并表达见 [K11](./K11-dual-path-search.md)，外发授权与开关见 [K09](./K09-web-authorization.md)，能力状态与路由见 [K04](./K04-provider-capability.md)，额度与费用账本见 [K06](./K06-budget-ledger.md)，来源身份见 [K14](./K14-evidence-and-provenance.md)，正文读取见 [K13](./K13-web-reading-window.md)。供应商原生工具声明不登记为业务工具（见 [objects.md](../rules/objects.md) §1.3），其协议能力经本合同管理。
 
-**执行事实**：`K12` 构造器与凭据解析器已落地（`src-tauri/src/ai_runtime/native_search_subrequest.rs`）；`C10` 按端点声明，生产无适配器故原生 `unsupported`；搜索事件尚未进入网关流式路径（`streaming.rs` 事件枚举未扩）。关闭仍等 `D04`／`G03`。本体系**不宣布** MiniMax、DeepSeek 或 Gemini 任一端点已通过本合同（不是 `V05`）。
+**执行事实**：`K12` 构造器与凭据解析器已落地（`src-tauri/src/ai_runtime/native_search_subrequest.rs`）；生产登记 2 个适配器（MiniMax-M3 → Responses 隔离子请求；DeepSeek-Flash → Anthropic Messages 隔离子请求）。`C10` 对这两模型为 `Available`，其余模型仍为 `adapter_absent` 或 ASR／TTS `capability_absent`。生产路径会发真实 HTTPS（计费）。主对话目录族不变。搜索事件尚未进入 `streaming.rs`。关闭仍等 `D04`／`G03`。本体系**不宣布**任一端点已通过本合同（不是 `V05`）。`Available` 不是「支持且已适配」。
 
 <!-- iris:end K12 -->
 

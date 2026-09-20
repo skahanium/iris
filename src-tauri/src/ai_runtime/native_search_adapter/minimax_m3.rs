@@ -39,6 +39,7 @@ impl NativeSearchModelAdapter for MinimaxM3NativeSearchAdapter {
             "instructions": "This is an isolated web search subrequest. You must use the web_search tool and return URL citations. Do not answer from memory.",
             "stream": false,
             "store": false,
+            // Fixed to the 2026-09-20 live probe request shape; not the main-chat temperature.
             "temperature": 0.1,
             "tool_choice": "auto",
             "max_output_tokens": MAX_OUTPUT_TOKENS,
@@ -77,15 +78,10 @@ fn minimax_protocol_insufficient() -> NativeSearchParse {
 }
 
 fn minimax_responses_url(api_base: &str) -> Result<String, RouteFailureClass> {
-    let mut base = api_base.trim().trim_end_matches('/').to_string();
-    if !base.starts_with("https://") {
-        return Err(RouteFailureClass::TransportOrProviderFailure);
-    }
-    for suffix in ["/chat/completions", "/responses", "/messages"] {
-        if let Some(stripped) = base.strip_suffix(suffix) {
-            base = stripped.trim_end_matches('/').to_string();
-        }
-    }
+    let base = super::https_api_base_without_suffixes(
+        api_base,
+        &["/chat/completions", "/responses", "/messages"],
+    )?;
     if base.ends_with("/v1") {
         Ok(format!("{base}/responses"))
     } else {

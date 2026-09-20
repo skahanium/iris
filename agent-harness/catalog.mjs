@@ -597,7 +597,7 @@ export const objects = {
     implementation: { state: "partial" },
     verification: { state: "none" },
     implements: ["K04"],
-    note: "C10 按端点探针 native_search_support_for 已落地；生产无适配器故 unsupported。已有机械 V03，verification 仍 none，不是 passed，不是 V05。",
+    note: "C10 按端点探针 native_search_support_for 已落地；现行适配器与 Available 分流见 K12 执行事实。已有机械 V03，verification 仍 none，不是 passed，不是 V05。",
   },
   C11: {
     kind: "component",
@@ -723,7 +723,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K11", "K12", "N07"],
     depends_on: ["C10", "C18", "C13", "C04"],
-    note: "协调器已接入生产 web_search；K12 构造器与解析器已落地，生产无适配器故原生 unsupported，MCP 单路是正常配置。K12 未进生产执行，故 partial 不是 present。机械 V03 不是验收，不把 verification 标 passed，不关 G02。",
+    note: "协调器已接入生产 web_search；原生可达性见 K12 执行事实。partial 不是 present（G02 仍 open，V04 缺）。机械 V03 不是验收，不关 G02。",
   },
   C21: {
     kind: "component",
@@ -981,7 +981,7 @@ export const objects = {
       anchor: "K12",
     },
     applies_to: ["C20", "C11", "C12"],
-    note: "构造器与 fixture 解析器已落地；C10 按端点声明，生产无适配器故原生 unsupported；搜索事件尚未进入网关流式路径。不是 V05，不关 G03。",
+    note: "生产登记 2 个适配器；C10 对这两模型 Available。搜索事件尚未进入网关流式路径。不是 V05，不关 G03。正文见执行事实段。",
   },
   K13: {
     kind: "contract",
@@ -1580,7 +1580,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G02" },
     blocks: blocks("acceptance", ["D04"]),
-    note: "2026-09-19 第一刀：协调器已接入，K12 构造器已落地但生产无适配器故原生 unsupported，机械 V03 存在。机械覆盖不是验收；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。",
+    note: "两已登记模型 Available 时会发起原生+MCP。机械 V03 不是验收；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。现状见 open-items G02。",
   },
   G03: {
     kind: "issue",
@@ -1589,7 +1589,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G03" },
     blocks: blocks("acceptance", ["D04"]),
-    note: "2026-09-19 第一刀：有构造器／解析器，无直播路径、无适配器。不是关闭。协议侧逐端点 V05 的承接方（2026-09-17）：Q04／Q10 的关闭不再要求 V05；服务端搜索事件与引用归本条。D02 只交付机械续轮与终止原因，不关闭本条。",
+    note: "适配器已登记两模型；流式主路径仍未保真搜索事件。不是关闭，不是 V05。D02 不关闭本条。",
   },
   G04: {
     kind: "issue",

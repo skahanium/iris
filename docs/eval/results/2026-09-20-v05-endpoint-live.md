@@ -2,11 +2,13 @@
 
 本文件是 [2026-09-19 V05 逐端点实网验证窗口](./2026-09-19-v05-live-window.md) 授权后的**执行记录**，不是关闭证明。
 
+> **此后状态（适配器落地后）**：`production_native_search_adapter_count() == 2`（MiniMax-M3 + DeepSeek-Flash）；C10 对 MiniMax-M3 为 `Available`。下文 §二调用表仍是探针当天观察。不关闭 `G02`／`G03`／`Q17`／`D04`。`Available` 不是 `V05`。
+
 - 承接：`G03`／`Q17`／`K12`／`D04`
 - 本轮只跑 **MiniMax-M3** 原生搜索协议探针（诊断调用，非全矩阵）
 - **DeepSeek 未运行**（缺本轮 Key／费用／live 批准）
 - **不关闭** `G02`、`G03`、`Q05`、`Q17`、`D04`；不把 `C20`／`C11`／`K12` 标为 verification passed
-- 生产适配器计数仍为 0；搜索事件仍未进入 `streaming.rs`
+- 本轮当时生产适配器计数为 0；搜索事件仍未进入 `streaming.rs`（流式缺口此后仍在）
 - 不含 API Key、笔记正文、私有推理；检索正文只记长度与主机名
 
 ## 一、本轮批准对照
@@ -63,11 +65,11 @@
 - Anthropic Messages + `web_search_20250305` 在 **Iris 生产主机** `api.minimaxi.com` 上：请求被接受（200／`base_resp.status_code=0`），但**静默未检索**。归类为 **协议／结果不足**，不是传输失败，不是能力降级文案。
 - OpenAI Responses `POST /v1/responses` + `{type:web_search}` 在同一主机上：**协议可承载原生搜索**，且返回了检索凭据。这只证明该诊断请求；不证明流式、续轮、账本或双路生产入口。
 - 目录里 `MiniMax-M3` 仍是 Chat Completions 族。原生搜索若接入，应是 **K12 隔离子请求** 走 Responses，而不是把主对话改写成 Responses，也不是把品牌／`supports_tools` 推断为 `Available`。
-- 机械层：`OpenAiShaped` 解析器已能识别 `web_search_call` + `url_citation`；生产 `production_native_search_adapter_count() == 0`，C10 对 MiniMax-M3 仍为 `adapter_absent`。
+- 机械层（本轮当时）：`OpenAiShaped` 解析器已能识别 `web_search_call` + `url_citation`；当时 `production_native_search_adapter_count() == 0`，C10 对 MiniMax-M3 仍为 `adapter_absent`。此后见文首此后状态。
 
 ## 五、下一步（未做）
 
-1. MiniMax-M3 生产适配器：对获准查询发 Responses 子请求，把 live 形状映射到 `SearchHit`，**不得**把 Anthropic 200 当成功。
+1. MiniMax-M3 生产适配器：**此后已落地**（K12 Responses 隔离子请求）。本轮探针时尚未登记。**不得**把 Anthropic 200 当成功。
 2. 将服务端搜索事件纳入网关流式路径（`G03` 仍缺）。
 3. DeepSeek-Flash 原生搜索探针与适配器见 [2026-09-20 V05 DeepSeek-Flash 原生搜索](./2026-09-20-v05-deepseek-native-search-live.md)；不得用本 MiniMax 记录代替。
 4. 流式、截断、混合续轮、K06 入账仍缺，本文件不补跑。
