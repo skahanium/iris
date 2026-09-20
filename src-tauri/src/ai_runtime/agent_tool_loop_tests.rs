@@ -165,16 +165,14 @@ async fn parent_turn_keeps_the_frozen_ceiling_while_reserving_final_synthesis() 
                 tool_calls: vec![tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         budgets: Mutex::new(Vec::new()),
@@ -286,16 +284,14 @@ async fn unexposed_tool_call_is_rejected_without_reaching_executor() {
                 }],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -1048,8 +1044,7 @@ async fn missing_provider_usage_is_estimated_from_the_local_turn_data() {
             tool_calls: Vec::new(),
             usage: Default::default(),
             finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
+            ..Default::default()
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -1807,8 +1802,7 @@ impl ToolLoopProvider for InterruptedThenRecoveryProvider {
                     .collect(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -2061,8 +2055,7 @@ fn scripted_tool_calls_response(calls: Vec<ToolCall>) -> super::model_gateway::G
         tool_calls: calls,
         usage: Default::default(),
         finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     }
 }
 
@@ -2072,8 +2065,7 @@ fn scripted_final_response(content: &str) -> super::model_gateway::GatewayRespon
         tool_calls: Vec::new(),
         usage: Default::default(),
         finish_reason: "stop".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     }
 }
 
@@ -2153,15 +2145,14 @@ async fn internal_final_answer_submission_bypasses_executor_history_and_tool_bud
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
                 reasoning_content: Some("private reasoning must not enter the transcript".into()),
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("the loop must not request a second turn".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2205,8 +2196,7 @@ async fn invalid_structured_source_binding_gets_one_no_tool_repair_turn() {
         }))],
         usage: Default::default(),
         finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     };
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([response("W8"), response("W1")])),
@@ -2253,8 +2243,7 @@ async fn repeated_invalid_structured_source_binding_finishes_with_limitation() {
         }))],
         usage: Default::default(),
         finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     };
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([invalid(), invalid()])),
@@ -2291,7 +2280,7 @@ async fn final_submission_retries_one_withheld_plain_draft() {
                 usage: Default::default(),
                 finish_reason: "stop".into(),
                 reasoning_content: Some("private".into()),
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -2300,8 +2289,7 @@ async fn final_submission_retries_one_withheld_plain_draft() {
                 }))],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2438,16 +2426,14 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
                 tool_calls: vec![tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2520,24 +2506,21 @@ async fn successful_equivalent_tool_call_is_not_executed_twice() {
                 tool_calls: vec![tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
                 tool_calls: vec![repeated_call],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2633,8 +2616,7 @@ async fn hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -2645,16 +2627,14 @@ async fn hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("已基于第二轮的新资料完成回答。".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2702,8 +2682,7 @@ async fn hr1_local_multi_hop_reads_distinct_notes_without_web_access() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -2714,8 +2693,7 @@ async fn hr1_local_multi_hop_reads_distinct_notes_without_web_access() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -2726,16 +2704,14 @@ async fn hr1_local_multi_hop_reads_distinct_notes_without_web_access() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("已综合两份本地笔记。".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2790,32 +2766,28 @@ async fn hr1_repeated_failed_tool_call_stops_after_two_real_executions() {
                 tool_calls: vec![repeated_call("failed-first")],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
                 tool_calls: vec![repeated_call("failed-second")],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
                 tool_calls: vec![repeated_call("failed-third")],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("工具暂不可用，已说明限制。".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2859,16 +2831,14 @@ async fn malformed_spawn_subagent_arguments_reach_the_bounded_executor() {
                 }],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("handled invalid child request".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2915,8 +2885,7 @@ async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
             tool_calls: Vec::new(),
             usage: Default::default(),
             finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
+            ..Default::default()
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -2968,16 +2937,14 @@ async fn web_required_without_a_tool_surface_finishes_with_a_bounded_limitation(
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("still unverified".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3011,16 +2978,14 @@ async fn empty_web_search_preserves_a_research_repair_before_bounded_completion(
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("unsupported current claim [W1]".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             scripted_final_response("Current status still cannot be verified."),
         ])),
@@ -3059,16 +3024,14 @@ async fn web_preferred_keeps_the_model_draft_when_search_or_fetch_fails() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("勒布朗仍在打球，以下分析不依赖本轮网页正文。".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3119,8 +3082,7 @@ async fn web_required_accepts_a_natural_clarification_before_any_tool_dispatch()
             tool_calls: Vec::new(),
             usage: Default::default(),
             finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
+            ..Default::default()
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -3183,8 +3145,7 @@ async fn external_required_repairs_then_limits_an_answer_without_registered_evid
         tool_calls: Vec::new(),
         usage: Default::default(),
         finish_reason: "stop".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     };
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([unverified(), unverified()])),
@@ -3248,8 +3209,7 @@ async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
                 tool_calls: vec![web_tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some(
@@ -3259,8 +3219,7 @@ async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3325,8 +3284,7 @@ async fn evaluation_tool_loop_tap_records_turns_usage_tools_and_truncation_in_me
                     prompt_cache_miss_tokens: 10,
                 },
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
@@ -3339,8 +3297,7 @@ async fn evaluation_tool_loop_tap_records_turns_usage_tools_and_truncation_in_me
                     prompt_cache_miss_tokens: 8,
                 },
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3393,16 +3350,14 @@ async fn web_tool_results_use_the_web_specific_budget_without_losing_the_tail() 
                 tool_calls: vec![web_tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3515,8 +3470,7 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
             tool_calls: vec![tool_call()],
             usage: Default::default(),
             finish_reason: "tool_calls".into(),
-            reasoning_content: None,
-            continuation: None,
+            ..Default::default()
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -3597,8 +3551,7 @@ impl ToolLoopProvider for BudgetRecordingProvider {
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -3678,8 +3631,7 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
                 tool_calls,
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -3693,8 +3645,7 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
                 }],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),

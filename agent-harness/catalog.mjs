@@ -610,7 +610,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K04"],
     depends_on: ["C10"],
-    note: "fixture 解析器在 native_search_subrequest.rs；流式主路径仍未保真搜索事件。verification 仍 none，不把本条标 passed，不关 G03。",
+    note: "主对话 SSE 夹带搜索事件进入处理路径为 MainStreamLeak 凭据；生产子请求仍不经 streaming.rs。verification 仍 none，不把本条标 passed，不关 G03。",
   },
   C12: {
     kind: "component",
@@ -723,7 +723,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K11", "K12", "N07"],
     depends_on: ["C10", "C18", "C13", "C04"],
-    note: "协调器已接入生产 web_search；原生可达性见 K12 执行事实。partial 不是 present（G02 仍 open，V04 缺）。机械 V03 不是验收，不关 G02。",
+    note: "协调器已接入生产 web_search；原生可达性见 K12 执行事实。生产入口录制回放 V04 已有，不是 V05。partial 不是 present（G02 仍 open）。机械 V03 不是验收，不关 G02。",
   },
   C21: {
     kind: "component",
@@ -981,7 +981,7 @@ export const objects = {
       anchor: "K12",
     },
     applies_to: ["C20", "C11", "C12"],
-    note: "生产登记 2 个适配器；C10 对这两模型 Available。搜索事件尚未进入网关流式路径。不是 V05，不关 G03。正文见执行事实段。",
+    note: "生产登记 2 个适配器；C10 对这两模型 Available。生产子请求仍 stream:false；主对话 SSE 夹带为 MainStreamLeak。不是 V05，不关 G03。正文见执行事实段。",
   },
   K13: {
     kind: "contract",
@@ -1581,7 +1581,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G02" },
     blocks: blocks("acceptance", ["D04"]),
-    note: "两已登记模型 Available 时会发起原生+MCP。机械 V03 不是验收；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。现状见 open-items G02。",
+    note: "生产入口录制回放 V04 已有（dual_path_v04_tests.rs）。不是 V05；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。现状见 open-items G02。",
   },
   G03: {
     kind: "issue",
@@ -1590,7 +1590,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G03" },
     blocks: blocks("acceptance", ["D04"]),
-    note: "适配器已登记两模型；流式主路径仍未保真搜索事件。不是关闭，不是 V05。D02 不关闭本条。",
+    note: "处理路径切片已落地（SSE MainStreamLeak + 隔离子请求观察）。生产子请求仍 stream:false。不是关闭，不是 V05。D02 不关闭本条。",
   },
   G04: {
     kind: "issue",

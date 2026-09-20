@@ -70,8 +70,7 @@ impl ToolLoopProvider for Provider {
                 },
                 usage: Default::default(),
                 finish_reason: if turn < 3 { "tool_calls" } else { "stop" }.into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -296,8 +295,7 @@ impl ToolLoopProvider for ChunkSearch {
                 },
                 usage: Default::default(),
                 finish_reason: if turn < 4 { "tool_calls" } else { "stop" }.into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }

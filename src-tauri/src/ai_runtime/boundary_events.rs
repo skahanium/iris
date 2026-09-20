@@ -1092,6 +1092,27 @@ pub fn query_by_run(db: &Database, run_id: &str) -> AppResult<Vec<BoundaryEventR
     })
 }
 
+/// Persist a content-free native-search observation tied to the parent call identity.
+pub fn record_native_search_observation(
+    db: &Database,
+    correlation: &BoundaryCorrelation,
+    payload: &serde_json::Value,
+) -> AppResult<()> {
+    record_event(
+        db,
+        correlation,
+        BoundaryLayer::Generated,
+        BoundaryEventKind::OutboundWitness,
+        RecordCompleteness::Complete,
+        DiscoveryLocation {
+            module: "M07",
+            component: "C20",
+            tool_instance: Some("native_search".into()),
+        },
+        payload.clone(),
+    )
+}
+
 /// Best-effort handshake start used by the production model path.
 pub fn record_handshake_start(db: &Database, slot: &BoundaryAuditSlot) -> AppResult<()> {
     record_event(
@@ -1582,5 +1603,52 @@ mod tests {
             assess_completeness(&db, &run_id).expect("assess"),
             RecordCompleteness::Complete
         );
+    }
+
+    #[test]
+    fn native_search_observation_is_correlated_and_excludes_urls_and_secrets() {
+        let db = Database::open_in_memory().expect("db");
+        let run_id = accept_run(&db, "c26-native-search");
+        let correlation = closed_correlation(&run_id);
+        crate::ai_runtime::boundary_events::record_native_search_observation(
+            &db,
+            &correlation,
+            &serde_json::json!({
+                "kind": "native_search_subrequest",
+                "origin": "isolated_subrequest",
+                "https": true,
+                "statusClass": "2xx",
+                "hasRetrievalCredentials": true,
+                "citationCount": 2,
+                "promptTokens": 11,
+                "completionTokens": 7,
+                "budgetKind": "model_auxiliary_request",
+                "isNetworkToolDispatch": false
+            }),
+        )
+        .expect("record native search");
+        let events = query_by_run(&db, &run_id).expect("query");
+        let recorded = events
+            .iter()
+            .find(|event| {
+                event
+                    .payload
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("native_search_subrequest")
+            })
+            .expect("native search witness");
+        assert_eq!(recorded.run_id, run_id);
+        assert_eq!(recorded.call_id, "call_1");
+        assert_eq!(recorded.attempt_id, "attempt_1");
+        assert_eq!(recorded.model_turn, 1);
+        assert_eq!(recorded.payload["https"], true);
+        assert_eq!(recorded.payload["hasRetrievalCredentials"], true);
+        assert_eq!(recorded.payload["citationCount"], 2);
+        assert_eq!(recorded.payload["isNetworkToolDispatch"], false);
+        let encoded = recorded.payload.to_string();
+        assert!(!encoded.contains("https://"));
+        assert!(!encoded.contains("sk-"));
+        assert!(!encoded.contains(SECRET_NOTE));
     }
 }

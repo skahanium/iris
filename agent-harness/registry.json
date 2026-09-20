@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 134,
+  "registryRevision": 136,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-20T07:09:49.814Z"
+    "recordedAt": "2026-09-20T10:24:54.769Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -96,12 +96,12 @@
     "contracts/K11-dual-path-search.md": {
       "container": "K11",
       "registration": "K11#file",
-      "fingerprint": "6c6c761cdeb6ae177237e741c94355c1"
+      "fingerprint": "30957200edcab603ec2d9819f3ad91ce"
     },
     "contracts/K12-native-search-subrequest.md": {
       "container": "K12",
       "registration": "K12#file",
-      "fingerprint": "eb488f0a14ac76a5e5e0685e2f955bb6"
+      "fingerprint": "628a927141f47f9cfc4322db05511d9d"
     },
     "contracts/K13-web-reading-window.md": {
       "container": "K13",
@@ -196,7 +196,7 @@
     "implementation/D04-dual-path-search.md": {
       "container": "D04",
       "registration": "D04#file",
-      "fingerprint": "fbb1c7c822ca6c82535f15b330686505"
+      "fingerprint": "d3c5080d00c755d2d1700be031455e93"
     },
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
@@ -236,7 +236,7 @@
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04",
-      "fingerprint": "f0549b3a628e800e7c99a390e9499314"
+      "fingerprint": "9ce47227b0c3c4fd9addb140ddca06c8"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
@@ -251,7 +251,7 @@
     "modules/m07-retrieval-and-evidence.md": {
       "container": "M07",
       "registration": "M07",
-      "fingerprint": "ef4e446d10d76f4fa904ef2286445969"
+      "fingerprint": "203c7148201163265e888c5fbef2ebf1"
     },
     "modules/m08-verification-and-delivery.md": {
       "container": "M08",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "4e2b2784598b12fa8d46d5e0dd72667f"
+      "fingerprint": "37b887a79554ff6d17e701a577549b84"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -726,20 +726,20 @@
       "title": "C11 协议与续轮适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 16,
+      "revision": 17,
       "definition": {
         "file": "modules/m04-model-gateway.md",
         "anchor": "C11",
         "line": 165,
         "endLine": 205,
-        "fingerprint": "f6516942e644db31887c78f0d36625a8"
+        "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c"
       },
       "implementation": { "state": "partial" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "implements": ["K04"], "depends_on": ["C10"] },
-      "note": "fixture 解析器在 native_search_subrequest.rs；流式主路径仍未保真搜索事件。verification 仍 none，不把本条标 passed，不关 G03。"
+      "note": "主对话 SSE 夹带搜索事件进入处理路径为 MainStreamLeak 凭据；生产子请求仍不经 streaming.rs。verification 仍 none，不把本条标 passed，不关 G03。"
     },
     "C12": {
       "kind": "component",
@@ -921,13 +921,13 @@
       "title": "C20 双路网页搜索协调",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 15,
+      "revision": 16,
       "definition": {
         "file": "modules/m07-retrieval-and-evidence.md",
         "anchor": "C20",
         "line": 179,
         "endLine": 219,
-        "fingerprint": "43dfe86295dac55c82079edb23c3ee51"
+        "fingerprint": "dcc588e93cf7aef60a06f3c79942182a"
       },
       "implementation": { "state": "partial" },
       "verification": { "state": "none" },
@@ -937,7 +937,7 @@
         "implements": ["K11", "K12", "N07"],
         "depends_on": ["C10", "C18", "C13", "C04"]
       },
-      "note": "协调器已接入生产 web_search；原生可达性见 K12 执行事实。partial 不是 present（G02 仍 open，V04 缺）。机械 V03 不是验收，不关 G02。"
+      "note": "协调器已接入生产 web_search；原生可达性见 K12 执行事实。生产入口录制回放 V04 已有，不是 V05。partial 不是 present（G02 仍 open）。机械 V03 不是验收，不关 G02。"
     },
     "C21": {
       "kind": "component",
@@ -1414,20 +1414,20 @@
       "title": "双路搜索协调的真实执行",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 15,
+      "revision": 16,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G02",
         "line": 32,
         "endLine": 42,
-        "fingerprint": "963d73de5fa4cc20ade7a52dd8085a6a"
+        "fingerprint": "812829141d7fe58e661239383fa0f165"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": "两已登记模型 Available 时会发起原生+MCP。机械 V03 不是验收；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。现状见 open-items G02。"
+      "note": "生产入口录制回放 V04 已有（dual_path_v04_tests.rs）。不是 V05；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。现状见 open-items G02。"
     },
     "G03": {
       "kind": "issue",
@@ -1435,20 +1435,20 @@
       "title": "原生搜索事件的接入与端点适配",
       "owner": "M04",
       "maturity": "draft",
-      "revision": 15,
+      "revision": 16,
       "definition": {
         "file": "requirements/open-items.md",
         "anchor": "G03",
         "line": 44,
         "endLine": 55,
-        "fingerprint": "f6f2bd3d8b0b3f8e698a0b2f3f22800a"
+        "fingerprint": "2bbc8e7920d37c72637b94467245d433"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": "适配器已登记两模型；流式主路径仍未保真搜索事件。不是关闭，不是 V05。D02 不关闭本条。"
+      "note": "处理路径切片已落地（SSE MainStreamLeak + 隔离子请求观察）。生产子请求仍 stream:false。不是关闭，不是 V05。D02 不关闭本条。"
     },
     "G04": {
       "kind": "issue",
@@ -1763,7 +1763,7 @@
       "work": null,
       "scope": [],
       "relations": { "applies_to": ["C20", "C11", "C12"] },
-      "note": "生产登记 2 个适配器；C10 对这两模型 Available。搜索事件尚未进入网关流式路径。不是 V05，不关 G03。正文见执行事实段。"
+      "note": "生产登记 2 个适配器；C10 对这两模型 Available。生产子请求仍 stream:false；主对话 SSE 夹带为 MainStreamLeak。不是 V05，不关 G03。正文见执行事实段。"
     },
     "K13": {
       "kind": "contract",
@@ -4480,13 +4480,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 31,
+      "revision": 32,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 86,
-        "fingerprint": "c9bed2d1d527606c919a58beb0e988e9"
+        "fingerprint": "81e6f6c50a17cad54d2b60ffcde17e13"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4522,13 +4522,13 @@
       "title": "V04 跨组件交接与生产入口证据",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 11,
+      "revision": 12,
       "definition": {
         "file": "testing/acceptance-matrix.md",
         "anchor": "V04",
         "line": 37,
         "endLine": 59,
-        "fingerprint": "a08b4a591370649c3a92dd7bc54b3257"
+        "fingerprint": "eb9bcb2ce4bab35c59af0a3a11af5246"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -6060,8 +6060,8 @@
       "environment": "local / Windows 10 / cargo test",
       "fingerprint": "963d73de5fa4cc20ade7a52dd8085a6a",
       "at": "2026-09-20T02:58:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-20-71 执行事实收口后重绑：机械 dual_path 覆盖仍在。两已登记模型 Available 时会发起原生+MCP。机械覆盖不是验收，不关 G02，不是 V04。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：机械 dual_path 覆盖仍在。两已登记模型 Available 时会发起原生+MCP。机械覆盖不是验收，不关 G02，不是 V04。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C20",
@@ -6071,8 +6071,8 @@
       "environment": "local / Windows 10 / cargo test",
       "fingerprint": "43dfe86295dac55c82079edb23c3ee51",
       "at": "2026-09-20T02:58:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-20-71 执行事实收口后重绑：implementation.state=partial（V04 缺，G02 仍 open）。不把 C20 verification 标 passed，不关 G02。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：implementation.state=partial（V04 缺，G02 仍 open）。不把 C20 verification 标 passed，不关 G02。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C20",
@@ -6082,8 +6082,8 @@
       "environment": "local / Windows 10 / cargo test",
       "fingerprint": "43dfe86295dac55c82079edb23c3ee51",
       "at": "2026-09-20T02:58:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-20-71 执行事实收口后重绑：生产入口仍经协调器。未登记模型 MCP 单路。不是 V04，不把 C20 verification 标 passed，不关 G02。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：生产入口仍经协调器。未登记模型 MCP 单路。不是 V04，不把 C20 verification 标 passed，不关 G02。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C20",
@@ -6093,8 +6093,8 @@
       "environment": "local / Windows 10 / cargo test",
       "fingerprint": "43dfe86295dac55c82079edb23c3ee51",
       "at": "2026-09-20T02:58:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-20-71 执行事实收口后重绑：web_search 返回 dualPath 分路状态；MCP 主备次数不是 dualPathComplete。不把 C20 verification 标 passed，不关 G02。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：web_search 返回 dualPath 分路状态；MCP 主备次数不是 dualPathComplete。不把 C20 verification 标 passed，不关 G02。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C20",
@@ -6104,8 +6104,8 @@
       "environment": "local / Windows 10 / cargo test",
       "fingerprint": "43dfe86295dac55c82079edb23c3ee51",
       "at": "2026-09-20T02:58:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-20-71 执行事实收口后重绑：web_fetch 不呈现 dualPath。不是 V04，不把 C20 verification 标 passed，不关 G02。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：web_fetch 不呈现 dualPath。不是 V04，不把 C20 verification 标 passed，不关 G02。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "G03",
@@ -6115,8 +6115,8 @@
       "environment": "local / Windows 10 / cargo test",
       "fingerprint": "f6f2bd3d8b0b3f8e698a0b2f3f22800a",
       "at": "2026-09-20T02:58:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-20-71 执行事实收口后重绑：本机 native_search 47 passed / 0 failed / 3 ignored。适配器已登记两模型；流式主路径仍未保真。不是关闭，不是 V05。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：本机 native_search 47 passed / 0 failed / 3 ignored。适配器已登记两模型；流式主路径仍未保真。不是关闭，不是 V05。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "G03",
@@ -6126,8 +6126,8 @@
       "environment": "local / Windows 10 / cargo test",
       "fingerprint": "f6f2bd3d8b0b3f8e698a0b2f3f22800a",
       "at": "2026-09-20T02:58:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-20-71 执行事实收口后重绑：SSE 夹带 web_search_call 不产生检索凭据。G03 仍 open。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：SSE 夹带 web_search_call 不产生检索凭据。G03 仍 open。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C10",
@@ -6159,8 +6159,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6170,8 +6170,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。 2026-09-19 重绑：本机 streaming_finish_reason_sse 3 passed（含 G03 夹带搜索事件负例）。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。 2026-09-19 重绑：本机 streaming_finish_reason_sse 3 passed（含 G03 夹带搜索事件负例）。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6181,8 +6181,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6192,8 +6192,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6203,8 +6203,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6214,8 +6214,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6225,8 +6225,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6236,8 +6236,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6247,8 +6247,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6258,8 +6258,8 @@
       "environment": "local / Windows 10 / node v24.14.1 / cargo test",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
-      "applicability": "current",
-      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "applicability": "obsolete",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，2026-09-19 重绑：C11 正文补了 fixture 解析器落点；流式主路径仍未保真搜索事件。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
     },
     {
       "object": "C11",
@@ -6269,8 +6269,305 @@
       "environment": "local / macOS / cargo test（DEVELOPER_DIR=/Library/Developer/CommandLineTools）",
       "fingerprint": "f6516942e644db31887c78f0d36625a8",
       "at": "2026-09-19T14:55:00Z",
+      "applicability": "obsolete",
+      "note": "2026-09-19 第一刀：本机 1 passed / 0 failed。流式主路径不把搜索事件变成可引用凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 【已被取代，保留为历史证据】CHG-2026-09-20-75 处理路径与 V04 录制回放改写了对象正文，本条绑定的是改写前的指纹；按 governance §5.2 规则 6 不改写旧指纹，改以 applicability=obsolete 重绑当前指纹。"
+    },
+    {
+      "object": "G02",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_search.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "812829141d7fe58e661239383fa0f165",
+      "at": "2026-09-20T10:30:00Z",
       "applicability": "current",
-      "note": "2026-09-19 第一刀：本机 1 passed / 0 failed。流式主路径不把搜索事件变成可引用凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。"
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：机械 dual_path 覆盖仍在。两已登记模型 Available 时会发起原生+MCP。机械覆盖不是验收，不关 G02，机械 V03 仍保留。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C20",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_search.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "dcc588e93cf7aef60a06f3c79942182a",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：implementation.state=partial（G02 仍 open）。不把 C20 verification 标 passed，不关 G02。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C20",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/web_evidence_broker_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib search_without_usable_https_candidates_is_recorded_as_failed_health",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "dcc588e93cf7aef60a06f3c79942182a",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：生产入口仍经协调器。未登记模型 MCP 单路。不把 C20 verification 标 passed，不关 G02。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C20",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/web.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib successful_web_response_is_packetized",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "dcc588e93cf7aef60a06f3c79942182a",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：web_search 返回 dualPath 分路状态；MCP 主备次数不是 dualPathComplete。不把 C20 verification 标 passed，不关 G02。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C20",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/tool_dispatch/web.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib web_fetch_response_does_not_present_search_dual_path",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "dcc588e93cf7aef60a06f3c79942182a",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：web_fetch 不呈现 dualPath。不把 C20 verification 标 passed，不关 G02。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "G03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/native_search_subrequest.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib native_search",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "2bbc8e7920d37c72637b94467245d433",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-71 执行事实收口后重绑：本机 native_search 47 passed / 0 failed / 3 ignored。适配器已登记两模型；处理路径切片已落地。不是关闭，不是 V05。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_chat_completions.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_chat_completions",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 9 passed / 0 failed。Chat Completions 流式状态机：length 不改写为 stop、缺省 unknown、尾事件、截断工具不进入可执行列表、max_tokens 不派发。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic；Anthropic 五类见 streaming_anthropic 记录。不把 C11 verification 标为通过（Responses／Q10／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 48：本机 2 passed / 0 failed。字节级 SSE：finish_reason=length 出网关；仅 [DONE]、无终止块时为 unknown 而非 stop。随后全量 cargo test --lib：2088 passed / 0 failed / 5 ignored。 2026-09-19 重绑：本机 streaming_finish_reason_sse 3 passed（含 G03 夹带搜索事件负例）。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::deepseek_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 2 passed / 0 failed。DeepSeek 直发 HTTP 顶层 thinking.type=enabled，不写 extra_body；reasoning_effort 为 high／max。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。本行不覆盖 Anthropic 终止；不把 C11 verification 标为通过（G03／Q17／V05 仍不在范围）。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib deepseek_tool_continuation_preserves_reasoning_content",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。同一 Provider 工具续轮 assistant 出站带 reasoning_content 与顶层 thinking，无 extra_body。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib messages_for_api_does_not_replay_reasoning",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。无 tool_calls 的历史 assistant 不回放私有推理。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/body.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib phase3_adapter_contract_tests::responses_",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 3 passed / 0 failed。Responses 续轮保留稳定 instructions；Host System 修复写入 input；无 System 夹具仍可不带 instructions。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_capacity_eval_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib responses_double_preserves_instructions_and_host_repair_on_continuation",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "registryRevision 49：本机 1 passed / 0 failed。字节级第二跳 /v1/responses：previous_response_id、instructions、input 内 system 修复与 function_call_output。随后全量 cargo test --lib：2091 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/model_gateway/streaming_anthropic.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic::tests",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 9 passed / 0 failed。Anthropic Messages 流式状态机：end_turn 保留、max_tokens／缺 stop_reason 为 unknown 且不进入可执行 tool_use、message_stop 尾事件不填 stop。随后全量 cargo test --lib：2117 passed / 0 failed / 5 ignored。不把 C11 verification 标为通过，2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_anthropic_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_anthropic_finish_reason_sse",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-17-50：本机 6 passed / 0 failed。字节级 SSE：end_turn 经 message_stop 保留；max_tokens 清掉截断 tool_use；缺 stop_reason（含仅连接结束、无 message_stop）为 unknown 而非 stop。随后全量 cargo test --lib：2118 passed / 0 failed / 5 ignored。 2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/agent_tool_loop_anthropic_finish_reason_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib agent_tool_loop_anthropic_finish_reason",
+      "environment": "local / Windows 10 / node v24.14.1 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "包 B 对照检查：本机 3 passed / 0 failed。end_turn／tool_use 仍派发，max_tokens 不派发。与 Q04 的 agent_tool_loop_finish_reason 命令隔离。不把 C11 verification 标为通过，2026-09-19 重绑：C11 正文补了 fixture 解析器落点；主对话 SSE 夹带搜索事件进入处理路径为凭据。不把 C11 verification 标 passed，不关 G03。 2026-09-19 对照检查后重绑：C11 正文纠正 Q04／D02 已关闭口径，并写明 ResponsesReserved 直播路径未加。不把 C11 verification 标 passed，不关 G03。 CHG-2026-09-20-75 重绑：处理路径切片与生产入口 V04 录制回放已落地。不把 verification 标 passed，不关 G02／G03／Q17／D04，不是 V05。"
+    },
+    {
+      "object": "G02",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib v04_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "812829141d7fe58e661239383fa0f165",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：生产入口五场景 + 分路故障录制回放（execute_web_tool → ProductionNativeSearchRoute + BrokerMcpSearchRoute）。不是 V05 live，不关 G02／D04，不把 verification 标 passed。"
+    },
+    {
+      "object": "C20",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib v04_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "dcc588e93cf7aef60a06f3c79942182a",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：生产入口五场景 + 分路故障录制回放（execute_web_tool → ProductionNativeSearchRoute + BrokerMcpSearchRoute）。不是 V05 live，不关 G02／D04，不把 verification 标 passed。"
+    },
+    {
+      "object": "D04",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib v04_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "231abe077396d4f660fc5bfcc5282f82",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：生产入口五场景 + 分路故障录制回放（execute_web_tool → ProductionNativeSearchRoute + BrokerMcpSearchRoute）。不是 V05 live，不关 G02／D04，不把 verification 标 passed。"
+    },
+    {
+      "object": "K11",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib v04_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "a9e4a9d5fc619f4708fce9d4bf4583b8",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：生产入口五场景 + 分路故障录制回放（execute_web_tool → ProductionNativeSearchRoute + BrokerMcpSearchRoute）。不是 V05 live，不关 G02／D04，不把 verification 标 passed。"
+    },
+    {
+      "object": "V04",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib v04_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "eb9bcb2ce4bab35c59af0a3a11af5246",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：生产入口五场景 + 分路故障录制回放（execute_web_tool → ProductionNativeSearchRoute + BrokerMcpSearchRoute）。不是 V05 live，不关 G02／D04，不把 verification 标 passed。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib chat_completions_sse_web_search_call_does_not_yield_executable_tool_calls",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：SSE 夹带 web_search_call 不崩、无 Error、不产生可执行 tool_calls。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib chat_completions_sse_web_search_call_mints_main_stream_leak_credentials",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：同一 fixture 流式路径产出 MainStreamLeak 凭据；dual-path 原生状态不受其影响。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "C11",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_anthropic_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib anthropic_sse_server_tool_use_mints_credentials_without_client_tools",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：Anthropic SSE server_tool_use 产出凭据且不进入客户端 tool_use。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "G03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/streaming_finish_reason_sse_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib chat_completions_sse_web_search_call_mints_main_stream_leak_credentials",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "2bbc8e7920d37c72637b94467245d433",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：同一 fixture 流式路径产出 MainStreamLeak 凭据；dual-path 原生状态不受其影响。不把 C11 verification 标 passed，不关 G03。"
+    },
+    {
+      "object": "K12",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/native_search_adapter_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib native_search_attaches_reported_tokens_without_counting_as_network_tool",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "91b94fe0837f4c3c218d7838bcf55b62",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：隔离子请求凭据与 NativeSearchRequestIdentity 进入 dualPath／C26；usage 挂父调用，不占 model_turn／network_tool。不是 V05，不关 G03。"
+    },
+    {
+      "object": "C26",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/boundary_events.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib native_search_observation_is_correlated_and_excludes_urls_and_secrets",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "48e1a8c40e3430e47b34ba3b69fcfce8",
+      "at": "2026-09-20T10:30:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-20-75：隔离子请求凭据与 NativeSearchRequestIdentity 进入 dualPath／C26；usage 挂父调用，不占 model_turn／network_tool。不是 V05，不关 G03。"
     }
   ],
   "changes": [
@@ -20301,6 +20598,103 @@
           "fingerprintTo": "9df9d5e4e1a8f60ebc3dbbe9c995fe33"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-20-75",
+      "at": "2026-09-20T10:22:40.130Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "G03 处理路径切片与 V04 生产入口录制回放：更新执行事实与现状，不关 G02/G03/Q17/D04，不把 verification 标 passed，不改架构 F 表。",
+      "review": null,
+      "objects": [
+        {
+          "id": "K11#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "6c6c761cdeb6ae177237e741c94355c1",
+          "fingerprintTo": "30957200edcab603ec2d9819f3ad91ce"
+        },
+        {
+          "id": "K12#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "eb488f0a14ac76a5e5e0685e2f955bb6",
+          "fingerprintTo": "628a927141f47f9cfc4322db05511d9d"
+        },
+        {
+          "id": "M04",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "f0549b3a628e800e7c99a390e9499314",
+          "fingerprintTo": "9ce47227b0c3c4fd9addb140ddca06c8"
+        },
+        {
+          "id": "M07",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "ef4e446d10d76f4fa904ef2286445969",
+          "fingerprintTo": "203c7148201163265e888c5fbef2ebf1"
+        },
+        {
+          "id": "C11",
+          "revisionFrom": 16,
+          "revisionTo": 17,
+          "fingerprintFrom": "f6516942e644db31887c78f0d36625a8",
+          "fingerprintTo": "14c83d8ded91a0d55eb1dabdde06562c"
+        },
+        {
+          "id": "C20",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "43dfe86295dac55c82079edb23c3ee51",
+          "fingerprintTo": "dcc588e93cf7aef60a06f3c79942182a"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 31,
+          "revisionTo": 32,
+          "fingerprintFrom": "c9bed2d1d527606c919a58beb0e988e9",
+          "fingerprintTo": "81e6f6c50a17cad54d2b60ffcde17e13"
+        },
+        {
+          "id": "V04",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "a08b4a591370649c3a92dd7bc54b3257",
+          "fingerprintTo": "eb9bcb2ce4bab35c59af0a3a11af5246"
+        },
+        {
+          "id": "G02",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "963d73de5fa4cc20ade7a52dd8085a6a",
+          "fingerprintTo": "812829141d7fe58e661239383fa0f165"
+        },
+        {
+          "id": "G03",
+          "revisionFrom": 15,
+          "revisionTo": 16,
+          "fingerprintFrom": "f6f2bd3d8b0b3f8e698a0b2f3f22800a",
+          "fingerprintTo": "2bbc8e7920d37c72637b94467245d433"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-20-76",
+      "at": "2026-09-20T10:24:54.769Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "补写 D04 不承诺段与 catalog note，使其与 G03 处理路径／V04 录制回放事实一致；不关缺口，不标 passed。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D04#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "fbb1c7c822ca6c82535f15b330686505",
+          "fingerprintTo": "d3c5080d00c755d2d1700be031455e93"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -21378,6 +21772,12 @@
       "author": "Cursor Grok 4.6（施工）",
       "topic": "2026-09-20 原生搜索执行事实收口：verify 重绑",
       "detail": "CHG-2026-09-20-71 细化后，将 G02／C20／G03／C10 的 current V03 标 obsolete 并重绑当前定义指纹；REV-2026-09-19-60 的 Q17 槽标 stale（不改写旧指纹）。不把 verification.state 标 passed，不关 G02／G03／Q17／D04。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-20T10:30:00Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "topic": "2026-09-20 G03 处理路径与 V04 生产入口：verify 重绑",
+      "detail": "CHG-2026-09-20-75 细化后，将 G02／C20／G03／C11 的 current V03 标 obsolete 并重绑当前定义指纹；新增 kind=V04 绑 dual_path_v04_tests.rs。不把 verification.state 标 passed，不关 G02／G03／Q17／D04。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ]
 }

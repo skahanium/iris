@@ -93,8 +93,7 @@ impl ToolLoopProvider for DraftProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }

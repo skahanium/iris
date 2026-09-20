@@ -91,7 +91,8 @@ pub(crate) struct DualPathCandidate {
 }
 
 /// Credentialed hits returned by one route executor.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SearchHit {
     pub url: String,
     pub title: String,
@@ -107,6 +108,8 @@ pub(crate) struct RouteAttemptOutcome {
     pub failure: Option<RouteFailureClass>,
     /// MCP providers tried inside one route. Never a dual-path count.
     pub internal_provider_attempts: u32,
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
 }
 
 /// Successful search-request counts reserved for K11 usage.
@@ -115,6 +118,10 @@ pub(crate) struct RouteAttemptOutcome {
 pub(crate) struct DualPathSearchUsage {
     pub native: u32,
     pub mcp: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_prompt_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_completion_tokens: Option<u32>,
 }
 
 /// Coordinator input.
@@ -139,6 +146,8 @@ pub(crate) struct DualPathSearchOutcome {
     pub mcp_internal_provider_attempts: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_unsupported_reason: Option<NativeSearchUnsupportedReason>,
+    #[serde(default)]
+    pub native_has_retrieval_credentials: bool,
 }
 
 impl DualPathSearchOutcome {
@@ -279,6 +288,12 @@ where
     let usage = DualPathSearchUsage {
         native: u32::from(native_status.succeeded),
         mcp: u32::from(mcp_status.succeeded),
+        native_prompt_tokens: native_outcome
+            .as_ref()
+            .and_then(|outcome| outcome.prompt_tokens),
+        native_completion_tokens: native_outcome
+            .as_ref()
+            .and_then(|outcome| outcome.completion_tokens),
     };
     let candidates = merge_route_candidates(
         native_status
@@ -301,6 +316,9 @@ where
             NativeSearchSupport::Unsupported => probe.native_search_unsupported_reason(),
             _ => None,
         },
+        native_has_retrieval_credentials: native_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.has_retrieval_credentials),
     }
 }
 
@@ -428,6 +446,8 @@ pub(crate) fn dual_path_status_json(outcome: &DualPathSearchOutcome) -> Value {
         "usage": {
             "native": outcome.usage.native,
             "mcp": outcome.usage.mcp,
+            "nativePromptTokens": outcome.usage.native_prompt_tokens,
+            "nativeCompletionTokens": outcome.usage.native_completion_tokens,
         },
         "shortage": outcome.shortage,
         "executedInParallel": outcome.executed_in_parallel,
@@ -451,6 +471,12 @@ fn native_route_status_json(outcome: &DualPathSearchOutcome) -> Value {
         Some(reason) => json!(reason),
         None => Value::Null,
     };
+    native["hasRetrievalCredentials"] = json!(outcome.native_has_retrieval_credentials);
+    native["citationCount"] = json!(outcome
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.channels.contains(&SearchChannel::Native))
+        .count());
     native
 }
 
@@ -484,6 +510,68 @@ fn canonicalize_search_url(url: &str) -> String {
         let _ = normalized.set_port(None);
     }
     normalized.to_string()
+}
+
+/// C26 witness for an isolated native-search subrequest. Omits URLs, note
+/// bodies, and secrets.
+pub(crate) fn record_native_search_boundary(
+    db: &crate::storage::db::Database,
+    outcome: &DualPathSearchOutcome,
+) {
+    if outcome.identity.run_id.trim().is_empty() || !outcome.native.attempted {
+        return;
+    }
+    let call_id = if outcome.identity.action_id.trim().is_empty() {
+        "web_search".to_string()
+    } else {
+        outcome.identity.action_id.clone()
+    };
+    let correlation = crate::ai_runtime::boundary_events::BoundaryCorrelation {
+        run_id: outcome.identity.run_id.clone(),
+        input_revision: outcome.identity.input_revision.to_string(),
+        parent_run_id: None,
+        child_run_id: None,
+        model_turn: 1,
+        call_id,
+        attempt_id: outcome.identity.attempt.to_string(),
+        tool_surface_version: "native-search".into(),
+        protocol_adapter: "native_search_subrequest".into(),
+    };
+    let status_class = if outcome.native.succeeded {
+        "2xx"
+    } else {
+        match outcome.native.failed {
+            Some(RouteFailureClass::TemporaryFailure) => "4xx",
+            Some(RouteFailureClass::TransportOrProviderFailure) => "5xx",
+            Some(RouteFailureClass::ProtocolOrResultInsufficient) => "protocol",
+            None => "unknown",
+        }
+    };
+    let citation_count = outcome
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.channels.contains(&SearchChannel::Native))
+        .count();
+    let token_usage_reported = outcome.usage.native_prompt_tokens.is_some()
+        || outcome.usage.native_completion_tokens.is_some();
+    let payload = json!({
+        "kind": "native_search_subrequest",
+        "origin": "isolated_subrequest",
+        "https": true,
+        "statusClass": status_class,
+        "hasRetrievalCredentials": outcome.native_has_retrieval_credentials,
+        "citationCount": citation_count,
+        "promptTokens": outcome.usage.native_prompt_tokens,
+        "completionTokens": outcome.usage.native_completion_tokens,
+        "tokenUsageReported": token_usage_reported,
+        "budgetKind": "model_auxiliary_request",
+        "isNetworkToolDispatch": false
+    });
+    let _ = crate::ai_runtime::boundary_events::record_native_search_observation(
+        db,
+        &correlation,
+        &payload,
+    );
 }
 
 #[cfg(test)]
@@ -522,6 +610,7 @@ mod tests {
             generated_text_only: false,
             failure: None,
             internal_provider_attempts,
+            ..Default::default()
         }
     }
 
@@ -532,6 +621,7 @@ mod tests {
             generated_text_only: false,
             failure: Some(RouteFailureClass::TransportOrProviderFailure),
             internal_provider_attempts,
+            ..Default::default()
         }
     }
 
@@ -733,6 +823,7 @@ mod tests {
             generated_text_only: true,
             failure: None,
             internal_provider_attempts: 1,
+            ..Default::default()
         });
         let mcp = ScriptedSearchRoute::new(credentialed(vec![hit("https://mcp.example/b")], 1));
 
@@ -875,5 +966,27 @@ mod tests {
             Some(RouteFailureClass::TemporaryFailure)
         );
         assert!(outcome.mcp.succeeded);
+    }
+
+    #[tokio::test]
+    async fn dual_path_json_exposes_native_credentials_count_and_parent_identity() {
+        let native =
+            ScriptedSearchRoute::new(credentialed(vec![hit("https://native.example/a")], 1));
+        let mcp = ScriptedSearchRoute::new(credentialed(vec![hit("https://mcp.example/b")], 1));
+        let outcome = coordinate_dual_path_search(
+            request(true),
+            &NativeSearchSupport::Available,
+            &native,
+            &mcp,
+        )
+        .await;
+        let json = dual_path_status_json(&outcome);
+        assert_eq!(json["requestIdentity"]["runId"], "run-1");
+        assert_eq!(json["requestIdentity"]["actionId"], "search-1");
+        assert_eq!(json["native"]["hasRetrievalCredentials"], true);
+        assert_eq!(json["native"]["citationCount"], 1);
+        assert_eq!(json["usage"]["native"], 1);
+        assert!(json["usage"].get("nativePromptTokens").is_some());
+        assert!(json["usage"].get("nativeCompletionTokens").is_some());
     }
 }

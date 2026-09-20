@@ -71,7 +71,7 @@
 | 组件  | 现有落点                                                                                                                                                                                                                                                                                                                  | 处置                                                                                                                      |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `C10` | `src-tauri/src/ai_runtime/provider_router.rs`、`src-tauri/src/ai_runtime/capability_resolver.rs`、`src-tauri/src/ai_runtime/native_search_subrequest.rs`（`native_search_support_for` 按端点探针）                                                                                                                        | 收清 Provider 与工具能力来源；原生搜索按端点声明，现行登记见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实 |
-| `C11` | `src-tauri/src/ai_runtime/model_gateway.rs` 及其子文件（`body.rs`、`messages.rs`、`streaming.rs`、`streaming_chat_completions.rs`、`streaming_anthropic.rs`、`responses.rs`、`anthropic_response.rs`、`usage.rs`、`abort.rs`、`http_backend.rs`、`minimax_tool_call.rs`）；fixture 解析器在 `native_search_subrequest.rs` | 修正现有合同；流式主路径仍未保真搜索事件                                                                                  |
+| `C11` | `src-tauri/src/ai_runtime/model_gateway.rs` 及其子文件（`body.rs`、`messages.rs`、`streaming.rs`、`streaming_search_events.rs`、`streaming_chat_completions.rs`、`streaming_anthropic.rs`、`responses.rs`、`anthropic_response.rs`、`usage.rs`、`abort.rs`、`http_backend.rs`、`minimax_tool_call.rs`）；fixture 解析器在 `native_search_subrequest.rs` | 主对话 SSE 夹带搜索事件进入处理路径为凭据；生产子请求仍不经 `streaming.rs`；`G03` 仍 open |
 | `C12` | 网关、`src-tauri/src/ai_runtime/run_engine/providers.rs`、`src-tauri/src/ai_runtime/circuit_breaker.rs`                                                                                                                                                                                                                   | 统一执行报告                                                                                                              |
 
 ## 兼容
@@ -192,7 +192,7 @@
 
 ## 源码落点
 
-现有基础与处置：model_gateway 及其子文件；`native_search_subrequest.rs` 的 fixture 解析器映射检索凭据形状。流式主路径仍未保真搜索事件（`streaming.rs` 事件枚举未扩，`G03` 仍 open）。protocol-and-continuation 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
+现有基础与处置：model_gateway 及其子文件；`streaming_search_events.rs` 识别主对话 SSE 夹带的搜索事件为 `MainStreamLeak` 凭据（不生成可执行 `ToolCall`，不驱动 K11 原生 `succeeded`）。生产子请求仍 `stream:false`、不经 `streaming.rs`（事件枚举未扩）。`G03` 仍 open。protocol-and-continuation 的目标合同不要求按组件新建文件；映射到多个责任组件的现有大文件应在迁移时删除被替代的重复判断。
 
 ## 兼容
 
@@ -200,7 +200,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`。Chat Completions 流式终止原因已有 `V03` 机械记录（`registry.json.verify`，对象 `C11`／`Q04`）；Anthropic Messages 流式五类终止（`end_turn`／`max_tokens`／`tool_use`／`message_stop`／缺 `stop_reason`→`unknown`）已有 `V03` 机械记录（对象 `C11`／`K04`）；`Q10` 出站续轮（DeepSeek 顶层 `thinking`、工具续轮 `reasoning_content`、Responses `instructions`／Host 修复）亦有 `V03` 机械记录。本组件 `verification.state` 仍为 `none`，因为服务端搜索事件（`G03`／`Q17`）与逐端点 `V05` 不在本条范围。fixture 解析器不是流式保真，不重开已关闭的 `Q04`，也不据此关闭 `G03`／`D04`，也不把 Anthropic 覆盖写入 `Q04` 关闭条件。Chat Completions SSE 负例夹带 `web_search_call` 与 `groundingMetadata` 以钉住「不崩、无检索凭据」；`ResponsesReserved` 直播路径本轮未加（协议替身不服务 `/v1/responses`），不据此宣称 Responses 流式已覆盖。
+关键不变量与所需证据类别见 `V01`–`V07`。Chat Completions 流式终止原因已有 `V03` 机械记录（`registry.json.verify`，对象 `C11`／`Q04`）；Anthropic Messages 流式五类终止（`end_turn`／`max_tokens`／`tool_use`／`message_stop`／缺 `stop_reason`→`unknown`）已有 `V03` 机械记录（对象 `C11`／`K04`）；`Q10` 出站续轮（DeepSeek 顶层 `thinking`、工具续轮 `reasoning_content`、Responses `instructions`／Host 修复）亦有 `V03` 机械记录。本组件 `verification.state` 仍为 `none`，因为逐端点 `V05` 与 `G03` 关闭不在本条范围。fixture 解析器不是流式保真，不重开已关闭的 `Q04`，也不据此关闭 `G03`／`D04`，也不把 Anthropic 覆盖写入 `Q04` 关闭条件。Chat Completions／Anthropic SSE 夹带 `web_search_call`／`server_tool_use`／`url_citation` 钉住「不崩、无可执行 tool_calls，且产出 `MainStreamLeak` 凭据」；生产子请求仍不经流式主循环。`ResponsesReserved` 直播路径本轮未加（协议替身不服务 `/v1/responses`），不据此宣称 Responses 流式已覆盖。
 
 <!-- iris:end C11 -->
 

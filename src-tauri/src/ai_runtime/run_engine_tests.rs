@@ -202,8 +202,7 @@ impl ToolLoopProvider for MockStreamingProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -249,8 +248,7 @@ impl ToolLoopProvider for FixedContentStreamingProvider {
                     prompt_cache_miss_tokens: 7,
                 },
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -281,8 +279,7 @@ impl ToolLoopProvider for MissingUsageStreamingProvider {
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -340,8 +337,7 @@ impl ToolLoopProvider for MetaAnalysisStreamingProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -382,8 +378,7 @@ impl ToolLoopProvider for NormalAnswerStreamingProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -412,8 +407,7 @@ impl ToolLoopProvider for MetaAnalysisToolLoopProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -549,16 +543,14 @@ fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvide
                 }],
                 usage: Default::default(),
                 finish_reason: "tool_calls".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             crate::ai_runtime::model_gateway::GatewayResponse {
                 content: Some(final_content),
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     }
@@ -1050,8 +1042,7 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_precise_citations_withou
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             }];
             let provider = ScriptedToolLoopProvider {
                 responses: std::sync::Mutex::new(VecDeque::from(responses)),
@@ -3534,16 +3525,14 @@ async fn tool_loop_appends_one_recovery_turn_after_a_title_only_answer() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             crate::ai_runtime::model_gateway::GatewayResponse {
                 content: Some("近期报道主要聚焦其国内政策与外交活动。[W1]".to_string()),
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -3637,8 +3626,7 @@ async fn strict_external_submission_persists_only_the_referenced_evidence() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -3831,8 +3819,7 @@ async fn strict_web_answer_without_current_run_marker_withholds_unsupported_draf
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -3933,8 +3920,7 @@ async fn natural_web_answer_keeps_only_the_current_run_precise_marker() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4021,8 +4007,7 @@ async fn strict_web_missing_marker_withholds_unsupported_draft() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4105,8 +4090,7 @@ async fn web_follow_up_keeps_current_run_citations_separate_from_history() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4170,8 +4154,7 @@ async fn web_follow_up_keeps_current_run_citations_separate_from_history() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4264,8 +4247,7 @@ async fn source_group_strict_web_turn_does_not_block_the_next_turn_in_the_same_s
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4514,8 +4496,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
                     tool_calls: Vec::new(),
                     usage: Default::default(),
                     finish_reason: "stop".into(),
-                    reasoning_content: None,
-                    continuation: None,
+                    ..Default::default()
                 })
             })
         }

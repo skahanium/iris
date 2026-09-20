@@ -7,7 +7,9 @@ use super::model_gateway::{
     GatewayRequest, LlmFunctionDef, LlmMessage, LlmToolDef, MessageRole, ModelGateway, StreamEvent,
     StreamEventObserver, StreamEventType,
 };
-use super::native_search_subrequest::{parse_native_search_payload, NativeSearchPayloadFamily};
+use super::native_search_subrequest::{
+    parse_native_search_payload, NativeSearchPayloadFamily, RetrievalOrigin,
+};
 use crate::ai_types::{EndpointFamily, ProviderConfig, ResolvedReasoningRequest};
 use crate::error::AppResult;
 
@@ -128,25 +130,8 @@ impl StreamEventObserver for RecordingObserver {
 }
 
 #[tokio::test]
-async fn chat_completions_sse_web_search_call_is_ignored_without_credentials() {
-    // G03 is still open: the streaming path must not crash on search events and
-    // must not mint retrieval credentials. The fixture parser can see the same
-    // JSON; that is not the gateway live path.
-    let payload = serde_json::json!({
-        "choices": [{
-            "delta": { "content": "ok" },
-            "finish_reason": "stop"
-        }],
-        "output": [{
-            "type": "web_search_call",
-            "status": "completed"
-        }],
-        "groundingMetadata": {
-            "groundingChunks": [{
-                "web": { "uri": "https://example.com/from-sse", "title": "SSE hit" }
-            }]
-        }
-    });
+async fn chat_completions_sse_web_search_call_does_not_yield_executable_tool_calls() {
+    let payload = search_shaped_chat_completions_payload();
     let sse = format!("data: {payload}\n\ndata: [DONE]\n\n");
     let double = spawn_llm_protocol_double(vec![HttpResponseScript::sse(&sse)])
         .await
@@ -156,7 +141,7 @@ async fn chat_completions_sse_web_search_call_is_ignored_without_credentials() {
 
     let response = gateway
         .send_streaming_request_to_observer(
-            "run-g03-sse-search-ignored",
+            "run-g03-sse-search-not-tool-call",
             request(provider(&double.base_url)),
             &mut observer,
         )
@@ -174,10 +159,66 @@ async fn chat_completions_sse_web_search_call_is_ignored_without_credentials() {
     );
     assert!(response.tool_calls.is_empty());
     assert_eq!(response.content.as_deref(), Some("ok"));
+    assert_eq!(response.finish_reason, "stop");
+}
+
+#[tokio::test]
+async fn chat_completions_sse_web_search_call_mints_main_stream_leak_credentials() {
+    let payload = search_shaped_chat_completions_payload();
+    let sse = format!("data: {payload}\n\ndata: [DONE]\n\n");
+    let double = spawn_llm_protocol_double(vec![HttpResponseScript::sse(&sse)])
+        .await
+        .expect("protocol double");
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let mut observer = RecordingObserver { events: Vec::new() };
+
+    let response = gateway
+        .send_streaming_request_to_observer(
+            "run-g03-sse-search-credentials",
+            request(provider(&double.base_url)),
+            &mut observer,
+        )
+        .await
+        .expect("search-shaped SSE must not fail the Chat Completions parser");
+    let _ = double.finish().await;
 
     let parsed = parse_native_search_payload(NativeSearchPayloadFamily::GeminiShaped, &payload);
     assert!(
         parsed.has_retrieval_credentials,
-        "the fixture parser still recognizes grounding; streaming must not"
+        "the fixture parser still recognizes grounding"
     );
+    let observation = response
+        .retrieval_observation
+        .expect("streaming path must surface leaked search credentials");
+    assert_eq!(observation.origin, RetrievalOrigin::MainStreamLeak);
+    assert!(observation.identity.run_id.is_empty());
+    assert_ne!(observation.origin, RetrievalOrigin::IsolatedSubrequest);
+    assert!(observation.has_retrieval_credentials);
+    assert!(
+        observation
+            .candidates
+            .iter()
+            .any(|hit| hit.url == "https://example.com/from-sse"),
+        "HTTPS grounding URI must be retained: {:?}",
+        observation.candidates
+    );
+    assert!(response.tool_calls.is_empty());
+}
+
+fn search_shaped_chat_completions_payload() -> serde_json::Value {
+    serde_json::json!({
+        "choices": [{
+            "delta": { "content": "ok" },
+            "finish_reason": "stop"
+        }],
+        "output": [{
+            "type": "web_search_call",
+            "status": "completed"
+        }],
+        "groundingMetadata": {
+            "groundingChunks": [{
+                "web": { "uri": "https://example.com/from-sse", "title": "SSE hit" }
+            }]
+        }
+    })
 }

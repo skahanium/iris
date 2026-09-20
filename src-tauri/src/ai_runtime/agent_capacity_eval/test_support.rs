@@ -6874,8 +6874,7 @@ pub(crate) fn boundary_gateway_response(
         } else {
             "tool_calls".to_string()
         },
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     }
 }
 

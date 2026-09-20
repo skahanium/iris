@@ -120,8 +120,7 @@ fn response(
         tool_calls,
         usage: Default::default(),
         finish_reason: finish_reason.into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     }
 }
 

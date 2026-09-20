@@ -9,9 +9,10 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::ai_runtime::dual_path_search::{
-    coordinate_dual_path_search, DualPathSearchOutcome, DualPathSearchRequest,
-    ProductionNativeSearchRoute, ProductionNativeSearchSupport, RouteAttemptOutcome,
-    RouteFailureClass, SearchActionIdentity, SearchChannel, SearchHit, SearchRoute,
+    coordinate_dual_path_search, record_native_search_boundary, DualPathSearchOutcome,
+    DualPathSearchRequest, ProductionNativeSearchRoute, ProductionNativeSearchSupport,
+    RouteAttemptOutcome, RouteFailureClass, SearchActionIdentity, SearchChannel, SearchHit,
+    SearchRoute,
 };
 use crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef;
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
@@ -202,7 +203,16 @@ async fn collect_web_evidence_with_queries(
                 }
             }
         }
-        collected.extend(native_web_evidence_items(&dual_path));
+        let already_collected = collected
+            .iter()
+            .map(|item| canonicalize_url(&item.canonical_url))
+            .filter(|url| !url.is_empty())
+            .collect::<std::collections::BTreeSet<_>>();
+        collected.extend(
+            native_web_evidence_items(&dual_path)
+                .into_iter()
+                .filter(|item| !already_collected.contains(&canonicalize_url(&item.canonical_url))),
+        );
         usage.successful_search_requests.native = dual_path.usage.native;
         usage.successful_search_requests.mcp = dual_path.usage.mcp;
     }
@@ -576,7 +586,10 @@ async fn collect_search_provider_fetches(
         )
         .await;
         match result {
-            Ok(fetch) if fetch.failure_reason.is_none() => return vec![Ok(fetch)],
+            Ok(fetch) if fetch.failure_reason.is_none() => {
+                failures.push(Ok(fetch));
+                return failures;
+            }
             Ok(fetch) => failures.push(Ok(fetch)),
             Err(error) => failures.push(Err(error.to_string())),
         }
@@ -597,7 +610,8 @@ async fn collect_search_provider_fetches(
                 .await
                 .map_err(|error| error.to_string());
                 if matches!(&retry, Ok(fetch) if fetch.failure_reason.is_none()) {
-                    return vec![retry];
+                    failures.push(retry);
+                    return failures;
                 }
                 failures.push(retry);
             }
@@ -689,6 +703,7 @@ fn mcp_fetches_to_route_outcome(
                 generated_text_only: parse_empty.contains("text_without_url"),
                 failure: Some(RouteFailureClass::ProtocolOrResultInsufficient),
                 internal_provider_attempts,
+                ..Default::default()
             };
         }
         return RouteAttemptOutcome {
@@ -697,6 +712,7 @@ fn mcp_fetches_to_route_outcome(
             generated_text_only: false,
             failure: None,
             internal_provider_attempts,
+            ..Default::default()
         };
     }
     RouteAttemptOutcome {
@@ -705,6 +721,7 @@ fn mcp_fetches_to_route_outcome(
         generated_text_only: false,
         failure: Some(RouteFailureClass::TransportOrProviderFailure),
         internal_provider_attempts,
+        ..Default::default()
     }
 }
 
@@ -791,6 +808,7 @@ async fn collect_planned_query_fetches(
         native_usage = native_usage.saturating_add(outcome.usage.native);
         mcp_usage = mcp_usage.saturating_add(outcome.usage.mcp);
         fetches.extend(mcp_route.take_fetches());
+        record_native_search_boundary(db, &outcome);
         if index == 0 {
             dual_path = outcome;
         }

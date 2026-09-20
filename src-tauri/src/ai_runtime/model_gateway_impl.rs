@@ -1,3 +1,4 @@
+use crate::ai_runtime::native_search_subrequest::RetrievalObservation;
 pub use crate::ai_types::{
     ContextPacket, EndpointFamily, FunctionCall, LlmMessage, MessageRole, ProviderConfig,
     TokenUsage, ToolCall, ToolSpec,
@@ -28,6 +29,8 @@ mod streaming_chat_completions;
 mod streaming_impl;
 #[path = "model_gateway/streaming_reasoning.rs"]
 mod streaming_reasoning;
+#[path = "model_gateway/streaming_search_events.rs"]
+mod streaming_search_events;
 #[path = "model_gateway/streaming_witness.rs"]
 mod streaming_witness;
 #[path = "model_gateway/usage.rs"]
@@ -69,7 +72,7 @@ impl fmt::Debug for ProviderContinuation {
 }
 
 /// Gateway response (non-streaming).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GatewayResponse {
     pub content: Option<String>,
     pub tool_calls: Vec<ToolCall>,
@@ -79,6 +82,9 @@ pub struct GatewayResponse {
     pub reasoning_content: Option<String>,
     #[serde(skip)]
     pub continuation: Option<ProviderContinuation>,
+    #[serde(skip)]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) retrieval_observation: Option<RetrievalObservation>,
 }
 
 /// Model Gateway: handles LLM provider communication.
@@ -501,6 +507,7 @@ fn parse_openai_responses_response(json: &serde_json::Value) -> GatewayResponse 
                 response_id: response_id.to_string(),
             }
         }),
+        retrieval_observation: None,
     }
 }
 
@@ -582,6 +589,7 @@ fn parse_openai_compatible_response(
             .to_string(),
         reasoning_content,
         continuation: None,
+        retrieval_observation: None,
     }
 }
 

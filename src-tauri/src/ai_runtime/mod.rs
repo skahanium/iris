@@ -61,6 +61,8 @@ pub(crate) mod classified_ephemeral;
 pub mod classified_retrieval;
 pub(crate) mod diagnostic_query;
 pub(crate) mod dual_path_search;
+#[cfg(test)]
+mod dual_path_v04_tests;
 pub(crate) mod native_search_adapter;
 #[cfg(test)]
 mod native_search_adapter_tests;

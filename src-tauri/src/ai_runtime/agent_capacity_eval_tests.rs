@@ -2587,7 +2587,7 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
             },
             finish_reason: "length".into(),
             reasoning_content: Some("private reasoning".into()),
-            continuation: None,
+            ..Default::default()
         },
         31,
     );

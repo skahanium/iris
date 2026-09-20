@@ -2,22 +2,18 @@
 //!
 //! This module constructs an isolated native-search payload and maps protocol
 //! fixtures onto K11 route-attempt fields. Production adapters are registered
-//! per model in `native_search_adapter`. Streaming search events are not
-//! admitted into `streaming.rs`.
-
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "unused helpers remain until streaming admits native search events"
-    )
-)]
+//! per model in `native_search_adapter`. The production subrequest stays
+//! `stream:false` and does not travel through `ModelGateway`. Main-dialogue SSE
+//! may still carry leaked search events; those become `MainStreamLeak`
+//! observations and never mark the K11 native route succeeded.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 
 use crate::ai_runtime::dual_path_search::{
-    NativeSearchSupport, RouteAttemptOutcome, RouteFailureClass, SearchHit,
+    NativeSearchSupport, RouteAttemptOutcome, RouteFailureClass, SearchActionIdentity, SearchHit,
 };
 use crate::ai_types::EndpointFamily;
 
@@ -60,13 +56,37 @@ pub(crate) struct NativeSearchPublicScope {
 }
 
 /// Request identity that must stay attached to results and billing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeSearchRequestIdentity {
     pub run_id: String,
     pub input_revision: u32,
     pub parent_call_id: String,
     pub attempt: u32,
+}
+
+/// Where retrieval credentials were observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RetrievalOrigin {
+    #[default]
+    IsolatedSubrequest,
+    MainStreamLeak,
+}
+
+/// Protocol-family-agnostic retrieval observation for C11/C12/C26.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RetrievalObservation {
+    pub origin: RetrievalOrigin,
+    pub identity: SearchActionIdentity,
+    pub has_retrieval_credentials: bool,
+    pub candidates: Vec<SearchHit>,
+    pub event_kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u32>,
 }
 
 /// Draft accepted by the constructor. Private material is never forwarded.
@@ -101,6 +121,7 @@ pub(crate) struct NativeSearchBudgetClaim {
 }
 
 impl NativeSearchBudgetClaim {
+    #[cfg(test)]
     pub(crate) fn is_network_tool_dispatch(&self) -> bool {
         false
     }
@@ -230,6 +251,7 @@ pub(crate) fn native_search_unsupported_reason_for(
 }
 
 /// Production adapter registry size. Counted from per-model adapter files.
+#[cfg(test)]
 pub(crate) fn production_native_search_adapter_count() -> usize {
     crate::ai_runtime::native_search_adapter::production_adapter_count()
 }
@@ -368,6 +390,7 @@ fn walk_json(value: &Value, visit: &mut impl FnMut(&Value)) {
 
 impl NativeSearchSubrequest {
     /// Outbound JSON contains only the approved query, public scope, identity, and endpoint.
+    #[cfg(test)]
     pub(crate) fn outbound_payload(&self) -> Value {
         json!({
             "query": self.query,
@@ -398,6 +421,142 @@ impl NativeSearchParse {
             generated_text_only: self.generated_text_only,
             failure: self.failure,
             internal_provider_attempts: 0,
+            ..Default::default()
+        }
+    }
+}
+
+const SEARCH_EVENT_KINDS: &[&str] = &[
+    "web_search_call",
+    "url_citation",
+    "server_tool_use",
+    "web_search_tool_result",
+    "web_search_result",
+];
+
+/// Collect supplier-defined search event type names from a JSON payload.
+pub(crate) fn collect_search_event_kinds(value: &Value) -> Vec<String> {
+    let mut kinds = Vec::new();
+    walk_json(value, &mut |node| {
+        if let Some(kind) = node.get("type").and_then(Value::as_str) {
+            if SEARCH_EVENT_KINDS.contains(&kind) && !kinds.iter().any(|existing| existing == kind)
+            {
+                kinds.push(kind.to_string());
+            }
+        }
+        if (node.get("groundingChunks").is_some()
+            || node.get("grounding_chunks").is_some()
+            || node.get("groundingMetadata").is_some()
+            || node.get("grounding_metadata").is_some())
+            && !kinds.iter().any(|existing| existing == "groundingMetadata")
+        {
+            kinds.push("groundingMetadata".to_string());
+        }
+    });
+    kinds
+}
+
+/// Map a main-dialogue SSE/JSON fragment onto a leak observation.
+///
+/// Structured search events count as retrieval credentials even before HTTPS
+/// citations arrive. This observation never drives K11 native `succeeded`.
+pub(crate) fn observation_from_main_stream_json(value: &Value) -> Option<RetrievalObservation> {
+    let event_kinds = collect_search_event_kinds(value);
+    let openai = parse_native_search_payload(NativeSearchPayloadFamily::OpenAiShaped, value);
+    let gemini = parse_native_search_payload(NativeSearchPayloadFamily::GeminiShaped, value);
+    let anthropic = parse_native_search_payload(NativeSearchPayloadFamily::AnthropicShaped, value);
+    let parse = [openai, gemini, anthropic]
+        .into_iter()
+        .max_by_key(|item| (item.has_retrieval_credentials, item.candidates.len()))
+        .expect("three parse families");
+    let mut candidates = parse.candidates;
+    if candidates.is_empty() {
+        candidates = collect_structured_https_hits(value);
+    }
+    if event_kinds.is_empty() && candidates.is_empty() && !parse.has_retrieval_credentials {
+        return None;
+    }
+    Some(RetrievalObservation {
+        origin: RetrievalOrigin::MainStreamLeak,
+        identity: SearchActionIdentity::default(),
+        has_retrieval_credentials: parse.has_retrieval_credentials || !event_kinds.is_empty(),
+        candidates,
+        event_kinds,
+        prompt_tokens: extract_reported_prompt_tokens(value),
+        completion_tokens: extract_reported_completion_tokens(value),
+    })
+}
+
+/// Fold another stream fragment into an accumulated observation.
+pub(crate) fn merge_retrieval_observation(
+    slot: &mut Option<RetrievalObservation>,
+    next: RetrievalObservation,
+) {
+    let Some(existing) = slot.as_mut() else {
+        *slot = Some(next);
+        return;
+    };
+    existing.origin = next.origin;
+    existing.has_retrieval_credentials |= next.has_retrieval_credentials;
+    for candidate in next.candidates {
+        if !existing
+            .candidates
+            .iter()
+            .any(|existing_hit| existing_hit.url == candidate.url)
+        {
+            existing.candidates.push(candidate);
+        }
+    }
+    for kind in next.event_kinds {
+        if !existing
+            .event_kinds
+            .iter()
+            .any(|existing_kind| existing_kind == &kind)
+        {
+            existing.event_kinds.push(kind);
+        }
+    }
+    if existing.prompt_tokens.is_none() {
+        existing.prompt_tokens = next.prompt_tokens;
+    }
+    if existing.completion_tokens.is_none() {
+        existing.completion_tokens = next.completion_tokens;
+    }
+}
+
+pub(crate) fn extract_reported_prompt_tokens(value: &Value) -> Option<u32> {
+    value
+        .pointer("/usage/input_tokens")
+        .or_else(|| value.pointer("/usage/prompt_tokens"))
+        .or_else(|| value.pointer("/message/usage/input_tokens"))
+        .and_then(Value::as_u64)
+        .and_then(|tokens| u32::try_from(tokens).ok())
+}
+
+pub(crate) fn extract_reported_completion_tokens(value: &Value) -> Option<u32> {
+    value
+        .pointer("/usage/output_tokens")
+        .or_else(|| value.pointer("/usage/completion_tokens"))
+        .and_then(Value::as_u64)
+        .and_then(|tokens| u32::try_from(tokens).ok())
+}
+
+impl RetrievalObservation {
+    pub(crate) fn from_isolated_parse(
+        identity: SearchActionIdentity,
+        parse: &NativeSearchParse,
+        event_kinds: Vec<String>,
+        prompt_tokens: Option<u32>,
+        completion_tokens: Option<u32>,
+    ) -> Self {
+        Self {
+            origin: RetrievalOrigin::IsolatedSubrequest,
+            identity,
+            has_retrieval_credentials: parse.has_retrieval_credentials,
+            candidates: parse.candidates.clone(),
+            event_kinds,
+            prompt_tokens,
+            completion_tokens,
         }
     }
 }
@@ -614,6 +773,7 @@ mod tests {
                 generated_text_only: false,
                 failure: None,
                 internal_provider_attempts: 1,
+                ..Default::default()
             }
         }
     }
@@ -796,6 +956,36 @@ mod tests {
             outcome.failure,
             Some(RouteFailureClass::TransportOrProviderFailure)
         );
+    }
+
+    #[test]
+    fn main_stream_leak_is_not_isolated_native_route_success() {
+        let value = json!({
+            "type": "web_search_call",
+            "status": "completed",
+            "action": { "query": "q" }
+        });
+        let leak = observation_from_main_stream_json(&value).expect("leak observation");
+        assert_eq!(leak.origin, RetrievalOrigin::MainStreamLeak);
+        assert!(leak.has_retrieval_credentials);
+        assert!(
+            leak.identity.run_id.is_empty(),
+            "leaked SSE credentials must not carry a native search identity"
+        );
+        let isolated = RetrievalObservation::from_isolated_parse(
+            SearchActionIdentity {
+                run_id: "run-1".into(),
+                input_revision: 1,
+                action_id: "web_search".into(),
+                attempt: 1,
+            },
+            &parse_native_search_payload(NativeSearchPayloadFamily::OpenAiShaped, &value),
+            leak.event_kinds.clone(),
+            None,
+            None,
+        );
+        assert_eq!(isolated.origin, RetrievalOrigin::IsolatedSubrequest);
+        assert_ne!(leak.origin, isolated.origin);
     }
 
     #[test]

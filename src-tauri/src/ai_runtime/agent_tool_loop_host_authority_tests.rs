@@ -234,8 +234,7 @@ fn tool_response_with_usage(call: ToolCall, completion_tokens: u32) -> GatewayRe
             ..Default::default()
         },
         finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     }
 }
 
@@ -245,8 +244,7 @@ fn final_response(content: &str) -> GatewayResponse {
         tool_calls: Vec::new(),
         usage: Default::default(),
         finish_reason: "stop".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     }
 }
 

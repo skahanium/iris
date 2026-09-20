@@ -13,9 +13,9 @@ use super::native_search_adapter::{
 };
 use super::native_search_subrequest::{
     construct_native_search_subrequest, production_native_search_adapter_count,
-    NativeSearchEndpointRef, NativeSearchParse, NativeSearchPublicScope,
-    NativeSearchRequestIdentity, NativeSearchSubrequest, NativeSearchSubrequestDraft,
-    NativeSearchUnsupportedReason,
+    NativeSearchBudgetClaim, NativeSearchBudgetKind, NativeSearchEndpointRef, NativeSearchParse,
+    NativeSearchPublicScope, NativeSearchRequestIdentity, NativeSearchSubrequest,
+    NativeSearchSubrequestDraft, NativeSearchUnsupportedReason,
 };
 use crate::ai_types::EndpointFamily;
 use serde_json::{json, Value};
@@ -198,6 +198,7 @@ impl SearchRoute for CountingMcpRoute {
             generated_text_only: false,
             failure: None,
             internal_provider_attempts: 1,
+            ..Default::default()
         }
     }
 }
@@ -272,6 +273,28 @@ async fn minimax_responses_scripted_http_yields_https_hits() {
         outcome.candidates[0].snippet, "example weather",
         "title must fill snippet so discovery-only web_search treats native hits as usable"
     );
+}
+
+#[tokio::test]
+async fn native_search_attaches_reported_tokens_without_counting_as_network_tool() {
+    let mut body = responses_live_shape();
+    body["usage"] = json!({ "input_tokens": 11, "output_tokens": 7 });
+    let transport = ScriptedTransport::ok(body);
+    let drafted = draft("approved query", None);
+    let outcome = execute_native_search(
+        drafted.clone(),
+        &transport,
+        Some("secret-must-not-be-recorded"),
+        "https://api.minimaxi.com/v1",
+    )
+    .await;
+    assert_eq!(outcome.prompt_tokens, Some(11));
+    assert_eq!(outcome.completion_tokens, Some(7));
+    let claim = NativeSearchBudgetClaim {
+        kind: NativeSearchBudgetKind::ModelAuxiliaryRequest,
+        parent_call_id: drafted.identity.parent_call_id,
+    };
+    assert!(!claim.is_network_tool_dispatch());
 }
 
 #[tokio::test]
@@ -889,6 +912,7 @@ impl SearchRoute for CountingNativeRoute {
             generated_text_only: false,
             failure: None,
             internal_provider_attempts: 0,
+            ..Default::default()
         }
     }
 }

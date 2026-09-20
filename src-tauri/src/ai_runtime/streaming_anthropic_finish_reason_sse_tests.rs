@@ -183,3 +183,27 @@ async fn anthropic_sse_connection_close_without_stop_reason_is_unknown_not_stop(
     assert_ne!(response.finish_reason, "stop");
     assert_eq!(response.content.as_deref(), Some("连接结束前没有终止块"));
 }
+
+#[tokio::test]
+async fn anthropic_sse_server_tool_use_mints_credentials_without_client_tools() {
+    let response = stream_anthropic(
+        "run-g03-anthropic-sse-server-search",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"web_search\",\"input\":{\"query\":\"status\"}}}\n\n\
+         data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"web_search_tool_result\",\"content\":[{\"type\":\"web_search_result\",\"url\":\"https://example.com/anthropic-sse\",\"title\":\"hit\"}]}}\n\n\
+         data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"text_delta\",\"text\":\"已检索。\"}}\n\n\
+         data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n\
+         data: {\"type\":\"message_stop\"}\n\n",
+    )
+    .await;
+
+    assert_eq!(response.finish_reason, "end_turn");
+    assert!(response.tool_calls.is_empty());
+    let observation = response
+        .retrieval_observation
+        .expect("Anthropic SSE server search must become credentials");
+    assert_eq!(
+        observation.origin,
+        super::native_search_subrequest::RetrievalOrigin::MainStreamLeak
+    );
+    assert!(observation.has_retrieval_credentials);
+}

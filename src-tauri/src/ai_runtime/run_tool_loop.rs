@@ -537,6 +537,17 @@ impl<'a> NormalRunToolExecutor<'a> {
                 ));
             }
         }
+        if !self.web_search_currently_enabled() {
+            let failure = WebFailure::new(SafeRunErrorCode::PermissionDenied, false);
+            self.set_web_failure(Some(failure))?;
+            return Ok(failed_web_tool_call(
+                tool_name,
+                failure,
+                1,
+                Duration::ZERO,
+                0,
+            ));
+        }
         let requested_urls = if discovery_only {
             Vec::new()
         } else {
@@ -578,7 +589,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.clone(),
             urls: fetch_urls,
-            enabled: self.has_capability("web.search"),
+            enabled: self.web_search_currently_enabled(),
             max_search_results: web_result_limit(discovery_only, remaining, 1),
             max_fetches,
             provider_snapshots: provider_snapshots.clone(),
@@ -615,6 +626,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     ));
                 }
                 let mut attempt_input = broker_input.clone();
+                attempt_input.enabled = self.web_search_currently_enabled();
                 attempt_input.max_search_results =
                     web_result_limit(discovery_only, remaining, attempts_for_search);
                 attempt_input.max_fetches = max_fetches;
@@ -1575,6 +1587,24 @@ fn safe_external_tool_failure(error: &AppError) -> &'static str {
     } else {
         "external_tool_provider_unavailable"
     }
+}
+
+fn live_web_search_enabled_setting(db: &Database) -> AppResult<Option<bool>> {
+    db.with_read_conn(|conn| {
+        let raw: Result<String, rusqlite::Error> = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'web_search_enabled'",
+            [],
+            |row| row.get(0),
+        );
+        match raw {
+            Ok(json) => {
+                let value: serde_json::Value = serde_json::from_str(&json)?;
+                Ok(value.as_bool())
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    })
 }
 
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
@@ -2869,6 +2899,17 @@ impl NormalRunToolExecutor<'_> {
             .any(|capability| capability.as_str() == required)
     }
 
+    fn web_search_currently_enabled(&self) -> bool {
+        if !self.has_capability("web.search") {
+            return false;
+        }
+        match live_web_search_enabled_setting(&self.state.db) {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
     fn ordered_web_provider_snapshots(
         &self,
         tool_name: &str,
@@ -4085,6 +4126,7 @@ mod tests {
                         finish_reason: "tool_calls".to_string(),
                         reasoning_content: None,
                         continuation: None,
+                        retrieval_observation: None,
                     });
                 }
                 let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
@@ -4108,6 +4150,7 @@ mod tests {
                     finish_reason: "stop".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 })
             })
         }
@@ -4700,6 +4743,7 @@ mod tests {
                     finish_reason: "tool_calls".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 },
                 GatewayResponse {
                     content: Some("子任务已读取当前时间。".to_string()),
@@ -4708,6 +4752,7 @@ mod tests {
                     finish_reason: "stop".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 },
                 GatewayResponse {
                     content: Some("第二个子任务完成。".to_string()),
@@ -4716,6 +4761,7 @@ mod tests {
                     finish_reason: "stop".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 },
                 GatewayResponse {
                     content: Some("第三个子任务完成。".to_string()),
@@ -4724,6 +4770,7 @@ mod tests {
                     finish_reason: "stop".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 },
             ])),
             tool_surfaces: Mutex::new(Vec::new()),
@@ -5382,6 +5429,7 @@ mod tests {
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
                 continuation: None,
+                retrieval_observation: None,
             });
         let partial = executor
             .execute(

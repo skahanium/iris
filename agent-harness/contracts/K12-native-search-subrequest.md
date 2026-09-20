@@ -6,7 +6,7 @@
 
 本合同只定义子请求本身；两条路线的协调结果与合并表达见 [K11](./K11-dual-path-search.md)，外发授权与开关见 [K09](./K09-web-authorization.md)，能力状态与路由见 [K04](./K04-provider-capability.md)，额度与费用账本见 [K06](./K06-budget-ledger.md)，来源身份见 [K14](./K14-evidence-and-provenance.md)，正文读取见 [K13](./K13-web-reading-window.md)。供应商原生工具声明不登记为业务工具（见 [objects.md](../rules/objects.md) §1.3），其协议能力经本合同管理。
 
-**执行事实**：`K12` 构造器与凭据解析器已落地（`src-tauri/src/ai_runtime/native_search_subrequest.rs`）；生产登记 2 个适配器（MiniMax-M3 → Responses 隔离子请求；DeepSeek-Flash → Anthropic Messages 隔离子请求）。`C10` 对这两模型为 `Available`，其余模型仍为 `adapter_absent` 或 ASR／TTS `capability_absent`。生产路径会发真实 HTTPS（计费）。主对话目录族不变。搜索事件尚未进入 `streaming.rs`。关闭仍等 `D04`／`G03`。本体系**不宣布**任一端点已通过本合同（不是 `V05`）。`Available` 不是「支持且已适配」。
+**执行事实**：`K12` 构造器与凭据解析器已落地（`src-tauri/src/ai_runtime/native_search_subrequest.rs`）；生产登记 2 个适配器（MiniMax-M3 → Responses 隔离子请求；DeepSeek-Flash → Anthropic Messages 隔离子请求）。`C10` 对这两模型为 `Available`，其余模型仍为 `adapter_absent` 或 ASR／TTS `capability_absent`。生产路径会发真实 HTTPS（计费）。生产子请求仍 `stream:false`、不经 `ModelGateway`／`streaming.rs`。主对话 SSE **若夹带**搜索事件（`web_search_call`／`server_tool_use`／`url_citation`／`groundingMetadata`）则进入处理路径为 `MainStreamLeak` 凭据，不得写成 K11 原生 `succeeded`，也不得变成可执行客户端 `ToolCall`。隔离子请求凭据进入 C12 `dualPath` 与 C26 见证（不含 URL 正文、不含密钥）。关闭仍等 `V05`／`D04`。本体系**不宣布**任一端点已通过本合同（不是 `V05`）。`Available` 不是「支持且已适配」。
 
 <!-- iris:end K12 -->
 

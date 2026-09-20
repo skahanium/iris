@@ -86,7 +86,7 @@
 
 ## 兼容
 
-- **`C20` 当前 `implementation.state=partial`**：协调器已接入生产 `web_search`。原生适配器与 C10 探针见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实。`partial` 不是 `present`：`G02` 仍 open（`V04` 缺），流式事件归 `G03`，未登记模型仍 MCP 单路。
+- **`C20` 当前 `implementation.state=partial`**：协调器已接入生产 `web_search`。原生适配器与 C10 探针见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实。`partial` 不是 `present`：`G02` 仍 open（生产入口录制回放 `V04` 已有，不是 `V05`），流式主循环仍不发起原生子请求（`G03`），未登记模型仍 MCP 单路。
 - 目标配置合同的兼容要求（§5.1）：保留总联网开关；开启后按任务及既有外发权限执行双路合同，**不再要求用户勾选两次**；原生能力配置、MCP 有序候选与抓取能力分别保存；`C20` 合成带配置版本的执行快照。
 - 用户明确要求：开启联网代表允许使用外部网页信息，**不等于**材料和数据外发限制全部解除；网页检索关闭与完全离线不同（讨论十）。
 - 旧非 CAS 快照与历史证据记录的读取按既有兼容路径保留；证据投影的兼容规则是显式空数组表示最终消息无来源，只有字段缺失的旧消息可以按历史 `SourceGroupFallback` 读取（[ARCHITECTURE.md](../../ARCHITECTURE.md)）。
@@ -103,7 +103,7 @@
 | 搜索片段不能升级为正文证据                               | `V02` 已登记不变量，检测位置 `C22`，恢复行为「拒绝登记并说明原因」，测试标注「待补充（`D04`）」 |
 | 纯编辑任务不触发检索                                     | 分别验证「需要联网材料的组合任务」与「纯编辑任务不触发检索」（`Q14`）                           |
 
-本模块 `M07` 与 `C19`、`C21`、`C22` 当前 `implementation.state=present`、`C20` 为 `partial`；全部 `verification.state=none`。**仅验证后端两个替身都被调用，不足以声明双路能力已接通**（§5.1）。`G02` 仍 open。
+本模块 `M07` 与 `C19`、`C21`、`C22` 当前 `implementation.state=present`、`C20` 为 `partial`；全部 `verification.state=none`。生产入口录制回放 `V04` 已有，**不足以声明双路 live 已接通**（§5.1）。`G02` 仍 open。
 
 ## 依赖与缺口
 
@@ -206,7 +206,7 @@
 
 ## 源码落点
 
-现有基础与处置：协调器在 `src-tauri/src/ai_runtime/dual_path_search.rs`，由生产 `web_search`（`execute_web_tool`／broker 搜索收集）调用。`K12` 构造器与凭据解析器在 `src-tauri/src/ai_runtime/native_search_subrequest.rs`；生产适配器与探针见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实。MCP 路径包装现有 failover，视为一条路线。`implementation.state=partial`，`verification.state=none`。机械 `V03` 不是关闭，也不是 `V04`。
+现有基础与处置：协调器在 `src-tauri/src/ai_runtime/dual_path_search.rs`，由生产 `web_search`（`execute_web_tool`／broker 搜索收集）调用。`K12` 构造器与凭据解析器在 `src-tauri/src/ai_runtime/native_search_subrequest.rs`；生产适配器与探针见 [K12](../contracts/K12-native-search-subrequest.md) 执行事实。MCP 路径包装现有 failover，视为一条路线。生产入口录制回放 `V04` 见 `dual_path_v04_tests.rs`。`implementation.state=partial`，`verification.state=none`。机械 `V03` 不是关闭；录制回放 `V04` 不是 `V05`，也不关闭 `G02`。
 
 ## 兼容
 
@@ -214,7 +214,7 @@
 
 ## 测试
 
-关键不变量与所需证据类别见 `V01`–`V07`。本组件当前 `verification.state=none`（不是 `passed`）。已有机械 `V03` 指纹绑定（`dual_path_search.rs` 等）；这不是 `V04`，也不关闭 `G02`。
+关键不变量与所需证据类别见 `V01`–`V07`。本组件当前 `verification.state=none`（不是 `passed`）。已有机械 `V03` 与生产入口录制回放 `V04`（`dual_path_v04_tests.rs`）；`V04` 不替代 `V05`，也不关闭 `G02`。
 
 <!-- iris:end C20 -->
 

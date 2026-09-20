@@ -6,8 +6,11 @@
 
 use std::collections::HashMap;
 
-use super::{usage_impl::parse_usage, GatewayResponse};
+use super::{
+    streaming_search_events::note_stream_search_json, usage_impl::parse_usage, GatewayResponse,
+};
 use crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity;
+use crate::ai_runtime::native_search_subrequest::RetrievalObservation;
 use crate::ai_types::{FunctionCall, TokenUsage, ToolCall};
 
 /// Incremental Chat Completions stream: content, tool deltas, usage, and the
@@ -20,6 +23,7 @@ pub(crate) struct ChatCompletionsStreamState {
     extra_tool_calls: Vec<ToolCall>,
     finish_reason: Option<String>,
     usage: TokenUsage,
+    retrieval_observation: Option<RetrievalObservation>,
 }
 
 impl ChatCompletionsStreamState {
@@ -63,6 +67,8 @@ impl ChatCompletionsStreamState {
                 }
             }
         }
+
+        note_stream_search_json(&mut self.retrieval_observation, json);
 
         content_delta
     }
@@ -128,6 +134,7 @@ impl ChatCompletionsStreamState {
             finish_reason,
             reasoning_content: (!self.reasoning.is_empty()).then_some(self.reasoning),
             continuation: None,
+            retrieval_observation: self.retrieval_observation,
         }
     }
 }
@@ -335,5 +342,37 @@ mod tests {
         assert_eq!(response.finish_reason, "stop");
         assert_eq!(response.content.as_deref(), Some("完整回答。"));
         assert!(response.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn web_search_call_json_mints_main_stream_leak_without_tool_calls() {
+        let response = apply_all(&[serde_json::json!({
+            "choices": [{
+                "delta": { "content": "ok" },
+                "finish_reason": "stop"
+            }],
+            "output": [{
+                "type": "web_search_call",
+                "status": "completed"
+            }],
+            "groundingMetadata": {
+                "groundingChunks": [{
+                    "web": { "uri": "https://example.com/from-sse", "title": "SSE hit" }
+                }]
+            }
+        })]);
+        assert!(response.tool_calls.is_empty());
+        let observation = response
+            .retrieval_observation
+            .expect("Chat Completions search events must become credentials");
+        assert_eq!(
+            observation.origin,
+            crate::ai_runtime::native_search_subrequest::RetrievalOrigin::MainStreamLeak
+        );
+        assert!(observation.has_retrieval_credentials);
+        assert!(observation
+            .candidates
+            .iter()
+            .any(|hit| hit.url == "https://example.com/from-sse"));
     }
 }

@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 
+use crate::ai_runtime::native_search_subrequest::RetrievalObservation;
 use crate::ai_types::{FunctionCall, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult};
 
-use super::{GatewayResponse, ProviderContinuation};
+use super::{
+    streaming_search_events::note_stream_search_json, GatewayResponse, ProviderContinuation,
+};
 
 /// A normalized, safe-to-classify fragment emitted by the OpenAI Responses SSE
 /// stream. Reasoning entries are provider-authored *summaries*, never hidden
@@ -21,6 +24,7 @@ pub(super) struct ResponsesStreamState {
     usage: TokenUsage,
     finish_reason: String,
     response_id: Option<String>,
+    retrieval_observation: Option<RetrievalObservation>,
 }
 
 impl Default for ResponsesStreamState {
@@ -32,6 +36,7 @@ impl Default for ResponsesStreamState {
             usage: TokenUsage::default(),
             finish_reason: "stop".to_string(),
             response_id: None,
+            retrieval_observation: None,
         }
     }
 }
@@ -107,6 +112,7 @@ impl ResponsesStreamState {
             }
             _ => {}
         }
+        note_stream_search_json(&mut self.retrieval_observation, json);
         Ok(deltas)
     }
 
@@ -120,6 +126,7 @@ impl ResponsesStreamState {
             continuation: self
                 .response_id
                 .map(|response_id| ProviderContinuation::OpenAiResponses { response_id }),
+            retrieval_observation: self.retrieval_observation,
         }
     }
 
@@ -294,5 +301,82 @@ mod tests {
             }))
             .expect("duplicate completed summary event");
         assert!(duplicate.is_empty());
+    }
+
+    #[test]
+    fn responses_web_search_call_is_credential_not_client_tool() {
+        let mut state = ResponsesStreamState::default();
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "web_search_call",
+                    "id": "ws_1",
+                    "status": "completed"
+                }
+            }))
+            .unwrap();
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "ok",
+                        "annotations": [{
+                            "type": "url_citation",
+                            "url": "https://example.com/responses",
+                            "title": "Responses hit"
+                        }]
+                    }]
+                }
+            }))
+            .unwrap();
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "response.completed",
+                "response": { "id": "resp_search", "status": "completed" }
+            }))
+            .unwrap();
+
+        let response = state.into_gateway_response();
+        assert!(
+            response.tool_calls.is_empty(),
+            "server web_search_call must not become a client function_call: {:?}",
+            response.tool_calls
+        );
+        let observation = response
+            .retrieval_observation
+            .expect("Responses search events must become credentials");
+        assert_eq!(
+            observation.origin,
+            crate::ai_runtime::native_search_subrequest::RetrievalOrigin::MainStreamLeak
+        );
+        assert!(observation.has_retrieval_credentials);
+        assert!(observation
+            .candidates
+            .iter()
+            .any(|hit| hit.url == "https://example.com/responses"));
+    }
+
+    #[test]
+    fn responses_client_web_search_function_call_stays_executable_tool() {
+        let mut state = ResponsesStreamState::default();
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "response.function_call_arguments.done",
+                "call_id": "call_1",
+                "name": "web_search",
+                "arguments": "{\"query\":\"Iris\"}"
+            }))
+            .unwrap();
+        let response = state.into_gateway_response();
+        assert_eq!(response.tool_calls.len(), 1);
+        assert_eq!(response.tool_calls[0].function.name, "web_search");
+        assert!(
+            response.retrieval_observation.is_none(),
+            "client function_call named web_search is not a leaked server search event"
+        );
     }
 }

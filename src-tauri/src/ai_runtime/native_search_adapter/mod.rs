@@ -16,9 +16,11 @@ use crate::ai_runtime::dual_path_search::{
     NativeSearchSupport, RouteAttemptOutcome, RouteFailureClass, SearchActionIdentity,
 };
 use crate::ai_runtime::native_search_subrequest::{
-    construct_native_search_subrequest, native_search_support_for, NativeSearchEndpointRef,
-    NativeSearchParse, NativeSearchPublicScope, NativeSearchRequestIdentity,
-    NativeSearchSubrequest, NativeSearchSubrequestDraft,
+    collect_search_event_kinds, construct_native_search_subrequest,
+    extract_reported_completion_tokens, extract_reported_prompt_tokens, native_search_support_for,
+    NativeSearchEndpointRef, NativeSearchParse, NativeSearchPublicScope,
+    NativeSearchRequestIdentity, NativeSearchSubrequest, NativeSearchSubrequestDraft,
+    RetrievalObservation,
 };
 use crate::credentials::llm_credential_service;
 
@@ -92,11 +94,13 @@ const PRODUCTION_ADAPTERS: &[&dyn NativeSearchModelAdapter] = &[
 ];
 
 /// Production adapter slice. Tests assert catalog ids; lookup stays exclusive match.
+#[cfg(test)]
 pub(crate) fn production_adapters() -> &'static [&'static dyn NativeSearchModelAdapter] {
     PRODUCTION_ADAPTERS
 }
 
 /// Number of production native-search adapters. Not a capability advertisement.
+#[cfg(test)]
 pub(crate) fn production_adapter_count() -> usize {
     production_adapters().len()
 }
@@ -195,7 +199,11 @@ pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
         return transport_failure();
     }
     let mut outcome = match result.status {
-        200 => adapter.parse_response(&result.body).into_route_outcome(),
+        200 => outcome_from_isolated_parse(
+            adapter.parse_response(&result.body),
+            &constructed,
+            &result.body,
+        ),
         401 | 403 | 429 => return temporary_failure(),
         _ => return transport_failure(),
     };
@@ -209,7 +217,11 @@ pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
             return transport_failure();
         }
         outcome = match result.status {
-            200 => adapter.parse_response(&result.body).into_route_outcome(),
+            200 => outcome_from_isolated_parse(
+                adapter.parse_response(&result.body),
+                &constructed,
+                &result.body,
+            ),
             401 | 403 | 429 => temporary_failure(),
             _ => transport_failure(),
         };
@@ -239,7 +251,22 @@ pub(crate) async fn execute_production_route(
         }
         Err(RouteFailureClass::TemporaryFailure) => return temporary_failure(),
     };
-    let secret = crate::credentials::get_runtime_secret(&binding.credential_service).ok();
+    let secret = {
+        #[cfg(test)]
+        {
+            recorded_bearer_for_run(&identity.run_id).or_else(|| {
+                crate::credentials::get_runtime_secret(&binding.credential_service)
+                    .ok()
+                    .map(|value| value.to_string())
+            })
+        }
+        #[cfg(not(test))]
+        {
+            crate::credentials::get_runtime_secret(&binding.credential_service)
+                .ok()
+                .map(|value| value.to_string())
+        }
+    };
     let draft = NativeSearchSubrequestDraft {
         query: query.to_string(),
         public_scope: NativeSearchPublicScope::default(),
@@ -252,10 +279,15 @@ pub(crate) async fn execute_production_route(
         endpoint,
         private_material: None,
     };
+    #[cfg(test)]
+    if let Some(transport) = recorded_transport_for_run(&identity.run_id) {
+        return execute_native_search(draft, &transport, secret.as_deref(), &binding.api_base)
+            .await;
+    }
     execute_native_search(
         draft,
         &LiveNativeSearchTransport,
-        secret.as_ref().map(|value| value.as_str()),
+        secret.as_deref(),
         &binding.api_base,
     )
     .await
@@ -266,6 +298,171 @@ struct LiveNativeSearchTransport;
 #[cfg(test)]
 thread_local! {
     static LAST_LIVE_TRACE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+#[cfg(test)]
+static RECORDED_NATIVE_SEARCH_BY_RUN: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, RecordedNativeSearchTransport>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+static RECORDED_NATIVE_BEARER_BY_RUN: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn recorded_native_search_by_run(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, RecordedNativeSearchTransport>> {
+    RECORDED_NATIVE_SEARCH_BY_RUN
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[cfg(test)]
+fn recorded_native_bearer_by_run(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    RECORDED_NATIVE_BEARER_BY_RUN
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[cfg(test)]
+fn recorded_transport_for_run(run_id: &str) -> Option<RecordedNativeSearchTransport> {
+    recorded_native_search_by_run()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(run_id)
+        .cloned()
+}
+
+#[cfg(test)]
+fn recorded_bearer_for_run(run_id: &str) -> Option<String> {
+    recorded_native_bearer_by_run()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(run_id)
+        .cloned()
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct RecordedNativeSearchTransport {
+    results: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<NativeSearchHttpResult>>>,
+    call_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    captured_urls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    captured_headers: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+}
+
+#[cfg(test)]
+impl RecordedNativeSearchTransport {
+    pub(crate) fn call_count(&self) -> u32 {
+        self.call_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn captured_urls(&self) -> Vec<String> {
+        self.captured_urls
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    pub(crate) fn captured_headers(&self) -> Vec<(String, String)> {
+        self.captured_headers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    pub(crate) fn authorization_present(&self) -> bool {
+        self.captured_headers().iter().any(|(name, value)| {
+            !value.is_empty()
+                && (name.eq_ignore_ascii_case("authorization")
+                    || name.eq_ignore_ascii_case("x-api-key"))
+        })
+    }
+}
+
+#[cfg(test)]
+impl NativeSearchTransport for RecordedNativeSearchTransport {
+    async fn post_json(
+        &self,
+        url: &str,
+        _body: &Value,
+        headers: &[(String, String)],
+    ) -> NativeSearchHttpResult {
+        self.call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.captured_urls
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(url.to_string());
+        self.captured_headers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .extend(headers.iter().cloned());
+        self.results
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pop_front()
+            .unwrap_or(NativeSearchHttpResult {
+                status: 0,
+                body: Value::Null,
+                transport_failed: true,
+            })
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct RecordedNativeSearchTransportGuard {
+    run_id: String,
+    transport: RecordedNativeSearchTransport,
+}
+
+#[cfg(test)]
+impl std::ops::Deref for RecordedNativeSearchTransportGuard {
+    type Target = RecordedNativeSearchTransport;
+
+    fn deref(&self) -> &Self::Target {
+        &self.transport
+    }
+}
+
+#[cfg(test)]
+impl Drop for RecordedNativeSearchTransportGuard {
+    fn drop(&mut self) {
+        recorded_native_search_by_run()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.run_id);
+        recorded_native_bearer_by_run()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.run_id);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_recorded_native_search_transport(
+    run_id: &str,
+    results: Vec<NativeSearchHttpResult>,
+    bearer: &str,
+) -> RecordedNativeSearchTransportGuard {
+    let transport = RecordedNativeSearchTransport {
+        results: std::sync::Arc::new(std::sync::Mutex::new(results.into())),
+        call_count: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        captured_urls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        captured_headers: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    recorded_native_search_by_run()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(run_id.to_string(), transport.clone());
+    recorded_native_bearer_by_run()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(run_id.to_string(), bearer.to_string());
+    RecordedNativeSearchTransportGuard {
+        run_id: run_id.to_string(),
+        transport,
+    }
 }
 
 #[cfg(test)]
@@ -403,6 +600,35 @@ fn native_search_https_client() -> crate::error::AppResult<reqwest::Client> {
         .read_timeout(NATIVE_SEARCH_HTTP_TIMEOUT)
         .build()
         .map_err(|error| crate::error::AppError::msg(error.to_string()))
+}
+
+fn attach_reported_usage(outcome: &mut RouteAttemptOutcome, body: &Value) {
+    outcome.prompt_tokens = extract_reported_prompt_tokens(body);
+    outcome.completion_tokens = extract_reported_completion_tokens(body);
+}
+
+fn outcome_from_isolated_parse(
+    parse: NativeSearchParse,
+    constructed: &NativeSearchSubrequest,
+    body: &Value,
+) -> RouteAttemptOutcome {
+    let observation = RetrievalObservation::from_isolated_parse(
+        SearchActionIdentity {
+            run_id: constructed.identity.run_id.clone(),
+            input_revision: constructed.identity.input_revision,
+            action_id: constructed.identity.parent_call_id.clone(),
+            attempt: constructed.identity.attempt,
+        },
+        &parse,
+        collect_search_event_kinds(body),
+        extract_reported_prompt_tokens(body),
+        extract_reported_completion_tokens(body),
+    );
+    let mut outcome = parse.into_route_outcome();
+    outcome.prompt_tokens = observation.prompt_tokens;
+    outcome.completion_tokens = observation.completion_tokens;
+    attach_reported_usage(&mut outcome, body);
+    outcome
 }
 
 fn protocol_insufficient() -> RouteAttemptOutcome {

@@ -6,8 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use super::GatewayResponse;
+use super::{streaming_search_events::note_stream_search_json, GatewayResponse};
 use crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity;
+use crate::ai_runtime::native_search_subrequest::RetrievalObservation;
 use crate::ai_types::{FunctionCall, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult};
 
@@ -26,6 +27,7 @@ pub(crate) struct AnthropicStreamState {
     tool_blocks: BTreeMap<usize, AnthropicToolUseBlock>,
     pub(crate) usage: TokenUsage,
     finish_reason: Option<String>,
+    retrieval_observation: Option<RetrievalObservation>,
 }
 
 impl AnthropicStreamState {
@@ -106,6 +108,7 @@ impl AnthropicStreamState {
             }
             _ => {}
         }
+        note_stream_search_json(&mut self.retrieval_observation, json);
         Ok(None)
     }
 
@@ -143,6 +146,7 @@ impl AnthropicStreamState {
             finish_reason,
             reasoning_content: None,
             continuation: None,
+            retrieval_observation: self.retrieval_observation,
         }
     }
 }
@@ -405,5 +409,61 @@ mod tests {
                 .unwrap(),
             serde_json::json!({ "query": "阶段 1", "limit": 5 })
         );
+    }
+
+    #[test]
+    fn server_tool_use_mints_main_stream_leak_without_client_tool_calls() {
+        let response = apply_all(&[
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "server_tool_use",
+                    "id": "srvtoolu_search",
+                    "name": "web_search",
+                    "input": { "query": "status" }
+                }
+            }),
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "web_search_tool_result",
+                    "tool_use_id": "srvtoolu_search",
+                    "content": [{
+                        "type": "web_search_result",
+                        "url": "https://example.com/anthropic",
+                        "title": "Anthropic hit"
+                    }]
+                }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": { "type": "text_delta", "text": "已检索。" }
+            }),
+            serde_json::json!({
+                "type": "message_delta",
+                "delta": { "stop_reason": "end_turn" }
+            }),
+        ]);
+        assert_eq!(response.finish_reason, "end_turn");
+        assert!(
+            response.tool_calls.is_empty(),
+            "server_tool_use must not become executable client tool_use: {:?}",
+            response.tool_calls
+        );
+        let observation = response
+            .retrieval_observation
+            .expect("Anthropic server search events must become credentials");
+        assert_eq!(
+            observation.origin,
+            crate::ai_runtime::native_search_subrequest::RetrievalOrigin::MainStreamLeak
+        );
+        assert!(observation.has_retrieval_credentials);
+        assert!(observation
+            .candidates
+            .iter()
+            .any(|hit| hit.url == "https://example.com/anthropic"));
     }
 }
