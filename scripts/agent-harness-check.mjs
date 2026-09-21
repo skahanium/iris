@@ -26,6 +26,14 @@ import {
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+  FILE_OBJECT_SUFFIX,
+  IDENTITY_ALIASES,
+  isContainerRegistration,
+  normalizeContainerId,
+  reviewerIdentity,
+} from "./agent-harness-identity.mjs";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 
@@ -494,23 +502,6 @@ function walk(dir) {
 
 // 工具文件不参与对象标记解析：登记表本身用首行标记声明身份，catalog 是纯代码。
 const TOOLING_FILES = new Set(["catalog.mjs"]);
-
-// 单对象文件的文件级容器与子对象共用 ID；登记表中用 `<ID>#file` 与 `<ID>` 区分。
-const FILE_OBJECT_SUFFIX = "#file";
-/**
- * 文件级容器的登记键：显式容器 `X#file` 归一化为 `X` 后重新拼，目录登记表直接
- * 给出容器 ID 的单对象文件（`X` 同时是对象 ID 与容器 ID）保持 `X`。
- *
- * 归一化是必需的：`registry.files` 的 `registration` 字段本身可能就是 `X#file`，
- * 直接再拼一次会造出 `X#file#file`——一个既不是对象也不是容器的登记键，任何复核
- * 或变更记录绑上它都会被判「引用未登记对象」。
- */
-const normalizeContainerId = (id) =>
-  id.endsWith(FILE_OBJECT_SUFFIX)
-    ? id.slice(0, -FILE_OBJECT_SUFFIX.length)
-    : id;
-
-const isContainerRegistration = (id) => id.endsWith(FILE_OBJECT_SUFFIX);
 
 function discoverManagedFiles(catalogFiles) {
   const discovered = new Set();
@@ -991,18 +982,27 @@ function checkReviews(
           `复核 ${review.id} 的 change=${review.change} 与变更不匹配`,
         );
       }
-      if (review.author && review.author === change.author) {
+      // 身份比较按**实体**而不是按整串：整串比较会让
+      // `X（收口）` 与 `X（收口，自审）` 判成两个身份，于是 P03 §5.2 规则 1
+      // 「架构变更的作者不能自行解封」多出一条改字面量就能走通的旁路。
+      const authorIdentity = reviewerIdentity(review.author);
+      const changeIdentity = reviewerIdentity(change.author);
+      const reviewerIdentityOfReviewer = reviewerIdentity(review.reviewer);
+      if (authorIdentity && authorIdentity === changeIdentity) {
         violation(
           "reviews",
-          `复核 ${review.id} 的作者与变更作者相同（架构变更的作者不能自行作出无影响结论）`,
+          `复核 ${review.id} 的作者与变更作者是同一身份（${authorIdentity}）：架构变更的作者不能自行作出无影响结论`,
         );
       }
       if (
-        review.reviewer &&
-        review.author &&
-        review.reviewer === review.author
+        reviewerIdentityOfReviewer &&
+        authorIdentity &&
+        reviewerIdentityOfReviewer === authorIdentity
       ) {
-        violation("reviews", `复核 ${review.id} 的 reviewer 与 author 相同`);
+        violation(
+          "reviews",
+          `复核 ${review.id} 的 reviewer 与 author 是同一身份（${authorIdentity}）`,
+        );
       }
       if (!review.reason || String(review.reason).trim().length < 4) {
         violation("reviews", `复核 ${review.id} 缺少判断理由`);
@@ -1076,6 +1076,43 @@ function checkReviews(
       violation(
         "reviews",
         `复核 ${review.id} 引用的变更 ${review.change} 不存在`,
+      );
+    }
+  }
+
+  // 每个架构/治理变更**至少要有一条非作者自签的复核**。
+  //
+  // 只校验 `change.review` 指向的那一条是不够的：一条自签复核可以留在
+  // `reviews[]` 里而不被任何 change 引用，于是它既不会被上面的循环比对、也不会
+  // 计入缺口——它只是躺在登记表里，看起来像一条已完成的复核。这正是
+  // REV-2026-09-19-47／48／54／56 的状态：被独立复核取代之后，它们成了无人引用的
+  // 自签，而检查器对此全绿。
+  for (const change of changes) {
+    if (
+      change.classification !== "architecture" &&
+      change.classification !== "governance"
+    ) {
+      continue;
+    }
+    const changeIdentity = reviewerIdentity(change.author);
+    const unsealed = reviews.some(
+      (entry) =>
+        entry.change === change.id &&
+        reviewerIdentity(entry.author) !== changeIdentity,
+    );
+    if (!unsealed) {
+      const selfSigned = reviews.filter(
+        (entry) =>
+          entry.change === change.id &&
+          reviewerIdentity(entry.author) === changeIdentity,
+      );
+      violation(
+        "reviews",
+        selfSigned.length > 0
+          ? `架构/治理变更 ${change.id} 只有作者自签的复核（${selfSigned
+              .map((entry) => entry.id)
+              .join("、")}），没有一条由其他身份作出的复核`
+          : `架构/治理变更 ${change.id} 没有任何复核记录`,
       );
     }
   }

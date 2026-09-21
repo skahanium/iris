@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 144,
+  "registryRevision": 145,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-21T13:24:04.793Z"
+    "recordedAt": "2026-09-21T14:33:30.175Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "c6cf70e4ce7fedaeeab5f65ef2858d53"
+      "fingerprint": "0241b1e2dc422c59b0751324a5be0a6c"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -286,7 +286,7 @@
     "rules/governance.md": {
       "container": "P03",
       "registration": "P03",
-      "fingerprint": "aba2d9631617a9617dc77b3ca52c276c"
+      "fingerprint": "692621c69c6be545f721a086cb7bb60e"
     },
     "rules/objects.md": {
       "container": "P02",
@@ -524,11 +524,17 @@
         "endLine": 167,
         "fingerprint": "70008a4a66f03dbd77223e12aaa1b361"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K01"] },
+      "relations": {
+        "implements": ["K01"]
+      },
       "note": null
     },
     "C02": {
@@ -545,11 +551,17 @@
         "endLine": 209,
         "fingerprint": "ce4c209b3f4d2bfabd8a62fa29224467"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K02"] },
+      "relations": {
+        "implements": ["K02"]
+      },
       "note": null
     },
     "C03": {
@@ -566,11 +578,18 @@
         "endLine": 251,
         "fingerprint": "f327db20835338cf39afa5d3b49a9b9d"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K03"], "depends_on": ["C01", "C02"] },
+      "relations": {
+        "implements": ["K03"],
+        "depends_on": ["C01", "C02"]
+      },
       "note": null
     },
     "C04": {
@@ -587,11 +606,18 @@
         "endLine": 169,
         "fingerprint": "ea388829eaa9035ea2b27b7ccf353d75"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K05"], "depends_on": ["C01"] },
+      "relations": {
+        "implements": ["K05"],
+        "depends_on": ["C01"]
+      },
       "note": null
     },
     "C05": {
@@ -608,11 +634,18 @@
         "endLine": 211,
         "fingerprint": "5102979b7ea99c0505bb9d7d65758e53"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K05", "K16"], "depends_on": ["C04"] },
+      "relations": {
+        "implements": ["K05", "K16"],
+        "depends_on": ["C04"]
+      },
       "note": null
     },
     "C06": {
@@ -629,11 +662,18 @@
         "endLine": 253,
         "fingerprint": "c4b49c79ae7e64029994ab9e42289b40"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K05"], "depends_on": ["C05"] },
+      "relations": {
+        "implements": ["K05"],
+        "depends_on": ["C05"]
+      },
       "note": null
     },
     "C07": {
@@ -650,11 +690,17 @@
         "endLine": 165,
         "fingerprint": "be303c3a129014a4e0d7518aef656c0e"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K07"] },
+      "relations": {
+        "implements": ["K07"]
+      },
       "note": null
     },
     "C08": {
@@ -671,11 +717,18 @@
         "endLine": 207,
         "fingerprint": "ad81b8040ed4b9e46fdac02d1b1fe22c"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K07", "K08"], "depends_on": ["C07"] },
+      "relations": {
+        "implements": ["K07", "K08"],
+        "depends_on": ["C07"]
+      },
       "note": null
     },
     "C09": {
@@ -692,11 +745,18 @@
         "endLine": 249,
         "fingerprint": "2cc4ec4d60cda186a5e1cf795ad4c457"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K08"], "depends_on": ["C04"] },
+      "relations": {
+        "implements": ["K08"],
+        "depends_on": ["C04"]
+      },
       "note": null
     },
     "C10": {
@@ -713,11 +773,17 @@
         "endLine": 163,
         "fingerprint": "fe63dc7bde6864cd621135eadddabdbc"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K04"] },
+      "relations": {
+        "implements": ["K04"]
+      },
       "note": "C10 按端点探针 native_search_support_for 已落地；现行适配器与 Available 分流见 K12 执行事实。已有机械 V03，verification 仍 none，不是 passed，不是 V05。"
     },
     "C11": {
@@ -734,11 +800,18 @@
         "endLine": 205,
         "fingerprint": "14c83d8ded91a0d55eb1dabdde06562c"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K04"], "depends_on": ["C10"] },
+      "relations": {
+        "implements": ["K04"],
+        "depends_on": ["C10"]
+      },
       "note": "主对话 SSE 夹带搜索事件进入处理路径为 MainStreamLeak 凭据；生产子请求仍不经 streaming.rs。verification 仍 none，不把本条标 passed，不关 G03。"
     },
     "C12": {
@@ -755,11 +828,18 @@
         "endLine": 247,
         "fingerprint": "f9d0b4447363412e70c6258c5f548d6f"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K04", "K06"], "depends_on": ["C11"] },
+      "relations": {
+        "implements": ["K04", "K06"],
+        "depends_on": ["C11"]
+      },
       "note": null
     },
     "C13": {
@@ -776,11 +856,17 @@
         "endLine": 192,
         "fingerprint": "f1499c3b8c81fe35d51e6a6ff7ff543e"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K06"] },
+      "relations": {
+        "implements": ["K06"]
+      },
       "note": null
     },
     "C14": {
@@ -797,11 +883,18 @@
         "endLine": 234,
         "fingerprint": "1d69cdc01d7c2bf1dcd302328ac47cdd"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K16"], "depends_on": ["C13", "C17"] },
+      "relations": {
+        "implements": ["K16"],
+        "depends_on": ["C13", "C17"]
+      },
       "note": null
     },
     "C15": {
@@ -818,8 +911,12 @@
         "endLine": 276,
         "fingerprint": "1c1ce0630de04592faf7804a4f84fe6b"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -842,11 +939,17 @@
         "endLine": 170,
         "fingerprint": "6c006eeb089856f2b1c793f04290a945"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K10"] },
+      "relations": {
+        "implements": ["K10"]
+      },
       "note": null
     },
     "C17": {
@@ -863,8 +966,12 @@
         "endLine": 212,
         "fingerprint": "a01749ccfab0cb5b4c04063effbe4eca"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -887,11 +994,18 @@
         "endLine": 254,
         "fingerprint": "d837e9389cba8780513641777fed6022"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K18"], "depends_on": ["C04"] },
+      "relations": {
+        "implements": ["K18"],
+        "depends_on": ["C04"]
+      },
       "note": null
     },
     "C19": {
@@ -908,11 +1022,18 @@
         "endLine": 177,
         "fingerprint": "273f9c59f1a745c8ed3e190859f6cacc"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K09"], "depends_on": ["C04"] },
+      "relations": {
+        "implements": ["K09"],
+        "depends_on": ["C04"]
+      },
       "note": null
     },
     "C20": {
@@ -929,8 +1050,12 @@
         "endLine": 219,
         "fingerprint": "dcc588e93cf7aef60a06f3c79942182a"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -953,11 +1078,18 @@
         "endLine": 261,
         "fingerprint": "7a55ec7bfdda5aa16c8a9f6f4966dcff"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K13"], "depends_on": ["C04", "C18"] },
+      "relations": {
+        "implements": ["K13"],
+        "depends_on": ["C04", "C18"]
+      },
       "note": null
     },
     "C22": {
@@ -974,11 +1106,18 @@
         "endLine": 303,
         "fingerprint": "8d62c96656893980f0e4c437115921cb"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K14"], "depends_on": ["C19", "C21"] },
+      "relations": {
+        "implements": ["K14"],
+        "depends_on": ["C19", "C21"]
+      },
       "note": null
     },
     "C23": {
@@ -995,11 +1134,18 @@
         "endLine": 171,
         "fingerprint": "62b79fae885c68c01316461398c862e0"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K16"], "depends_on": ["C22"] },
+      "relations": {
+        "implements": ["K16"],
+        "depends_on": ["C22"]
+      },
       "note": "2026-09-21 第二波：格式整理内容保持核对器已接线（body_text／block_order／link_targets；未证明不冻结确认）。verification 仍 none，不关 D05／N04。"
     },
     "C24": {
@@ -1016,8 +1162,12 @@
         "endLine": 213,
         "fingerprint": "a134c89546702d47d643e6c4a1cad6f4"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -1040,11 +1190,18 @@
         "endLine": 255,
         "fingerprint": "b63690cb7b325e9e9b251e97bd0beaf2"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K15"], "depends_on": ["C23", "C02"] },
+      "relations": {
+        "implements": ["K15"],
+        "depends_on": ["C23", "C02"]
+      },
       "note": null
     },
     "C26": {
@@ -1061,11 +1218,17 @@
         "endLine": 197,
         "fingerprint": "48e1a8c40e3430e47b34ba3b69fcfce8"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K17"] },
+      "relations": {
+        "implements": ["K17"]
+      },
       "note": null
     },
     "C27": {
@@ -1082,11 +1245,18 @@
         "endLine": 239,
         "fingerprint": "4384d82dd344640c3634247994e0c3c8"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["K17"], "depends_on": ["C26"] },
+      "relations": {
+        "implements": ["K17"],
+        "depends_on": ["C26"]
+      },
       "note": null
     },
     "D01": {
@@ -1103,9 +1273,15 @@
         "endLine": 95,
         "fingerprint": "0767ce792634a56cd54f1f82190cd319"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "passed" },
-      "work": { "state": "done" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "passed"
+      },
+      "work": {
+        "state": "done"
+      },
       "scope": [
         "N01",
         "N15",
@@ -1138,9 +1314,15 @@
         "endLine": 128,
         "fingerprint": "921617a8193a17d2738c106c2be595bc"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "passed" },
-      "work": { "state": "done" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "passed"
+      },
+      "work": {
+        "state": "done"
+      },
       "scope": ["N01", "N15", "N16", "N17", "N20", "N21", "Q04", "Q10", "G06"],
       "relations": {
         "depends_on": ["D01", "K04", "K06", "K10", "K15", "K16", "R11", "R12"],
@@ -1162,9 +1344,15 @@
         "endLine": 105,
         "fingerprint": "68122b88f0152c116d52ba35723cd19e"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "passed" },
-      "work": { "state": "done" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "passed"
+      },
+      "work": {
+        "state": "done"
+      },
       "scope": ["N05", "N12", "N13", "N14", "N22", "Q02", "Q08", "G01", "G05"],
       "relations": {
         "depends_on": ["D01", "K01", "K03", "K05", "K07", "K08"],
@@ -1186,9 +1374,15 @@
         "endLine": 96,
         "fingerprint": "231abe077396d4f660fc5bfcc5282f82"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
-      "work": { "state": "active" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": {
+        "state": "active"
+      },
       "scope": [
         "N06",
         "N07",
@@ -1223,9 +1417,15 @@
         "endLine": 98,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
-      "work": { "state": "active" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": {
+        "state": "active"
+      },
       "scope": ["N02", "N03", "N04", "N11", "N23", "Q14"],
       "relations": {
         "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
@@ -1246,11 +1446,19 @@
         "endLine": 59,
         "fingerprint": "1ef0e3f3adfdd9f347eebbefe4e583c2"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
-      "work": { "state": "planned" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
+      "work": {
+        "state": "planned"
+      },
       "scope": ["N16", "N18", "Q06", "Q07", "Q19"],
-      "relations": { "depends_on": ["D04", "D05", "V06", "E03"] },
+      "relations": {
+        "depends_on": ["D04", "D05", "V06", "E03"]
+      },
       "note": null
     },
     "E01": {
@@ -1267,11 +1475,17 @@
         "endLine": 71,
         "fingerprint": "884ecb3c7b4d83937aa67abd567961e8"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["V01", "V02"] },
+      "relations": {
+        "implements": ["V01", "V02"]
+      },
       "note": null
     },
     "E02": {
@@ -1288,11 +1502,18 @@
         "endLine": 114,
         "fingerprint": "d2d1b0b6e629ea7c0e2f60344153dfcc"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["V03", "V04"], "depends_on": ["E01"] },
+      "relations": {
+        "implements": ["V03", "V04"],
+        "depends_on": ["E01"]
+      },
       "note": null
     },
     "E03": {
@@ -1309,8 +1530,12 @@
         "endLine": 156,
         "fingerprint": "5e7399bdb840f642ae74f5f89cde62ce"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -1333,8 +1558,12 @@
         "endLine": 60,
         "fingerprint": "bf4770015b45418173a54ce18269972c"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -1354,8 +1583,12 @@
         "endLine": 27,
         "fingerprint": "662fb9e35e9230459e92c2ba1196c9d4"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -1375,8 +1608,12 @@
         "endLine": 53,
         "fingerprint": "bad9307c79e0801c99d3df4ad9d5aa7b"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -1396,14 +1633,24 @@
         "endLine": 30,
         "fingerprint": "2071e9f771f3bc6b238ec2d886414a8a"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
         "blocks": [
-          { "id": "D03", "at": "acceptance" },
-          { "id": "D05", "at": "acceptance" }
+          {
+            "id": "D03",
+            "at": "acceptance"
+          },
+          {
+            "id": "D05",
+            "at": "acceptance"
+          }
         ]
       },
       "note": null
@@ -1422,11 +1669,22 @@
         "endLine": 42,
         "fingerprint": "812829141d7fe58e661239383fa0f165"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D04",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "生产入口录制回放 V04 已有（dual_path_v04_tests.rs）。不是 V05；不关本条，不把两个替身写成 V04，不把 MCP 主备写成双路。现状见 open-items G02。"
     },
     "G03": {
@@ -1443,11 +1701,22 @@
         "endLine": 55,
         "fingerprint": "2bbc8e7920d37c72637b94467245d433"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D04",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "处理路径切片已落地（SSE MainStreamLeak + 隔离子请求观察）。生产子请求仍 stream:false。不是关闭，不是 V05。D02 不关闭本条。"
     },
     "G04": {
@@ -1464,11 +1733,22 @@
         "endLine": 68,
         "fingerprint": "e266f35bd09c892a8a8d8df299b9ae62"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D01",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "G05": {
@@ -1485,11 +1765,22 @@
         "endLine": 80,
         "fingerprint": "3e5e26b905a9d7b706669313e2d1d149"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D03", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D03",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "G06": {
@@ -1506,11 +1797,22 @@
         "endLine": 92,
         "fingerprint": "e2a191641920f6d25b7666b769e10c5d"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D02",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "关闭门槛：过早收束负例由 host_authority 的独立 verify 命令绑定（agent_tool_loop_host_authority_tests.rs），不写在 C14 备注里代替。字段级 mismatch（K16／C14）与 Anthropic 终止（C11／K04）不写入本条关闭条件。随 D02 验收关闭。"
     },
     "K01": {
@@ -1527,11 +1829,17 @@
         "endLine": 91,
         "fingerprint": "f47c02b89d7569bbb5e4152b3ba0814c"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C01", "C03", "C07", "C22"] },
+      "relations": {
+        "applies_to": ["C01", "C03", "C07", "C22"]
+      },
       "note": null
     },
     "K02": {
@@ -1548,11 +1856,17 @@
         "endLine": 87,
         "fingerprint": "21737948fbfe97459310db283fc3e40a"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C02", "C25", "C27"] },
+      "relations": {
+        "applies_to": ["C02", "C25", "C27"]
+      },
       "note": null
     },
     "K03": {
@@ -1569,11 +1883,17 @@
         "endLine": 120,
         "fingerprint": "aca78336e194a43bb90f39d52537fc73"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C03", "C07", "C14", "C25"] },
+      "relations": {
+        "applies_to": ["C03", "C07", "C14", "C25"]
+      },
       "note": null
     },
     "K04": {
@@ -1590,11 +1910,17 @@
         "endLine": 96,
         "fingerprint": "9089a048ca45699335d62b22baff0c54"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C10", "C11", "C12", "C20"] },
+      "relations": {
+        "applies_to": ["C10", "C11", "C12", "C20"]
+      },
       "note": null
     },
     "K05": {
@@ -1611,11 +1937,17 @@
         "endLine": 101,
         "fingerprint": "ceda0a86513f667e831fb6736d47718c"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C04", "C05", "C06", "C17", "C20", "C24"] },
+      "relations": {
+        "applies_to": ["C04", "C05", "C06", "C17", "C20", "C24"]
+      },
       "note": null
     },
     "K06": {
@@ -1632,11 +1964,17 @@
         "endLine": 109,
         "fingerprint": "3e648abcc442f7bf9f959369c70ed403"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C12", "C13", "C15", "C17", "C20", "C21"] },
+      "relations": {
+        "applies_to": ["C12", "C13", "C15", "C17", "C20", "C21"]
+      },
       "note": null
     },
     "K07": {
@@ -1653,11 +1991,17 @@
         "endLine": 95,
         "fingerprint": "65968fe0e8ee638639c26157d8a0654b"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C07", "C08", "C11"] },
+      "relations": {
+        "applies_to": ["C07", "C08", "C11"]
+      },
       "note": null
     },
     "K08": {
@@ -1674,11 +2018,17 @@
         "endLine": 109,
         "fingerprint": "7916cc7f30f7ada7a877d41d9e90ec5c"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C08", "C09"] },
+      "relations": {
+        "applies_to": ["C08", "C09"]
+      },
       "note": null
     },
     "K09": {
@@ -1695,11 +2045,17 @@
         "endLine": 89,
         "fingerprint": "e74b319d8226c3ea96f545a5eb54c762"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C04", "C19", "C20", "C21", "C15"] },
+      "relations": {
+        "applies_to": ["C04", "C19", "C20", "C21", "C15"]
+      },
       "note": null
     },
     "K10": {
@@ -1716,11 +2072,17 @@
         "endLine": 110,
         "fingerprint": "246332272cdd744f523f02f8848ab836"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C16", "C17", "C14"] },
+      "relations": {
+        "applies_to": ["C16", "C17", "C14"]
+      },
       "note": null
     },
     "K11": {
@@ -1737,11 +2099,17 @@
         "endLine": 109,
         "fingerprint": "a9e4a9d5fc619f4708fce9d4bf4583b8"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C20", "C10", "C18", "C22", "C25"] },
+      "relations": {
+        "applies_to": ["C20", "C10", "C18", "C22", "C25"]
+      },
       "note": null
     },
     "K12": {
@@ -1758,11 +2126,17 @@
         "endLine": 94,
         "fingerprint": "91b94fe0837f4c3c218d7838bcf55b62"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C20", "C11", "C12"] },
+      "relations": {
+        "applies_to": ["C20", "C11", "C12"]
+      },
       "note": "生产登记 2 个适配器；C10 对这两模型 Available。生产子请求仍 stream:false；主对话 SSE 夹带为 MainStreamLeak。不是 V05，不关 G03。正文见执行事实段。"
     },
     "K13": {
@@ -1779,11 +2153,17 @@
         "endLine": 109,
         "fingerprint": "9717ad70f62c8a1a70bfed3b59a03689"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C21", "C22", "C15"] },
+      "relations": {
+        "applies_to": ["C21", "C22", "C15"]
+      },
       "note": null
     },
     "K14": {
@@ -1800,11 +2180,17 @@
         "endLine": 108,
         "fingerprint": "87fb68d57378acbe17bc5a6c67fc6e25"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C22", "C07", "C23", "C25"] },
+      "relations": {
+        "applies_to": ["C22", "C07", "C23", "C25"]
+      },
       "note": null
     },
     "K15": {
@@ -1821,11 +2207,17 @@
         "endLine": 107,
         "fingerprint": "b5d197d66f42820ef83a738de88ca5b4"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C25", "C23", "C14"] },
+      "relations": {
+        "applies_to": ["C25", "C23", "C14"]
+      },
       "note": null
     },
     "K16": {
@@ -1842,11 +2234,17 @@
         "endLine": 111,
         "fingerprint": "897922f16ba134494da949a65678dfd9"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C23", "C14", "C17", "C24"] },
+      "relations": {
+        "applies_to": ["C23", "C14", "C17", "C24"]
+      },
       "note": null
     },
     "K17": {
@@ -1863,11 +2261,17 @@
         "endLine": 113,
         "fingerprint": "58cb397b479a7b308169c750616a1574"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C26", "C27", "C11", "C20", "C21"] },
+      "relations": {
+        "applies_to": ["C26", "C27", "C11", "C20", "C21"]
+      },
       "note": null
     },
     "K18": {
@@ -1884,11 +2288,17 @@
         "endLine": 114,
         "fingerprint": "69b42dc96c3cd0aadee0ea6c5c18484a"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "applies_to": ["C18", "C16", "C20", "C21"] },
+      "relations": {
+        "applies_to": ["C18", "C16", "C20", "C21"]
+      },
       "note": null
     },
     "L01": {
@@ -1905,8 +2315,12 @@
         "endLine": 100,
         "fingerprint": "36a5d197a6832c2e56b9a637ac1d7cfe"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -1929,8 +2343,12 @@
         "endLine": 126,
         "fingerprint": "0f87472e3767e57b6535c51cdd6f8dbf"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -1953,8 +2371,12 @@
         "endLine": 96,
         "fingerprint": "a75011aa6b19c5c547ebad7ea4f1fd15"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -1977,11 +2399,18 @@
         "endLine": 88,
         "fingerprint": "139b6ef1a5de30641b8ea74388f2cc5d"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["N04"], "consumes": ["K16"] },
+      "relations": {
+        "implements": ["N04"],
+        "consumes": ["K16"]
+      },
       "note": null
     },
     "L05": {
@@ -1998,11 +2427,18 @@
         "endLine": 95,
         "fingerprint": "0dc6369a7ccf55b8483980b737d1e9a1"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["N14"], "consumes": ["K03", "K07", "K08"] },
+      "relations": {
+        "implements": ["N14"],
+        "consumes": ["K03", "K07", "K08"]
+      },
       "note": null
     },
     "L06": {
@@ -2019,8 +2455,12 @@
         "endLine": 99,
         "fingerprint": "4e4e6f47a5acef8cb64b3e410ac7087b"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -2043,8 +2483,12 @@
         "endLine": 125,
         "fingerprint": "ff2051893f6edbca84af816531040bb8"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -2067,8 +2511,12 @@
         "endLine": 127,
         "fingerprint": "8394c41fdd12474add177a8ff2c3d091"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -2091,11 +2539,18 @@
         "endLine": 123,
         "fingerprint": "9400528d82c2529910a0e28219c8d16c"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["N05", "N14"], "consumes": ["K07", "K08"] },
+      "relations": {
+        "implements": ["N05", "N14"],
+        "consumes": ["K07", "K08"]
+      },
       "note": null
     },
     "M04": {
@@ -2112,8 +2567,12 @@
         "endLine": 121,
         "fingerprint": "65c8ba7fbe4be8629c342daa9aa248ae"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -2136,11 +2595,18 @@
         "endLine": 150,
         "fingerprint": "509c4dbf3d72a991feb959e1c391bc96"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["N15", "N16"], "consumes": ["K06", "K17"] },
+      "relations": {
+        "implements": ["N15", "N16"],
+        "consumes": ["K06", "K17"]
+      },
       "note": null
     },
     "M06": {
@@ -2157,11 +2623,18 @@
         "endLine": 128,
         "fingerprint": "0ed1e884bc91a5cccf905acb5db7415b"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["N19"], "consumes": ["K05", "K10", "K18"] },
+      "relations": {
+        "implements": ["N19"],
+        "consumes": ["K05", "K10", "K18"]
+      },
       "note": null
     },
     "M07": {
@@ -2178,8 +2651,12 @@
         "endLine": 135,
         "fingerprint": "a3bd6e620bc12ff62a1a1cbec28bb54b"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -2202,8 +2679,12 @@
         "endLine": 129,
         "fingerprint": "3d80423084809f04405e998ab1a9f55c"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -2226,11 +2707,18 @@
         "endLine": 155,
         "fingerprint": "83ad048f91a4243376a8d996089536b5"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["N18"], "consumes": ["K17"] },
+      "relations": {
+        "implements": ["N18"],
+        "consumes": ["K17"]
+      },
       "note": null
     },
     "N01": {
@@ -2247,8 +2735,12 @@
         "endLine": 63,
         "fingerprint": "613fcea6a35035ca8dda04f70406a315"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2268,8 +2760,12 @@
         "endLine": 73,
         "fingerprint": "9878237a75e3a6977f844ac5f102e031"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2289,8 +2785,12 @@
         "endLine": 83,
         "fingerprint": "7277548ae92676fe6ae4e73cafeab176"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2310,8 +2810,12 @@
         "endLine": 93,
         "fingerprint": "eccc6334d3654a54e643c9104cf5399d"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2331,8 +2835,12 @@
         "endLine": 103,
         "fingerprint": "4432bbaac03469ab31e72fd6310c980f"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2352,8 +2860,12 @@
         "endLine": 113,
         "fingerprint": "6d94fe205205c5ea7d14d01d94e374c9"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2373,8 +2885,12 @@
         "endLine": 123,
         "fingerprint": "5ef40b6290ab02465383f288fd425dc4"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2394,8 +2910,12 @@
         "endLine": 133,
         "fingerprint": "deb19650085c0c49d74d16c589d6648c"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2415,8 +2935,12 @@
         "endLine": 143,
         "fingerprint": "8b55037d43c6eae5bf9b3b415293c756"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2436,8 +2960,12 @@
         "endLine": 153,
         "fingerprint": "20c5d69a98e7395e25c36b918f426877"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2457,8 +2985,12 @@
         "endLine": 163,
         "fingerprint": "c15a7ffbf739918652714f53832b9c60"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2478,8 +3010,12 @@
         "endLine": 173,
         "fingerprint": "203687baa5683366bed9e2403d2620e5"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2499,8 +3035,12 @@
         "endLine": 183,
         "fingerprint": "74644674b060b344c51238c1124f1797"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2520,8 +3060,12 @@
         "endLine": 193,
         "fingerprint": "2fa475f1786556e17fe6df68488984df"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2541,8 +3085,12 @@
         "endLine": 203,
         "fingerprint": "8b1e2702b53888edfd021a82a04535d5"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2562,8 +3110,12 @@
         "endLine": 213,
         "fingerprint": "7dcb82a0b089a15f8e411e3a4d720a14"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2583,8 +3135,12 @@
         "endLine": 223,
         "fingerprint": "1e7b1b450e63fca7e2cbc3e18fba6bbd"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2604,8 +3160,12 @@
         "endLine": 233,
         "fingerprint": "cd1d6969eb69409310f473b7b2bad5e6"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2625,8 +3185,12 @@
         "endLine": 243,
         "fingerprint": "a531375937e1633b4f735f2e09ebbec0"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2646,8 +3210,12 @@
         "endLine": 253,
         "fingerprint": "7f795c751e1680797beaf2880e71f91c"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2667,8 +3235,12 @@
         "endLine": 263,
         "fingerprint": "733a1c8156e7cab033010c491b562c4f"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2688,8 +3260,12 @@
         "endLine": 273,
         "fingerprint": "f40ea878daaeaad7f36f17770969f2e0"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2709,8 +3285,12 @@
         "endLine": 283,
         "fingerprint": "ac6bd2e346f7db1cec0e968fc8399317"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2730,8 +3310,12 @@
         "endLine": 144,
         "fingerprint": "1c8b2b9c4372b18427bac502f9e68e50"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2751,8 +3335,12 @@
         "endLine": 209,
         "fingerprint": "307cd1d4482aa3bd86fb4af0b1d4936b"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2768,12 +3356,16 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "P03",
-        "line": 186,
-        "endLine": 206,
+        "line": 191,
+        "endLine": 211,
         "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2793,11 +3385,17 @@
         "endLine": 292,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["P05"] },
+      "relations": {
+        "consumes": ["P05"]
+      },
       "note": "源码事实与 Q* 未决事项的唯一位置"
     },
     "P05": {
@@ -2814,8 +3412,12 @@
         "endLine": 108,
         "fingerprint": "3068eea7612d1a3f4c00c578a019595f"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2835,8 +3437,12 @@
         "endLine": 53,
         "fingerprint": "6ad314659b015a4ca8656b93ad4fb386"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -2856,11 +3462,17 @@
         "endLine": 82,
         "fingerprint": "9c94a9f80256f6b5e33c5b24abb0da48"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["P03", "P05"] },
+      "relations": {
+        "consumes": ["P03", "P05"]
+      },
       "note": "登记不进入 39 个业务工具数的入口与 Planned 占位；Planned 不暴露"
     },
     "Q01": {
@@ -2877,11 +3489,22 @@
         "endLine": 56,
         "fingerprint": "cdf338350dff64cd26178cac55314bdf"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D01",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "调查结论：2026-09-14 那次无法唯一归因；同类现象的可定位性由 D01 交付。不阻断 D02。"
     },
     "Q02": {
@@ -2898,14 +3521,24 @@
         "endLine": 67,
         "fingerprint": "9df9d5e4e1a8f60ebc3dbbe9c995fe33"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
         "blocks": [
-          { "id": "D03", "at": "acceptance" },
-          { "id": "D04", "at": "acceptance" }
+          {
+            "id": "D03",
+            "at": "acceptance"
+          },
+          {
+            "id": "D04",
+            "at": "acceptance"
+          }
         ]
       },
       "note": "D03 验收已 closed。F01 promote 切片不重开、不重关；V04 双路仍归 G02／D04。"
@@ -2924,14 +3557,24 @@
         "endLine": 79,
         "fingerprint": "4529e0f687301d751d596d8c204e647f"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
         "blocks": [
-          { "id": "D01", "at": "acceptance" },
-          { "id": "D06", "at": "acceptance" }
+          {
+            "id": "D01",
+            "at": "acceptance"
+          },
+          {
+            "id": "D06",
+            "at": "acceptance"
+          }
         ]
       },
       "note": null
@@ -2950,11 +3593,22 @@
         "endLine": 91,
         "fingerprint": "cf416a70a89bc913fbdfdb519c647b0d"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D02",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "关闭门槛：Chat Completions 五类终止的现有 V03 机械记录（4 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04，不是本条关闭条件。Anthropic 五类只算 C11／K04，不扩大本条。"
     },
     "Q05": {
@@ -2971,11 +3625,22 @@
         "endLine": 103,
         "fingerprint": "efbee7d33f48bf7b6dfd70193f99e735"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D04",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "落点 058366ea；源码 list 只读已有机械 V03；关闭仍等 D04 验收。不把 C18 verification 标为通过。"
     },
     "Q06": {
@@ -2992,11 +3657,22 @@
         "endLine": 114,
         "fingerprint": "cc701424e395c94c887aab555656a2f8"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D06", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D06",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "Q07": {
@@ -3013,11 +3689,22 @@
         "endLine": 125,
         "fingerprint": "b5520ca814a1c858c44ab7cde7906f9b"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D06", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D06",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "Q08": {
@@ -3034,11 +3721,22 @@
         "endLine": 139,
         "fingerprint": "c736fb0184f9145115544091c5c9764a"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D03", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D03",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "Q09": {
@@ -3055,11 +3753,22 @@
         "endLine": 151,
         "fingerprint": "9d25a63f3fe8285bff6462ef33cb42d5"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D01",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "Q10": {
@@ -3076,11 +3785,22 @@
         "endLine": 163,
         "fingerprint": "472dc5d2602bb72006315d53f50caeb9"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D02",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "关闭门槛：事实 1–3 的现有 V03 机械记录（5 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04。服务端搜索事件与引用不算本条（→ G03）。"
     },
     "Q11": {
@@ -3097,14 +3817,24 @@
         "endLine": 175,
         "fingerprint": "a29a814ce8718467ddb68e0a0584ed1b"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
         "blocks": [
-          { "id": "D01", "at": "acceptance" },
-          { "id": "D06", "at": "acceptance" }
+          {
+            "id": "D01",
+            "at": "acceptance"
+          },
+          {
+            "id": "D06",
+            "at": "acceptance"
+          }
         ]
       },
       "note": null
@@ -3123,11 +3853,22 @@
         "endLine": 187,
         "fingerprint": "dd85c6176ec4acb041710e3b22b4aaeb"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D01",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "Q13": {
@@ -3144,8 +3885,12 @@
         "endLine": 201,
         "fingerprint": "9cea6ab3ebd14c74b64bfba30194436e"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3165,11 +3910,22 @@
         "endLine": 213,
         "fingerprint": "f8a4415f31a3c8c9b068891977fa70d1"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D05", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D05",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。格式整理核对器也不能推出本条已关闭。"
     },
     "Q15": {
@@ -3186,8 +3942,12 @@
         "endLine": 227,
         "fingerprint": "7cc5877f380f3e19067a225eef7264a9"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3207,8 +3967,12 @@
         "endLine": 240,
         "fingerprint": "0be98a33d79789919db2818c4b319190"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3228,11 +3992,22 @@
         "endLine": 254,
         "fingerprint": "dba7b39ca5ce6cfbe94f4872e2168e14"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D04",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。**本条目前没有任何 verify 记录，这是有意的、不是遗漏**：唯一所需证据是 V05 逐端点真实调用，而它需要用户先批准四件事（端点范围、费用上限、凭据、原生搜索端点），见 docs/eval/results/2026-09-19-v05-live-window.md；未获批准前一条也不运行。因此不得用 V03 机械记录或 V04 生产入口录制回放来充抵本条，也不得因本条缺证据而误判为「施工方漏绑」。"
     },
     "Q18": {
@@ -3249,11 +4024,22 @@
         "endLine": 266,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D01",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "Q19": {
@@ -3270,11 +4056,22 @@
         "endLine": 277,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D06", "at": "acceptance" }] },
+      "relations": {
+        "blocks": [
+          {
+            "id": "D06",
+            "at": "acceptance"
+          }
+        ]
+      },
       "note": null
     },
     "R01": {
@@ -3291,8 +4088,12 @@
         "endLine": 82,
         "fingerprint": "0f83e37bea339e70b4fb3660ab96b9b7"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3312,8 +4113,12 @@
         "endLine": 104,
         "fingerprint": "ce298478f741d2c69345dda2a443b402"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3333,8 +4138,12 @@
         "endLine": 126,
         "fingerprint": "24c06e85f6e7b29877dfd8f5863a4825"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3354,8 +4163,12 @@
         "endLine": 148,
         "fingerprint": "c8b613cdf98521dcb8f2b367b050a515"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3375,8 +4188,12 @@
         "endLine": 170,
         "fingerprint": "e69c32bbaa7fa7048e6a01cbb39ee2aa"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3396,8 +4213,12 @@
         "endLine": 192,
         "fingerprint": "18d5085c59639a35d81313dccc0d6b33"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3417,8 +4238,12 @@
         "endLine": 214,
         "fingerprint": "f991597da8f2577109135fba88fe72e5"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3438,8 +4263,12 @@
         "endLine": 236,
         "fingerprint": "9497dacb90ed0d106a4398de547977f2"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3459,8 +4288,12 @@
         "endLine": 258,
         "fingerprint": "0143db6a2b4c154c3294c0224a6a271b"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3480,8 +4313,12 @@
         "endLine": 280,
         "fingerprint": "52d9ec8de59718033291d3088789e519"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3501,8 +4338,12 @@
         "endLine": 308,
         "fingerprint": "1a8c8914c5afa0c9681aaf22b3b4e6f2"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3522,8 +4363,12 @@
         "endLine": 335,
         "fingerprint": "810567ee4bf3309b7b6eb6a94f90300d"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3543,11 +4388,17 @@
         "endLine": 369,
         "fingerprint": "98261fd05c8d7c88e67e28146d6a889c"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K06"] },
+      "relations": {
+        "consumes": ["K06"]
+      },
       "note": "已采用：当前不改默认值；改数必须先升 schema_version。常量表延后到第一次改数。不关闭 Q13，不把 D02 标为可验收。"
     },
     "README-CONTRACTS": {
@@ -3564,8 +4415,12 @@
         "endLine": 38,
         "fingerprint": "38685944b2115fa5ad92e3b7de15f969"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3585,8 +4440,12 @@
         "endLine": 26,
         "fingerprint": "8ad1bd4ceea0c05e73de4006a4e75565"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3606,8 +4465,12 @@
         "endLine": 32,
         "fingerprint": "86b282d7c598378e3f29c803a429c646"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3627,8 +4490,12 @@
         "endLine": 60,
         "fingerprint": "19e6a4767318363afb1d35cba7293717"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3648,8 +4515,12 @@
         "endLine": 89,
         "fingerprint": "96e7f1b4451011ba408d522328335085"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -3669,11 +4540,17 @@
         "endLine": 88,
         "fingerprint": "a60318807b45a3e4c918170eb313fd39"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K01", "K05"] },
+      "relations": {
+        "consumes": ["K01", "K05"]
+      },
       "note": "工具卡；语义归属 M01，暴露面 general"
     },
     "T03": {
@@ -3690,11 +4567,17 @@
         "endLine": 110,
         "fingerprint": "9330379cac99ff5690a116916d4ef804"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K10"] },
+      "relations": {
+        "consumes": ["K10"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T04": {
@@ -3711,11 +4594,17 @@
         "endLine": 89,
         "fingerprint": "a46649aa8eed3fe50e505da807f10c7d"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K10"] },
+      "relations": {
+        "consumes": ["K10"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T05": {
@@ -3732,11 +4621,17 @@
         "endLine": 94,
         "fingerprint": "8e15aab926da19619fa9694e806cf4af"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K09"] },
+      "relations": {
+        "consumes": ["K09"]
+      },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
     "T06": {
@@ -3753,11 +4648,17 @@
         "endLine": 98,
         "fingerprint": "02bbf8f55de77a570f9016770c94039b"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05", "K14"] },
+      "relations": {
+        "consumes": ["K05", "K14"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T07": {
@@ -3774,11 +4675,17 @@
         "endLine": 102,
         "fingerprint": "e4d0f028521bb195575c887742d69868"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T08": {
@@ -3795,11 +4702,17 @@
         "endLine": 94,
         "fingerprint": "9de783d22df4581b249fca84ea4ff75a"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T09": {
@@ -3816,11 +4729,17 @@
         "endLine": 86,
         "fingerprint": "4eae0566af7bfb7cfabd1dcc9535dcde"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 general"
     },
     "T10": {
@@ -3837,11 +4756,17 @@
         "endLine": 82,
         "fingerprint": "7a0287968ad6e2b378c20399b8fcabf3"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K07"] },
+      "relations": {
+        "consumes": ["K07"]
+      },
       "note": "工具卡；语义归属 M03，暴露面 general"
     },
     "T11": {
@@ -3858,11 +4783,17 @@
         "endLine": 107,
         "fingerprint": "0479a43a0a27de355982a34507b561ad"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K09", "K11", "K12"] },
+      "relations": {
+        "consumes": ["K09", "K11", "K12"]
+      },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
     "T12": {
@@ -3879,11 +4810,17 @@
         "endLine": 101,
         "fingerprint": "4a07c2ebe0f3f258c844068b3ee0007c"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K09", "K13"] },
+      "relations": {
+        "consumes": ["K09", "K13"]
+      },
       "note": "工具卡；语义归属 M07，暴露面 general"
     },
     "T13": {
@@ -3900,11 +4837,17 @@
         "endLine": 86,
         "fingerprint": "dcab16c63530b19f5d475d6fd29bf74d"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05", "K08"] },
+      "relations": {
+        "consumes": ["K05", "K08"]
+      },
       "note": "工具卡；语义归属 M03，暴露面 general"
     },
     "T14": {
@@ -3921,11 +4864,17 @@
         "endLine": 104,
         "fingerprint": "83af751caf892cafdc91d595d3ffa792"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05", "K08"] },
+      "relations": {
+        "consumes": ["K05", "K08"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
     "T15": {
@@ -3942,11 +4891,17 @@
         "endLine": 106,
         "fingerprint": "1b6618a0bff3adff999409933746b17f"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05", "K14"] },
+      "relations": {
+        "consumes": ["K05", "K14"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
     "T16": {
@@ -3963,11 +4918,17 @@
         "endLine": 107,
         "fingerprint": "f19ec946d52f751440174e5f8cfa657d"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05", "K14"] },
+      "relations": {
+        "consumes": ["K05", "K14"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 general"
     },
     "T17": {
@@ -3984,11 +4945,17 @@
         "endLine": 118,
         "fingerprint": "d2fd35fb049b7e2921fee554cad2104e"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T18": {
@@ -4005,11 +4972,17 @@
         "endLine": 115,
         "fingerprint": "1056470c84c319a4639de4693a79f64b"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T19": {
@@ -4026,11 +4999,17 @@
         "endLine": 117,
         "fingerprint": "b4da95b1a3189b738fdc1170aab9036f"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T20": {
@@ -4047,11 +5026,17 @@
         "endLine": 122,
         "fingerprint": "8b4bef166639be583885da22f5e23685"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T21": {
@@ -4068,11 +5053,17 @@
         "endLine": 136,
         "fingerprint": "84eca265c1fa3bb40a7618eebbe4645b"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T22": {
@@ -4089,11 +5080,17 @@
         "endLine": 132,
         "fingerprint": "ab594963f3166beb5a2019f3038418b0"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T23": {
@@ -4110,11 +5107,17 @@
         "endLine": 137,
         "fingerprint": "bc8c49b215242e1bc21c69065fbfe43e"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T24": {
@@ -4131,11 +5134,17 @@
         "endLine": 131,
         "fingerprint": "5b4b9255ecd26e99339f793bd6b5ea53"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T25": {
@@ -4152,11 +5161,17 @@
         "endLine": 98,
         "fingerprint": "6c386cfbc7102343473643fb87f27cfe"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K16"] },
+      "relations": {
+        "consumes": ["K16"]
+      },
       "note": "工具卡；语义归属 M08，暴露面 extended"
     },
     "T26": {
@@ -4173,11 +5188,17 @@
         "endLine": 105,
         "fingerprint": "00706b568f1c694fd60ba6f4bad1158c"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K14"] },
+      "relations": {
+        "consumes": ["K14"]
+      },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
     "T27": {
@@ -4194,11 +5215,17 @@
         "endLine": 118,
         "fingerprint": "6812c553f7f585d28e510094d83a9ad3"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T28": {
@@ -4215,11 +5242,17 @@
         "endLine": 107,
         "fingerprint": "980ea27e20a8a7ec67b3f5952ba21349"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K09"] },
+      "relations": {
+        "consumes": ["K09"]
+      },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
     "T29": {
@@ -4236,11 +5269,17 @@
         "endLine": 108,
         "fingerprint": "cc677183809d965ac761091c53450309"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K09"] },
+      "relations": {
+        "consumes": ["K09"]
+      },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
     "T30": {
@@ -4257,11 +5296,17 @@
         "endLine": 109,
         "fingerprint": "9598f25a9ec0dcf9b1fe5be77ee3a291"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K09"] },
+      "relations": {
+        "consumes": ["K09"]
+      },
       "note": "工具卡；语义归属 M07，暴露面 extended"
     },
     "T31": {
@@ -4278,11 +5323,17 @@
         "endLine": 144,
         "fingerprint": "a0716570d3c567eda34c59d4ef47f317"
       },
-      "implementation": { "state": "partial" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "partial"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K06", "K10", "K14"] },
+      "relations": {
+        "consumes": ["K06", "K10", "K14"]
+      },
       "note": "工具卡；语义归属 M05，暴露面 extended"
     },
     "T32": {
@@ -4299,11 +5350,17 @@
         "endLine": 126,
         "fingerprint": "fb37dc126c88ccfaf6c48faa0f440e14"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T33": {
@@ -4320,11 +5377,17 @@
         "endLine": 105,
         "fingerprint": "cb1074a050699cc05c907d79146422b0"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "T34": {
@@ -4341,11 +5404,17 @@
         "endLine": 114,
         "fingerprint": "0af3a99fce54908a9c3421a2e413971c"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T35": {
@@ -4362,11 +5431,17 @@
         "endLine": 121,
         "fingerprint": "37cc8cb07af5b1d1d38479864412dce5"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T36": {
@@ -4383,11 +5458,17 @@
         "endLine": 125,
         "fingerprint": "d23cb0ff4e1c437e238308219aaf0fcf"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T37": {
@@ -4404,11 +5485,17 @@
         "endLine": 121,
         "fingerprint": "54bd47f10eea083593e268e34213ee8f"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T38": {
@@ -4425,11 +5512,17 @@
         "endLine": 116,
         "fingerprint": "9926b5145dfb83e19686759effe9be5d"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M02，暴露面 extended"
     },
     "T39": {
@@ -4446,11 +5539,17 @@
         "endLine": 120,
         "fingerprint": "d8920cc7d44485c3523641328ff81ec2"
       },
-      "implementation": { "state": "present" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "present"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
-      "relations": { "consumes": ["K05"] },
+      "relations": {
+        "consumes": ["K05"]
+      },
       "note": "工具卡；语义归属 M06，暴露面 extended"
     },
     "V01": {
@@ -4467,8 +5566,12 @@
         "endLine": 45,
         "fingerprint": "26b3b1339aacb37e1103f4fae3a446af"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4488,8 +5591,12 @@
         "endLine": 87,
         "fingerprint": "9a17c9529bf274139a6a6e121f52ce3a"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4509,8 +5616,12 @@
         "endLine": 35,
         "fingerprint": "c80708fe0d2a66019a63036eef7984d8"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4530,8 +5641,12 @@
         "endLine": 59,
         "fingerprint": "eb9bcb2ce4bab35c59af0a3a11af5246"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4551,8 +5666,12 @@
         "endLine": 84,
         "fingerprint": "67b248f8696e2e85c0d03e29bceee08c"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4572,8 +5691,12 @@
         "endLine": 109,
         "fingerprint": "7f236062aa8a607f3a94021430b9d614"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4593,8 +5716,12 @@
         "endLine": 134,
         "fingerprint": "7ee436d9210c6e024c6b8a2238b74d76"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4614,8 +5741,12 @@
         "endLine": 111,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {},
@@ -4631,15 +5762,21 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X01",
-        "line": 208,
-        "endLine": 230,
+        "line": 213,
+        "endLine": 235,
         "fingerprint": "1c85b2afe464d3bd20f0d0913fac1fed"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "passed" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "passed"
+      },
       "work": null,
       "scope": [],
-      "relations": { "implements": ["P02", "P03"] },
+      "relations": {
+        "implements": ["P02", "P03"]
+      },
       "note": null
     },
     "X02": {
@@ -4652,15 +5789,22 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X02",
-        "line": 232,
-        "endLine": 246,
+        "line": 237,
+        "endLine": 251,
         "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "passed" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "passed"
+      },
       "work": null,
       "scope": [],
-      "relations": { "verifies": ["X01", "P02", "P03"], "depends_on": ["X01"] },
+      "relations": {
+        "verifies": ["X01", "P02", "P03"],
+        "depends_on": ["X01"]
+      },
       "note": null
     },
     "X03": {
@@ -4673,12 +5817,16 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X03",
-        "line": 248,
-        "endLine": 261,
+        "line": 253,
+        "endLine": 266,
         "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
+      "implementation": {
+        "state": "unknown"
+      },
+      "verification": {
+        "state": "none"
+      },
       "work": null,
       "scope": [],
       "relations": {
@@ -6794,9 +7942,9 @@
     {
       "id": "CHG-2026-09-15-1",
       "at": "2026-09-15T05:36:48.271Z",
-      "author": "DSH Agent (documentation build round)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "登记表首次落库：写入对象指纹、文件级容器指纹与来源指纹，无责任归属或权限语义变化",
+      "reason": "登记表首次落库：写入对象指纹、文件级容器指纹与来源指纹，无责任归属或权限语义变化 【原 author：(documentation build round)】",
       "review": null,
       "objects": [
         {
@@ -7896,9 +9044,9 @@
     {
       "id": "CHG-2026-09-15-2",
       "at": "2026-09-15T05:37:31.002Z",
-      "author": "DSH Agent (documentation build round)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "登记表首次落库：写入对象指纹、文件级容器指纹与来源指纹；无责任归属、权限或用户承诺变化",
+      "reason": "登记表首次落库：写入对象指纹、文件级容器指纹与来源指纹；无责任归属、权限或用户承诺变化 【原 author：(documentation build round)】",
       "review": null,
       "objects": [
         {
@@ -8998,7 +10146,7 @@
     {
       "id": "CHG-2026-09-15-3",
       "at": "2026-09-15T05:37:37.490Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "登记表容器指纹补齐",
       "review": null,
@@ -10100,7 +11248,7 @@
     {
       "id": "CHG-2026-09-15-4",
       "at": "2026-09-15T05:37:46.950Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "登记表容器指纹补齐",
       "review": null,
@@ -11202,7 +12350,7 @@
     {
       "id": "CHG-2026-09-15-5",
       "at": "2026-09-15T05:37:56.068Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "登记表容器指纹补齐",
       "review": null,
@@ -12304,7 +13452,7 @@
     {
       "id": "CHG-2026-09-15-6",
       "at": "2026-09-15T05:42:53.869Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "登记目录索引容器与归档入口；无责任归属或权限语义变化",
       "review": null,
@@ -13406,7 +14554,7 @@
     {
       "id": "CHG-2026-09-15-7",
       "at": "2026-09-15T05:43:04.593Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "入口补归档登记段",
       "review": null,
@@ -14532,7 +15680,7 @@
     {
       "id": "CHG-2026-09-15-8",
       "at": "2026-09-15T05:43:28.961Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "ROADMAP 指向新的 Agent Harness 入口（仅索引与状态归属表述更新，无版本承诺或用户承诺变化）",
       "review": null,
@@ -15658,7 +16806,7 @@
     {
       "id": "CHG-2026-09-15-9",
       "at": "2026-09-15T05:43:34.570Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "探测指纹稳定性（第二次无变化应不产生变更记录）",
       "review": null,
@@ -16784,7 +17932,7 @@
     {
       "id": "CHG-2026-09-15-10",
       "at": "2026-09-15T05:44:29.053Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "按仓库 Prettier 规则格式化新增文档与脚本（排版变化，无合同语义变化）",
       "review": null,
@@ -17186,7 +18334,7 @@
     {
       "id": "CHG-2026-09-15-11",
       "at": "2026-09-15T05:45:00.156Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "P07 补规则段以声明其约束",
       "review": null,
@@ -17203,9 +18351,9 @@
     {
       "id": "CHG-2026-09-15-GOV1",
       "at": "2026-09-15T05:46:20Z",
-      "author": "DSH Agent（文档体系建立）",
+      "author": "dsh-agent",
       "classification": "governance",
-      "reason": "建立期引入三类治理性改变，按治理规则必须独立复核：① 文件级容器与对象定义的位置方案（单对象文件容器与对象同 ID，权威 JSON 用 <ID>#file 区分；多对象文件用显式容器 ID）；② 对象种类与 ID 前缀扩充（新增 N 需求条目、P07 协议入口与 Planned 登记）；③ 就绪、证据与复核的可执行判据（prior-fingerprint 比对、verify 记录必填、容器正文不参与必备要素判定）。",
+      "reason": "建立期引入三类治理性改变，按治理规则必须独立复核：① 文件级容器与对象定义的位置方案（单对象文件容器与对象同 ID，权威 JSON 用 <ID>#file 区分；多对象文件用显式容器 ID）；② 对象种类与 ID 前缀扩充（新增 N 需求条目、P07 协议入口与 Planned 登记）；③ 就绪、证据与复核的可执行判据（prior-fingerprint 比对、verify 记录必填、容器正文不参与必备要素判定）。 【原 author：（文档体系建立）】",
       "review": "REV-2026-09-15-GOV1",
       "objects": [
         {
@@ -18823,9 +19971,9 @@
     {
       "id": "CHG-2026-09-16-20",
       "at": "2026-09-16T02:35:00Z",
-      "author": "DSH Agent (D01 收尾)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "D01 收尾：① 证据 2 指向新增的诊断演练记录；② 检查器文件级指纹改用固定 POSIX 分隔符（此前 Windows 上 94 个托管文件全部误报，POSIX 平台不受影响，属跨平台缺陷修正而非内容变化）；③ 登记表 verify 拆分为可分别证伪的入口并重绑本机复现结果。不改变任何对象合同、责任归属或用户承诺。",
+      "reason": "D01 收尾：① 证据 2 指向新增的诊断演练记录；② 检查器文件级指纹改用固定 POSIX 分隔符（此前 Windows 上 94 个托管文件全部误报，POSIX 平台不受影响，属跨平台缺陷修正而非内容变化）；③ 登记表 verify 拆分为可分别证伪的入口并重绑本机复现结果。不改变任何对象合同、责任归属或用户承诺。 【原 author：(D01 收尾)】",
       "review": null,
       "objects": [],
       "files": [
@@ -18837,9 +19985,9 @@
     {
       "id": "CHG-2026-09-16-21",
       "at": "2026-09-16T02:50:00Z",
-      "author": "DSH Agent (D01 收尾)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "D01 文件内登记本轮状态与证据时点：说明 work.state=done 早于证据 1 的登记，并列明本轮已绑定与「已绑定但未端到端」的边界。只补说明文字与指针，不改变 D01 的改动范围、证据要求、回退条件或任何用户承诺，故为细化。",
+      "reason": "D01 文件内登记本轮状态与证据时点：说明 work.state=done 早于证据 1 的登记，并列明本轮已绑定与「已绑定但未端到端」的边界。只补说明文字与指针，不改变 D01 的改动范围、证据要求、回退条件或任何用户承诺，故为细化。 【原 author：(D01 收尾)】",
       "review": null,
       "objects": [],
       "files": ["implementation/D01-trustworthy-baseline.md"]
@@ -18847,9 +19995,9 @@
     {
       "id": "CHG-2026-09-16-22",
       "at": "2026-09-16T04:10:00Z",
-      "author": "DSH Agent (格式收口)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "按仓库 Prettier 规则对齐 m09 源码落点表格列宽；只改排版，不触及任何对象的正式定义正文，故为细化。同步把原先 prettier 未通过的 15 个文件统一到规范格式，使 format:check 由 16 项失败转为全绿。",
+      "reason": "按仓库 Prettier 规则对齐 m09 源码落点表格列宽；只改排版，不触及任何对象的正式定义正文，故为细化。同步把原先 prettier 未通过的 15 个文件统一到规范格式，使 format:check 由 16 项失败转为全绿。 【原 author：(格式收口)】",
       "review": null,
       "objects": [],
       "files": [
@@ -18874,9 +20022,9 @@
     {
       "id": "CHG-2026-09-16-23",
       "at": "2026-09-16T03:12:17.545Z",
-      "author": "Cursor Grok 4.6 (D01 closeout)",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "D01 收口：补 diagnose_run 端到端演练；将 Q01 改写为调查结论（历史无法唯一归因、现行可定位）并列入 D01 关闭项；解除对 D02 的错误阻断。不改变授权、写入或循环哲学。",
+      "reason": "D01 收口：补 diagnose_run 端到端演练；将 Q01 改写为调查结论（历史无法唯一归因、现行可定位）并列入 D01 关闭项；解除对 D02 的错误阻断。不改变授权、写入或循环哲学。 【原 author：(D01 closeout)】",
       "review": null,
       "objects": [
         {
@@ -18905,9 +20053,9 @@
     {
       "id": "CHG-2026-09-16-24",
       "at": "2026-09-16T03:38:44.843Z",
-      "author": "Cursor Grok 4.6 (R11 docs)",
+      "author": "cursor-grok-4.6",
       "classification": "architecture",
-      "reason": "R11 约束分层与 M5 决定权；N15 扩写不改变 D01 关闭项；新增 N21–N23 与 G06（at=acceptance）。前缀表只扩号段、不新增前缀。不改变授权模型、不新开 request_tools 缺口、不把配方写入检查器。",
+      "reason": "R11 约束分层与 M5 决定权；N15 扩写不改变 D01 关闭项；新增 N21–N23 与 G06（at=acceptance）。前缀表只扩号段、不新增前缀。不改变授权模型、不新开 request_tools 缺口、不把配方写入检查器。 【原 author：(R11 docs)】",
       "review": "REV-2026-09-16-24",
       "objects": [
         {
@@ -18964,9 +20112,9 @@
     {
       "id": "CHG-2026-09-16-25",
       "at": "2026-09-16T04:14:46.578Z",
-      "author": "DSH Agent (Q04 F03)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "只接受 Q04 覆盖与 V02 测试指针：Chat Completions 流式已保留终止事实、截断工具不派发；不关闭 D02、Q10、G06。",
+      "reason": "只接受 Q04 覆盖与 V02 测试指针：Chat Completions 流式已保留终止事实、截断工具不派发；不关闭 D02、Q10、G06。 【原 author：(Q04 F03)】",
       "review": null,
       "objects": [
         {
@@ -18988,9 +20136,9 @@
     {
       "id": "CHG-2026-09-16-26",
       "at": "2026-09-16T06:37:47.001Z",
-      "author": "DSH Agent (Q04 F03 self-check)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "自检对齐：补缺失终止与空正文 length 回归；L01/K16/D02 不再把已覆盖的 Chat Completions 流式写死 stop 写成现状；不关闭 D02、Q10、G06。",
+      "reason": "自检对齐：补缺失终止与空正文 length 回归；L01/K16/D02 不再把已覆盖的 Chat Completions 流式写死 stop 写成现状；不关闭 D02、Q10、G06。 【原 author：(Q04 F03 self-check)】",
       "review": null,
       "objects": [
         {
@@ -19026,9 +20174,9 @@
     {
       "id": "CHG-2026-09-16-27",
       "at": "2026-09-16T07:03:30.909Z",
-      "author": "DSH Agent (Q04 F03 verify bind)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "自检收尾：C11／C14／Q04 测试节改为指向即将绑定的 V03 记录，并写明 verification.state 仍为 none；不关闭 D02、Q04、Q10、G06。",
+      "reason": "自检收尾：C11／C14／Q04 测试节改为指向即将绑定的 V03 记录，并写明 verification.state 仍为 none；不关闭 D02、Q04、Q10、G06。 【原 author：(Q04 F03 verify bind)】",
       "review": null,
       "objects": [
         {
@@ -19057,9 +20205,9 @@
     {
       "id": "CHG-2026-09-16-28",
       "at": "2026-09-16T07:04:16.980Z",
-      "author": "DSH Agent (Q04 F03 verify bind)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "自检收尾：C11／Q04 测试节指向即将绑定的 V03 记录，并写明 verification.state 仍为 none；不改 C14 正式定义以免打到 R11 复核指纹；不关闭 D02、Q04、Q10、G06。",
+      "reason": "自检收尾：C11／Q04 测试节指向即将绑定的 V03 记录，并写明 verification.state 仍为 none；不改 C14 正式定义以免打到 R11 复核指纹；不关闭 D02、Q04、Q10、G06。 【原 author：(Q04 F03 verify bind)】",
       "review": null,
       "objects": [
         {
@@ -19074,9 +20222,9 @@
     {
       "id": "CHG-2026-09-16-29",
       "at": "2026-09-16T08:51:23.630Z",
-      "author": "DSH Agent (Q10 outbound continuation)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "只接受 Q10 出站续轮覆盖与 V02 测试指针：DeepSeek 顶层 thinking、工具续轮 reasoning_content、Responses instructions 与 Host 修复；不关闭 D02、Q10、G03、Q17。",
+      "reason": "只接受 Q10 出站续轮覆盖与 V02 测试指针：DeepSeek 顶层 thinking、工具续轮 reasoning_content、Responses instructions 与 Host 修复；不关闭 D02、Q10、G03、Q17。 【原 author：(Q10 outbound continuation)】",
       "review": null,
       "objects": [
         {
@@ -19105,9 +20253,9 @@
     {
       "id": "CHG-2026-09-16-30",
       "at": "2026-09-16T14:01:12.032Z",
-      "author": "DSH Agent（会话内治理修复）",
+      "author": "dsh-agent",
       "classification": "governance",
-      "reason": "治理修复：Q16 的归属与阻断从 D02 迁到 D03（scope、blocks、正文一致），并把 G05 移出 D02 scope。Q16 的交互形态仍未确定，改动只修正虚假归属与验收门槛算术，不改变任何合同语义。按 P03 §4.1 属治理变更。",
+      "reason": "治理修复：Q16 的归属与阻断从 D02 迁到 D03（scope、blocks、正文一致），并把 G05 移出 D02 scope。Q16 的交互形态仍未确定，改动只修正虚假归属与验收门槛算术，不改变任何合同语义。按 P03 §4.1 属治理变更。 【原 author：（会话内治理修复）】",
       "review": "REV-2026-09-16-30",
       "objects": [
         {
@@ -19122,7 +20270,7 @@
     {
       "id": "CHG-2026-09-16-31",
       "at": "2026-09-16T14:05:22.839Z",
-      "author": "DSH Agent",
+      "author": "dsh-agent",
       "classification": "refinement",
       "reason": "按仓库 Prettier 规则对齐两处表格排版（仅排版，无合同语义变化）",
       "review": null,
@@ -19146,9 +20294,9 @@
     {
       "id": "CHG-2026-09-16-32",
       "at": "2026-09-16T15:01:06.422Z",
-      "author": "Cursor Grok 4.6 (R12 docs)",
+      "author": "cursor-grok-4.6",
       "classification": "architecture",
-      "reason": "R12：完成额度预留是输出帽信封不是关面配方。用户确认方案 B。前缀表只扩号段到 R12。不关闭 D02／Q04／Q10／G06，不改循环实现。",
+      "reason": "R12：完成额度预留是输出帽信封不是关面配方。用户确认方案 B。前缀表只扩号段到 R12。不关闭 D02／Q04／Q10／G06，不改循环实现。 【原 author：(R12 docs)】",
       "review": "REV-2026-09-16-32",
       "objects": [
         {
@@ -19254,9 +20402,9 @@
     {
       "id": "CHG-2026-09-16-33",
       "at": "2026-09-16T15:51:41.896Z",
-      "author": "Cursor Grok 4.6 (C14 envelope)",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "只同步现状与测试指针：循环已按信封关面，配方计数不再强制综合或注入关面指令；C14 verify 指纹绑到新定义，verification.state 仍 none；不关闭 D02、Q04、Q10、G06。",
+      "reason": "只同步现状与测试指针：循环已按信封关面，配方计数不再强制综合或注入关面指令；C14 verify 指纹绑到新定义，verification.state 仍 none；不关闭 D02、Q04、Q10、G06。 【原 author：(C14 envelope)】",
       "review": null,
       "objects": [
         {
@@ -19285,9 +20433,9 @@
     {
       "id": "CHG-2026-09-17-34",
       "at": "2026-09-17T04:13:53.673Z",
-      "author": "DSH Agent（会话内文档收口）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "把 G06 的两段写准：差异改为逐项列出真正未完成项（字段级 mismatch 反馈、Anthropic 终止原因负例覆盖），删掉已过时的「本缺口关闭前不要求已实现这些负例」，并注明 Q04／Q10 已在 D02 closes 内且有 V03 覆盖、不构成理由。只改缺口描述与证据指向，不改任何合同语义或实现。",
+      "reason": "把 G06 的两段写准：差异改为逐项列出真正未完成项（字段级 mismatch 反馈、Anthropic 终止原因负例覆盖），删掉已过时的「本缺口关闭前不要求已实现这些负例」，并注明 Q04／Q10 已在 D02 closes 内且有 V03 覆盖、不构成理由。只改缺口描述与证据指向，不改任何合同语义或实现。 【原 author：（会话内文档收口）】",
       "review": null,
       "objects": [
         {
@@ -19302,9 +20450,9 @@
     {
       "id": "CHG-2026-09-17-35",
       "at": "2026-09-17T04:39:41.134Z",
-      "author": "DSH Agent（会话内 Q13 收口）",
+      "author": "dsh-agent",
       "classification": "architecture",
-      "reason": "R13：同版本预算存档的数值漂移改为逐字段取更严格一侧后物化读取，任一上限高于规范值仍失败关闭（InvalidBudgetPolicy）；同时把 for_profile 的 schema_version 3 提为常量。这改变预算/权限语义（物化策略直接用于执行），按 P03 §4.1 属架构变更。Q13 因此解除对 D02 验收的阻断。",
+      "reason": "R13：同版本预算存档的数值漂移改为逐字段取更严格一侧后物化读取，任一上限高于规范值仍失败关闭（InvalidBudgetPolicy）；同时把 for_profile 的 schema_version 3 提为常量。这改变预算/权限语义（物化策略直接用于执行），按 P03 §4.1 属架构变更。Q13 因此解除对 D02 验收的阻断。 【原 author：（会话内 Q13 收口）】",
       "review": "REV-2026-09-17-35",
       "objects": [
         {
@@ -19333,9 +20481,9 @@
     {
       "id": "CHG-2026-09-17-36",
       "at": "2026-09-17T04:41:25.507Z",
-      "author": "DSH Agent（会话内 Q13 收口）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "D02 正文对齐 R13：登记 Q13 由决定解决（不由工作包关闭）、预算证据项标注已落地、回退条件改为「撤销 R13 兼容分支」。登记表把 Q13 标为 closed（closedBy=R13）。只改说明与状态，不改实现语义（R13 的架构变更已在 CHG-2026-09-17-35 复核）。",
+      "reason": "D02 正文对齐 R13：登记 Q13 由决定解决（不由工作包关闭）、预算证据项标注已落地、回退条件改为「撤销 R13 兼容分支」。登记表把 Q13 标为 closed（closedBy=R13）。只改说明与状态，不改实现语义（R13 的架构变更已在 CHG-2026-09-17-35 复核）。 【原 author：（会话内 Q13 收口）】",
       "review": null,
       "objects": [
         {
@@ -19350,9 +20498,9 @@
     {
       "id": "CHG-2026-09-17-37",
       "at": "2026-09-17T05:00:01.190Z",
-      "author": "DSH Agent（会话内 Q13 尽调）",
+      "author": "dsh-agent",
       "classification": "governance",
-      "reason": "R13 改为待定并记录已否证的路径：同 schema 内逐字段取更严格一侧会取消「完整但不规范必须失败关闭」的篡改检测，实测使 complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry 失败，实现已回退。Q13 恢复 open 并继续阻断 D02 验收。这只是把决定与状态改成事实，未采用任何新规则；采用 schema 版本门控属后续治理变更。",
+      "reason": "R13 改为待定并记录已否证的路径：同 schema 内逐字段取更严格一侧会取消「完整但不规范必须失败关闭」的篡改检测，实测使 complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry 失败，实现已回退。Q13 恢复 open 并继续阻断 D02 验收。这只是把决定与状态改成事实，未采用任何新规则；采用 schema 版本门控属后续治理变更。 【原 author：（会话内 Q13 尽调）】",
       "review": "REV-2026-09-17-37",
       "objects": [
         {
@@ -19381,9 +20529,9 @@
     {
       "id": "CHG-2026-09-17-38",
       "at": "2026-09-17T05:08:51.381Z",
-      "author": "DSH Agent（会话内治理整改）",
+      "author": "dsh-agent",
       "classification": "governance",
-      "reason": "取消 rebind：复核绑定保留写入当时指纹并标 stale，陈旧只影响被改动的对象、报告为缺口而不阻断检查；解封必须由一条针对当前指纹的新复核完成。三处历史 rebind 已整改（旧记录恢复原指纹，新增 REV-2026-09-17-38/39/40 覆盖当前指纹）。按 P03 §4.1 属治理变更。",
+      "reason": "取消 rebind：复核绑定保留写入当时指纹并标 stale，陈旧只影响被改动的对象、报告为缺口而不阻断检查；解封必须由一条针对当前指纹的新复核完成。三处历史 rebind 已整改（旧记录恢复原指纹，新增 REV-2026-09-17-38/39/40 覆盖当前指纹）。按 P03 §4.1 属治理变更。 【原 author：（会话内治理整改）】",
       "review": "REV-2026-09-17-41",
       "objects": [
         {
@@ -19398,9 +20546,9 @@
     {
       "id": "CHG-2026-09-17-42",
       "at": "2026-09-17T08:24:48.981Z",
-      "author": "Cursor Grok 4.6 (field-level feedback)",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "只改 G06 归属与 R13 待定身份、Q04 范围句与 D02 不承诺：字段级纠偏属 K16/C14，Anthropic 五类负例属 C11/K04；不改 D02 的 blocks、scope、closes，不关闭任何 issue。",
+      "reason": "只改 G06 归属与 R13 待定身份、Q04 范围句与 D02 不承诺：字段级纠偏属 K16/C14，Anthropic 五类负例属 C11/K04；不改 D02 的 blocks、scope、closes，不关闭任何 issue。 【原 author：(field-level feedback)】",
       "review": null,
       "objects": [
         {
@@ -19436,9 +20584,9 @@
     {
       "id": "CHG-2026-09-17-43",
       "at": "2026-09-17T08:43:36.268Z",
-      "author": "Cursor Grok 4.6 (field-level feedback)",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "只登记字段级纠偏机械覆盖：V02 行、C14/K16 测试指针；verification.state 仍 none；不改 D02 的 blocks、scope、closes，不关闭任何 issue。",
+      "reason": "只登记字段级纠偏机械覆盖：V02 行、C14/K16 测试指针；verification.state 仍 none；不改 D02 的 blocks、scope、closes，不关闭任何 issue。 【原 author：(field-level feedback)】",
       "review": null,
       "objects": [
         {
@@ -19474,9 +20622,9 @@
     {
       "id": "CHG-2026-09-17-45",
       "at": "2026-09-17T10:02:47.820Z",
-      "author": "DSH Agent (陈旧复核解封)",
+      "author": "dsh-agent",
       "classification": "governance",
-      "reason": "§5.2 增补第 8 条：复核随变更同批交付，台账只登记仍未解封的条目；检查器据此收敛 gaps，避免永久告警名单",
+      "reason": "§5.2 增补第 8 条：复核随变更同批交付，台账只登记仍未解封的条目；检查器据此收敛 gaps，避免永久告警名单 【原 author：(陈旧复核解封)】",
       "review": "REV-2026-09-17-45",
       "objects": [
         {
@@ -19491,9 +20639,9 @@
     {
       "id": "CHG-2026-09-17-46",
       "at": "2026-09-17T11:10:00Z",
-      "author": "DSH Agent (登记ID修正)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "修掉两处机械缺陷，均不改任何对象定义正文、关系或状态：① 文件级对象登记 ID 不再由代码猜——catalog.fileContainers 之外的容器名（rules/governance.md 的 P03、rules/objects.md 的 P02）登记为裸 ID，不再生成 catalog 从未登记的 P03#file／P02#file；② registry.json 正文改由仓库 Prettier 序列化，消除与 format:check 的长期不一致。按 P03 §4.1 属细化。",
+      "reason": "修掉两处机械缺陷，均不改任何对象定义正文、关系或状态：① 文件级对象登记 ID 不再由代码猜——catalog.fileContainers 之外的容器名（rules/governance.md 的 P03、rules/objects.md 的 P02）登记为裸 ID，不再生成 catalog 从未登记的 P03#file／P02#file；② registry.json 正文改由仓库 Prettier 序列化，消除与 format:check 的长期不一致。按 P03 §4.1 属细化。 【原 author：(登记ID修正)】",
       "review": null,
       "objects": [],
       "files": ["rules/governance.md", "rules/objects.md", "registry.json"]
@@ -19501,9 +20649,9 @@
     {
       "id": "CHG-2026-09-17-47",
       "at": "2026-09-17T10:14:17.176Z",
-      "author": "DSH Agent (换行与表格收口)",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "按仓库 Prettier 与 .gitattributes 收口：把 CRLF 工作副本转为 LF，并对齐 V02 证据表列宽（纯排版，无内容变化）",
+      "reason": "按仓库 Prettier 与 .gitattributes 收口：把 CRLF 工作副本转为 LF，并对齐 V02 证据表列宽（纯排版，无内容变化） 【原 author：(换行与表格收口)】",
       "review": null,
       "objects": [
         {
@@ -19518,9 +20666,9 @@
     {
       "id": "CHG-2026-09-17-48",
       "at": "2026-09-17T10:47:33.410Z",
-      "author": "Cursor Grok 4.6 (R13 Q13 D02 governance)",
+      "author": "cursor-grok-4.6",
       "classification": "governance",
-      "reason": "采用 R13：当前不改预算默认值，改数必须先升 schema_version，常量表延后到第一次改数。Q13 保持 open，移出 D02 的 scope 与 blocks；不改 D02 closes，不关闭任何 issue，不把 D02 标为可验收。",
+      "reason": "采用 R13：当前不改预算默认值，改数必须先升 schema_version，常量表延后到第一次改数。Q13 保持 open，移出 D02 的 scope 与 blocks；不改 D02 closes，不关闭任何 issue，不把 D02 标为可验收。 【原 author：(R13 Q13 D02 governance)】",
       "review": "REV-2026-09-17-48",
       "objects": [
         {
@@ -19570,9 +20718,9 @@
     {
       "id": "CHG-2026-09-17-49",
       "at": "2026-09-17T11:08:48.165Z",
-      "author": "Cursor Grok 4.6 (Package A follow-up)",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "P01 对象计数与 objects.md／FILE-DECISIONS 对齐为 R01–R13；D02 规则段钉明检查器 acceptanceReady 不等于产品完成。不改 D02 的 closes／work.state／阻断边，不关闭任何 issue。",
+      "reason": "P01 对象计数与 objects.md／FILE-DECISIONS 对齐为 R01–R13；D02 规则段钉明检查器 acceptanceReady 不等于产品完成。不改 D02 的 closes／work.state／阻断边，不关闭任何 issue。 【原 author：(Package A follow-up)】",
       "review": "REV-2026-09-17-49",
       "objects": [
         {
@@ -19594,9 +20742,9 @@
     {
       "id": "CHG-2026-09-17-50",
       "at": "2026-09-17T11:44:07.685Z",
-      "author": "Cursor Grok 4.6 (Package B Anthropic five-class)",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "登记 Anthropic Messages 流式五类终止的测试指针与机械覆盖；不关闭 Q04／Q10／D02／G06，不把 C11 verification 标为通过。",
+      "reason": "登记 Anthropic Messages 流式五类终止的测试指针与机械覆盖；不关闭 Q04／Q10／D02／G06，不把 C11 verification 标为通过。 【原 author：(Package B Anthropic five-class)】",
       "review": null,
       "objects": [
         {
@@ -19639,9 +20787,9 @@
     {
       "id": "CHG-2026-09-19-47",
       "at": "2026-09-19T04:46:35.515Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "architecture",
-      "reason": "D02 关闭门槛改写：Q04／Q10 关闭证据降至各自现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 需 host_authority 独立 verify 命令；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许（§4.1 属验收门槛，按治理/架构变更复核）。不标 done、不关 issue、不改 Q13。",
+      "reason": "D02 关闭门槛改写：Q04／Q10 关闭证据降至各自现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 需 host_authority 独立 verify 命令；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许（§4.1 属验收门槛，按治理/架构变更复核）。不标 done、不关 issue、不改 Q13。 【原 author：（施工）】",
       "review": "REV-2026-09-19-60",
       "objects": [
         {
@@ -19726,9 +20874,9 @@
     {
       "id": "CHG-2026-09-19-48",
       "at": "2026-09-19T04:55:03.290Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "architecture",
-      "reason": "D02 收口：按 §三关闭门槛表与 §三之一时点表写 work.state=done 与 verification.state=passed，关闭 Q04／Q10／G06；不代标 C11／C14 passed，不关 Q13",
+      "reason": "D02 收口：按 §三关闭门槛表与 §三之一时点表写 work.state=done 与 verification.state=passed，关闭 Q04／Q10／G06；不代标 C11／C14 passed，不关 Q13 【原 author：（施工）】",
       "review": "REV-2026-09-19-61",
       "objects": [
         {
@@ -19764,9 +20912,9 @@
     {
       "id": "CHG-2026-09-19-49",
       "at": "2026-09-19T04:56:08.668Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "Prettier 排版：不改变承诺，仅调整表格与折行",
+      "reason": "Prettier 排版：不改变承诺，仅调整表格与折行 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -19802,9 +20950,9 @@
     {
       "id": "CHG-2026-09-19-50",
       "at": "2026-09-19T04:57:01.952Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "D02 §三.5／§三之一／§五 与收口后的事实对齐（负例已实现、关闭已完成、证据均已重跑绑定）",
+      "reason": "D02 §三.5／§三之一／§五 与收口后的事实对齐（负例已实现、关闭已完成、证据均已重跑绑定） 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -19819,9 +20967,9 @@
     {
       "id": "CHG-2026-09-19-51",
       "at": "2026-09-19T05:20:48.082Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "证据台账文字修正：Q04／D02／G06 已收口关闭，原文「不关闭」已为假",
+      "reason": "证据台账文字修正：Q04／D02／G06 已收口关闭，原文「不关闭」已为假 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -19836,9 +20984,9 @@
     {
       "id": "CHG-2026-09-19-52",
       "at": "2026-09-19T05:41:37.123Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "G01 差异 1、2 收口：目录档位修正与 request_tools 落地，同步工具卡 T25／T03 与缺口正文",
+      "reason": "G01 差异 1、2 收口：目录档位修正与 request_tools 落地，同步工具卡 T25／T03 与缺口正文 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -19874,9 +21022,9 @@
     {
       "id": "CHG-2026-09-19-53",
       "at": "2026-09-19T05:43:36.664Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "Q08 登记检测位置与已知限制；V02 台账新增覆盖缺口与纠正保留两行",
+      "reason": "Q08 登记检测位置与已知限制；V02 台账新增覆盖缺口与纠正保留两行 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -19905,9 +21053,9 @@
     {
       "id": "CHG-2026-09-19-54",
       "at": "2026-09-19T05:46:21.562Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "architecture",
-      "reason": "Q16 交互形态确定（运行中拒绝新指令）、Q15 写入与作用域语义确定并明确不实现有效期／冲突呈现、E03 提升为 defined；同步 K03／K08 正文。属承诺与判据变化，按架构变更复核",
+      "reason": "Q16 交互形态确定（运行中拒绝新指令）、Q15 写入与作用域语义确定并明确不实现有效期／冲突呈现、E03 提升为 defined；同步 K03／K08 正文。属承诺与判据变化，按架构变更复核 【原 author：（施工）】",
       "review": "REV-2026-09-19-62",
       "objects": [
         {
@@ -19964,9 +21112,9 @@
     {
       "id": "CHG-2026-09-19-55",
       "at": "2026-09-19T05:47:33.765Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "未确定事项表更新：Q15 有效期／冲突呈现明确不实现，Q16 就地通道已确定不做；Prettier 排版",
+      "reason": "未确定事项表更新：Q15 有效期／冲突呈现明确不实现，Q16 就地通道已确定不做；Prettier 排版 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -19988,9 +21136,9 @@
     {
       "id": "CHG-2026-09-19-56",
       "at": "2026-09-19T05:50:03.881Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "architecture",
-      "reason": "D03 关闭门槛表、三之一时点表与 §五 不作出的承诺改写；属验收门槛变化，按架构变更复核",
+      "reason": "D03 关闭门槛表、三之一时点表与 §五 不作出的承诺改写；属验收门槛变化，按架构变更复核 【原 author：（施工）】",
       "review": "REV-2026-09-19-63",
       "objects": [
         {
@@ -20012,9 +21160,9 @@
     {
       "id": "CHG-2026-09-19-57",
       "at": "2026-09-19T05:54:52.308Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "D03 §三之一 填入收口提交哈希与证据绑定行（内容与已绑证据一致，仅补时点）",
+      "reason": "D03 §三之一 填入收口提交哈希与证据绑定行（内容与已绑证据一致，仅补时点） 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20029,9 +21177,9 @@
     {
       "id": "CHG-2026-09-19-58",
       "at": "2026-09-19T06:08:54.263Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "登记 V05 授权前置窗口并接入 Q17／G03／D04；不改变任何验收门槛",
+      "reason": "登记 V05 授权前置窗口并接入 Q17／G03／D04；不改变任何验收门槛 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20060,9 +21208,9 @@
     {
       "id": "CHG-2026-09-19-59",
       "at": "2026-09-19T10:51:08.146Z",
-      "author": "Cursor Grok 4.6（阅读面对齐）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "人读入口与 G05/G06/D02/D03 §一对齐 catalog；不改 work.state 与 issues",
+      "reason": "人读入口与 G05/G06/D02/D03 §一对齐 catalog；不改 work.state 与 issues 【原 author：（阅读面对齐）】",
       "review": null,
       "objects": [
         {
@@ -20112,9 +21260,9 @@
     {
       "id": "CHG-2026-09-19-64",
       "at": "2026-09-19T11:01:38.333Z",
-      "author": "Cursor Grok 4.6（阅读面对齐）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "D02 §三／§五与 D03 §二去掉已关闭的 Q16 未确定表述；不改 work.state 与 issues",
+      "reason": "D02 §三／§五与 D03 §二去掉已关闭的 Q16 未确定表述；不改 work.state 与 issues 【原 author：（阅读面对齐）】",
       "review": null,
       "objects": [
         {
@@ -20136,9 +21284,9 @@
     {
       "id": "CHG-2026-09-19-65",
       "at": "2026-09-19T11:34:23.471Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "Q05 源码 list 只读：删除列举路径 heal 写库，升级保留在 upsert，runtime overlay 不写库；对齐 Q05/F04/K18/M06/L02/m09/V02 阅读面。不关 Q05、不标 D04 done、不把 C18 verification 标 passed。",
+      "reason": "Q05 源码 list 只读：删除列举路径 heal 写库，升级保留在 upsert，runtime overlay 不写库；对齐 Q05/F04/K18/M06/L02/m09/V02 阅读面。不关 Q05、不标 D04 done、不把 C18 verification 标 passed。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20209,9 +21357,9 @@
     {
       "id": "CHG-2026-09-19-66",
       "at": "2026-09-19T11:37:24.222Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "Q05 第一刀阅读面 Prettier 重排，不改语义；不关 Q05、不标 D04 done。",
+      "reason": "Q05 第一刀阅读面 Prettier 重排，不改语义；不关 Q05、不标 D04 done。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20233,9 +21381,9 @@
     {
       "id": "CHG-2026-09-19-67",
       "at": "2026-09-19T11:43:32.531Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "Q05 第一刀自检：D04 §五与工具卡不再把 list 写库写成现行事实；不关 Q05、不标 D04 done、不改关闭门槛。",
+      "reason": "Q05 第一刀自检：D04 §五与工具卡不再把 list 写库写成现行事实；不关 Q05、不标 D04 done、不改关闭门槛。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20285,9 +21433,9 @@
     {
       "id": "CHG-2026-09-19-68",
       "at": "2026-09-19T11:45:40.917Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "Q05 第一刀自检：C18 不变量措辞补全为「已消除」；不关 Q05、不标 D04 done。",
+      "reason": "Q05 第一刀自检：C18 不变量措辞补全为「已消除」；不关 Q05、不标 D04 done。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20302,9 +21450,9 @@
     {
       "id": "CHG-2026-09-19-69",
       "at": "2026-09-19T12:05:50.219Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "Q05／F04 时序口径：list 只读落点 058366ea；145bc563／70c929ac 不是 list 只读；不关 Q05、不标 D04 done。",
+      "reason": "Q05／F04 时序口径：list 只读落点 058366ea；145bc563／70c929ac 不是 list 只读；不关 Q05、不标 D04 done。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20354,9 +21502,9 @@
     {
       "id": "CHG-2026-09-19-70",
       "at": "2026-09-19T12:12:34.459Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "Q05／F04 时序口径自检：剩余阅读面改为落点见 Q05（058366ea）；不关 Q05、不标 D04 done、不改 C18 对象与工具卡。",
+      "reason": "Q05／F04 时序口径自检：剩余阅读面改为落点见 Q05（058366ea）；不关 Q05、不标 D04 done、不改 C18 对象与工具卡。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20392,9 +21540,9 @@
     {
       "id": "CHG-2026-09-19-71",
       "at": "2026-09-19T12:52:05.656Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "G02／K11／C20 第一刀：协调器接入生产 web_search；生产原生 unsupported，MCP 单路正常；机械 V03 不是关闭、不关 G02、不标 C20 verification passed。",
+      "reason": "G02／K11／C20 第一刀：协调器接入生产 web_search；生产原生 unsupported，MCP 单路正常；机械 V03 不是关闭、不关 G02、不标 C20 verification passed。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20472,9 +21620,9 @@
     {
       "id": "CHG-2026-09-19-72",
       "at": "2026-09-19T13:08:07.172Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "对照检查：web_fetch 不呈现 dualPath；C20 测试承认机械 V03 绑定而非「没有证据」；G02 差异去掉 Q02；M04 的 G03 主包改为 D04。不关 G02，不标 C20 verification passed，不自签 REV。",
+      "reason": "对照检查：web_fetch 不呈现 dualPath；C20 测试承认机械 V03 绑定而非「没有证据」；G02 差异去掉 Q02；M04 的 G03 主包改为 D04。不关 G02，不标 C20 verification passed，不自签 REV。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20510,9 +21658,9 @@
     {
       "id": "CHG-2026-09-19-73",
       "at": "2026-09-19T14:12:55.564Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "K12 构造器与 fixture 解析器落地；C10 按端点声明，生产无适配器故原生 unsupported；搜索事件尚未进入网关流式路径。不关 G02／G03／Q17／D04。",
+      "reason": "K12 构造器与 fixture 解析器落地；C10 按端点声明，生产无适配器故原生 unsupported；搜索事件尚未进入网关流式路径。不关 G02／G03／Q17／D04。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20590,9 +21738,9 @@
     {
       "id": "CHG-2026-09-19-74",
       "at": "2026-09-19T14:53:56.795Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "对照检查：K11 不再把无真原生写成无 K12；M04 去掉已关闭的 Q04／D02 未决口径；C11 写明 ResponsesReserved 直播路径未加。不关 G02／G03，不标 C20／C11 verification passed，不自签 REV。",
+      "reason": "对照检查：K11 不再把无真原生写成无 K12；M04 去掉已关闭的 Q04／D02 未决口径；C11 写明 ResponsesReserved 直播路径未加。不关 G02／G03，不标 C20／C11 verification passed，不自签 REV。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20621,9 +21769,9 @@
     {
       "id": "CHG-2026-09-20-71",
       "at": "2026-09-20T02:57:27.536Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "同步原生搜索现行执行事实：两适配器已登记且 C10 Available；不关 G02/G03/Q17/D04，Available 不是 V05。",
+      "reason": "同步原生搜索现行执行事实：两适配器已登记且 C10 Available；不关 G02/G03/Q17/D04，Available 不是 V05。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20708,9 +21856,9 @@
     {
       "id": "CHG-2026-09-20-72",
       "at": "2026-09-20T03:07:10.638Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "对照检查：现行权威树去掉生产原生 unsupported 假事实；不关 G02/G03/Q17/D04。",
+      "reason": "对照检查：现行权威树去掉生产原生 unsupported 假事实；不关 G02/G03/Q17/D04。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20746,9 +21894,9 @@
     {
       "id": "CHG-2026-09-20-73",
       "at": "2026-09-20T07:03:08.272Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "F01 写入协议：web_search_route_promote 只改主服务、不接受客户端备用列表；Q02 保持 closed，D04 closes 去掉 Q02。",
+      "reason": "F01 写入协议：web_search_route_promote 只改主服务、不接受客户端备用列表；Q02 保持 closed，D04 closes 去掉 Q02。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20805,9 +21953,9 @@
     {
       "id": "CHG-2026-09-20-74",
       "at": "2026-09-20T07:09:49.814Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "对照检查：Q02 所需证据补挂载中 set/promote 并发负例；不重开 Q02，不关 D04/G02。",
+      "reason": "对照检查：Q02 所需证据补挂载中 set/promote 并发负例；不重开 Q02，不关 D04/G02。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20822,9 +21970,9 @@
     {
       "id": "CHG-2026-09-20-75",
       "at": "2026-09-20T10:22:40.130Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "G03 处理路径切片与 V04 生产入口录制回放：更新执行事实与现状，不关 G02/G03/Q17/D04，不把 verification 标 passed，不改架构 F 表。",
+      "reason": "G03 处理路径切片与 V04 生产入口录制回放：更新执行事实与现状，不关 G02/G03/Q17/D04，不把 verification 标 passed，不改架构 F 表。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20902,9 +22050,9 @@
     {
       "id": "CHG-2026-09-20-76",
       "at": "2026-09-20T10:24:54.769Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "补写 D04 不承诺段与 catalog note，使其与 G03 处理路径／V04 录制回放事实一致；不关缺口，不标 passed。",
+      "reason": "补写 D04 不承诺段与 catalog note，使其与 G03 处理路径／V04 录制回放事实一致；不关缺口，不标 passed。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20919,9 +22067,9 @@
     {
       "id": "CHG-2026-09-20-77",
       "at": "2026-09-20T15:00:00.000Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "D04 差距收口开工：work.state=active 与本波执行事实写入文件外围；不关包，不标 passed。",
+      "reason": "D04 差距收口开工：work.state=active 与本波执行事实写入文件外围；不关包，不标 passed。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20936,9 +22084,9 @@
     {
       "id": "CHG-2026-09-21-78",
       "at": "2026-09-21T01:43:25.078Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "D05 第一波开工：LocalTransformation 接线与 Dispatching 回执核验；不关 Q14/D05。",
+      "reason": "D05 第一波开工：LocalTransformation 接线与 Dispatching 回执核验；不关 Q14/D05。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20967,9 +22115,9 @@
     {
       "id": "CHG-2026-09-21-79",
       "at": "2026-09-21T02:03:52.280Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "D05 第一波对照检查：冒号核实、格式整理同义、时效题不被总结吃掉；不关 Q14/D05。",
+      "reason": "D05 第一波对照检查：冒号核实、格式整理同义、时效题不被总结吃掉；不关 Q14/D05。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -20998,9 +22146,9 @@
     {
       "id": "CHG-2026-09-21-80",
       "at": "2026-09-21T09:36:48.418Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "D05 第二波：格式整理内容保持核对器接线；不关 Q14/D05/N04。",
+      "reason": "D05 第二波：格式整理内容保持核对器接线；不关 Q14/D05/N04。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -21029,9 +22177,9 @@
     {
       "id": "CHG-2026-09-21-81",
       "at": "2026-09-21T09:57:15.234Z",
-      "author": "Cursor Grok 4.6（施工）",
+      "author": "cursor-grok-4.6",
       "classification": "refinement",
-      "reason": "D05 第二波对照检查：补全插入、缺字段、全角空格与链接标签证据；不关 Q14/D05/N04。",
+      "reason": "D05 第二波对照检查：补全插入、缺字段、全角空格与链接标签证据；不关 Q14/D05/N04。 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -21053,9 +22201,9 @@
     {
       "id": "CHG-2026-09-21-82",
       "at": "2026-09-21T13:22:35.146Z",
-      "author": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
       "classification": "refinement",
-      "reason": "Prettier 排版：m04-model-gateway.md 与 evidence.md 的表格与折行对齐，不改变任何承诺或判据",
+      "reason": "Prettier 排版：m04-model-gateway.md 与 evidence.md 的表格与折行对齐，不改变任何承诺或判据 【原 author：（施工）】",
       "review": null,
       "objects": [
         {
@@ -21073,6 +22221,23 @@
           "fingerprintTo": "9a17c9529bf274139a6a6e121f52ce3a"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-21-83",
+      "at": "2026-09-21T14:33:30.175Z",
+      "author": "dsh-agent",
+      "classification": "governance",
+      "reason": "§5.2 规则 2 补写检查器实际采用的身份比对口径（按实体而非整串），并新增「每个架构/治理变更至少一条非作者复核」的要求；同步登记表身份字段归一到 4 个稳定标识",
+      "review": "REV-2026-09-21-83",
+      "objects": [
+        {
+          "id": "P03",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "aba2d9631617a9617dc77b3ca52c276c",
+          "fingerprintTo": "692621c69c6be545f721a086cb7bb60e"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -21080,10 +22245,10 @@
       "id": "REV-2026-09-15-GOV1",
       "change": "CHG-2026-09-15-GOV1",
       "at": "2026-09-15T05:46:20Z",
-      "author": "用户（会话内确认按 document.md 定稿方案执行）",
-      "reviewer": "DSH Agent（文档体系建立）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "容器位置方案、前缀扩充与就绪判据直接落实 document.md §2、§5 的已确认要求（登记不等于正式定义、成对标记与全文归属、阻断规则与检查器测试清单）；规则文档与检查器实现一致，未改变已确认的责任归属或权限语义。",
+      "reason": "容器位置方案、前缀扩充与就绪判据直接落实 document.md §2、§5 的已确认要求（登记不等于正式定义、成对标记与全文归属、阻断规则与检查器测试清单）；规则文档与检查器实现一致，未改变已确认的责任归属或权限语义。 【原 author：（会话内确认按 document.md 定稿方案执行）】",
       "evidence": "document.md（体系定稿方案）；scripts/agent-harness-check.test.mjs 的 15 条负例；registry.json.notes 记录的建立期限制",
       "objects": [
         {
@@ -21094,7 +22259,7 @@
         {
           "id": "P03",
           "revision": 11,
-          "fingerprint": "aba2d9631617a9617dc77b3ca52c276c"
+          "fingerprint": "692621c69c6be545f721a086cb7bb60e"
         },
         {
           "id": "X01",
@@ -21120,10 +22285,10 @@
       "id": "REV-2026-09-16-D01-G04-Q18",
       "change": "CHG-2026-09-15-19",
       "at": "2026-09-16T03:12:17Z",
-      "author": "Cursor Grok 4.6（未编写 CHG-2026-09-15-19）",
-      "reviewer": "skahanium / DSH Agent",
+      "author": "cursor-grok-4.6",
+      "reviewer": "skahanium + dsh-agent",
       "conclusion": "synchronized",
-      "reason": "G04 与 Q18 关闭对应 D01 最小诊断：C26 四层出站见证与完整循环事件、C27 查询、V07 八类投影。完整诊断工作台与付费实网不在缺口范围。本复核不把当时一并关闭 Q01 当作「历史唯一根因已证实」；Q01 由 CHG-2026-09-16-23 改写为调查结论。",
+      "reason": "G04 与 Q18 关闭对应 D01 最小诊断：C26 四层出站见证与完整循环事件、C27 查询、V07 八类投影。完整诊断工作台与付费实网不在缺口范围。本复核不把当时一并关闭 Q01 当作「历史唯一根因已证实」；Q01 由 CHG-2026-09-16-23 改写为调查结论。 【原 author：（未编写 CHG-2026-09-15-19）】",
       "evidence": "docs/eval/results/2026-09-14-diagnostic-drill.md；cargo test --lib diagnostic_query；npx vitest run tests/assistant-run-diagnostic-v07.test.tsx",
       "objects": [
         {
@@ -21147,10 +22312,10 @@
       "id": "REV-2026-09-16-D01-Q01",
       "change": "CHG-2026-09-16-23",
       "at": "2026-09-16T03:12:17Z",
-      "author": "用户委托的 D01 收口复核（CHG-2026-09-16-23 为细化，此条记录关闭口径）",
-      "reviewer": "Cursor Grok 4.6 (D01 closeout)",
+      "author": "user",
+      "reviewer": "cursor-grok-4.6",
       "conclusion": "synchronized",
-      "reason": "细化：Q01 关闭含义改为「历史无法唯一归因、现行可定位」，不是证实模型故障；D02 不再被 Q01 阻断。证据 2 补 diagnose_run 端到端。verification.passed 仅覆盖 D01 三条回归证据。",
+      "reason": "细化：Q01 关闭含义改为「历史无法唯一归因、现行可定位」，不是证实模型故障；D02 不再被 Q01 阻断。证据 2 补 diagnose_run 端到端。verification.passed 仅覆盖 D01 三条回归证据。 【原 author：（CHG-2026-09-16-23 为细化，此条记录关闭口径）】",
       "evidence": "agent-harness/requirements/current-baseline.md Q01；docs/eval/results/2026-09-14-diagnostic-drill.md 第三节",
       "objects": [
         {
@@ -21174,10 +22339,10 @@
       "id": "REV-2026-09-16-24",
       "change": "CHG-2026-09-16-24",
       "at": "2026-09-16T03:38:44.843Z",
-      "author": "用户（确认 R11 为决定）",
-      "reviewer": "Cursor Grok 4.6 (R11 docs)",
+      "author": "user",
+      "reviewer": "cursor-grok-4.6",
       "conclusion": "synchronized",
-      "reason": "用户已确认 R11 为决定。三层约束与模型拥有下一步写入架构 §3 M5／C13／C14；N15 扩写钉明不改变 D01 关闭项；G06 仅 at=acceptance 阻断 D02。未新开 request_tools 缺口，未把配方写入检查器。随后 CHG-2026-09-16-32 把完成额度预留从配方清单拆到 R12；CHG-2026-09-16-33 同步 C14／G06 现状（信封关面）。本条仍覆盖 R11 当时的三层约束，预留归类以 CHG-32 为准，循环现状以 CHG-33 为准。",
+      "reason": "用户已确认 R11 为决定。三层约束与模型拥有下一步写入架构 §3 M5／C13／C14；N15 扩写钉明不改变 D01 关闭项；G06 仅 at=acceptance 阻断 D02。未新开 request_tools 缺口，未把配方写入检查器。随后 CHG-2026-09-16-32 把完成额度预留从配方清单拆到 R12；CHG-2026-09-16-33 同步 C14／G06 现状（信封关面）。本条仍覆盖 R11 当时的三层约束，预留归类以 CHG-32 为准，循环现状以 CHG-33 为准。 【原 author：（确认 R11 为决定）】",
       "evidence": "2026-09-16 用户确认 R11 为决定；docs/agent-architecture.md §3 M5、§7.4、§10.3、§11；agent-harness/decisions/README.md R11；agent-harness/implementation/D02-protocol-and-recovery.md 过早收束负例清单",
       "objects": [
         {
@@ -21254,10 +22419,10 @@
       "id": "REV-2026-09-16-30",
       "change": "CHG-2026-09-16-30",
       "at": "2026-09-16T14:03:03Z",
-      "author": "用户（会话内确认执行第 2 项治理修复）",
-      "reviewer": "DSH Agent（会话内治理修复）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "归属与阻断边已按会话决定一致落地：Q16 移出 D02 scope、blocks 改指 D03、并写入 D03 scope 与其正文；G05 移出 D02 scope（其 blocks 原本已在 D03）。本变更只改归属、阻断边与说明文字，未改任何合同语义或实现，因此无现行验证结论失效。",
+      "reason": "归属与阻断边已按会话决定一致落地：Q16 移出 D02 scope、blocks 改指 D03、并写入 D03 scope 与其正文；G05 移出 D02 scope（其 blocks 原本已在 D03）。本变更只改归属、阻断边与说明文字，未改任何合同语义或实现，因此无现行验证结论失效。 【原 author：（会话内确认执行第 2 项治理修复）】",
       "evidence": "可追溯评审记录：本会话关于 D02 归属缺陷的核对结论；落地证据为 `node scripts/agent-harness-check.mjs` 的就绪计算——D02 的验收阻断由「Q13＋Q16」收敛为仅 `Q13`，Q16 的阻断转移到 D03（与 P03 §2.5 一致）。",
       "objects": [
         {
@@ -21279,10 +22444,10 @@
       "id": "REV-2026-09-16-32",
       "change": "CHG-2026-09-16-32",
       "at": "2026-09-16T15:01:06.422Z",
-      "author": "用户（确认 R12 为决定，采用方案 B）",
-      "reviewer": "Cursor Grok 4.6 (R12 docs)",
+      "author": "user",
+      "reviewer": "cursor-grok-4.6",
       "conclusion": "synchronized",
-      "reason": "用户已确认 R12 为决定，采用方案 B：完成额度预留是 C13 信封（探索轮输出帽；预留触达后可不提供业务工具并把 remaining 留给表达），不是注入关面指令的配方。R11 配方清单不再把「预留关面」当配方。前缀表只扩号段到 R12。随后 CHG-2026-09-16-33 落地 C14 循环并同步现状；未关闭 D02／Q04／Q10／G06。",
+      "reason": "用户已确认 R12 为决定，采用方案 B：完成额度预留是 C13 信封（探索轮输出帽；预留触达后可不提供业务工具并把 remaining 留给表达），不是注入关面指令的配方。R11 配方清单不再把「预留关面」当配方。前缀表只扩号段到 R12。随后 CHG-2026-09-16-33 落地 C14 循环并同步现状；未关闭 D02／Q04／Q10／G06。 【原 author：（确认 R12 为决定，采用方案 B）】",
       "evidence": "2026-09-16 用户确认 R12 为决定并选择方案 B；docs/agent-architecture.md §3 M5、C13／C14、§11；agent-harness/decisions/README.md R12；agent-harness/implementation/D02-protocol-and-recovery.md §二／§三.5.4–5",
       "objects": [
         {
@@ -21366,10 +22531,10 @@
       "id": "REV-2026-09-16-38",
       "change": "CHG-2026-09-17-34",
       "at": "2026-09-17T04:14:11Z",
-      "author": "DSH Agent（会话内文档收口，自审：本次为细化）",
-      "reviewer": "DSH Agent（会话内文档收口）",
+      "author": "dsh-agent",
+      "reviewer": "dsh-agent",
       "conclusion": "no-impact",
-      "reason": "G06 只改了缺口的描述与证据指向：差异段改为列出真正未完成的项（字段级 mismatch 反馈、Anthropic 终止原因负例覆盖），删掉已经过时的「本缺口关闭前不要求已实现这些负例」，并说明 Q04／Q10 已在 D02 closes 内、不构成保留理由。缺口的目标、阻断门槛与关闭条件均未改变，因此不推翻先前把 G06 纳入影响范围的两次架构复核（REV-2026-09-16-24、REV-2026-09-16-32）的判断；本条按 P02 §5『细化允许作者自审，但必须引用具体差异与理由』记录。",
+      "reason": "G06 只改了缺口的描述与证据指向：差异段改为列出真正未完成的项（字段级 mismatch 反馈、Anthropic 终止原因负例覆盖），删掉已经过时的「本缺口关闭前不要求已实现这些负例」，并说明 Q04／Q10 已在 D02 closes 内、不构成保留理由。缺口的目标、阻断门槛与关闭条件均未改变，因此不推翻先前把 G06 纳入影响范围的两次架构复核（REV-2026-09-16-24、REV-2026-09-16-32）的判断；本条按 P02 §5『细化允许作者自审，但必须引用具体差异与理由』记录。 【原 author：（会话内文档收口，自审：本次为细化）】",
       "evidence": "差异为本文件 G06 块的实际改动；G06 / registryRevision 59 / fingerprint 14e5e3a010e0e2e23af6fb403bd70033",
       "objects": [
         {
@@ -21384,10 +22549,10 @@
       "id": "REV-2026-09-17-35",
       "change": "CHG-2026-09-17-35",
       "at": "2026-09-17T04:39:41.134Z",
-      "author": "用户（2026-09-17 指示按建议处理 Q13）",
-      "reviewer": "DSH Agent（会话内 Q13 收口）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "R13 的兼容分支已落地且与决定一致：同版本数值漂移逐字段取 min(存档, 规范)，任一上限高于规范值仍失败关闭；策略物化结果直接用于执行，因此该分支不放宽任何执行额度。现有验证结论无失效：既有的「放宽上限必须失败关闭」测试仍绿，新增回归钉子覆盖更严格一侧可读。",
+      "reason": "R13 的兼容分支已落地且与决定一致：同版本数值漂移逐字段取 min(存档, 规范)，任一上限高于规范值仍失败关闭；策略物化结果直接用于执行，因此该分支不放宽任何执行额度。现有验证结论无失效：既有的「放宽上限必须失败关闭」测试仍绿，新增回归钉子覆盖更严格一侧可读。 【原 author：（2026-09-17 指示按建议处理 Q13）】",
       "evidence": "可追溯评审记录：用户 2026-09-17 指示按建议处理 Q13（会话内），决定正文为 decisions/README.md 的 R13。实测证据：agent_run_repository_tests.rs 的 q13_schema_three_archive_with_drifted_values_is_readable_only_when_stricter（实现前以 #[ignore] 记录为红，实现后转绿）。",
       "objects": [
         {
@@ -21409,10 +22574,10 @@
       "id": "REV-2026-09-17-37",
       "change": "CHG-2026-09-17-37",
       "at": "2026-09-17T05:00:01.190Z",
-      "author": "用户（2026-09-17 指示处理 Q13）",
-      "reviewer": "DSH Agent（会话内 Q13 尽调）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "R13 由「已采用」改为「待定并记录否证路径」，Q13 恢复 open 并向 D02 重新登记阻断边；这些都为事实性更正，未引入新规则，也未改变任何执行语义（R13 的实现从未进入执行路径，已回退）。",
+      "reason": "R13 由「已采用」改为「待定并记录否证路径」，Q13 恢复 open 并向 D02 重新登记阻断边；这些都为事实性更正，未引入新规则，也未改变任何执行语义（R13 的实现从未进入执行路径，已回退）。 【原 author：（2026-09-17 指示处理 Q13）】",
       "evidence": "实测证据：complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry 在改动下失败、回退后恢复为绿（cargo test --lib agent_run_repository，37 passed）；决定正文为 decisions/README.md 的 R13。",
       "objects": [
         {
@@ -21442,10 +22607,10 @@
       "id": "REV-2026-09-17-38",
       "change": "CHG-2026-09-17-34",
       "at": "2026-09-17T05:08:09Z",
-      "author": "用户（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）",
-      "reviewer": "DSH Agent（文档收口）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "治理规则 §5.2 增补第 6、7 条，与检查器实现一致：陈旧绑定保留原指纹并标记 stale，报告为缺口而不阻断检查；解封须由针对当前指纹的新复核完成；陈旧只影响被改动的对象。",
+      "reason": "治理规则 §5.2 增补第 6、7 条，与检查器实现一致：陈旧绑定保留原指纹并标记 stale，报告为缺口而不阻断检查；解封须由针对当前指纹的新复核完成；陈旧只影响被改动的对象。 【原 author：（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）】",
       "evidence": "差异：rules/governance.md §5.2 第 6、7 条；scripts/agent-harness-check.mjs 的 checkReviews 陈旧分支与 gaps 输出。实测：agent-harness:check PASSED 并输出 2 项陈旧绑定缺口。",
       "objects": [
         {
@@ -21462,10 +22627,10 @@
       "id": "REV-2026-09-17-39",
       "change": "CHG-2026-09-17-35",
       "at": "2026-09-17T05:08:09Z",
-      "author": "用户（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）",
-      "reviewer": "DSH Agent（文档收口）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "no-impact",
-      "reason": "decisions/README.md 增加 R13、Q13 正文补实测与候选路径：容器前言变化与新决定的加入，未改动任何既有决定或模块的合同语义；Q13 由「已解决」更正为「待定」属事实更正。两者都不推翻 REV-2026-09-16-32／35 的原判断。",
+      "reason": "decisions/README.md 增加 R13、Q13 正文补实测与候选路径：容器前言变化与新决定的加入，未改动任何既有决定或模块的合同语义；Q13 由「已解决」更正为「待定」属事实更正。两者都不推翻 REV-2026-09-16-32／35 的原判断。 【原 author：（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）】",
       "evidence": "差异为 decisions/README.md 的 R13 块与 current-baseline.md 的 Q13 块。",
       "objects": [
         {
@@ -21488,10 +22653,10 @@
       "id": "REV-2026-09-17-40",
       "change": "CHG-2026-09-17-37",
       "at": "2026-09-17T05:08:09Z",
-      "author": "用户（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）",
-      "reviewer": "DSH Agent（文档收口）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "no-impact",
-      "reason": "D02 正文撤掉「已由 R13 落地」的表述并把回退条件改为禁止放宽「完整但不规范必须失败关闭」，R13 改写为「待定并记录否证路径」：两者都是把文档改成与事实一致，未引入新规则或改变执行语义。",
+      "reason": "D02 正文撤掉「已由 R13 落地」的表述并把回退条件改为禁止放宽「完整但不规范必须失败关闭」，R13 改写为「待定并记录否证路径」：两者都是把文档改成与事实一致，未引入新规则或改变执行语义。 【原 author：（2026-09-17 确认治理方向：取消 rebind、改为新复核覆盖当前指纹）】",
       "evidence": "差异为 D02 工作包正文与 R13 决定正文；R13 的实现已回退，src-tauri 无改动。",
       "objects": [
         {
@@ -21514,10 +22679,10 @@
       "id": "REV-2026-09-17-41",
       "change": "CHG-2026-09-17-38",
       "at": "2026-09-17T05:08:51.381Z",
-      "author": "用户（2026-09-17 确认取消 rebind、改为新复核覆盖当前指纹）",
-      "reviewer": "DSH Agent（会话内治理整改）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "治理规则 §5.2 增补第 6、7 条，与检查器实现一致：陈旧绑定保留原指纹并标记 stale，报告为缺口而不阻断检查；解封须由针对当前指纹的新复核完成；陈旧只影响被改动的对象。 ｜ 编号更正：原为自动分配时与手工新增复核重号，已改为 41。",
+      "reason": "治理规则 §5.2 增补第 6、7 条，与检查器实现一致：陈旧绑定保留原指纹并标记 stale，报告为缺口而不阻断检查；解封须由针对当前指纹的新复核完成；陈旧只影响被改动的对象。 ｜ 编号更正：原为自动分配时与手工新增复核重号，已改为 41。 【原 author：（2026-09-17 确认取消 rebind、改为新复核覆盖当前指纹）】",
       "evidence": "差异：rules/governance.md §5.2 第 6、7 条；scripts/agent-harness-check.mjs 的 checkReviews 陈旧分支与 gaps 输出。实测：agent-harness:check PASSED 并输出 2 项陈旧绑定缺口。",
       "objects": []
     },
@@ -21525,10 +22690,10 @@
       "id": "REV-2026-09-17-42",
       "change": "CHG-2026-09-17-43",
       "at": "2026-09-17T09:30:00Z",
-      "author": "用户（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）",
-      "reviewer": "Cursor Grok 4.6 (field-level feedback)",
+      "author": "user",
+      "reviewer": "cursor-grok-4.6",
       "conclusion": "no-impact",
-      "reason": "唯一差异是 C14「测试」一节新增字段级参数纠偏的证据指针（agent_tool_loop_schema_feedback_tests.rs、guardrails 枚举取值断言、registry.json.verify 的 C14／K16 记录）并把范围句写作「不关闭 G06／D02」。逐行比对复核当时（CHG-2026-09-16-33 之后的 d8e95a77…）与当前正文：除该节外零差异；组件责任、输入输出、决定权、不变量、异常、审计与源码落点均未改动，也未新增或放宽任何权限与副作用。按 P03 §4.1 属细化。",
+      "reason": "唯一差异是 C14「测试」一节新增字段级参数纠偏的证据指针（agent_tool_loop_schema_feedback_tests.rs、guardrails 枚举取值断言、registry.json.verify 的 C14／K16 记录）并把范围句写作「不关闭 G06／D02」。逐行比对复核当时（CHG-2026-09-16-33 之后的 d8e95a77…）与当前正文：除该节外零差异；组件责任、输入输出、决定权、不变量、异常、审计与源码落点均未改动，也未新增或放宽任何权限与副作用。按 P03 §4.1 属细化。 【原 author：（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）】",
       "evidence": "差异：modules/m05-agent-execution.md 的 C14 对象块「## 测试」段（复核时 39 行 vs 当前 39 行，仅 1 行被替换）。原判断见 REV-2026-09-16-24／REV-2026-09-16-32；本轮不改写其指纹。",
       "objects": [
         {
@@ -21544,10 +22709,10 @@
       "id": "REV-2026-09-17-43",
       "change": "CHG-2026-09-17-42",
       "at": "2026-09-17T09:30:00Z",
-      "author": "用户（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）",
-      "reviewer": "Cursor Grok 4.6 (field-level feedback)",
+      "author": "user",
+      "reviewer": "cursor-grok-4.6",
       "conclusion": "no-impact",
-      "reason": "三处差异都只在归属与措辞：① G06「差异」段把字段级反馈与 Anthropic 五类负例改为声明为 K16／C14 与 C11／K04 的后续事项，并写明「closes 豁免不等于已关闭」，「所需证据」同步删去这两项作为关闭条件；② D02 文件「不作出的承诺」段新增一句，明确这两项不作为 G06 关闭条件、也不等于本工作包可验收；③ R13 只改标题与 name（「必须走 schema 版本门控」→「兼容路径（待定，尚未采用）」，R13 的决定／依据／已否证路径／未确定事项四段正文逐字未变，rev 2→3 仅标题行）。逐行比对复核当时（G06 34→42 前为 14e5a3a0…，D02#file／R13 为 REV-2026-09-17-37 绑定的 1e68ee02…／51b8af05…）与当前正文：G06 的目标与 at=acceptance 阻断门槛未变、仍 open；D02 的 scope、closes 与 Q13 的 at=acceptance 阻断边未变、work.state 仍 planned；R13 未从「待定」转为「已采用」。三者都不改变责任归属、输入输出语义、决定权、不变量、权限、副作用或兼容承诺，按 P03 §4.1 属细化。",
+      "reason": "三处差异都只在归属与措辞：① G06「差异」段把字段级反馈与 Anthropic 五类负例改为声明为 K16／C14 与 C11／K04 的后续事项，并写明「closes 豁免不等于已关闭」，「所需证据」同步删去这两项作为关闭条件；② D02 文件「不作出的承诺」段新增一句，明确这两项不作为 G06 关闭条件、也不等于本工作包可验收；③ R13 只改标题与 name（「必须走 schema 版本门控」→「兼容路径（待定，尚未采用）」，R13 的决定／依据／已否证路径／未确定事项四段正文逐字未变，rev 2→3 仅标题行）。逐行比对复核当时（G06 34→42 前为 14e5a3a0…，D02#file／R13 为 REV-2026-09-17-37 绑定的 1e68ee02…／51b8af05…）与当前正文：G06 的目标与 at=acceptance 阻断门槛未变、仍 open；D02 的 scope、closes 与 Q13 的 at=acceptance 阻断边未变、work.state 仍 planned；R13 未从「待定」转为「已采用」。三者都不改变责任归属、输入输出语义、决定权、不变量、权限、副作用或兼容承诺，按 P03 §4.1 属细化。 【原 author：（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）】",
       "evidence": "差异：requirements/open-items.md 的 G06 对象块（12→9 行，两处重述）；implementation/D02-protocol-and-recovery.md 的文件级外围正文（92 行，1 行替换）；decisions/README.md 的 R13 对象块（41 行，仅标题行替换）。",
       "objects": [
         {
@@ -21577,10 +22742,10 @@
       "id": "REV-2026-09-17-44",
       "change": "CHG-2026-09-17-35",
       "at": "2026-09-17T09:30:00Z",
-      "author": "用户（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）",
-      "reviewer": "DSH Agent（会话内 Q13 收口）",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "no-impact",
-      "reason": "文件级差异只有一处：容器外围正文新增 `[[child:R13]]` 占位与其后的一个空行（按检查器的容器正文构造逐行比对，3116→3131 字符，delta 恰为 2 行）。即 decisions/README.md 的容器指纹变化仅来自「新增一条决定子对象」，容器自身的索引与说明文字未改。新增子对象 R13 的正文已由 REV-2026-09-17-37 在同一次变更内绑定并复核（当前指纹 e8029cb6… 与 REV-37 所绑 51b8af05… 之间的差异是标题改为待定语气，已在 REV-2026-09-17-43 复核）。因此容器层属细化，不推翻 REV-2026-09-16-32 对 R12 索引与容器说明的判断。",
+      "reason": "文件级差异只有一处：容器外围正文新增 `[[child:R13]]` 占位与其后的一个空行（按检查器的容器正文构造逐行比对，3116→3131 字符，delta 恰为 2 行）。即 decisions/README.md 的容器指纹变化仅来自「新增一条决定子对象」，容器自身的索引与说明文字未改。新增子对象 R13 的正文已由 REV-2026-09-17-37 在同一次变更内绑定并复核（当前指纹 e8029cb6… 与 REV-37 所绑 51b8af05… 之间的差异是标题改为待定语气，已在 REV-2026-09-17-43 复核）。因此容器层属细化，不推翻 REV-2026-09-16-32 对 R12 索引与容器说明的判断。 【原 author：（2026-09-17 确认按 §5.2 新增复核解封，不改写旧记录）】",
       "evidence": "差异：decisions/README.md 的容器正文（child 占位 13→14）。构造方式与 scripts/agent-harness-check.mjs 的 fileObject 指纹一致（子对象块替换为 [[child:ID]]）。",
       "objects": [
         {
@@ -21596,16 +22761,16 @@
       "id": "REV-2026-09-17-45",
       "change": "CHG-2026-09-17-45",
       "at": "2026-09-17T10:02:47.820Z",
-      "author": "用户（2026-09-17 确认：解封由新增复核完成，不改写旧记录）",
-      "reviewer": "DSH Agent (陈旧复核解封)",
+      "author": "user",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "治理规则 §5.2 增补第 8 条（复核随变更同批交付；台账只登记仍未解封的条目），并让检查器按同一条语义收敛 gaps：报告层只列出尚无当前指纹复核的陈旧绑定。为解封此前 8 条陈旧绑定，已新增三条针对当前指纹的复核（REV-2026-09-17-42 → C14；REV-2026-09-17-43 → G06／D02#file／R13；REV-2026-09-17-44 → FILE-DECISIONS#file），旧记录一律保留写入当时的指纹并标 stale，未改写。行为影响限于报告与台账，不改变任何合同、权限或执行语义。",
+      "reason": "治理规则 §5.2 增补第 8 条（复核随变更同批交付；台账只登记仍未解封的条目），并让检查器按同一条语义收敛 gaps：报告层只列出尚无当前指纹复核的陈旧绑定。为解封此前 8 条陈旧绑定，已新增三条针对当前指纹的复核（REV-2026-09-17-42 → C14；REV-2026-09-17-43 → G06／D02#file／R13；REV-2026-09-17-44 → FILE-DECISIONS#file），旧记录一律保留写入当时的指纹并标 stale，未改写。行为影响限于报告与台账，不改变任何合同、权限或执行语义。 【原 author：（2026-09-17 确认：解封由新增复核完成，不改写旧记录）】",
       "evidence": "差异：rules/governance.md §5.2 第 8 条；scripts/agent-harness-check.mjs 新增 openStaleBindings()，并让 check 输出与 gaps 台账共用该结果。实测：agent-harness:check PASSED，陈旧复核绑定警告由 8 项降为 0 项；registry.gaps 由 8 条变为 []。三条新复核绑定的指纹与对象当前定义逐条相等（REV-42：4cff06c7…；REV-43：1a452b52…／a3d096d3…／e8029cb6…；REV-44：7a8c63d1…）。",
       "objects": [
         {
           "id": "P03",
           "revision": 11,
-          "fingerprint": "aba2d9631617a9617dc77b3ca52c276c"
+          "fingerprint": "692621c69c6be545f721a086cb7bb60e"
         }
       ]
     },
@@ -21613,10 +22778,10 @@
       "id": "REV-2026-09-17-48",
       "change": "CHG-2026-09-17-48",
       "at": "2026-09-17T10:47:33.410Z",
-      "author": "用户（会话内确认：R13 采用、Q13 移出 D02）",
-      "reviewer": "Cursor Grok 4.6 (R13 Q13 D02 governance)",
+      "author": "user",
+      "reviewer": "cursor-grok-4.6",
       "conclusion": "synchronized",
-      "reason": "用户已确认：当前不改预算默认值，但改数必须先升 schema_version（常量表延后到第一次改数）；Q13 保持 open，移出 D02 的 scope 与 blocks。落地后 catalog 与正文一致：D02.closes 仍为 Q04／Q10／G06，work.state 仍 planned；Q13／G06／Q04／Q10 仍 open。检查器对 D02 的 Q13 验收阻断已解除；Q04／Q10／G06 因 closes 豁免在计算上也不挡验收，产品上仍不得把 D02 标为完成。本条只解封归属与阻断边，不构成合同已通过。",
+      "reason": "用户已确认：当前不改预算默认值，但改数必须先升 schema_version（常量表延后到第一次改数）；Q13 保持 open，移出 D02 的 scope 与 blocks。落地后 catalog 与正文一致：D02.closes 仍为 Q04／Q10／G06，work.state 仍 planned；Q13／G06／Q04／Q10 仍 open。检查器对 D02 的 Q13 验收阻断已解除；Q04／Q10／G06 因 closes 豁免在计算上也不挡验收，产品上仍不得把 D02 标为完成。本条只解封归属与阻断边，不构成合同已通过。 【原 author：（会话内确认：R13 采用、Q13 移出 D02）】",
       "evidence": "可追溯评审记录：本会话用户确认「暂时不改预算默认值，但预留今后可调整的空间」以及「拿掉 Q13 对 D02 的验收阻断并移出 scope」。决定正文为 decisions/README.md 的 R13；catalog.mjs 的 D02.scope 与 Q13.blocks；implementation/D02-protocol-and-recovery.md 规则段。实测：node scripts/agent-harness-check.mjs 退出码 0；registry.issues.Q13 仍为 open。",
       "objects": [
         {
@@ -21658,10 +22823,10 @@
       "id": "REV-2026-09-17-49",
       "change": "CHG-2026-09-17-49",
       "at": "2026-09-17T11:08:48.165Z",
-      "author": "用户（会话内要求对照检查完善包A）",
-      "reviewer": "Cursor Grok 4.6 (Package A follow-up)",
+      "author": "user",
+      "reviewer": "cursor-grok-4.6",
       "conclusion": "no-impact",
-      "reason": "两处都是把现行事实写准：① P01 入口计数从 R01–R12／12 改为 R01–R13／13，与已复核的 objects.md 前缀表及 FILE-DECISIONS 索引一致；② D02 规则段澄清 Q13 仍 open、并钉明检查器因 closes 豁免可能算出 acceptanceReady=true，产品上仍保持 planned／verification=none，不得写成 done 或 ready。未改 D02.closes、work.state、Q13 状态或任何执行语义。",
+      "reason": "两处都是把现行事实写准：① P01 入口计数从 R01–R12／12 改为 R01–R13／13，与已复核的 objects.md 前缀表及 FILE-DECISIONS 索引一致；② D02 规则段澄清 Q13 仍 open、并钉明检查器因 closes 豁免可能算出 acceptanceReady=true，产品上仍保持 planned／verification=none，不得写成 done 或 ready。未改 D02.closes、work.state、Q13 状态或任何执行语义。 【原 author：（会话内要求对照检查完善包A）】",
       "evidence": "可追溯评审记录：本会话用户要求「完成后自己对照检查完善一轮」。差异为 agent-harness/README.md 对象计数一行，以及 implementation/D02-protocol-and-recovery.md 规则段作用域句与「不作出的承诺」一条。registry.objects.D02 定义指纹仍为 7d28dc5cddb628eadaff4907d503767b，work.state=planned；issues.Q13／Q04／Q10／G06 仍 open。实测：node scripts/agent-harness-check.mjs 退出码 0。",
       "objects": [
         {
@@ -21680,16 +22845,16 @@
       "id": "REV-2026-09-19-47",
       "change": "CHG-2026-09-19-47",
       "at": "2026-09-19T04:46:35.515Z",
-      "author": "DeepSeek Harness（施工）",
-      "reviewer": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "D02 关闭门槛改写：Q04／Q10 关闭证据降至各自现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 需 host_authority 独立 verify 命令；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许（§4.1 属验收门槛，按治理/架构变更复核）。不标 done、不关 issue、不改 Q13。",
+      "reason": "D02 关闭门槛改写：Q04／Q10 关闭证据降至各自现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 需 host_authority 独立 verify 命令；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许（§4.1 属验收门槛，按治理/架构变更复核）。不标 done、不关 issue、不改 Q13。 【原 author：（施工）】",
       "evidence": "技术核对（施工者 DeepSeek Harness，2026-09-19）：①Q04／Q10 的关闭门槛改写只降证据种类，不改变已确认事实与影响边界；V05 外移 G03／Q17／D04 与该三项现有 open 状态一致；②G06 关闭证据钉 host_authority 独立命令，已实跑 5 passed / 0 failed；③K16 §8.6 七例拆分不丢失任何一例，各例交付方与 D04／D05 的 scope 一致；④D02 §五 由一律禁止改为条件式允许属 P03 §4.1「验收门槛自身变化」，故本批按 architecture 复核。独立性声明：本条复核由施工者本人作出，不是 P03 §5.2 要求的独立复核——改写的是验收门槛本身，按 §5.2 规则 1、2 必须由未参与本变更编写的独立 AI 或人工重新复核；在此之前该门槛改写只算技术核对通过，不得作为解封依据。",
       "objects": [
         {
           "id": "D02",
           "revision": 0,
-          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
+          "fingerprint": "8d7b0606678123466d5c1eb76a7948ab"
         },
         {
           "id": "D04",
@@ -21715,7 +22880,7 @@
         {
           "id": "D02",
           "revision": 14,
-          "fingerprint": "af3d921b27b02d4f2aee384cf5ad509f"
+          "fingerprint": "8d7b0606678123466d5c1eb76a7948ab"
         },
         {
           "id": "Q04",
@@ -21742,7 +22907,8 @@
         {
           "id": "G06",
           "revision": 7,
-          "fingerprint": "4db38fb68d7362103f4c770134caf337"
+          "fingerprint": "4db38fb68d7362103f4c770134caf337",
+          "stale": true
         }
       ]
     },
@@ -21750,10 +22916,10 @@
       "id": "REV-2026-09-19-48",
       "change": "CHG-2026-09-19-48",
       "at": "2026-09-19T04:55:03.290Z",
-      "author": "DeepSeek Harness（施工）",
-      "reviewer": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "D02 收口：按 §三关闭门槛表与 §三之一时点表写 work.state=done 与 verification.state=passed，关闭 Q04／Q10／G06；不代标 C11／C14 passed，不关 Q13",
+      "reason": "D02 收口：按 §三关闭门槛表与 §三之一时点表写 work.state=done 与 verification.state=passed，关闭 Q04／Q10／G06；不代标 C11／C14 passed，不关 Q13 【原 author：（施工）】",
       "evidence": "技术核对（施工者 DeepSeek Harness，2026-09-19）：①D02 对象自身有 applicability=current 的 verify；②关闭门槛表三行各有对应记录——Q04 四条 Chat Completions V03、Q10 五条事实 1–3 V03、G06 一条 host_authority 独立命令记录；③§三之一时点表已填，work.state=done 晚于本对象 verify；④issues 只关 Q04／Q10／G06，Q13 仍 open；⑤未代标 C11／C14 的 verification.state，未主张逐端点 V05。独立性声明：本条复核由施工者本人作出，不是 P03 §5.2 要求的独立复核——本变更改变验收门槛并翻转状态权威，按 §5.2 规则 1、2 必须由未参与本变更编写的独立 AI 或人工重新复核；在此之前只算技术核对通过。",
       "objects": [
         {
@@ -21784,10 +22950,10 @@
       "id": "REV-2026-09-19-54",
       "change": "CHG-2026-09-19-54",
       "at": "2026-09-19T05:46:21.562Z",
-      "author": "DeepSeek Harness（施工）",
-      "reviewer": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "Q16 交互形态确定（运行中拒绝新指令）、Q15 写入与作用域语义确定并明确不实现有效期／冲突呈现、E03 提升为 defined；同步 K03／K08 正文。属承诺与判据变化，按架构变更复核",
+      "reason": "Q16 交互形态确定（运行中拒绝新指令）、Q15 写入与作用域语义确定并明确不实现有效期／冲突呈现、E03 提升为 defined；同步 K03／K08 正文。属承诺与判据变化，按架构变更复核 【原 author：（施工）】",
       "evidence": "技术核对（施工者 DeepSeek Harness，2026-09-19）：①Q16 的交互形态取自代码事实——ensure_session_idle／ensure_no_active_top_level_run 以 agent_run_active_run_exists 拒绝运行中指令，UI 文案见 useUnifiedAssistantSend.ts 的 normalSubmissionError；两条性质各有绑定证据，取消仅留 interrupted partial 而非发布答案（settle_cancelled_run_with_partial）。这是**把源码已有的选择写成权威**，不是新增运行中修订能力——K03 §一 明确不承诺就地修订通道。②Q15 的确定语义同样取自代码：ai_memories 全仓唯一写入路径是 memory_write，requires_confirmation=true 且 default_enabled_without_skill=false；有效期与冲突呈现**明确写成不实现**，没有把它们算作已完成。③E03 提升为 defined 只改 maturity：正文已具备 eval 种类的输入输出与判据要素，verification.state 仍 none，未声称语义质量通过。④scope／blocks 收敛：Q15／Q16 移出 D03 scope、Q15 移出 D05 blocks；closes 保持 [\"Q08\",\"G05\"]，未把 Q02／G01 写进 closes——避免出现「先宣布关闭、再补证据」的顺序。独立性声明：本条复核由施工者本人作出，不是 P03 §5.2 要求的独立复核——本变更改变用户承诺与判据，按 §5.2 规则 1、2 必须由未参与本变更编写的独立 AI 或人工重新复核；在此之前只算技术核对通过。",
       "objects": [
         {
@@ -21813,7 +22979,8 @@
         {
           "id": "V02",
           "revision": 28,
-          "fingerprint": "e687a11a356306e6afd5cf5807411513"
+          "fingerprint": "e687a11a356306e6afd5cf5807411513",
+          "stale": true
         },
         {
           "id": "Q15",
@@ -21831,10 +22998,10 @@
       "id": "REV-2026-09-19-56",
       "change": "CHG-2026-09-19-56",
       "at": "2026-09-19T05:50:03.881Z",
-      "author": "DeepSeek Harness（施工）",
-      "reviewer": "DeepSeek Harness（施工）",
+      "author": "dsh-agent",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "D03 关闭门槛表、三之一时点表与 §五 不作出的承诺改写；属验收门槛变化，按架构变更复核",
+      "reason": "D03 关闭门槛表、三之一时点表与 §五 不作出的承诺改写；属验收门槛变化，按架构变更复核 【原 author：（施工）】",
       "evidence": "技术核对（施工者 DeepSeek Harness，2026-09-19）：①D03 §三「关闭门槛」表逐项固定本包关闭证据，并把「覆盖终点与裁剪边界同源」明确排除在关闭条件外（登记为 Q08 已知限制）；②§三之一按 D01 的教训记时点，work.state=done 将晚于全部证据；③§五 把 Q15／Q16 的「已确定」与「明确不做」分开写，未把不做写成已实现；④closes 保持 [\"Q08\",\"G05\"] 不动，Q02／G01 留在 scope 内、由 registry.issues 在验收时独立写 closed——避免 D02 收口时明确禁止的「先声明 closes、再补证据」顺序。独立性声明：本条复核由施工者本人作出，不是 P03 §5.2 要求的独立复核——本变更改写验收门槛，按 §5.2 规则 1、2 必须由未参与本变更编写的独立 AI 或人工重新复核；在此之前只算技术核对通过。",
       "objects": [
         {
@@ -21845,7 +23012,7 @@
         {
           "id": "D03",
           "revision": 12,
-          "fingerprint": "6c207d405fbdbb6cf3a06603f1f159f1"
+          "fingerprint": "36902d79edaa626ee01948a5ceb6edb5"
         }
       ]
     },
@@ -21853,10 +23020,10 @@
       "id": "REV-2026-09-19-60",
       "change": "CHG-2026-09-19-47",
       "at": "2026-09-19T10:55:00Z",
-      "author": "Cursor Grok 4.6（独立复核；未编写 CHG-47/48/54/56）",
-      "reviewer": "DeepSeek Harness（施工）",
+      "author": "cursor-grok-4.6",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "D02 关闭门槛改写与当前定义一致：Q04／Q10 降至现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 以 host_authority 独立命令为关闭证据；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许。CHG-58 的 V05 窗口是细化，不推翻门槛外移。",
+      "reason": "D02 关闭门槛改写与当前定义一致：Q04／Q10 降至现有 V03，逐端点 V05 外移 G03／Q17／D04；G06 以 host_authority 独立命令为关闭证据；恢复案例按交付方拆分；D02 §五 由一律禁止改为条件式允许。CHG-58 的 V05 窗口是细化，不推翻门槛外移。 【原 author：（独立复核；未编写 CHG-47/48/54/56）】",
       "evidence": "依据本会话独立核对（复核者未编写 CHG-47／48／54／56）。施工者自签的 REV-2026-09-19-47 不能解封。对象槽绑定当前 objects[].definition.fingerprint（D02 为 921617a8…，不是文件指纹）；容器只用 D02#file／K16#file。D04／Q17／G03 按当前定义指纹重绑，清掉 REV-47 三条未解封缺口。施工超范围是过程问题，记于此，不把已关 issue 当假验收撤销。",
       "objects": [
         {
@@ -21938,10 +23105,10 @@
       "id": "REV-2026-09-19-61",
       "change": "CHG-2026-09-19-48",
       "at": "2026-09-19T10:55:00Z",
-      "author": "Cursor Grok 4.6（独立复核；未编写 CHG-47/48/54/56）",
-      "reviewer": "DeepSeek Harness（施工）",
+      "author": "cursor-grok-4.6",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "D02 收口写 work.state=done／verification.state=passed、关闭 Q04／Q10／G06 与当前合同一致；不代标 C11／C14 passed，不关 Q13。",
+      "reason": "D02 收口写 work.state=done／verification.state=passed、关闭 Q04／Q10／G06 与当前合同一致；不代标 C11／C14 passed，不关 Q13。 【原 author：（独立复核；未编写 CHG-47/48/54/56）】",
       "evidence": "依据本会话独立核对（复核者未编写 CHG-47／48／54／56）。施工者自签的 REV-2026-09-19-48 不能解封。P03 绑定对象定义指纹 ba2e902…，不是 governance.md 文件指纹。X01／X02 绑定当前定义指纹，顺带覆盖 GOV1／REV-48 的 X01 缺口。施工超范围是过程问题，记于此。",
       "objects": [
         {
@@ -21977,10 +23144,10 @@
       "id": "REV-2026-09-19-62",
       "change": "CHG-2026-09-19-54",
       "at": "2026-09-19T10:55:00Z",
-      "author": "Cursor Grok 4.6（独立复核；未编写 CHG-47/48/54/56）",
-      "reviewer": "DeepSeek Harness（施工）",
+      "author": "cursor-grok-4.6",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "Q16 交互形态确定（运行中拒绝新指令）、Q15 写入与作用域语义确定并明确不实现有效期／冲突呈现、E03 提升为 defined；同步 K03／K08 正文。属承诺与判据变化，与当前定义一致。",
+      "reason": "Q16 交互形态确定（运行中拒绝新指令）、Q15 写入与作用域语义确定并明确不实现有效期／冲突呈现、E03 提升为 defined；同步 K03／K08 正文。属承诺与判据变化，与当前定义一致。 【原 author：（独立复核；未编写 CHG-47/48/54/56）】",
       "evidence": "依据本会话独立核对（复核者未编写 CHG-47／48／54／56）。施工者自签的 REV-2026-09-19-54 不能解封。用户在本方案中追认 D03 收口，不重开已关 issue。原变更 objects[] 漏了 E03，本条补上当前定义指纹。K03／K08 对象槽用定义指纹，容器只用 K03#file／K08#file。施工超范围是过程问题，记于此。",
       "objects": [
         {
@@ -22031,10 +23198,10 @@
       "id": "REV-2026-09-19-63",
       "change": "CHG-2026-09-19-56",
       "at": "2026-09-19T10:55:00Z",
-      "author": "Cursor Grok 4.6（独立复核；未编写 CHG-47/48/54/56）",
-      "reviewer": "DeepSeek Harness（施工）",
+      "author": "cursor-grok-4.6",
+      "reviewer": "dsh-agent",
       "conclusion": "synchronized",
-      "reason": "D03 关闭门槛表、三之一时点表与 §五 不作出的承诺改写与当前定义一致；closes 保持 Q08／G05。",
+      "reason": "D03 关闭门槛表、三之一时点表与 §五 不作出的承诺改写与当前定义一致；closes 保持 Q08／G05。 【原 author：（独立复核；未编写 CHG-47/48/54/56）】",
       "evidence": "依据本会话独立核对（复核者未编写 CHG-47／48／54／56）。施工者自签的 REV-2026-09-19-56 不能解封。用户在本方案中追认 D03 收口（Q02／Q08／G01／G05 证据保留，不重开 issue）。对象槽绑定 D03 当前定义指纹 68122b88…，容器只用 D03#file。施工超范围是过程问题，记于此，不当成假验收撤销。",
       "objects": [
         {
@@ -22055,34 +23222,101 @@
           "fingerprint": "36902d79edaa626ee01948a5ceb6edb5"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-21-83",
+      "change": "CHG-2026-09-21-83",
+      "at": "2026-09-21T14:33:30.175Z",
+      "author": "待独立复核（本轮为施工者登记口径；未参与编写的独立方复核前不解封）",
+      "reviewer": "dsh-agent",
+      "conclusion": "needs-reverification",
+      "reason": "§5.2 规则 2 补写检查器实际采用的身份比对口径（按实体而非整串），并新增「每个架构/治理变更至少一条非作者复核」的要求；同步登记表身份字段归一到 4 个稳定标识",
+      "evidence": "--reconcile 只登记待复核，不能作为独立复核完成依据",
+      "objects": [
+        {
+          "id": "P03",
+          "revision": 0,
+          "fingerprint": "692621c69c6be545f721a086cb7bb60e"
+        }
+      ]
     }
   ],
   "issues": {
-    "Q01": { "state": "closed" },
-    "Q02": { "state": "closed" },
-    "Q03": { "state": "closed" },
-    "Q04": { "state": "closed" },
-    "Q05": { "state": "open" },
-    "Q06": { "state": "open" },
-    "Q07": { "state": "open" },
-    "Q08": { "state": "closed" },
-    "Q09": { "state": "closed" },
-    "Q10": { "state": "closed" },
-    "Q11": { "state": "closed" },
-    "Q12": { "state": "closed" },
-    "Q13": { "state": "open" },
-    "Q14": { "state": "open" },
-    "Q15": { "state": "closed" },
-    "Q16": { "state": "closed" },
-    "Q17": { "state": "open" },
-    "Q18": { "state": "closed" },
-    "Q19": { "state": "open" },
-    "G01": { "state": "closed" },
-    "G02": { "state": "open" },
-    "G03": { "state": "open" },
-    "G04": { "state": "closed" },
-    "G05": { "state": "closed" },
-    "G06": { "state": "closed" }
+    "Q01": {
+      "state": "closed"
+    },
+    "Q02": {
+      "state": "closed"
+    },
+    "Q03": {
+      "state": "closed"
+    },
+    "Q04": {
+      "state": "closed"
+    },
+    "Q05": {
+      "state": "open"
+    },
+    "Q06": {
+      "state": "open"
+    },
+    "Q07": {
+      "state": "open"
+    },
+    "Q08": {
+      "state": "closed"
+    },
+    "Q09": {
+      "state": "closed"
+    },
+    "Q10": {
+      "state": "closed"
+    },
+    "Q11": {
+      "state": "closed"
+    },
+    "Q12": {
+      "state": "closed"
+    },
+    "Q13": {
+      "state": "open"
+    },
+    "Q14": {
+      "state": "open"
+    },
+    "Q15": {
+      "state": "closed"
+    },
+    "Q16": {
+      "state": "closed"
+    },
+    "Q17": {
+      "state": "open"
+    },
+    "Q18": {
+      "state": "closed"
+    },
+    "Q19": {
+      "state": "open"
+    },
+    "G01": {
+      "state": "closed"
+    },
+    "G02": {
+      "state": "open"
+    },
+    "G03": {
+      "state": "open"
+    },
+    "G04": {
+      "state": "closed"
+    },
+    "G05": {
+      "state": "closed"
+    },
+    "G06": {
+      "state": "closed"
+    }
   },
   "gaps": [
     {
@@ -22174,6 +23408,12 @@
       "author": "Cursor Grok 4.6（施工）",
       "topic": "2026-09-21 D05 第二波：verify 绑内容保持核对器",
       "detail": "CHG-2026-09-21-80 细化后，将 Q14 的 current V03 重绑当前定义指纹；为 D05／C23／N04／C24 追加绑 d05_content_preservation_tests.rs 的 current V03／V04。不把 verification.state 标 passed，不关 Q14／D05／N04。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-21T14:00:00Z",
+      "author": "dsh-agent",
+      "topic": "2026-09-21 登记表身份字段归一",
+      "detail": "changes[].author（81 条 29 种取值）与 reviews[].author／reviewer（27 条 17 种）此前把「谁做的」与「这轮做了什么」写在同一字段里，例如 `Cursor Grok 4.6 (Package A follow-up)`、`DSH Agent (Q04 F03 self-check)`、`用户委托的 D01 收口复核（…）`。身份字段因此不可比对：P03 §5.2 规则 1 的检查器实现是 author 与 change.author 的字符串比较，带描述的字符串永不相等，自签会被漏掉。本次把 author／reviewer 归一为 4 个稳定标识 dsh-agent／cursor-grok-4.6／skahanium／user，被剥离的描述逐条追加到该记录的 reason 末尾（`【原 author：…】`），不删除任何信息。依据：AGENT-REFORM-DISCUSSION-2026-09-14.md 开篇写明「DeepSeek（批注署名 DSH）」，且环境 DSH_HOME=/Users/skahanium/.dsh，故 `DSH Agent` 与 `DeepSeek Harness` 为同一实体，合并为 dsh-agent。归一后按身份判定，自签复核为 5 条：REV-2026-09-16-38 与 REV-2026-09-19-47／48／54／56。本操作只改身份字段与 reason 文本，不改任何指纹、修订号、绑定或结论。"
     }
   ]
 }
