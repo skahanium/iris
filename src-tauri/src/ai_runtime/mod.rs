@@ -76,6 +76,8 @@ mod streaming_finish_reason_sse_tests;
 pub mod classified_session;
 pub(crate) mod context_materials;
 pub mod conversation_memory;
+#[cfg(test)]
+mod d05_document_task_tests;
 pub(crate) mod direct_provider_route;
 pub(crate) mod document_policy_repository;
 pub(crate) mod final_answer_integrity;

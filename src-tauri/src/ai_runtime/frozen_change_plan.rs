@@ -300,6 +300,100 @@ impl FrozenChangePlan {
     }
 }
 
+/// Outcome of revalidating disk content while Durable Apply is `Dispatching`.
+///
+/// `Dispatching` means the write receipt is unknown. Matching `expected_post`
+/// means the write landed; matching `base` means it has not; anything else
+/// must fail closed and must not be retried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrozenWriteReceipt {
+    NotYetApplied,
+    AlreadyApplied,
+    Unknown,
+}
+
+/// Classify one target's current hash against the frozen base and expected post hashes.
+pub(crate) fn classify_frozen_write_receipt(
+    current_hash: &str,
+    base_hash: &str,
+    expected_post_hash: &str,
+) -> FrozenWriteReceipt {
+    if current_hash == expected_post_hash {
+        FrozenWriteReceipt::AlreadyApplied
+    } else if current_hash == base_hash {
+        FrozenWriteReceipt::NotYetApplied
+    } else {
+        FrozenWriteReceipt::Unknown
+    }
+}
+
+/// Classify every target of one frozen operation. Mixed receipts are unknown.
+pub(crate) fn classify_frozen_operation_receipt(
+    current_by_path: &BTreeMap<String, String>,
+    operation: &FrozenChangeOperation,
+) -> FrozenWriteReceipt {
+    let expected: BTreeMap<_, _> = operation
+        .expected_post_content_hashes()
+        .iter()
+        .cloned()
+        .collect();
+    let mut seen = None;
+    for (path, base_hash) in operation.base_content_hashes() {
+        let Some(current) = current_by_path.get(path) else {
+            return FrozenWriteReceipt::Unknown;
+        };
+        let Some(expected_hash) = expected.get(path) else {
+            return FrozenWriteReceipt::Unknown;
+        };
+        let receipt = classify_frozen_write_receipt(current, base_hash, expected_hash);
+        match seen {
+            None => seen = Some(receipt),
+            Some(previous) if previous == receipt => {}
+            Some(_) => return FrozenWriteReceipt::Unknown,
+        }
+    }
+    seen.unwrap_or(FrozenWriteReceipt::Unknown)
+}
+
+/// Read live files for one operation and classify the in-flight write receipt.
+pub(crate) fn classify_operation_disk_receipt(
+    vault: &std::path::Path,
+    operation: &FrozenChangeOperation,
+) -> FrozenWriteReceipt {
+    let mut current = BTreeMap::new();
+    for (path, _) in operation.base_content_hashes() {
+        if path.starts_with("application://") {
+            return FrozenWriteReceipt::Unknown;
+        }
+        let Ok(resolved) = crate::storage::paths::resolve_vault_path(vault, path) else {
+            return FrozenWriteReceipt::Unknown;
+        };
+        let Ok(body) = std::fs::read_to_string(resolved) else {
+            return FrozenWriteReceipt::Unknown;
+        };
+        current.insert(path.clone(), crate::cas::hash::content_hash_str(&body));
+    }
+    classify_frozen_operation_receipt(&current, operation)
+}
+
+/// Record a landed write when `Dispatching` is retried after the expected hash is already on disk.
+pub(crate) fn recovered_write_receipt_result(
+    tool_name: &str,
+    operation: &FrozenChangeOperation,
+) -> ToolCallResult {
+    ToolCallResult {
+        tool_name: tool_name.to_string(),
+        success: true,
+        output: serde_json::json!({
+            "tool_call_id": operation.tool_call_id(),
+            "recovered_write_receipt": true,
+        }),
+        duration_ms: 0,
+        tokens_used: None,
+        error: None,
+    }
+}
+
 /// Align recovered suffix results to frozen operations by index and tool_call_id.
 ///
 /// The executor only returns `skip(start)` results. Prefix operations already

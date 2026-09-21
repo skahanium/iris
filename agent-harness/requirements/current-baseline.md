@@ -205,7 +205,8 @@
 ### Q14 双路搜索对纯编辑任务的触发范围未单独确认
 
 - **已确认事实**：一次执行新网页搜索即触发双路合同；纯润色、提供材料内的格式整理不因联网开关打开而自动搜索。
-- **不能推出**：把双路要求退回「两路可选」。时间上是否并行是执行策略（默认并发、受约束时串行），两路实际执行是功能合同。
+- **现状（2026-09-21）**：Intake `ExclusionClassifier` 已把既有 `is_local_transformation_request` 接到 `WebDecisionReason::LocalTransformation`；`web_enabled=true` 的纯润色／格式整理信封为 `freshness=Offline`，capabilities 不含 `web.search`。冒号剥离后仍用全文判定「请核实」等显式联网，正文里的 URL 仍视为资料。斜杠命令 `useInlineAi.ts` 的 `webEnabled: false` 只是入口钉，**不能**单独当作本条关闭证据。显式联网／URL／核实／时效题仍给 `web.search`。闲聊「你好」保持 `DefaultOnline`。`Effect::Draft` 仍只有 `note.propose_patch`、没有 `note.apply_patch`。
+- **不能推出**：把双路要求退回「两路可选」。时间上是否并行是执行策略（默认并发、受约束时串行），两路实际执行是功能合同。也**不能推出本条已关闭**，或格式整理已保持内容（`N04`），或 `D05` 已验收。
 - **影响边界**：`C20`、`L02`、`L03`。
 - **所需证据**：分别验证「需要联网材料的组合任务」与「纯编辑任务不触发检索」。
 

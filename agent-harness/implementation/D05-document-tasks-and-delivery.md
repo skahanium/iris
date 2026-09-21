@@ -18,7 +18,14 @@
 | `L03` 编辑与候选应用链路       | 提供候选生成、确认与应用的交接顺序（本工作包按其顺序执行，不重复定义链路内容）                            |
 | `L04` 格式保持链路             | 提供格式整理的允许变化集合与验证交接顺序                                                                  |
 
-可施工与可验收**由计算得出**，不读历史标签：见 [治理规则](../rules/governance.md) §2.5。本轮该工作包状态是 `planned`，登记不等于已施工。
+可施工与可验收**由计算得出**，不读历史标签：见 [治理规则](../rules/governance.md) §2.5。本轮该工作包状态是 `active`，登记不等于已验收；`acceptanceReady` 仍由未决问题计算，本波不关闭。
+
+**本波执行事实（2026-09-21 第一波，不关闭）**
+
+- **已落地（本波接线，不造轮子）**：`WebDecisionReason::LocalTransformation` 与 `is_local_transformation_request` 原先只用于 vault 工具面；现已接到 `ExclusionClassifier::resolve`。`instruction：body` 剥离后仍用未剥离全文判定显式核实／高风险，避免「翻译：请核实 https://…」被当成纯变换。`web.search` 仍只在 `web_enabled && freshness != Offline` 时进入信封。Durable Apply 派发前把 checkpoint 写成 `Dispatching`。
+- **本波做**：纯润色／格式整理在联网开关打开时也不进入 `web.search`（Q14 触发面；词表含「格式整理」等同义，不含裸「规范化」以免误伤知识问句）；「Summarize the latest breaking news」这类时效题仍给 `web.search`。`Dispatching` 先核验磁盘哈希：已是 `expected_post` 则跳过写入、仍是 base 则派发一次、两者都不是则失败关闭且不重放后缀。前缀已落地时跳过并只派发后缀。恢复把 `Dispatching` 前缀已写入判为可续跑，不得把 `Dispatching` 直接加成 `Applied`；磁盘不再匹配计划终点则该 Run 手动检查，不中断整批恢复。机械 `V03` 与生产入口 `V04`（`execute_confirmed_frozen_change_set`）绑 `d05_document_task_tests.rs`。不把 D05／Q14／C05／C06／C24 标 closed 或 `verification.passed`。
+- **本波明确不做**：N04 正文／顺序／链接目标程序化核对器；把 `doc_normalize_markdown` 升格为内容保持；K15 `completed|partial|blocked` 新持久字段；C24 独立候选类型／UI；N23 撤回≠重规划扩 scope；D06、HR-7 live、Gemini 适配器、V05。不回头做 D04／G02／G03／Q17。
+- **不能当作关闭证据**：斜杠命令 `useInlineAi.ts` 的 `webEnabled: false` 只是入口钉，不能单独关闭 Q14。
 
 ## 二、改动范围
 
@@ -63,7 +70,7 @@
 - 不承诺现有规范化转换即可保证任意粘贴文章的内容保持；纯正则空白整理器不等于内容保持合同已经实现。
 - 不把生成候选扩张为文件写入授权：新内容通常由用户插入，实际写入继续经确认边界。
 - 不设发布分数、数值门槛与版本排期承诺；版本排期唯一来源是 [ROADMAP.md](../../ROADMAP.md)。
-- 不因本文件存在而声明 `N04`、`Q14` 已达成或已验证：本工作包尚未施工。
+- 不因本文件存在而声明 `N04`、`Q14` 已达成或已验证：本工作包第一波已开工，仍未关闭。
 - 用户撤回已发布答案不等于 Host 在循环内替模型重规划（`N23`）。
 
 <!-- iris:end D05 -->

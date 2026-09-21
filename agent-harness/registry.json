@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 137,
+  "registryRevision": 139,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-20T10:24:54.769Z"
+    "recordedAt": "2026-09-21T02:03:52.280Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -201,7 +201,7 @@
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "b2f40ce6614c67a8fd7894cb1af5c8c0"
+      "fingerprint": "46d0f54eb07eb80f3dcc01cd2bc6d605"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "37b887a79554ff6d17e701a577549b84"
+      "fingerprint": "68eaf97245a0ef938332043e13875e4e"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1219,18 +1219,18 @@
       "definition": {
         "file": "implementation/D05-document-tasks-and-delivery.md",
         "anchor": "D05",
-        "line": 71,
-        "endLine": 84,
+        "line": 78,
+        "endLine": 91,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
-      "work": { "state": "planned" },
+      "work": { "state": "active" },
       "scope": ["N02", "N03", "N04", "N11", "N23", "Q14"],
       "relations": {
         "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
       },
-      "note": null
+      "note": "2026-09-21 第一波开工：work.state=active；Intake LocalTransformation 已接线（冒号组合核实不误伤；格式整理同义；闲聊仍 DefaultOnline）。Dispatching 回执核验 skip/once/fail-closed，前缀已落地只派发后缀。不关 Q14/D05；不是 N04 内容保持、K15 分字段、C24 统一候选或 V05。"
     },
     "D06": {
       "kind": "work",
@@ -2789,8 +2789,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "P04",
-        "line": 278,
-        "endLine": 291,
+        "line": 279,
+        "endLine": 292,
         "fingerprint": "d7402993b611a78ed400107c36fd2100"
       },
       "implementation": { "state": "unknown" },
@@ -3157,20 +3157,20 @@
       "title": "双路搜索对纯编辑任务的触发范围未单独确认",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 11,
+      "revision": 13,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
         "line": 203,
-        "endLine": 212,
-        "fingerprint": "8035af42528aa4ff15a5cc256098c345"
+        "endLine": 213,
+        "fingerprint": "c3a99608d61ecc55d1f3720bb597f7b5"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D05", "at": "acceptance" }] },
-      "note": null
+      "note": "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。"
     },
     "Q15": {
       "kind": "issue",
@@ -3182,8 +3182,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q15",
-        "line": 214,
-        "endLine": 226,
+        "line": 215,
+        "endLine": 227,
         "fingerprint": "7cc5877f380f3e19067a225eef7264a9"
       },
       "implementation": { "state": "unknown" },
@@ -3203,8 +3203,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q16",
-        "line": 228,
-        "endLine": 239,
+        "line": 229,
+        "endLine": 240,
         "fingerprint": "0be98a33d79789919db2818c4b319190"
       },
       "implementation": { "state": "unknown" },
@@ -3224,8 +3224,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q17",
-        "line": 241,
-        "endLine": 253,
+        "line": 242,
+        "endLine": 254,
         "fingerprint": "dba7b39ca5ce6cfbe94f4872e2168e14"
       },
       "implementation": { "state": "unknown" },
@@ -3245,8 +3245,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q18",
-        "line": 255,
-        "endLine": 265,
+        "line": 256,
+        "endLine": 266,
         "fingerprint": "3f810ccc1d3b4c03fc1d3257e60816a0"
       },
       "implementation": { "state": "unknown" },
@@ -3266,8 +3266,8 @@
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q19",
-        "line": 267,
-        "endLine": 276,
+        "line": 268,
+        "endLine": 277,
         "fingerprint": "f8d6edc5504c815ca409550509e7ae39"
       },
       "implementation": { "state": "unknown" },
@@ -4480,13 +4480,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 32,
+      "revision": 34,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 86,
-        "fingerprint": "81e6f6c50a17cad54d2b60ffcde17e13"
+        "fingerprint": "18deb45c7fcc0b5ca963118cc947434d"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -6656,6 +6656,72 @@
       "at": "2026-09-20T15:20:00Z",
       "applicability": "current",
       "note": "2026-09-20 差距收口：保留既有 V03 机械负例（落点 058366ea）。不关闭 Q05，不把 C18 verification 标 passed。"
+    },
+    {
+      "object": "D05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_document_task_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_document_task",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
+      "at": "2026-09-21T02:00:00Z",
+      "applicability": "current",
+      "note": "D05 第一波机械覆盖：Q14 纯润色/格式整理在 web_enabled=true 时零 web.search；冒号核实仍给 web.search；时效 summarize 不被 LocalTransformation 吃掉；Draft≠Apply。本机 d05_document_task 15 passed / 0 failed。不关 Q14/D05，不把 verification 标 passed，不是 N04/K15/C24 统一候选，不是 V05。"
+    },
+    {
+      "object": "D05",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_document_task_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_dispatching_checkpoint",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
+      "at": "2026-09-21T02:00:00Z",
+      "applicability": "current",
+      "note": "D05 第一波生产入口：execute_confirmed_frozen_change_set 对 Dispatching 核验磁盘哈希（expected_post 跳过 / base 派发一次 / 未知 fail-closed 不重放后缀；前缀已落地只派发后缀）。不关 D05，不把 verification 标 passed。"
+    },
+    {
+      "object": "Q14",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_document_task_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib q14_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "c3a99608d61ecc55d1f3720bb597f7b5",
+      "at": "2026-09-21T02:10:00Z",
+      "applicability": "current",
+      "note": "Intake LocalTransformation 已接线：润色/格式整理 web_enabled=true 不含 web.search；翻译：请核实 https 仍给 web.search；正文 URL 视为资料；Summarize the latest breaking news 仍 VolatileExternalFact；闲聊你好 DefaultOnline；Draft 无 note.apply_patch。斜杠命令 webEnabled:false 不能单独当作关闭证据。Q14 仍 open。"
+    },
+    {
+      "object": "C05",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_document_task_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_dispatching_checkpoint",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "5102979b7ea99c0505bb9d7d65758e53",
+      "at": "2026-09-21T02:00:00Z",
+      "applicability": "current",
+      "note": "D05 第一波：冻结确认后 Dispatching 回执核验绑定目标与版本。不把 C05 verification 标 passed，不关 D05。"
+    },
+    {
+      "object": "C06",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_document_task_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_dispatching_checkpoint",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "c4b49c79ae7e64029994ab9e42289b40",
+      "at": "2026-09-21T02:00:00Z",
+      "applicability": "current",
+      "note": "D05 第一波：写入回执未知时不重放；已落地则跳过 rewrite。不把 C06 verification 标 passed，不关 D05。"
+    },
+    {
+      "object": "C24",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_document_task_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib q14_draft_effect_with_web_toggle_still_has_no_apply_patch",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "a134c89546702d47d643e6c4a1cad6f4",
+      "at": "2026-09-21T02:00:00Z",
+      "applicability": "current",
+      "note": "D05 第一波只钉 Draft≠Apply（有 propose_patch、无 apply_patch）。不是 C24 统一候选合同，不把 C24 verification 标 passed，不关 D05。"
     }
   ],
   "changes": [
@@ -20800,6 +20866,68 @@
           "fingerprintTo": "9fa22052f441004a91eebd8fd776795b"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-21-78",
+      "at": "2026-09-21T01:43:25.078Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "D05 第一波开工：LocalTransformation 接线与 Dispatching 回执核验；不关 Q14/D05。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "b2f40ce6614c67a8fd7894cb1af5c8c0",
+          "fingerprintTo": "4fe58844bdb5bb8c4af159b42c1167c3"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 32,
+          "revisionTo": 33,
+          "fingerprintFrom": "81e6f6c50a17cad54d2b60ffcde17e13",
+          "fingerprintTo": "986386bc0620bc84e6d7b956583a71ec"
+        },
+        {
+          "id": "Q14",
+          "revisionFrom": 11,
+          "revisionTo": 12,
+          "fingerprintFrom": "8035af42528aa4ff15a5cc256098c345",
+          "fingerprintTo": "04ff7d707439d1f459292dda61e24c9a"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-21-79",
+      "at": "2026-09-21T02:03:52.280Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "D05 第一波对照检查：冒号核实、格式整理同义、时效题不被总结吃掉；不关 Q14/D05。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "4fe58844bdb5bb8c4af159b42c1167c3",
+          "fingerprintTo": "46d0f54eb07eb80f3dcc01cd2bc6d605"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 33,
+          "revisionTo": 34,
+          "fingerprintFrom": "986386bc0620bc84e6d7b956583a71ec",
+          "fingerprintTo": "18deb45c7fcc0b5ca963118cc947434d"
+        },
+        {
+          "id": "Q14",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "04ff7d707439d1f459292dda61e24c9a",
+          "fingerprintTo": "c3a99608d61ecc55d1f3720bb597f7b5"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -21889,6 +22017,12 @@
       "author": "Cursor Grok 4.6（施工）",
       "topic": "2026-09-20 D04 差距收口：current V03/V04 重绑",
       "detail": "CHG-2026-09-20-77 接受 D04#file 外围执行事实。verify 段为 D04／G02／C20／K11／K12／Q05 追加绑定当前定义指纹的 current 记录（含 dual_path_v04、dispatch 身份、web_fetch 部分失败、Q05 list 只读机械负例）。不把 verification.state 标 passed，不关 Q05／Q17／G02／G03／D04。V05 live 未获四项批准，本波跳过。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-21T02:10:00Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "topic": "2026-09-21 D05 第一波对照检查：verify 重绑 Q14",
+      "detail": "CHG-2026-09-21-79 细化后，将 Q14 的 current V03 重绑当前定义指纹；D05 V03 备注改为 15 passed。不把 verification.state 标 passed，不关 Q14／D05。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ]
 }

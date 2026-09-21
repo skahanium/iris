@@ -28,6 +28,9 @@ use crate::ai_runtime::agent_tool_loop::{
     AgentToolLoop, RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
     MAX_WEB_TOOL_RESULT_CHARS,
 };
+use crate::ai_runtime::frozen_change_plan::{
+    classify_operation_disk_receipt, recovered_write_receipt_result, FrozenWriteReceipt,
+};
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
@@ -943,6 +946,38 @@ impl<'a> NormalRunToolExecutor<'a> {
             let gate_outcome = evaluate_tool_execution(&self.state.db, gate)?;
             let result = if let Some(result) = gate_outcome.tool_result {
                 result
+            } else if checkpoint_stage == DurableApplyCheckpointStage::Dispatching {
+                let receipt = self
+                    .state
+                    .vault_path()
+                    .map(|vault| classify_operation_disk_receipt(&vault, operation))
+                    .unwrap_or(FrozenWriteReceipt::Unknown);
+                match receipt {
+                    FrozenWriteReceipt::AlreadyApplied => {
+                        self.append_durable_stage(
+                            plan,
+                            DurableApplyCheckpointStage::Applied,
+                            index + 1,
+                            snapshot.run.state_version,
+                        )?;
+                        checkpoint_stage = DurableApplyCheckpointStage::Applied;
+                        recovered_write_receipt_result(entry.name, operation)
+                    }
+                    FrozenWriteReceipt::NotYetApplied => {
+                        self.dispatch_frozen_and_checkpoint(
+                            plan,
+                            operation,
+                            entry.name,
+                            index,
+                            snapshot.run.state_version,
+                            &mut checkpoint_stage,
+                        )
+                        .await?
+                    }
+                    FrozenWriteReceipt::Unknown => {
+                        failed_tool_call(entry.name, "frozen_change_write_receipt_unknown")
+                    }
+                }
             } else if revalidate_frozen_hash_pairs(
                 self.state.as_ref(),
                 operation.base_content_hashes(),
@@ -951,45 +986,22 @@ impl<'a> NormalRunToolExecutor<'a> {
             {
                 failed_tool_call(entry.name, "frozen_change_base_hash_drift")
             } else {
-                if checkpoint_stage != DurableApplyCheckpointStage::Dispatching {
-                    AgentRunRepository::append_checkpoint_step(
-                        &self.state.db,
-                        AppendRunCheckpointInput {
-                            run_id: self.accepted.run_id.clone(),
-                            state_version: snapshot.run.state_version,
-                            checkpoint: durable_apply_checkpoint(
-                                plan,
-                                DurableApplyCheckpointStage::Dispatching,
-                                index,
-                            )?,
-                        },
-                    )?;
-                    checkpoint_stage = DurableApplyCheckpointStage::Dispatching;
-                }
-                let result = self
-                    .dispatch_non_web_tool(
-                        entry.name,
-                        operation.change(),
-                        Some(plan.relative_paths()),
-                        Some(plan.vault_id()),
-                    )
-                    .await;
-                if result.success {
-                    AgentRunRepository::append_checkpoint_step(
-                        &self.state.db,
-                        AppendRunCheckpointInput {
-                            run_id: self.accepted.run_id.clone(),
-                            state_version: snapshot.run.state_version,
-                            checkpoint: durable_apply_checkpoint(
-                                plan,
-                                DurableApplyCheckpointStage::Applied,
-                                index + 1,
-                            )?,
-                        },
-                    )?;
-                    checkpoint_stage = DurableApplyCheckpointStage::Applied;
-                }
-                result
+                self.append_durable_stage(
+                    plan,
+                    DurableApplyCheckpointStage::Dispatching,
+                    index,
+                    snapshot.run.state_version,
+                )?;
+                checkpoint_stage = DurableApplyCheckpointStage::Dispatching;
+                self.dispatch_frozen_and_checkpoint(
+                    plan,
+                    operation,
+                    entry.name,
+                    index,
+                    snapshot.run.state_version,
+                    &mut checkpoint_stage,
+                )
+                .await?
             };
             audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
             append_model_tool_completed(
@@ -1014,6 +1026,52 @@ impl<'a> NormalRunToolExecutor<'a> {
             }
         }
         Ok(crate::ai_runtime::frozen_change_plan::merge_confirmed_results(plan, start, &results))
+    }
+
+    fn append_durable_stage(
+        &self,
+        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+        stage: DurableApplyCheckpointStage,
+        next_operation_index: usize,
+        state_version: u64,
+    ) -> AppResult<()> {
+        AgentRunRepository::append_checkpoint_step(
+            &self.state.db,
+            AppendRunCheckpointInput {
+                run_id: self.accepted.run_id.clone(),
+                state_version,
+                checkpoint: durable_apply_checkpoint(plan, stage, next_operation_index)?,
+            },
+        )
+    }
+
+    async fn dispatch_frozen_and_checkpoint(
+        &self,
+        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+        operation: &crate::ai_runtime::frozen_change_plan::FrozenChangeOperation,
+        tool_name: &str,
+        index: usize,
+        state_version: u64,
+        checkpoint_stage: &mut DurableApplyCheckpointStage,
+    ) -> AppResult<ToolCallResult> {
+        let result = self
+            .dispatch_non_web_tool(
+                tool_name,
+                operation.change(),
+                Some(plan.relative_paths()),
+                Some(plan.vault_id()),
+            )
+            .await;
+        if result.success {
+            self.append_durable_stage(
+                plan,
+                DurableApplyCheckpointStage::Applied,
+                index + 1,
+                state_version,
+            )?;
+            *checkpoint_stage = DurableApplyCheckpointStage::Applied;
+        }
+        Ok(result)
     }
 
     async fn dispatch_non_web_tool(

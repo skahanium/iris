@@ -941,14 +941,17 @@ impl ExclusionClassifier {
             return offline(WebDecisionReason::ExplicitLocalOnly);
         }
         // A transformation's supplied body is data. Inspect its instruction
-        // prefix, while retaining combined requests such as “translate and verify”.
-        let directive_text = directive_text
+        // prefix so an article URL does not become ExplicitUrl, while combined
+        // requests such as “翻译：请核实 https://…” still see 核实 on the
+        // unpeeled message.
+        let unpeeled_directive = directive_text;
+        let directive_text = unpeeled_directive
             .split_once(['：', ':'])
             .filter(|(instruction, body)| {
                 !body.starts_with("//") && is_local_transformation_request(instruction)
             })
-            .map_or(directive_text, |(instruction, _)| instruction);
-        let explicit_web = has_explicit_web_instruction(directive_text);
+            .map_or(unpeeled_directive, |(instruction, _)| instruction);
+        let explicit_web = has_explicit_web_instruction(unpeeled_directive);
 
         // An explicit external grant is the user's selected evidence source.
         // Auto-attached trusted bindings stay ordinary capability and must
@@ -983,7 +986,7 @@ impl ExclusionClassifier {
 
         let strict_reason = if contains_any(directive_text, &["http://", "https://"]) {
             Some(WebDecisionReason::ExplicitUrl)
-        } else if is_high_stakes_current_request(directive_text) {
+        } else if is_high_stakes_current_request(unpeeled_directive) {
             Some(WebDecisionReason::HighStakesCurrentFact)
         } else if explicit_web {
             Some(WebDecisionReason::ExplicitWebRequest)
@@ -996,6 +999,20 @@ impl ExclusionClassifier {
             } else {
                 offline_requires_web(WebDecisionReason::UserDisabled)
             };
+        }
+        // Pure rewrite / polish / translate of supplied text is not a search
+        // task. The Web toggle must not quietly add web.search (Q14). Combined
+        // requests such as "润色并请联网核实" or "翻译：请核实 …" already
+        // returned above via unpeeled explicit_web / URL / high-stakes.
+        // Volatile facts on the peeled instruction (e.g. "Summarize the
+        // latest breaking news") stay on the search path.
+        if is_local_transformation_request(directive_text)
+            && !explicit_web
+            && !contains_any(directive_text, &["http://", "https://"])
+            && !is_high_stakes_current_request(directive_text)
+            && !is_volatile_external_request(directive_text)
+        {
+            return offline(WebDecisionReason::LocalTransformation);
         }
         if is_volatile_external_request(directive_text) {
             return if request.web_enabled {
@@ -1156,6 +1173,10 @@ fn is_local_transformation_request(message: &str) -> bool {
             "校对",
             "总结",
             "摘要",
+            "格式整理",
+            "整理格式",
+            "格式规范化",
+            "规范化格式",
         ],
     )
 }

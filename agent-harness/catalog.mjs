@@ -1283,9 +1283,10 @@ export const objects = {
       file: "implementation/D05-document-tasks-and-delivery.md",
       anchor: "D05",
     },
-    work: { state: "planned" },
+    work: { state: "active" },
     scope: ["N02", "N03", "N04", "N11", "N23", "Q14"],
     depends_on: ["D02", "D03", "K05", "K15", "K16", "L03", "L04"],
+    note: "2026-09-21 第一波开工：work.state=active；Intake LocalTransformation 已接线（冒号组合核实不误伤；格式整理同义；闲聊仍 DefaultOnline）。Dispatching 回执核验 skip/once/fail-closed，前缀已落地只派发后缀。不关 Q14/D05；不是 N04 内容保持、K15 分字段、C24 统一候选或 V05。",
   },
   D06: {
     kind: "work",
@@ -1525,6 +1526,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q14" },
     blocks: blocks("acceptance", ["D05"]),
+    note: "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。",
   },
   Q15: {
     kind: "issue",
