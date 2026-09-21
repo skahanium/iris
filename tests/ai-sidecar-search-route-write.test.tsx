@@ -64,11 +64,17 @@ function installRoute(initial: string[]) {
 async function mountBridge() {
   const before = vi.mocked(webEvidenceProvidersList).mock.calls.length;
   const view = renderHook(() => useAiSidecarBridge({ editorRef: createRef() }));
-  await waitFor(() =>
+  // The mount effect awaits `Promise.all([settingsGet, webEvidenceProvidersList,
+  // webSearchRouteGet])` and only then pushes `webSearchProviders` /
+  // `webSearchProviderId` into state. Waiting for the *call* therefore returns
+  // while the availability projection is still empty, so the assertions raced
+  // the state update. Wait for both state slices the projection derives from.
+  await waitFor(() => {
     expect(
       vi.mocked(webEvidenceProvidersList).mock.calls.length,
-    ).toBeGreaterThan(before),
-  );
+    ).toBeGreaterThan(before);
+    expect(view.result.current.webSearchProviders.length).toBeGreaterThan(0);
+  });
   return view;
 }
 

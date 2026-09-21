@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 142,
+  "registryRevision": 143,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-21T09:57:15.234Z"
+    "recordedAt": "2026-09-21T13:22:35.146Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -236,7 +236,7 @@
     "modules/m04-model-gateway.md": {
       "container": "M04",
       "registration": "M04",
-      "fingerprint": "9ce47227b0c3c4fd9addb140ddca06c8"
+      "fingerprint": "7351ccde03773aecaa50866bd8b6bf4e"
     },
     "modules/m05-agent-execution.md": {
       "container": "M05",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "f19442b6767014a52c8e5b83ea22c55a"
+      "fingerprint": "9f3cbc620b92eb9554a4e288cb3d7ef8"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -4480,13 +4480,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 36,
+      "revision": 37,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
         "endLine": 87,
-        "fingerprint": "5712fc14532f6e5445cc4d54acfc115d"
+        "fingerprint": "9a17c9529bf274139a6a6e121f52ce3a"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -21047,6 +21047,30 @@
           "revisionTo": 36,
           "fingerprintFrom": "9c090d6d6bed6c74c28a463e803cc760",
           "fingerprintTo": "5712fc14532f6e5445cc4d54acfc115d"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-21-82",
+      "at": "2026-09-21T13:22:35.146Z",
+      "author": "DeepSeek Harness（施工）",
+      "classification": "refinement",
+      "reason": "Prettier 排版：m04-model-gateway.md 与 evidence.md 的表格与折行对齐，不改变任何承诺或判据",
+      "review": null,
+      "objects": [
+        {
+          "id": "M04",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "9ce47227b0c3c4fd9addb140ddca06c8",
+          "fingerprintTo": "7351ccde03773aecaa50866bd8b6bf4e"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 36,
+          "revisionTo": 37,
+          "fingerprintFrom": "5712fc14532f6e5445cc4d54acfc115d",
+          "fingerprintTo": "9a17c9529bf274139a6a6e121f52ce3a"
         }
       ]
     }
