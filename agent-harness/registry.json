@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 139,
+  "registryRevision": 142,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-21T02:03:52.280Z"
+    "recordedAt": "2026-09-21T09:57:15.234Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -201,7 +201,7 @@
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "46d0f54eb07eb80f3dcc01cd2bc6d605"
+      "fingerprint": "a9d1796d869c6fd7c03c1689ea4611f5"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "68eaf97245a0ef938332043e13875e4e"
+      "fingerprint": "f19442b6767014a52c8e5b83ea22c55a"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1000,7 +1000,7 @@
       "work": null,
       "scope": [],
       "relations": { "implements": ["K16"], "depends_on": ["C22"] },
-      "note": null
+      "note": "2026-09-21 第二波：格式整理内容保持核对器已接线（body_text／block_order／link_targets；未证明不冻结确认）。verification 仍 none，不关 D05／N04。"
     },
     "C24": {
       "kind": "component",
@@ -1024,7 +1024,7 @@
         "implements": ["K16", "L03", "L04"],
         "depends_on": ["C07", "C05"]
       },
-      "note": null
+      "note": "D05 第二波未做统一候选类型／UI；verification 仍 none。"
     },
     "C25": {
       "kind": "component",
@@ -1219,8 +1219,8 @@
       "definition": {
         "file": "implementation/D05-document-tasks-and-delivery.md",
         "anchor": "D05",
-        "line": 78,
-        "endLine": 91,
+        "line": 85,
+        "endLine": 98,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
       "implementation": { "state": "unknown" },
@@ -1230,7 +1230,7 @@
       "relations": {
         "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
       },
-      "note": "2026-09-21 第一波开工：work.state=active；Intake LocalTransformation 已接线（冒号组合核实不误伤；格式整理同义；闲聊仍 DefaultOnline）。Dispatching 回执核验 skip/once/fail-closed，前缀已落地只派发后缀。不关 Q14/D05；不是 N04 内容保持、K15 分字段、C24 统一候选或 V05。"
+      "note": "2026-09-21 第二波：work.state=active。第一波 Intake LocalTransformation 与 Dispatching 回执仍在。第二波格式整理核对器已接线（C23 行扫描；未证明则 format_preservation_unproven、不冻结确认）；T25 不是 N04 证明。不关 Q14/D05/N04；不是 K15 分字段、C24 统一候选或 V05。"
     },
     "D06": {
       "kind": "work",
@@ -2315,7 +2315,7 @@
       "work": null,
       "scope": [],
       "relations": {},
-      "note": "需求条目；来源与承接对象见 requirements/requirements.md"
+      "note": "2026-09-21 第二波格式整理核对器已接线；verification 仍 none，不是验收。"
     },
     "N05": {
       "kind": "requirement",
@@ -3157,20 +3157,20 @@
       "title": "双路搜索对纯编辑任务的触发范围未单独确认",
       "owner": "M07",
       "maturity": "draft",
-      "revision": 13,
+      "revision": 14,
       "definition": {
         "file": "requirements/current-baseline.md",
         "anchor": "Q14",
         "line": 203,
         "endLine": 213,
-        "fingerprint": "c3a99608d61ecc55d1f3720bb597f7b5"
+        "fingerprint": "f8a4415f31a3c8c9b068891977fa70d1"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D05", "at": "acceptance" }] },
-      "note": "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。"
+      "note": "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。格式整理核对器也不能推出本条已关闭。"
     },
     "Q15": {
       "kind": "issue",
@@ -4480,13 +4480,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 34,
+      "revision": 36,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 86,
-        "fingerprint": "18deb45c7fcc0b5ca963118cc947434d"
+        "endLine": 87,
+        "fingerprint": "5712fc14532f6e5445cc4d54acfc115d"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4610,8 +4610,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 88,
-        "endLine": 110,
+        "line": 89,
+        "endLine": 111,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": { "state": "unknown" },
@@ -6685,10 +6685,10 @@
       "testPath": "src-tauri/src/ai_runtime/d05_document_task_tests.rs",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib q14_",
       "environment": "local / Windows 10 / cargo test",
-      "fingerprint": "c3a99608d61ecc55d1f3720bb597f7b5",
-      "at": "2026-09-21T02:10:00Z",
+      "fingerprint": "f8a4415f31a3c8c9b068891977fa70d1",
+      "at": "2026-09-21T09:40:00Z",
       "applicability": "current",
-      "note": "Intake LocalTransformation 已接线：润色/格式整理 web_enabled=true 不含 web.search；翻译：请核实 https 仍给 web.search；正文 URL 视为资料；Summarize the latest breaking news 仍 VolatileExternalFact；闲聊你好 DefaultOnline；Draft 无 note.apply_patch。斜杠命令 webEnabled:false 不能单独当作关闭证据。Q14 仍 open。"
+      "note": "Intake LocalTransformation 已接线：润色/格式整理 web_enabled=true 不含 web.search；翻译：请核实 https 仍给 web.search；正文 URL 视为资料；Summarize the latest breaking news 仍 VolatileExternalFact；闲聊你好 DefaultOnline；Draft 无 note.apply_patch。斜杠命令 webEnabled:false 不能单独当作关闭证据。格式整理核对器不能推出本条已关闭。Q14 仍 open。"
     },
     {
       "object": "C05",
@@ -6722,6 +6722,72 @@
       "at": "2026-09-21T02:00:00Z",
       "applicability": "current",
       "note": "D05 第一波只钉 Draft≠Apply（有 propose_patch、无 apply_patch）。不是 C24 统一候选合同，不把 C24 verification 标 passed，不关 D05。"
+    },
+    {
+      "object": "D05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_content_preservation",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
+      "at": "2026-09-21T09:40:00Z",
+      "applicability": "current",
+      "note": "D05 第二波机械覆盖：格式整理内容保持行扫描（空白/列表标记通过；剥标点数字失败；调序失败；改链接失败；标签可变目标不可变；未闭合围栏与全角空格 unknown；T25 不是保持证明；润色不进门；非空插入与缺字段不冻结确认）。本机 d05_content_preservation 17 passed。不关 D05/N04，不把 verification 标 passed，不是 C24 统一候选或 V05。"
+    },
+    {
+      "object": "D05",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib n04_format",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
+      "at": "2026-09-21T09:40:00Z",
+      "applicability": "current",
+      "note": "D05 第二波生产入口：blocked_format_write_result 在确认前拦截；改正文不冻结、仅空白仍确认、润色不进门；agent_run_confirmations 为 0 且磁盘未写。不关 D05，不把 verification 标 passed。"
+    },
+    {
+      "object": "C23",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_content_preservation",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "62b79fae885c68c01316461398c862e0",
+      "at": "2026-09-21T09:40:00Z",
+      "applicability": "current",
+      "note": "内容保持核对器已接线。不把 C23 verification 标 passed，不关 D05/N04。"
+    },
+    {
+      "object": "C23",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib n04_format",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "62b79fae885c68c01316461398c862e0",
+      "at": "2026-09-21T09:40:00Z",
+      "applicability": "current",
+      "note": "格式整理未证明时不进入冻结确认。不把 C23 verification 标 passed。"
+    },
+    {
+      "object": "N04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib n04_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "eccc6334d3654a54e643c9104cf5399d",
+      "at": "2026-09-21T09:40:00Z",
+      "applicability": "current",
+      "note": "格式整理机械保持检查已接线。不是 N04 验收，verification 仍 none。"
+    },
+    {
+      "object": "C24",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib n04_polish_rewrite_is_not_format_gate",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "a134c89546702d47d643e6c4a1cad6f4",
+      "at": "2026-09-21T09:40:00Z",
+      "applicability": "current",
+      "note": "本波只说明润色不走格式保持门。不是 C24 统一候选合同，不把 C24 verification 标 passed。"
     }
   ],
   "changes": [
@@ -20928,6 +20994,61 @@
           "fingerprintTo": "c3a99608d61ecc55d1f3720bb597f7b5"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-21-80",
+      "at": "2026-09-21T09:36:48.418Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "D05 第二波：格式整理内容保持核对器接线；不关 Q14/D05/N04。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "46d0f54eb07eb80f3dcc01cd2bc6d605",
+          "fingerprintTo": "bf34cf618f97eb4fae732d3e9cc825e0"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 34,
+          "revisionTo": 35,
+          "fingerprintFrom": "18deb45c7fcc0b5ca963118cc947434d",
+          "fingerprintTo": "9c090d6d6bed6c74c28a463e803cc760"
+        },
+        {
+          "id": "Q14",
+          "revisionFrom": 13,
+          "revisionTo": 14,
+          "fingerprintFrom": "c3a99608d61ecc55d1f3720bb597f7b5",
+          "fingerprintTo": "f8a4415f31a3c8c9b068891977fa70d1"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-21-81",
+      "at": "2026-09-21T09:57:15.234Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "classification": "refinement",
+      "reason": "D05 第二波对照检查：补全插入、缺字段、全角空格与链接标签证据；不关 Q14/D05/N04。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "bf34cf618f97eb4fae732d3e9cc825e0",
+          "fingerprintTo": "a9d1796d869c6fd7c03c1689ea4611f5"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 35,
+          "revisionTo": 36,
+          "fingerprintFrom": "9c090d6d6bed6c74c28a463e803cc760",
+          "fingerprintTo": "5712fc14532f6e5445cc4d54acfc115d"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -22023,6 +22144,12 @@
       "author": "Cursor Grok 4.6（施工）",
       "topic": "2026-09-21 D05 第一波对照检查：verify 重绑 Q14",
       "detail": "CHG-2026-09-21-79 细化后，将 Q14 的 current V03 重绑当前定义指纹；D05 V03 备注改为 15 passed。不把 verification.state 标 passed，不关 Q14／D05。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-21T09:40:00Z",
+      "author": "Cursor Grok 4.6（施工）",
+      "topic": "2026-09-21 D05 第二波：verify 绑内容保持核对器",
+      "detail": "CHG-2026-09-21-80 细化后，将 Q14 的 current V03 重绑当前定义指纹；为 D05／C23／N04／C24 追加绑 d05_content_preservation_tests.rs 的 current V03／V04。不把 verification.state 标 passed，不关 Q14／D05／N04。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ]
 }

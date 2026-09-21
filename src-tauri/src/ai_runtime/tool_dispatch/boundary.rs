@@ -287,7 +287,7 @@ pub(super) fn doc_extract_citations_tool(args: &serde_json::Value) -> AppResult<
     }))
 }
 
-fn normalize_markdown(content: &str) -> String {
+pub(crate) fn normalize_markdown(content: &str) -> String {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let mut out = String::new();
     let mut blank_count = 0usize;

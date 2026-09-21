@@ -769,6 +769,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K16"],
     depends_on: ["C22"],
+    note: "2026-09-21 第二波：格式整理内容保持核对器已接线（body_text／block_order／link_targets；未证明不冻结确认）。verification 仍 none，不关 D05／N04。",
   },
   C24: {
     kind: "component",
@@ -784,6 +785,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K16", "L03", "L04"],
     depends_on: ["C07", "C05"],
+    note: "D05 第二波未做统一候选类型／UI；verification 仍 none。",
   },
   C25: {
     kind: "component",
@@ -1286,7 +1288,7 @@ export const objects = {
     work: { state: "active" },
     scope: ["N02", "N03", "N04", "N11", "N23", "Q14"],
     depends_on: ["D02", "D03", "K05", "K15", "K16", "L03", "L04"],
-    note: "2026-09-21 第一波开工：work.state=active；Intake LocalTransformation 已接线（冒号组合核实不误伤；格式整理同义；闲聊仍 DefaultOnline）。Dispatching 回执核验 skip/once/fail-closed，前缀已落地只派发后缀。不关 Q14/D05；不是 N04 内容保持、K15 分字段、C24 统一候选或 V05。",
+    note: "2026-09-21 第二波：work.state=active。第一波 Intake LocalTransformation 与 Dispatching 回执仍在。第二波格式整理核对器已接线（C23 行扫描；未证明则 format_preservation_unproven、不冻结确认）；T25 不是 N04 证明。不关 Q14/D05/N04；不是 K15 分字段、C24 统一候选或 V05。",
   },
   D06: {
     kind: "work",
@@ -1526,7 +1528,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q14" },
     blocks: blocks("acceptance", ["D05"]),
-    note: "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。",
+    note: "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。格式整理核对器也不能推出本条已关闭。",
   },
   Q15: {
     kind: "issue",
@@ -1843,7 +1845,11 @@ const requirementPlacement = {
   N01: { title: "基础对话、话题切换、追问与纠正可靠", owner: "M01" },
   N02: { title: "字词／句段润色、扩写与缩写", owner: "M08" },
   N03: { title: "按目标格式与文风生成内容，由用户插入", owner: "M08" },
-  N04: { title: "Markdown 格式整理不修改实际内容（序号除外）", owner: "M08" },
+  N04: {
+    title: "Markdown 格式整理不修改实际内容（序号除外）",
+    owner: "M08",
+    note: "2026-09-21 第二波格式整理核对器已接线；verification 仍 none，不是验收。",
+  },
   N05: { title: "自然连续对话承接前文、指代与纠正", owner: "M03" },
   N06: { title: "联网查询与后续核实", owner: "M07" },
   N07: { title: "原生与 MCP 两路都实际搜索", owner: "M07" },
@@ -1882,7 +1888,8 @@ for (const [id, entry] of Object.entries(requirementPlacement)) {
     owner: entry.owner,
     maturity: "draft",
     definition: { file: "requirements/requirements.md", anchor: id },
-    note: "需求条目；来源与承接对象见 requirements/requirements.md",
+    note:
+      entry.note ?? "需求条目；来源与承接对象见 requirements/requirements.md",
   };
 }
 

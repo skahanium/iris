@@ -28,6 +28,7 @@ use crate::ai_runtime::agent_tool_loop::{
     AgentToolLoop, RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
     MAX_WEB_TOOL_RESULT_CHARS,
 };
+use crate::ai_runtime::content_preservation::blocked_format_write_result;
 use crate::ai_runtime::frozen_change_plan::{
     classify_operation_disk_receipt, recovered_write_receipt_result, FrozenWriteReceipt,
 };
@@ -832,6 +833,9 @@ impl<'a> NormalRunToolExecutor<'a> {
         self.sink.emit(&event)
     }
 
+    #[rustfmt::skip]
+    fn format_gate(&self, name: &str, args: &serde_json::Value) -> Option<ToolCallResult> { blocked_format_write_result(&self.context.user_message, name, args) }
+
     fn freeze_change_plan(
         &self,
         call: &crate::ai_runtime::ToolCall,
@@ -1083,9 +1087,7 @@ impl<'a> NormalRunToolExecutor<'a> {
     ) -> ToolCallResult {
         let dispatch_context = ToolDispatchContext {
             db: Some(&self.state.db),
-
             selected_web_provider_id: None,
-
             note_path: None,
             file_id: None,
             run_id: Some(&self.accepted.run_id),
@@ -2163,6 +2165,8 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             );
             let mut result = if let Some(result) = gate_outcome.tool_result {
                 result
+            } else if let Some(blocked) = self.format_gate(entry.name, &args) {
+                blocked
             } else if entry.requires_confirmation {
                 self.request_change_confirmation(
                     call,
@@ -2294,6 +2298,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     || (!entry.requires_confirmation && !outcome.decision.can_execute_now())
                 {
                     return Err(AppError::msg("mixed_confirmation_batch"));
+                }
+                if self.format_gate(entry.name, &args).is_some() {
+                    // Fail closed before freeze so no confirmation lifecycle is started.
+                    return Err(AppError::msg("format_preservation_unproven"));
                 }
                 operations.push(self.freeze_change_operation(
                     call,

@@ -25,6 +25,8 @@ mod vault_impl;
 #[path = "tool_dispatch/web.rs"]
 mod web_impl;
 
+#[cfg(test)]
+pub(crate) use boundary_impl::normalize_markdown;
 pub use context_impl::ToolDispatchContext;
 
 #[rustfmt::skip]
