@@ -1,9 +1,9 @@
-use crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef;
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::{retrieval_scope::RetrievalScope, ContextPacket, RuntimeDocumentSnapshot};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+#[derive(Clone)]
 pub struct ToolDispatchContext<'a> {
     /// Database used by domain/evidence dispatch. `None` is reserved for
     /// isolated unit tests that do not exercise provider execution.
@@ -40,17 +40,17 @@ pub struct ToolDispatchContext<'a> {
     pub app_handle: Option<tauri::AppHandle>,
     pub attachment_count: usize,
     pub skill_activation_plan: Option<&'a crate::ai_types::SkillActivationPlanSummary>,
-    /// Frozen C10 native-search endpoint for this Run. `None` means the
-    /// dispatcher must not invent a native route (adapter_absent), not that the
-    /// model is unsupported.
-    pub(crate) native_search_endpoint: Option<NativeSearchEndpointRef>,
+    /// Host-owned action identity, frozen providers and absolute deadline.
+    /// The secondary Web entry point rejects dispatch when this is absent.
+    pub(crate) web_action:
+        Option<&'a crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput>,
 }
 
 impl<'a> ToolDispatchContext<'a> {
     /// Isolated dispatch context for tests that do not exercise native search.
     ///
-    /// Production ToolLoop must copy the frozen C10 endpoint from the executor;
-    /// this constructor leaves that identity absent (`adapter_absent`).
+    /// Production Web dispatch requires one frozen action; this constructor
+    /// leaves that identity absent and therefore cannot execute Web requests.
     pub fn for_tests(retrieval_scope: &'a RetrievalScope) -> Self {
         Self {
             db: None,
@@ -71,7 +71,7 @@ impl<'a> ToolDispatchContext<'a> {
             app_handle: None,
             attachment_count: 0,
             skill_activation_plan: None,
-            native_search_endpoint: None,
+            web_action: None,
         }
     }
 

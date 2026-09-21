@@ -7,7 +7,7 @@ use super::dual_path_search::{
     SearchActionIdentity, SearchHit, SearchRoute,
 };
 use super::native_search_adapter::{
-    bind_production_route, execute_native_search, execute_production_route,
+    bind_production_route, execute_native_search as execute_bound_native_search,
     https_api_base_without_suffixes, lookup_production_adapter, production_adapters,
     NativeSearchHttpResult, NativeSearchModelAdapter, NativeSearchTransport,
 };
@@ -20,6 +20,48 @@ use super::native_search_subrequest::{
 use crate::ai_types::EndpointFamily;
 use serde_json::{json, Value};
 use std::sync::Mutex;
+
+async fn execute_native_search<T: NativeSearchTransport>(
+    draft: NativeSearchSubrequestDraft,
+    transport: &T,
+    bearer: Option<&str>,
+    api_base: &str,
+) -> super::dual_path_search::RouteAttemptOutcome {
+    let _budget = crate::ai_runtime::model_turn_ledger::BindGuard::new(&draft.identity.run_id, 8);
+    execute_bound_native_search(draft, transport, bearer, api_base).await
+}
+
+// Opt-in live probes are adapter probes, not production Run authorization tests.
+async fn execute_configured_adapter_probe(
+    endpoint: Option<&NativeSearchEndpointRef>,
+    identity: &SearchActionIdentity,
+    query: &str,
+) -> super::dual_path_search::RouteAttemptOutcome {
+    let endpoint = endpoint.unwrap().clone();
+    let adapter = lookup_production_adapter(&endpoint.model_id).unwrap();
+    let binding = bind_production_route(adapter, &endpoint).unwrap();
+    let secret = crate::credentials::get_runtime_secret(&binding.credential_service).unwrap();
+    let draft = NativeSearchSubrequestDraft {
+        query: query.into(),
+        public_scope: NativeSearchPublicScope::default(),
+        identity: NativeSearchRequestIdentity {
+            run_id: identity.run_id.clone(),
+            input_revision: identity.input_revision.clone(),
+            parent_call_id: identity.action_id.clone(),
+            attempt: identity.attempt,
+            ..Default::default()
+        },
+        endpoint,
+        private_material: None,
+    };
+    execute_native_search(
+        draft,
+        &super::native_search_adapter::LiveNativeSearchTransport,
+        Some(secret.as_str()),
+        &binding.api_base,
+    )
+    .await
+}
 
 fn minimax_endpoint() -> NativeSearchEndpointRef {
     NativeSearchEndpointRef::new(
@@ -37,10 +79,11 @@ fn draft(query: &str, private_material: Option<&str>) -> NativeSearchSubrequestD
             language: Some("zh".into()),
         },
         identity: NativeSearchRequestIdentity {
-            run_id: "run-adapter".into(),
-            input_revision: 4,
+            run_id: uuid::Uuid::new_v4().to_string(),
+            input_revision: "4".into(),
             parent_call_id: "web_search".into(),
             attempt: 1,
+            ..Default::default()
         },
         endpoint: minimax_endpoint(),
         private_material: private_material.map(str::to_string),
@@ -76,6 +119,94 @@ fn responses_live_shape() -> Value {
     })
 }
 
+#[tokio::test]
+async fn review_regression_d_adapter_requires_explicit_completed_response() {
+    let mut body = responses_live_shape();
+    body.as_object_mut().unwrap().remove("status");
+    let transport = ScriptedTransport::ok(body);
+    let result = execute_native_search(
+        draft("approved query", None),
+        &transport,
+        Some("fixture"),
+        "https://example.test/v1",
+    )
+    .await;
+    assert!(!result.has_retrieval_credentials);
+    assert!(result.candidates.is_empty());
+    assert_eq!(
+        result.failure,
+        Some(RouteFailureClass::ProtocolOrResultInsufficient)
+    );
+}
+
+#[tokio::test]
+async fn review_regression_d_adapter_preserves_partial_usage_dimensions() {
+    for (usage, expected_prompt, expected_output) in [
+        (json!({"input_tokens":11}), Some(11), None),
+        (json!({"output_tokens":7}), None, Some(7)),
+        (json!({"input_tokens":0,"output_tokens":7}), None, Some(7)),
+    ] {
+        let mut body = responses_live_shape();
+        body["usage"] = usage;
+        let result = execute_native_search(
+            draft("approved query", None),
+            &ScriptedTransport::ok(body),
+            Some("fixture"),
+            "https://example.test/v1",
+        )
+        .await;
+        assert_eq!(result.prompt_tokens, expected_prompt);
+        assert_eq!(result.completion_tokens, expected_output);
+        assert!(result.usage_unknown);
+    }
+}
+
+#[tokio::test]
+async fn review_regression_d_adapter_rejects_over_limit_response_after_settlement() {
+    for usage in [
+        json!({"input_tokens":11,"output_tokens":2049}),
+        json!({"input_tokens":128001,"output_tokens":7}),
+    ] {
+        let mut body = responses_live_shape();
+        body["usage"] = usage.clone();
+        let result = execute_native_search(
+            draft("approved query", None),
+            &ScriptedTransport::ok(body),
+            Some("fixture"),
+            "https://example.test/v1",
+        )
+        .await;
+        assert_eq!(
+            result.prompt_tokens,
+            usage["input_tokens"].as_u64().map(|v| v as u32)
+        );
+        assert_eq!(
+            result.completion_tokens,
+            usage["output_tokens"].as_u64().map(|v| v as u32)
+        );
+        assert_eq!(result.dispatched_attempts, 1);
+        assert!(!result.has_retrieval_credentials);
+        assert_eq!(
+            result.failure,
+            Some(RouteFailureClass::ProtocolOrResultInsufficient)
+        );
+    }
+}
+
+#[tokio::test]
+async fn review_regression_d_adapter_invalid_header_is_not_dispatched() {
+    let drafted = draft("approved query", None);
+    let _budget = crate::ai_runtime::model_turn_ledger::BindGuard::new(&drafted.identity.run_id, 8);
+    let result = execute_bound_native_search(
+        drafted,
+        &super::native_search_adapter::LiveNativeSearchTransport,
+        Some("invalid\nheader"),
+        "https://example.test/v1",
+    )
+    .await;
+    assert_eq!(result.dispatched_attempts, 0);
+}
+
 struct ScriptedTransport {
     status: u16,
     body: Value,
@@ -106,7 +237,15 @@ impl NativeSearchTransport for ScriptedTransport {
         url: &str,
         body: &Value,
         headers: &[(String, String)],
+        before_dispatch: &(dyn Fn() -> bool + Sync),
     ) -> NativeSearchHttpResult {
+        if !before_dispatch() {
+            return NativeSearchHttpResult {
+                status: 0,
+                body: Value::Null,
+                transport_failed: true,
+            };
+        }
         *self.recorded_url.lock().expect("url") = Some(url.to_string());
         *self.recorded_body.lock().expect("body") = Some(body.clone());
         *self.recorded_headers.lock().expect("headers") = Some(headers.to_vec());
@@ -152,7 +291,15 @@ impl NativeSearchTransport for SequentialTransport {
         _url: &str,
         _body: &Value,
         _headers: &[(String, String)],
+        before_dispatch: &(dyn Fn() -> bool + Sync),
     ) -> NativeSearchHttpResult {
+        if !before_dispatch() {
+            return NativeSearchHttpResult {
+                status: 0,
+                body: Value::Null,
+                transport_failed: true,
+            };
+        }
         *self.recorded_count.lock().expect("count") += 1;
         self.responses
             .lock()
@@ -184,6 +331,24 @@ fn minimax_completed_text_only_with_tool_echo() -> Value {
     })
 }
 
+#[tokio::test]
+async fn review_regression_d_failed_retry_preserves_first_attempt_usage() {
+    let mut first = minimax_completed_text_only_with_tool_echo();
+    first["usage"] = json!({"input_tokens":11,"output_tokens":7});
+    let transport = SequentialTransport::new(vec![(200, first), (503, Value::Null)]);
+    let outcome = execute_native_search(
+        draft("approved query", None),
+        &transport,
+        Some("fixture"),
+        "https://search.example/v1",
+    )
+    .await;
+    assert_eq!(*transport.recorded_count.lock().unwrap(), 2);
+    assert_eq!(outcome.prompt_tokens, Some(11));
+    assert_eq!(outcome.completion_tokens, Some(7));
+    assert!(!outcome.has_retrieval_credentials);
+}
+
 struct CountingMcpRoute;
 
 impl SearchRoute for CountingMcpRoute {
@@ -198,6 +363,7 @@ impl SearchRoute for CountingMcpRoute {
             generated_text_only: false,
             failure: None,
             internal_provider_attempts: 1,
+            dispatched_attempts: 1,
             ..Default::default()
         }
     }
@@ -355,7 +521,10 @@ async fn minimax_anthropic_text_only_http_200_is_protocol_insufficient() {
     )
     .await;
     assert!(!outcome.has_retrieval_credentials);
-    assert!(outcome.generated_text_only);
+    assert!(
+        !outcome.generated_text_only,
+        "an invalid Responses envelope is not retryable text-only output"
+    );
     assert_eq!(
         outcome.failure,
         Some(RouteFailureClass::ProtocolOrResultInsufficient)
@@ -518,7 +687,7 @@ async fn minimax_responses_incomplete_without_citations_is_protocol_insufficient
 }
 
 #[tokio::test]
-async fn minimax_responses_incomplete_keeps_https_citations() {
+async fn minimax_responses_incomplete_does_not_claim_retrieval_success() {
     let mut body = responses_live_shape();
     body["status"] = json!("incomplete");
     body["incomplete_details"] = json!({ "reason": "max_output_tokens" });
@@ -530,15 +699,12 @@ async fn minimax_responses_incomplete_keeps_https_citations() {
         "https://api.minimaxi.com/v1",
     )
     .await;
-    assert!(
-        outcome.has_retrieval_credentials,
-        "truncated summary must not drop already-returned HTTPS citations: {outcome:?}"
-    );
-    assert_eq!(outcome.failure, None);
+    assert!(!outcome.has_retrieval_credentials);
     assert_eq!(
-        outcome.candidates[0].url,
-        "https://weather.example/shanghai"
+        outcome.failure,
+        Some(RouteFailureClass::ProtocolOrResultInsufficient)
     );
+    assert!(outcome.candidates.is_empty());
 }
 
 #[tokio::test]
@@ -742,6 +908,8 @@ impl NativeSearchModelAdapter for CatalogMissAdapter {
         json!({})
     }
 
+    fn constrain_output(&self, _body: &mut Value, _max_tokens: u32) {}
+
     fn parse_response(&self, _body: &Value) -> NativeSearchParse {
         NativeSearchParse {
             candidates: Vec::new(),
@@ -854,9 +1022,10 @@ async fn minimax_m3_production_probe_attempts_native_and_mcp() {
         DualPathSearchRequest {
             identity: SearchActionIdentity {
                 run_id: "run-minimax".into(),
-                input_revision: 1,
+                input_revision: "1".into(),
                 action_id: "web_search".into(),
                 attempt: 1,
+                ..Default::default()
             },
             query: "approved query".into(),
             allow_second_route: true,
@@ -891,10 +1060,11 @@ fn deepseek_draft(query: &str, private_material: Option<&str>) -> NativeSearchSu
             language: Some("zh".into()),
         },
         identity: NativeSearchRequestIdentity {
-            run_id: "run-adapter".into(),
-            input_revision: 4,
+            run_id: uuid::Uuid::new_v4().to_string(),
+            input_revision: "4".into(),
             parent_call_id: "web_search".into(),
             attempt: 1,
+            ..Default::default()
         },
         endpoint: deepseek_endpoint(),
         private_material: private_material.map(str::to_string),
@@ -911,11 +1081,13 @@ fn deepseek_anthropic_live_shape() -> Value {
         "content": [
             {
                 "type": "server_tool_use",
+                    "id": "fixture-search-call",
                 "name": "web_search",
                 "input": { "query": "approved query" }
             },
             {
                 "type": "web_search_tool_result",
+                    "tool_use_id": "fixture-search-call",
                 "content": [{
                     "type": "web_search_result",
                     "title": "example weather",
@@ -951,7 +1123,8 @@ impl SearchRoute for CountingNativeRoute {
             has_retrieval_credentials: true,
             generated_text_only: false,
             failure: None,
-            internal_provider_attempts: 0,
+            internal_provider_attempts: 1,
+            dispatched_attempts: 1,
             ..Default::default()
         }
     }
@@ -1109,9 +1282,10 @@ async fn deepseek_flash_production_probe_attempts_native_and_mcp() {
         DualPathSearchRequest {
             identity: SearchActionIdentity {
                 run_id: "run-deepseek".into(),
-                input_revision: 1,
+                input_revision: "1".into(),
                 action_id: "web_search".into(),
                 attempt: 1,
+                ..Default::default()
             },
             query: "approved query".into(),
             allow_second_route: true,
@@ -1145,13 +1319,14 @@ async fn live_minimax_m3_adapter_returns_https_citations() {
     let mut endpoint = minimax_endpoint();
     endpoint.api_base = Some("https://api.minimaxi.com/v1".into());
     endpoint.credential_service = Some("iris.llm.minimax".into());
-    let outcome = execute_production_route(
+    let outcome = execute_configured_adapter_probe(
         Some(&endpoint),
         &SearchActionIdentity {
             run_id: "live-minimax-adapter".into(),
-            input_revision: 1,
+            input_revision: "1".into(),
             action_id: "web_search".into(),
             attempt: 1,
+            ..Default::default()
         },
         "What is the weather in Shanghai?",
     )
@@ -1444,13 +1619,14 @@ async fn live_deepseek_flash_adapter_returns_https_citations() {
     let mut endpoint = deepseek_endpoint();
     endpoint.api_base = Some("https://api.deepseek.com".into());
     endpoint.credential_service = Some("iris.llm.deepseek".into());
-    let outcome = execute_production_route(
+    let outcome = execute_configured_adapter_probe(
         Some(&endpoint),
         &SearchActionIdentity {
             run_id: "live-deepseek-adapter".into(),
-            input_revision: 1,
+            input_revision: "1".into(),
             action_id: "web_search".into(),
             attempt: 1,
+            ..Default::default()
         },
         "What is the weather in Shanghai?",
     )

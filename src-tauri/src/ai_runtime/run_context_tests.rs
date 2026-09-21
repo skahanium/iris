@@ -1521,7 +1521,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
         app_handle: None,
         attachment_count: context.materials.len(),
         skill_activation_plan: None,
-        native_search_endpoint: None,
+        web_action: None,
     };
     let tool_arguments = serde_json::json!({});
     let tool_entry = crate::ai_runtime::tool_catalog::catalog_find("get_context_packets")
@@ -1708,6 +1708,7 @@ fn prompt_keeps_explicit_context_without_expanding_the_authorized_surface() {
         retrieval_scope: Default::default(),
         local_retrieval_packets: vec![],
         recent_messages: vec![],
+        omitted_history_sequences: vec![],
         conversation_memory: None,
         conversation_history_coverage_incomplete: false,
         prompt_profile: Default::default(),

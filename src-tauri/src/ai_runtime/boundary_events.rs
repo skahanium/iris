@@ -838,6 +838,8 @@ fn sanitize_loop_event(event: &serde_json::Value) -> serde_json::Value {
         "event",
         "round",
         "tool",
+        "callId",
+        "recoveryOfCallId",
         "reason",
         "modelTurns",
         "toolSurfaceVersion",

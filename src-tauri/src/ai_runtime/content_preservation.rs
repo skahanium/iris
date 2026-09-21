@@ -15,7 +15,7 @@
 //! - Fenced code is opaque: inner text must match exactly. An unclosed fence
 //!   marks related dimensions `unknown`, never `passed`.
 //! - Link targets in document order: `[text](url)` and `[[wikilink]]`. Labels
-//!   may change; targets may not. Links inside fences are data, not targets.
+//!   and display text must both remain unchanged. Code is opaque.
 //! - Block order: non-empty content units outside fences, after stripping the
 //!   allowed structural prefixes, must stay in the same sequence.
 //!
@@ -83,6 +83,7 @@ impl ContentPreservationReport {
         }
     }
 
+    #[cfg(test)]
     fn failed_body() -> Self {
         Self {
             body_text: ReportStatus::Failed,
@@ -91,6 +92,7 @@ impl ContentPreservationReport {
         }
     }
 
+    #[cfg(test)]
     fn proven_vacuous() -> Self {
         Self {
             body_text: ReportStatus::Passed,
@@ -149,6 +151,7 @@ pub(crate) fn check_format_preservation(
 ///
 /// Returns `None` when the gate does not apply or the candidate is proven, so
 /// the caller may still request confirmation. Never writes files.
+#[cfg(test)]
 pub(crate) fn blocked_format_write_result(
     user_message: &str,
     tool_name: &str,
@@ -182,7 +185,10 @@ pub(crate) fn blocked_format_write_result(
     }
 }
 
-fn unproven_tool_result(tool_name: &str, report: &ContentPreservationReport) -> ToolCallResult {
+pub(crate) fn unproven_tool_result(
+    tool_name: &str,
+    report: &ContentPreservationReport,
+) -> ToolCallResult {
     ToolCallResult {
         tool_name: tool_name.to_string(),
         success: false,
@@ -198,6 +204,7 @@ fn unproven_tool_result(tool_name: &str, report: &ContentPreservationReport) -> 
     }
 }
 
+#[cfg(test)]
 fn string_arg<'a>(args: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
     keys.iter()
         .find_map(|key| args.get(*key).and_then(serde_json::Value::as_str))
@@ -214,6 +221,7 @@ fn contains_any(message: &str, markers: &[&str]) -> bool {
 enum Block {
     Prose(String),
     Fence(String),
+    Blank,
 }
 
 struct ScannedDocument {
@@ -235,46 +243,81 @@ fn scan_document(text: &str) -> ScannedDocument {
         };
     }
 
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut unknown = false;
     let mut fence: Option<(char, usize)> = None;
     let mut fence_buf = String::new();
     let mut blocks = Vec::new();
     let mut link_targets = Vec::new();
 
-    for line in normalized.lines() {
+    for raw_line in text.split_inclusive('\n') {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let line = line.strip_suffix('\r').unwrap_or(line);
         if let Some((marker, marker_len)) = fence {
             if let Some((close_marker, close_len)) = markdown_fence_marker(line) {
-                if close_marker == marker && close_len >= marker_len {
+                let tail = line.trim_start_matches(' ').get(close_len..).unwrap_or("");
+                if close_marker == marker
+                    && close_len >= marker_len
+                    && tail.trim_matches([' ', '\t']).is_empty()
+                {
+                    // Delimiters are retained too: changing the language/info
+                    // or fence spelling is outside this wave's allowed set.
+                    fence_buf.push_str(line);
                     blocks.push(Block::Fence(std::mem::take(&mut fence_buf)));
                     fence = None;
                     continue;
                 }
             }
-            fence_buf.push_str(line);
-            fence_buf.push('\n');
+            fence_buf.push_str(raw_line);
             continue;
         }
 
         if let Some(marker) = markdown_fence_marker(line) {
+            let info = &line.trim_start_matches(' ')[marker.1..];
+            if marker.0 == '`' && info.contains('`') {
+                unknown = true;
+            }
             fence = Some(marker);
             fence_buf.clear();
+            fence_buf.push_str(line);
+            fence_buf.push('\n');
             continue;
         }
-
-        if looks_like_html_line(line) || looks_like_table_line(line) {
+        if line.contains('\r')
+            || looks_like_html_line(line)
+            || looks_like_table_line(line)
+            || line.starts_with([' ', '\t'])
+            || undecidable_inline_code(line)
+            || unsupported_block_delimiter(line)
+        {
             unknown = true;
         }
-
         let trimmed = trim_ascii_end(line);
         if trimmed.is_empty() {
+            if !blocks.is_empty() && !matches!(blocks.last(), Some(Block::Blank)) {
+                blocks.push(Block::Blank);
+            }
             continue;
         }
-
-        let (masked, targets) = extract_links(trimmed);
+        let (_, targets) = extract_links(trimmed);
         link_targets.extend(targets);
-        let unit = strip_structural_prefix(&masked).to_string();
-        blocks.push(Block::Prose(unit));
+        // Preserve the complete link spelling and labels, including anything
+        // resembling a link inside inline code. Only block prefixes may vary.
+        let unit = strip_structural_prefix(trimmed);
+        let kind = if unit.len() == trimmed.len() {
+            "prose:"
+        } else if trimmed.starts_with('#') {
+            "heading:"
+        } else {
+            "list:"
+        };
+        if kind == "list:"
+            && matches!(blocks.last(), Some(Block::Prose(previous)) if previous.starts_with("prose:"))
+        {
+            // Whether a numbered marker interrupts an existing paragraph
+            // depends on its index. Do not erase that semantic distinction.
+            unknown = true;
+        }
+        blocks.push(Block::Prose(format!("{kind}{unit}")));
     }
 
     let unclosed = fence.is_some();
@@ -284,6 +327,7 @@ fn scan_document(text: &str) -> ScannedDocument {
         match block {
             Block::Prose(text) => prose.push(text.clone()),
             Block::Fence(text) => fences.push(text.clone()),
+            Block::Blank => {}
         }
     }
 
@@ -330,8 +374,42 @@ fn looks_like_html_line(line: &str) -> bool {
 }
 
 fn looks_like_table_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.starts_with('|') && trimmed.bytes().filter(|byte| *byte == b'|').count() >= 2
+    // Tables need not start with '|'. Ignore only recognized link spellings;
+    // their complete raw body is still compared above.
+    extract_links(line).0.contains('|')
+}
+
+fn unsupported_block_delimiter(line: &str) -> bool {
+    let compact = line
+        .chars()
+        .filter(|ch| !matches!(ch, ' ' | '\t'))
+        .collect::<String>();
+    ['-', '*', '_', '=']
+        .iter()
+        .any(|marker| compact.len() >= 3 && compact.chars().all(|ch| ch == *marker))
+}
+
+fn undecidable_inline_code(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    let mut open = None;
+    while index < bytes.len() {
+        if bytes[index] != b'`' {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && bytes[index] == b'`' {
+            index += 1;
+        }
+        let len = index - start;
+        match open {
+            None => open = Some(len),
+            Some(count) if count == len => open = None,
+            _ => {}
+        }
+    }
+    open.is_some()
 }
 
 fn markdown_fence_marker(line: &str) -> Option<(char, usize)> {
@@ -377,7 +455,7 @@ fn strip_structural_prefix(line: &str) -> &str {
     }
 
     let digits = rest.chars().take_while(|ch| ch.is_ascii_digit()).count();
-    if digits > 0 {
+    if (1..=9).contains(&digits) {
         let after_digits = &rest[digits..];
         if let Some(stripped) = after_digits.strip_prefix('.') {
             if stripped.is_empty() || stripped.starts_with(' ') || stripped.starts_with('\t') {
@@ -427,14 +505,7 @@ fn parse_wikilink(chars: &[char], start: usize) -> Option<(usize, String)> {
     while cursor + 1 < chars.len() {
         if chars[cursor] == ']' && chars[cursor + 1] == ']' {
             let inner: String = chars[inner_start..cursor].iter().collect();
-            let target = inner
-                .split('|')
-                .next()
-                .unwrap_or("")
-                .split('#')
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let target = inner.split('|').next().unwrap_or("").to_string();
             return Some((cursor + 2, target));
         }
         cursor += 1;

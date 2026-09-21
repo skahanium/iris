@@ -20,11 +20,13 @@ pub(crate) struct ModelGatewayStreamingDirectAnswerProvider<'a> {
     reasoning: crate::ai_types::ResolvedReasoningRequest,
     continuation: Option<crate::ai_runtime::model_gateway::ProviderContinuation>,
     boundary: Option<crate::ai_runtime::boundary_events::BoundaryAuditSlot>,
+    budget_db: Option<&'a Database>,
 }
 
 impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
     /// Bind one already-hydrated provider configuration for this direct Run only.
     pub(crate) fn new(
+        db: Option<&'a Database>,
         gateway: &'a crate::ai_runtime::model_gateway::ModelGateway,
         provider: crate::ai_types::ProviderConfig,
         max_tokens: u32,
@@ -40,6 +42,7 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
             reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             continuation: None,
             boundary: None,
+            budget_db: db,
         })
     }
 
@@ -59,6 +62,7 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
             reasoning: dispatch.reasoning,
             continuation: None,
             boundary: None,
+            budget_db: None,
         })
     }
 
@@ -518,6 +522,13 @@ pub(crate) fn gateway_request_for_messages(
 }
 
 impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
+    fn manages_attempt_budget(&self) -> bool {
+        true
+    }
+    fn budget_database(&self) -> Option<&Database> {
+        self.budget_db
+    }
+
     fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
@@ -544,9 +555,51 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
         request.continuation = self.continuation.clone();
         request.boundary = self.boundary.clone();
         Box::pin(async move {
-            self.gateway
-                .send_streaming_request_to_observer(run_id, request, observer)
-                .await
+            let attempt_budget = AgentModelTurnBudget {
+                max_turn_output_tokens: Some(
+                    budget
+                        .max_turn_output_tokens
+                        .unwrap_or(self.max_tokens)
+                        .min(self.max_tokens),
+                ),
+                ..budget
+            };
+            let lease = crate::ai_runtime::model_turn_ledger::claim_attempt(
+                self.budget_db,
+                run_id,
+                crate::ai_runtime::model_turn_ledger::current_purpose(),
+                attempt_budget,
+            )?;
+            apply_model_turn_budget(&mut request, lease.budget);
+            let before_dispatch =
+                || crate::ai_runtime::model_turn_ledger::mark_dispatched(self.budget_db, &lease);
+            let result = self
+                .gateway
+                .send_streaming_request_with_dispatch(run_id, request, observer, &before_dispatch)
+                .await;
+            crate::ai_runtime::model_turn_ledger::settle_attempt(
+                self.budget_db,
+                &lease,
+                result.as_ref().ok().map(|response| &response.usage),
+            )?;
+            if let Ok(response) = &result {
+                let (prompt, completion, _) = resolved_turn_usage(response, messages, tools);
+                if lease
+                    .budget
+                    .max_prompt_tokens
+                    .is_some_and(|limit| prompt > limit)
+                {
+                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+                }
+                if lease
+                    .budget
+                    .max_turn_output_tokens
+                    .is_some_and(|limit| completion > limit)
+                {
+                    return Err(AppError::run(SafeRunErrorCode::OutputTooLong));
+                }
+            }
+            result
         })
     }
 }
@@ -652,6 +705,13 @@ impl<'a> FailoverStreamingProvider<'a> {
 }
 
 impl ToolLoopProvider for FailoverStreamingProvider<'_> {
+    fn manages_attempt_budget(&self) -> bool {
+        true
+    }
+    fn budget_database(&self) -> Option<&Database> {
+        Some(self.db)
+    }
+
     fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
@@ -691,10 +751,8 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
             // A Run gets one same-route retry, then advances through remaining
             // failover candidates without retrying each fallback.
             let mut dispatch_attempt = 0_u32;
-            let mut accumulated_usage = crate::ai_types::TokenUsage::default();
             loop {
                 dispatch_attempt = dispatch_attempt.saturating_add(1);
-                crate::ai_runtime::model_turn_ledger::claim(parent_run_id)?;
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
@@ -759,12 +817,17 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                     slot.clone(),
                 );
                 provider.boundary = Some(slot);
-                let attempt = provider
-                    .answer_turn(provider_state_key, messages, tools, budget, observer)
-                    .await;
-                if let Ok(response) = &attempt {
-                    accumulated_usage.saturating_acc(&response.usage);
-                }
+                provider.budget_db = Some(self.db);
+                let purpose = if dispatch_attempt == 1 {
+                    crate::ai_runtime::model_turn_ledger::current_purpose()
+                } else {
+                    crate::ai_runtime::model_turn_ledger::AttemptPurpose::Retry
+                };
+                let attempt = crate::ai_runtime::model_turn_ledger::with_purpose(
+                    purpose,
+                    provider.answer_turn(provider_state_key, messages, tools, budget, observer),
+                )
+                .await;
                 let attempt = match attempt {
                     Ok(response)
                         if response
@@ -781,8 +844,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                     other => other,
                 };
                 match attempt {
-                    Ok(mut response) => {
-                        response.usage = accumulated_usage.clone();
+                    Ok(response) => {
                         record_model_route_diagnostic(
                             self.db,
                             parent_run_id,
@@ -1027,5 +1089,42 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// Attach the root repository to providers that use the common attempt seam.
+pub(super) struct RunBudgetProvider<'a, P: ToolLoopProvider> {
+    pub(super) provider: &'a P,
+    pub(super) db: &'a Database,
+}
+impl<P: ToolLoopProvider> ToolLoopProvider for RunBudgetProvider<'_, P> {
+    fn manages_attempt_budget(&self) -> bool {
+        self.provider.manages_attempt_budget()
+    }
+    fn budget_database(&self) -> Option<&Database> {
+        Some(self.db)
+    }
+    fn answer_turn<'a>(
+        &'a self,
+        run_id: &'a str,
+        messages: &'a [crate::ai_runtime::LlmMessage],
+        tools: &'a [crate::ai_runtime::ToolSpec],
+        budget: AgentModelTurnBudget,
+        observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        self.provider
+            .answer_turn(run_id, messages, tools, budget, observer)
+    }
+    fn on_tool_call_dispatched(&self, run_id: &str) -> AppResult<()> {
+        self.provider.on_tool_call_dispatched(run_id)
+    }
+    fn on_tool_proposals_not_dispatched(&self, run_id: &str) -> AppResult<()> {
+        self.provider.on_tool_proposals_not_dispatched(run_id)
     }
 }

@@ -10,10 +10,127 @@ use std::time::Duration;
 
 const MERGED_FETCH_MAX_CHARS: usize = 12_000;
 
+pub(crate) fn authorized_broker_identity(db: &Database) -> SearchActionIdentity {
+    use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+    use crate::ai_runtime::run_contract::{
+        AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, RunEventPayload, RunEventType,
+        RunState, SecurityDomain,
+    };
+    let accepted = crate::ai_runtime::run_intake::RunIntake::start(
+        db,
+        AssistantRunStartRequest {
+            client_request_id: "broker-fixture".into(),
+            session: None,
+            turn: AssistantTurnDraft {
+                message: "contract".into(),
+                content_parts: None,
+                explicit_references: Vec::new(),
+                retrieval_scope: Default::default(),
+                display_mentions: Vec::new(),
+            },
+            explicit_action: None,
+            web_enabled: true,
+            model_override: None,
+            external_tool_grants: Vec::new(),
+            security_domain: SecurityDomain::Normal,
+            classified_context_ref: None,
+        },
+    )
+    .unwrap();
+    let mut version = accepted.state_version;
+    for state in [RunState::Preparing, RunState::Running] {
+        let event = AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: version,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state,
+                    stage: "broker fixture".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .unwrap();
+        version = event.state_version();
+    }
+    AgentRunRepository::persist_authorization_snapshot(
+        db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+        &[CapabilityId::new("web.search")],
+    )
+    .unwrap();
+    db.with_conn(|conn| {
+        conn.execute("INSERT INTO settings(key,value) VALUES('web_search_enabled','true') ON CONFLICT(key) DO UPDATE SET value=excluded.value", [])?;
+        Ok(())
+    }).unwrap();
+    SearchActionIdentity {
+        run_id: accepted.run_id,
+        input_revision: accepted.turn_id,
+        action_id: "broker-fixture-call".into(),
+        attempt: 1,
+        tool_surface_version: "fixture-tools".into(),
+        ..Default::default()
+    }
+}
+
 fn flatten_planned_query_fetch_results(
     batches: Vec<Vec<Result<SearchProviderFetch, String>>>,
 ) -> Vec<Result<SearchProviderFetch, String>> {
     batches.into_iter().flatten().collect()
+}
+
+#[tokio::test]
+async fn review_regression_d_frozen_broker_executes_one_approved_query() {
+    use crate::ai_runtime::mcp_runtime_registry as registry;
+    let db = Database::open_in_memory().unwrap();
+    let identity = authorized_broker_identity(&db);
+    registry::upsert_web_evidence_provider(
+        &db,
+        &registry::WebEvidenceProviderInput {
+            id: "frozen-query-once".into(),
+            name: "frozen-query-once".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
+            transport_config_json: contract_mcp_transport("search-fetch"),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(
+                r#"{"tool":"search","queryArg":"query","maxResultsArg":"max_results"}"#.into(),
+            ),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .unwrap();
+    let query = "approved first topic; approved second topic";
+    assert!(plan_search_queries(query).len() > 1);
+    let output = collect_web_evidence_with_usage(
+        &db,
+        WebEvidenceBrokerInput {
+            query: query.into(),
+            urls: Vec::new(),
+            enabled: true,
+            max_search_results: 4,
+            max_fetches: 0,
+            provider_snapshots: registry::list_enabled_web_provider_mappings(&db).unwrap(),
+            provider_selection_frozen: true,
+            search_identity: identity.clone(),
+            native_endpoint: None,
+            search_deadline: Some(tokio::time::Instant::now() + Duration::from_secs(30)),
+            web_revocation_epoch: crate::ai_runtime::model_gateway::web_revocation_epoch(),
+        },
+    )
+    .await
+    .unwrap();
+    let health = registry::web_evidence_provider_health(&db, "frozen-query-once", "web.search")
+        .unwrap()
+        .unwrap();
+    assert_eq!(health.success_count, 1, "actual successful MCP requests");
+    assert_eq!(output.dual_path.usage.mcp_attempts, 1);
+    assert_eq!(output.dual_path.usage.mcp, 1);
+    assert_eq!(output.dual_path.identity, identity);
 }
 
 fn web_evidence_usage_from_search_fetches<'a>(
@@ -163,6 +280,8 @@ async fn disabled_broker_returns_empty_without_search() {
             provider_selection_frozen: false,
             search_identity: SearchActionIdentity::default(),
             native_endpoint: None,
+            search_deadline: None,
+            web_revocation_epoch: crate::ai_runtime::model_gateway::web_revocation_epoch(),
         },
     )
     .await
@@ -347,8 +466,10 @@ async fn nested_429_fetch_fails_over_within_the_frozen_route() {
             max_fetches: 1,
             provider_snapshots: snapshots,
             provider_selection_frozen: true,
-            search_identity: SearchActionIdentity::default(),
+            search_identity: authorized_broker_identity(&db),
             native_endpoint: None,
+            search_deadline: Some(tokio::time::Instant::now() + Duration::from_secs(90)),
+            web_revocation_epoch: crate::ai_runtime::model_gateway::web_revocation_epoch(),
         },
     )
     .await
@@ -422,8 +543,10 @@ async fn search_without_usable_https_candidates_is_recorded_as_failed_health() {
             max_fetches: 0,
             provider_snapshots: vec![snapshot],
             provider_selection_frozen: true,
-            search_identity: SearchActionIdentity::default(),
+            search_identity: authorized_broker_identity(&db),
             native_endpoint: None,
+            search_deadline: Some(tokio::time::Instant::now() + Duration::from_secs(90)),
+            web_revocation_epoch: crate::ai_runtime::model_gateway::web_revocation_epoch(),
         },
     )
     .await
@@ -510,8 +633,10 @@ async fn fetch_only_broker_entrypoints_never_dispatch_search_even_with_a_query()
             crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(&db)
                 .unwrap(),
         provider_selection_frozen: true,
-        search_identity: SearchActionIdentity::default(),
+        search_identity: authorized_broker_identity(&db),
         native_endpoint: None,
+        search_deadline: Some(tokio::time::Instant::now() + Duration::from_secs(90)),
+        web_revocation_epoch: crate::ai_runtime::model_gateway::web_revocation_epoch(),
     };
     for output in [
         collect_initial_run_web_evidence_with_usage(&db, input.clone())

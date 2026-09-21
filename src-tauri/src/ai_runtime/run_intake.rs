@@ -1155,30 +1155,31 @@ fn strip_quoted_segments(message: &str) -> String {
 }
 
 fn is_local_transformation_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "rewrite",
-            "rephrase",
-            "polish",
-            "translate",
-            "proofread",
-            "summarize",
-            "写得更",
-            "礼貌",
-            "校对",
-            "改写",
-            "润色",
-            "翻译",
-            "校对",
-            "总结",
-            "摘要",
-            "格式整理",
-            "整理格式",
-            "格式规范化",
-            "规范化格式",
-        ],
-    )
+    crate::ai_runtime::content_preservation::is_format_preservation_request(message)
+        || contains_any(
+            message,
+            &[
+                "rewrite",
+                "rephrase",
+                "polish",
+                "translate",
+                "proofread",
+                "summarize",
+                "写得更",
+                "礼貌",
+                "校对",
+                "改写",
+                "润色",
+                "翻译",
+                "校对",
+                "总结",
+                "摘要",
+                "格式整理",
+                "整理格式",
+                "格式规范化",
+                "规范化格式",
+            ],
+        )
 }
 
 fn has_explicit_web_instruction(message: &str) -> bool {

@@ -277,17 +277,29 @@ impl NormalSessionRepository {
     }
 
     /// Load bounded conversation history strictly before one Run's current message.
+    #[cfg(test)]
     pub(crate) fn recent_messages_before(
         db: &Database,
         session_id: i64,
         before_seq: i64,
         limit: u32,
     ) -> AppResult<Vec<NormalSessionMessage>> {
+        Self::history_window_before(db, session_id, before_seq, limit).map(|(messages, _)| messages)
+    }
+
+    /// Read the bounded bodies and all eligible sequence identities from one SQL snapshot.
+    /// Older bodies are not materialized in Rust; their identities let context packing
+    /// distinguish real omissions from failed or unpublished turns.
+    pub(crate) fn history_window_before(
+        db: &Database,
+        session_id: i64,
+        before_seq: i64,
+        limit: u32,
+    ) -> AppResult<(Vec<NormalSessionMessage>, Vec<i64>)> {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT m.seq, m.role, m.content, m.content_parts, m.tool_calls, m.created_at, m.turn_id,
-                        m.context_scope_json, m.display_mentions_json, m.citation_map_json,
-                        m.evidence_refs_json, NULL, NULL, 0
+                "WITH eligible AS (
+                 SELECT m.*, ROW_NUMBER() OVER (ORDER BY m.seq DESC) AS position
                  FROM session_messages m
                  WHERE m.session_id = ?1 AND m.seq < ?2 AND m.role IN ('user', 'assistant')
                    AND (m.turn_id IS NULL
@@ -309,14 +321,26 @@ impl NormalSessionRepository {
                                                           WHERE paired.session_id = m.session_id
                                                             AND paired.turn_id = m.turn_id
                                                             AND paired.role = 'assistant')))))
-                 ORDER BY m.seq DESC
-                 LIMIT ?3",
+                 )
+                 SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
+                        context_scope_json, display_mentions_json, citation_map_json,
+                        evidence_refs_json, NULL, NULL, 0, 1
+                 FROM eligible WHERE position <= ?3
+                 UNION ALL
+                 SELECT seq, NULL, NULL, NULL, NULL, NULL, NULL,
+                        NULL, NULL, NULL, NULL, NULL, NULL, 0, 0
+                 FROM eligible WHERE position > ?3
+                 ORDER BY seq DESC",
             )?;
             let rows =
                 statement.query_map(rusqlite::params![session_id, before_seq, limit], |row| {
+                    let seq: i64 = row.get(0)?;
+                    if !row.get::<_, bool>(14)? {
+                        return Ok((seq, None));
+                    }
                     let role: String = row.get(1)?;
                     let content = visible_session_message_content(&role, row.get(2)?);
-                    Ok(NormalSessionMessage {
+                    Ok((seq, Some(NormalSessionMessage {
                         seq: row.get(0)?,
                         role,
                         content,
@@ -343,11 +367,20 @@ impl NormalSessionRepository {
                             row.get::<_, Option<String>>(9)?.as_deref(),
                         ),
                         evidence_refs: parse_optional_evidence_refs(row.get(10)?),
-                    })
+                    })))
                 })?;
-            let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
+            let mut messages = Vec::new();
+            let mut eligible_sequences = Vec::new();
+            for row in rows {
+                let (seq, message) = row?;
+                eligible_sequences.push(seq);
+                if let Some(message) = message {
+                    messages.push(message);
+                }
+            }
             messages.reverse();
-            Ok(messages)
+            eligible_sequences.reverse();
+            Ok((messages, eligible_sequences))
         })
     }
     /// Rename a conversation by opaque key.

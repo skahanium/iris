@@ -47,20 +47,18 @@ impl NativeSearchModelAdapter for MinimaxM3NativeSearchAdapter {
         })
     }
 
+    fn constrain_output(&self, body: &mut Value, max_tokens: u32) {
+        body["max_output_tokens"] = json!(max_tokens);
+    }
+
     fn parse_response(&self, body: &Value) -> NativeSearchParse {
         if body.get("error").is_some_and(|error| !error.is_null()) {
             return minimax_protocol_insufficient();
         }
-        let parse = parse_native_search_payload(NativeSearchPayloadFamily::OpenAiShaped, body);
-        if parse.has_retrieval_credentials {
-            return parse;
+        if body.get("status").and_then(Value::as_str) != Some("completed") {
+            return minimax_protocol_insufficient();
         }
-        if let Some(status) = body.get("status").and_then(Value::as_str) {
-            if status != "completed" {
-                return minimax_protocol_insufficient();
-            }
-        }
-        parse
+        parse_native_search_payload(NativeSearchPayloadFamily::OpenAiShaped, body)
     }
 
     fn retry_text_only_once(&self) -> bool {

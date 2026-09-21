@@ -29,10 +29,18 @@
 
 **本波执行事实（2026-09-21 第二波，不关闭）**
 
-- **已落地（本波接线，不造轮子）**：独立纯函数 `check_format_preservation`／`is_format_preservation_request`／`blocked_format_write_result`（`content_preservation.rs`）。生产入口在单工具确认与变更集冻结前拦截；错误码 `format_preservation_unproven`。T25 `normalize_markdown` 仅作空白对照，**不是** N04 证明。
-- **本波做**：格式整理候选写入确认前核对正文信息、块顺序、链接目标；仅允许 CRLF／行尾空白／围栏外空行折叠、列表标记与序号、ATX `#` 个数。未证明则把缺口回给模型，不冻结确认、不自动写入。机械 `V03` 与生产入口 `V04` 绑 `d05_content_preservation_tests.rs`（含非空插入、缺字段、全角空格 unknown、链接标签可变）。不把 D05／Q14／N04／C23／C24 标 closed 或 `verification.passed`。
+- **已落地（本波接线，不造轮子）**：独立纯函数 `check_format_preservation`／`is_format_preservation_request`（`content_preservation.rs`；旧选区辅助门仅供测试对照）。生产入口在单工具确认与变更集冻结前拦截；错误码 `format_preservation_unproven`。T25 `normalize_markdown` 仅作空白对照，**不是** N04 证明。
+- **本波做**：格式整理候选写入确认前核对正文信息、块顺序、链接目标；仅允许 CRLF／行尾空白／围栏外空行折叠、列表标记与序号、ATX `#` 个数。未证明则把缺口回给模型，不冻结确认、不自动写入。机械 `V03` 与生产入口 `V04` 绑 `d05_content_preservation_tests.rs`（含非空插入、缺字段、全角空格 unknown、链接目标、锚点与显示文字均保持）。不把 D05／Q14／N04／C23／C24 标 closed 或 `verification.passed`。
 - **本波明确不做**：C24 独立候选类型／UI；K15 `completed|partial|blocked` 新持久字段；把 T25 升格为内容保持；完整 CommonMark AST；N23、D06、HR-7 live、Gemini 适配器、V05。不回头做 D04／G02／G03／Q17。
 - **不能当作关闭证据**：核对器通过空白样例不能推出 N04／D05 已验收；润色／翻译不走本门。
+
+**修复复核（2026-09-22，不变更验收登记）**
+
+- 格式保持门按「参数／权限 → 整文 hash → 虚拟整文候选 → 整文保持 → 冻结」执行，局部数字、链接显示文字、锚点与代码正文不能被结构归一化掩盖。中英文格式意图与 Intake 复用判据，显式核实／时效需求仍优先。
+- 变更集拒绝使用带类型的 `Frozen`／`Rejected` 结果；每个原调用收到对应失败反馈，全批在冻结前拒绝，允许有界纠偏且不计实际工具执行。资源不足交付限制说明。
+- 启动恢复和真实 `RunIntake::control(Resume)` 后 worker 共用计划／授权／Vault／检查点／磁盘回执边界；当前前缀 hash 装配后只执行后缀，保留前缀结果，不改历史计划 hash。目标按集合比较、执行仍按冻结顺序。
+- 选区仅精确映射已执行编辑；范围重叠歧义或无映射依据时不猜测。写后整文 `read_note` 复核仅限已显式授权整文的目标，否则 Host 保留真实写入报告并说明未复核。
+- 定向回归入口为 `d05_content_preservation_tests.rs` 的 `review_regression_b_*` 与 `src-tauri/src/commands/assistant_commands_tests.rs` 的 `review_regression_c_*`。这些是无实网的生产组合与机械回归，不替代桌面实测、V05、语义验收或本工作包关闭证据。
 
 ## 二、改动范围
 

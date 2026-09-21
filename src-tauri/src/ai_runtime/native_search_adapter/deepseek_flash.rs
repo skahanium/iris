@@ -73,6 +73,10 @@ impl NativeSearchModelAdapter for DeepSeekFlashNativeSearchAdapter {
         })
     }
 
+    fn constrain_output(&self, body: &mut Value, max_tokens: u32) {
+        body["max_tokens"] = json!(max_tokens);
+    }
+
     fn parse_response(&self, body: &Value) -> NativeSearchParse {
         if body.get("error").is_some_and(|error| !error.is_null()) {
             return deepseek_protocol_insufficient();

@@ -151,9 +151,40 @@ fn later_success_cleared_a_failure(events: &[BoundaryEventRecord]) -> bool {
     let Some(last_failure) = events.iter().rposition(is_direct_failure_event) else {
         return false;
     };
-    events[last_failure.saturating_add(1)..]
-        .iter()
-        .any(is_successful_result_event)
+    let failure = &events[last_failure];
+    if failure.call_id.trim().is_empty()
+        || failure.call_id == "loop"
+        || payload_tool(failure) == Some(failure.call_id.as_str())
+    {
+        // Legacy tool-name correlation cannot distinguish independent queries.
+        return false;
+    }
+    let same_scope = |event: &BoundaryEventRecord| {
+        event.run_id == failure.run_id
+            && event.input_revision == failure.input_revision
+            && event.parent_run_id == failure.parent_run_id
+            && event.child_run_id == failure.child_run_id
+    };
+    let mut related_calls = std::collections::BTreeSet::from([failure.call_id.as_str()]);
+    for event in &events[last_failure.saturating_add(1)..] {
+        if !same_scope(event) {
+            continue;
+        }
+        let explicitly_related = event
+            .payload
+            .get("recoveryOfCallId")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|call_id| related_calls.contains(call_id));
+        let same_call = related_calls.contains(event.call_id.as_str())
+            && payload_tool(event) == payload_tool(failure);
+        if explicitly_related {
+            related_calls.insert(event.call_id.as_str());
+        }
+        if is_successful_result_event(event) && (same_call || explicitly_related) {
+            return true;
+        }
+    }
+    false
 }
 
 fn payload_tool(event: &BoundaryEventRecord) -> Option<&str> {
@@ -778,6 +809,80 @@ pub(crate) fn diagnose_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_regression_ef_unrelated_success_does_not_clear_failure() {
+        let failure = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"result","tool":"web_fetch","success":false}),
+        );
+        let mut success = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"result","tool":"system_time_now","success":true}),
+        );
+        success.call_id = "unrelated-call".into();
+        let report = interpret_events("run-1", &[failure, success], false);
+        assert!(!report.headline.contains("已恢复"));
+    }
+
+    #[test]
+    fn review_regression_ef_same_tool_new_query_requires_explicit_recovery_link() {
+        let failure = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"result","tool":"web_search","success":false}),
+        );
+        let mut success = record(
+            BoundaryEventKind::LoopEvent,
+            BoundaryLayer::Generated,
+            RecordCompleteness::Complete,
+            serde_json::json!({"event":"result","tool":"web_search","success":true}),
+        );
+        success.call_id = "different-query-call".into();
+        assert!(
+            !interpret_events("run-1", &[failure.clone(), success.clone()], false)
+                .headline
+                .contains("已恢复")
+        );
+        success.payload["recoveryOfCallId"] = serde_json::json!(failure.call_id);
+        assert!(interpret_events("run-1", &[failure, success], false)
+            .headline
+            .contains("已恢复"));
+    }
+
+    #[test]
+    fn review_regression_ef_explicit_recovery_survives_audit_persistence() {
+        let db = Database::open_in_memory().unwrap();
+        let (session, run_id) = accept_run(&db, "review-recovery-persistence");
+        let correlation = BoundaryCorrelation {
+            run_id: run_id.clone(),
+            input_revision: "revision-1".into(),
+            parent_run_id: None,
+            child_run_id: None,
+            model_turn: 1,
+            call_id: "search-old".into(),
+            attempt_id: "attempt-1".into(),
+            tool_surface_version: "surface-1".into(),
+            protocol_adapter: "tool_loop".into(),
+        };
+        record_loop_event(&db, &correlation, &serde_json::json!({"event":"result","tool":"web_search","callId":"search-old","success":false})).unwrap();
+        let next = BoundaryCorrelation {
+            call_id: "search-new".into(),
+            ..correlation
+        };
+        record_loop_event(&db, &next, &serde_json::json!({"event":"result","tool":"web_search","callId":"search-new","recoveryOfCallId":"search-old","success":true})).unwrap();
+        let events = query_by_run(&db, &run_id).unwrap();
+        assert_eq!(events[1].payload["recoveryOfCallId"], "search-old");
+        assert!(diagnose_run(&db, &session, &run_id)
+            .unwrap()
+            .headline
+            .contains("已恢复"));
+    }
     use crate::ai_runtime::agent_run_repository::{AcceptRunInput, AgentRunRepository};
     use crate::ai_runtime::boundary_events::{
         persist_failed, record_event, record_loop_event, BoundaryCorrelation, BoundaryEventKind,

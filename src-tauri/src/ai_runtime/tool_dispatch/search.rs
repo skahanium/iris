@@ -107,11 +107,23 @@ pub(super) async fn regulation_lookup(
     let article = args["article"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing article"))?;
+    let article = crate::knowledge::regulations::normalize_regulation_label(article, '条')
+        .ok_or_else(|| AppError::msg("invalid article"))?;
     let paragraph = args["paragraph"]
         .as_str()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let query = match paragraph {
+    let paragraph = paragraph
+        .map(|value| {
+            crate::knowledge::regulations::normalize_regulation_label(value, '款')
+                .ok_or_else(|| AppError::msg("invalid paragraph"))
+        })
+        .transpose()?;
+    let regulation_name = regulation_name
+        .trim()
+        .trim_start_matches('《')
+        .trim_end_matches('》');
+    let query = match paragraph.as_deref() {
         Some(paragraph) => format!("《{regulation_name}》{article}{paragraph}"),
         None => format!("《{regulation_name}》{article}"),
     };
@@ -142,9 +154,6 @@ pub(super) async fn regulation_lookup(
                 .is_ok()
             })
         });
-        if let Some(paragraph) = paragraph {
-            packets.retain(|packet| packet_covers_requested_paragraph(packet, paragraph));
-        }
         Ok(packets)
     })?;
     Ok(serde_json::json!({
@@ -153,21 +162,47 @@ pub(super) async fn regulation_lookup(
     }))
 }
 
-fn packet_covers_requested_paragraph(
-    packet: &crate::ai_runtime::ContextPacket,
-    paragraph: &str,
-) -> bool {
-    packet.citation_label.contains(paragraph)
-        || packet
-            .heading_path
-            .as_deref()
-            .is_some_and(|path| path.contains(paragraph))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai_runtime::retrieval_broker::{RetrievalLayerDiagnostic, RetrievalLayerStatus};
+
+    #[tokio::test]
+    async fn review_regression_ef_index_to_handler_normalizes_paragraph_and_keeps_policy() {
+        use crate::ai_runtime::policy_decision_engine::{
+            CapabilityDecision, DocumentCapability, DocumentPolicy, PolicyDecisionEngine,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.db.with_conn(|conn| {
+            conn.execute("INSERT INTO files(path,title,content_hash,created_at,updated_at) VALUES('law.md','条例','hash','now','now')", [])?;
+            let file_id = conn.last_insert_rowid();
+            let parsed = crate::knowledge::regulations::parse_regulation_structure("law.md", "《条例》\n第六条 内容\n一款 第一段\n二款 第二段");
+            assert_eq!(parsed.clauses.len(), 2);
+            crate::knowledge::regulations::index_regulation_clauses(conn, file_id, &parsed.clauses)?;
+            Ok(())
+        }).unwrap();
+        let scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+        let policy = PolicyDecisionEngine::new(DocumentPolicy::allow_all());
+        let args =
+            serde_json::json!({"regulation_name":"条例","article":"第六条","paragraph":"第一款"});
+        let mut ctx = ToolDispatchContext::for_tests(&scope);
+        ctx.document_policy = Some(&policy);
+        assert_eq!(
+            regulation_lookup(&state, &args, &ctx).await.unwrap()["found"],
+            true
+        );
+        let mut denied_policy = PolicyDecisionEngine::new(DocumentPolicy::allow_all());
+        denied_policy.set_document_policy(
+            "law.md",
+            DocumentPolicy::from_rules([(DocumentCapability::Read, CapabilityDecision::Deny)]),
+        );
+        ctx.document_policy = Some(&denied_policy);
+        assert_eq!(
+            regulation_lookup(&state, &args, &ctx).await.unwrap()["found"],
+            false
+        );
+    }
 
     fn diagnostic(
         layer: &str,
@@ -229,34 +264,5 @@ mod tests {
             .collect();
         let status = retrieval_status(&many);
         assert_eq!(status["layers"].as_array().expect("layers").len(), 8);
-    }
-
-    fn article_packet() -> crate::ai_runtime::ContextPacket {
-        crate::ai_runtime::ContextPacket {
-            id: "exact-1".into(),
-            source_type: crate::ai_runtime::SourceType::Regulation,
-            source_path: Some("regs/a.md".into()),
-            title: "条例".into(),
-            heading_path: Some("《纪律处分条例》 > 第六条".into()),
-            source_span: None,
-            content_hash: String::new(),
-            excerpt: "整条正文".into(),
-            retrieval_reason: "exact_regulation_lookup".into(),
-            score: 0.99,
-            trust_level: crate::ai_runtime::TrustLevel::UserNote,
-            citation_label: "《纪律处分条例》 第六条".into(),
-            stale: false,
-            web: None,
-            corpus: None,
-        }
-    }
-
-    #[test]
-    fn requested_paragraph_does_not_accept_the_whole_article() {
-        let article = article_packet();
-        assert!(!packet_covers_requested_paragraph(&article, "第一款"));
-        let mut matching = article;
-        matching.citation_label = "《纪律处分条例》 第六条第一款".into();
-        assert!(packet_covers_requested_paragraph(&matching, "第一款"));
     }
 }

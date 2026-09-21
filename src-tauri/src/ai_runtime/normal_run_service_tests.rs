@@ -1397,6 +1397,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
     .expect("local LLM boundary");
     let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
     let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        Some(&state.db),
         &gateway,
         ProviderConfig {
             name: "headless-contract-model".into(),
@@ -1528,6 +1529,7 @@ async fn production_runtime_time_uses_frozen_surface_and_recovers() {
     .expect("local LLM boundary");
     let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
     let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        Some(&state.db),
         &gateway,
         ProviderConfig {
             name: "headless-runtime-model".into(),

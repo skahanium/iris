@@ -2182,3 +2182,6 @@ fn non_durable_active_run_cannot_persist_checkpoint() {
         "agent_run_checkpoint_not_durable"
     );
 }
+
+#[path = "agent_run_repository/budget_tests.rs"]
+mod budget_tests;

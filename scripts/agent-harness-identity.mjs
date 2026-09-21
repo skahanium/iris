@@ -38,10 +38,13 @@ export const normalizeContainerId = (id) =>
  * 新增实体必须同步更新登记表的说明。
  */
 export const IDENTITY_ALIASES = {
+  "dsh-agent": "dsh-agent",
   "dsh agent": "dsh-agent",
   "deepseek harness": "dsh-agent",
   "cursor grok 4.6": "cursor-grok-4.6",
+  "cursor-grok-4.6": "cursor-grok-4.6",
   skahanium: "skahanium",
+  user: "user",
 };
 
 /**
@@ -53,8 +56,56 @@ export const IDENTITY_ALIASES = {
 export function reviewerIdentity(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
-  const leading = raw.split(/[（(]/, 1)[0].trim().toLowerCase();
+  const leading = raw
+    .split(/[（(]/, 1)[0]
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:other:\s*)+/, "")
+    .trim();
+  if (
+    /^(?:unattributed|unknown|pending|tbd|待复核|待独立复核|待重验|未署名|未知)$/.test(
+      leading,
+    )
+  )
+    return null;
   if (IDENTITY_ALIASES[leading]) return IDENTITY_ALIASES[leading];
   if (leading.startsWith("用户")) return "user";
-  return leading ? `other:${leading}` : null;
+  return leading
+    ? leading.startsWith("other:")
+      ? leading
+      : `other:${leading}`
+    : null;
+}
+
+/** A completed independent review; current object bindings are checked separately. */
+export function isIndependentReview(review, change) {
+  const author = reviewerIdentity(review?.author);
+  const changedBy = reviewerIdentity(change?.author);
+  return Boolean(
+    author &&
+    changedBy &&
+    author !== changedBy &&
+    author !== reviewerIdentity(review.reviewer) &&
+    review.change === change.id &&
+    ["no-impact", "synchronized"].includes(review.conclusion) &&
+    String(review.reason ?? "").trim().length >= 4 &&
+    String(review.evidence ?? "").trim() &&
+    review.objects?.some((object) =>
+      change.objects?.some((changed) => changed.id === object.id),
+    ),
+  );
+}
+
+/** All bindings, including supplementary reviews, use the same currentness gate. */
+export function reviewCoversCurrentObject(review, change, id, fingerprint) {
+  return (
+    isIndependentReview(review, change) &&
+    review.objects.some(
+      (binding) =>
+        binding.id === id &&
+        !binding.stale &&
+        fingerprint &&
+        binding.fingerprint === fingerprint,
+    )
+  );
 }

@@ -14,15 +14,36 @@ use crate::knowledge::{content_hash, EMBEDDING_DIM, EMBEDDING_MODEL, EXTRACTOR_V
 // ─── Regex Patterns ──────────────────────────────────────
 
 static RE_ARTICLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|\n)\s*第[一二三四五六七八九十百千0-9]+条\b").expect("article regex")
+    Regex::new(r"(?:^|\n)\s*第\s*[一二三四五六七八九十百千万0-9]+\s*条\b").expect("article regex")
 });
 
 static RE_PARAGRAPH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|\n)\s*[（(]?[一二三四五六七八九十0-9]+[）)]?\s*款?").expect("paragraph regex")
+    Regex::new(r"(?:^|\n)\s*(?:(?:第\s*)?[一二三四五六七八九十百千万0-9]+\s*款|[（(][一二三四五六七八九十百千万0-9]+[）)]\s*款?)").expect("paragraph regex")
 });
 
 static RE_REGULATION_NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"《([^》]+)》").expect("regulation name regex"));
+
+/// Canonical article/paragraph label shared by indexing and exact lookup.
+pub(crate) fn normalize_regulation_label(value: &str, unit: char) -> Option<String> {
+    if !matches!(unit, '条' | '款') {
+        return None;
+    }
+    let compact = value
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let ordinal = compact.strip_prefix('第').unwrap_or(&compact);
+    let ordinal = ordinal.strip_suffix(unit).unwrap_or(ordinal);
+    let ordinal = ordinal
+        .trim_start_matches(['（', '('])
+        .trim_end_matches(['）', ')']);
+    (!ordinal.is_empty()
+        && ordinal
+            .chars()
+            .all(|ch| "一二三四五六七八九十百千万0123456789".contains(ch)))
+    .then(|| format!("第{ordinal}{unit}"))
+}
 
 // ─── Data Types ──────────────────────────────────────────
 
@@ -71,7 +92,8 @@ pub fn parse_regulation_structure(file_path: &str, raw_text: &str) -> ParseResul
         };
 
         let article_text = &raw_text[article_start..article_end];
-        let article_num = article_match.as_str().trim().to_string();
+        let article_num = normalize_regulation_label(article_match.as_str(), '条')
+            .expect("article regex only accepts ordinal labels");
 
         // Detect chapter/section from preceding text
         let preceding = if article_start > 0 {
@@ -89,8 +111,8 @@ pub fn parse_regulation_structure(file_path: &str, raw_text: &str) -> ParseResul
         // Split article into paragraphs if present
         let para_splits: Vec<_> = RE_PARAGRAPH.find_iter(article_text).collect();
 
-        if para_splits.len() <= 1 {
-            // Single paragraph — whole article is one clause
+        if para_splits.is_empty() {
+            // An article without explicit paragraph labels remains one clause.
             let content = article_text.trim().to_string();
             clauses.push(RegulationClause {
                 regulation_name: regulation_name.clone(),
@@ -104,7 +126,7 @@ pub fn parse_regulation_structure(file_path: &str, raw_text: &str) -> ParseResul
                 source_end: article_end,
             });
         } else {
-            // Multi-paragraph article — create a clause per paragraph
+            // Preserve every explicit label, including an article with one paragraph.
             for (j, para_match) in para_splits.iter().enumerate() {
                 let para_start = article_start + para_match.start();
                 let para_end = if j + 1 < para_splits.len() {
@@ -113,7 +135,8 @@ pub fn parse_regulation_structure(file_path: &str, raw_text: &str) -> ParseResul
                     article_end
                 };
                 let para_text = raw_text[para_start..para_end].trim().to_string();
-                let para_num = para_match.as_str().trim().to_string();
+                let para_num = normalize_regulation_label(para_match.as_str(), '款')
+                    .expect("paragraph regex only accepts ordinal labels");
 
                 clauses.push(RegulationClause {
                     regulation_name: regulation_name.clone(),
@@ -202,8 +225,12 @@ pub fn index_regulation_clauses(
                 None::<String>,
                 clause.chapter,
                 clause.section,
-                clause.article,
-                clause.paragraph,
+                normalize_regulation_label(&clause.article, '条')
+                    .unwrap_or_else(|| clause.article.clone()),
+                clause
+                    .paragraph
+                    .as_deref()
+                    .and_then(|value| normalize_regulation_label(value, '款')),
                 clause.content,
                 keywords,
                 clause.source_start as i64,
@@ -380,5 +407,12 @@ mod tests {
         let kw = extract_keywords_heuristic(content);
         assert!(kw.contains("中国共产党章程"));
         assert!(kw.contains("问责条例"));
+    }
+    #[test]
+    fn review_regression_ef_single_explicit_paragraph_keeps_its_label() {
+        let parsed =
+            parse_regulation_structure("law.md", "《存款条例》\n第六条 规则\n一款 唯一段落");
+        assert_eq!(parsed.clauses.len(), 1);
+        assert_eq!(parsed.clauses[0].paragraph.as_deref(), Some("第一款"));
     }
 }

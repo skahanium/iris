@@ -6,6 +6,7 @@
 //! when an authorized Web operation fails without usable evidence. Runs
 //! without `web.search` never enable either tool.
 
+mod confirmed_changes;
 mod web_reading;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -25,10 +26,12 @@ use crate::ai_runtime::agent_run_repository::{
     DurableApplyCheckpointStage,
 };
 use crate::ai_runtime::agent_tool_loop::{
-    AgentToolLoop, RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
-    MAX_WEB_TOOL_RESULT_CHARS,
+    AgentToolLoop, ChangeSetRequestOutcome, RequiredWebBootstrapObservation, ToolLoopExecutor,
+    ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
 };
-use crate::ai_runtime::content_preservation::blocked_format_write_result;
+use crate::ai_runtime::content_preservation::{
+    check_format_preservation, is_format_preservation_request, unproven_tool_result,
+};
 use crate::ai_runtime::frozen_change_plan::{
     classify_operation_disk_receipt, recovered_write_receipt_result, FrozenWriteReceipt,
 };
@@ -496,6 +499,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         state_version: u64,
         user_authored_bootstrap: bool,
         persisted_tool_call_id: &str,
+        step: u32,
     ) -> AppResult<ToolCallResult> {
         let discovery_only = tool_name == WEB_SEARCH_TOOL_NAME;
         let query = if discovery_only {
@@ -591,6 +595,10 @@ impl<'a> NormalRunToolExecutor<'a> {
         // A single Web dispatch is bounded, while cross-call exploration is
         // governed exclusively by the generic network category budget.
         let provider_snapshots = self.ordered_web_provider_snapshots(tool_name);
+        let call_started = Instant::now();
+        let search_deadline = self.web_search_call_deadline();
+        let action_deadline = tokio::time::Instant::now() + search_deadline;
+        let web_revocation_epoch = crate::ai_runtime::model_gateway::web_revocation_epoch();
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.clone(),
             urls: fetch_urls,
@@ -601,24 +609,24 @@ impl<'a> NormalRunToolExecutor<'a> {
             provider_selection_frozen: true,
             search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
                 run_id: self.accepted.run_id.clone(),
-                input_revision: crate::ai_runtime::dual_path_search::input_revision_from_query(
-                    &query,
+                input_revision: self.accepted.turn_id.clone(),
+                child_run_id: self.child_event_scope.clone(),
+                model_turn: crate::ai_runtime::model_turn_ledger::latest_model_attempt(
+                    &crate::ai_runtime::model_turn_ledger::current_scope(&self.accepted.run_id),
+                )
+                .unwrap_or(0),
+                tool_surface_version: crate::ai_runtime::boundary_events::tool_surface_version(
+                    self.allowed_tool_names.iter(),
                 ),
-                action_id: if persisted_tool_call_id.trim().is_empty() {
-                    if discovery_only {
-                        "web_search".into()
-                    } else {
-                        "web_fetch".into()
-                    }
-                } else {
-                    persisted_tool_call_id.to_string()
-                },
+                action_id: self
+                    .buffered_child_tool_call_id(persisted_tool_call_id, step)
+                    .unwrap_or_else(|| persisted_tool_call_id.to_owned()),
                 attempt: 1,
             },
             native_endpoint: self.native_search_endpoint.clone(),
+            search_deadline: Some(action_deadline),
+            web_revocation_epoch,
         };
-        let call_started = Instant::now();
-        let search_deadline = self.web_search_call_deadline();
         let mut attempts_for_search = 0_u32;
         let output = if discovery_only || max_fetches > 0 {
             loop {
@@ -642,27 +650,23 @@ impl<'a> NormalRunToolExecutor<'a> {
                     web_result_limit(discovery_only, remaining, attempts_for_search);
                 attempt_input.max_fetches = max_fetches;
                 attempt_input.search_identity.attempt = attempts_for_search;
-                let failure = match tokio::time::timeout(
-                remaining_time,
-                crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
+                // Each transport owns the same absolute action deadline. An outer
+                // timeout would drop already completed evidence from the other route.
+                let failure = match crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
                     &self.state.db,
                     attempt_input,
-                ),
-            )
-            .await
-            {
-                Ok(Ok(output)) => {
-                    if output.items.iter().any(|item| item.conflict_group.is_some()) {
-                        WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
-                    } else if web_output_has_usable_result(&output, discovery_only) {
-                        break output;
-                    } else {
-                        classify_web_evidence_output_failure(&output)
+                ).await {
+                    Ok(output) => {
+                        if output.items.iter().any(|item| item.conflict_group.is_some()) {
+                            WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+                        } else if web_output_has_usable_result(&output, discovery_only) {
+                            break output;
+                        } else {
+                            classify_web_evidence_output_failure(&output)
+                        }
                     }
-                }
-                Ok(Err(error)) => classify_web_failure(&error),
-                Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
-            };
+                    Err(error) => classify_web_failure(&error),
+                };
                 let adaptive_oversize_retry =
                     failure.reason == WebEvidenceFailureReason::ProviderOutputTooLarge;
                 let retry_is_eligible = attempts_for_search < 2
@@ -833,251 +837,6 @@ impl<'a> NormalRunToolExecutor<'a> {
         self.sink.emit(&event)
     }
 
-    #[rustfmt::skip]
-    fn format_gate(&self, name: &str, args: &serde_json::Value) -> Option<ToolCallResult> { blocked_format_write_result(&self.context.user_message, name, args) }
-
-    fn freeze_change_plan(
-        &self,
-        call: &crate::ai_runtime::ToolCall,
-        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
-        args: &serde_json::Value,
-    ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangePlan> {
-        let operation = self.freeze_change_operation(call, entry, args, &mut BTreeMap::new())?;
-        let vault_id = self
-            .state
-            .vault_path()
-            .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
-            .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
-        crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
-            crate::ai_runtime::frozen_change_plan::FrozenChangeSetInput {
-                confirmation_id: uuid::Uuid::new_v4().to_string(),
-                run_id: self.accepted.run_id.clone(),
-                session_id: self.context.session_id,
-                request_id: self.accepted.run_id.clone(),
-                vault_id,
-                operations: vec![operation],
-                expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
-                    + CHANGE_CONFIRMATION_TTL_MS,
-            },
-        )
-    }
-
-    fn freeze_change_operation(
-        &self,
-        call: &crate::ai_runtime::ToolCall,
-        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
-        args: &serde_json::Value,
-        virtual_documents: &mut BTreeMap<String, String>,
-    ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput> {
-        let relative_paths = frozen_relative_paths(entry.name, args, self.context);
-        let mut base_content_hashes =
-            frozen_base_content_hashes(args, self.context, &relative_paths);
-        let expected_post_content_hashes = expected_post_content_hashes(
-            self.state.as_ref(),
-            entry.name,
-            args,
-            &relative_paths,
-            &mut base_content_hashes,
-            virtual_documents,
-        )?;
-        Ok(
-            crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput {
-                tool_call_id: call.id.clone(),
-                relative_paths,
-                operation: entry.name.to_string(),
-                base_content_hashes,
-                expected_post_content_hashes,
-                change: args.clone(),
-                rollback_summary: rollback_summary(entry.name),
-            },
-        )
-    }
-
-    /// Execute each operation from one consumed change set in its frozen order.
-    /// A failed or drifted operation stops the suffix; completed prefixes are
-    /// preserved and reported to the caller rather than being silently retried.
-    pub(crate) async fn execute_confirmed_frozen_change_set(
-        &self,
-        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
-    ) -> AppResult<Vec<ToolCallResult>> {
-        if plan.run_id() != self.accepted.run_id || plan.session_id() != self.context.session_id {
-            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
-        }
-        plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
-        plan.assert_live_vault(&self.state.vault_path()?)?;
-        AgentRunRepository::validate_durable_apply_checkpoint_binding(
-            &self.state.db,
-            &self.accepted.run_id,
-            plan,
-        )?;
-        let snapshot = AgentRunRepository::get_for_session(
-            &self.state.db,
-            &self.accepted.session.session_key,
-            &self.accepted.run_id,
-        )?
-        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
-        if snapshot.run.state != crate::ai_runtime::run_contract::RunState::Running {
-            return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
-        }
-        let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(
-            &self.state.db,
-            &self.accepted.run_id,
-        )?
-        .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
-        let start = checkpoint.next_operation_index();
-        let mut checkpoint_stage = checkpoint.stage();
-        let mut results = Vec::new();
-        for (index, operation) in plan.operations().iter().enumerate().skip(start) {
-            let entry = catalog_find(operation.operation())
-                .filter(|entry| entry.requires_confirmation
-                    && entry.implementation == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
-            if frozen_relative_paths(entry.name, operation.change(), self.context)
-                != operation.relative_paths()
-            {
-                return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
-            }
-            let gate = ToolExecutionGate {
-                run_id: &self.accepted.run_id,
-                session_id: Some(self.context.session_id),
-                run_step: u32::try_from(index + 1).unwrap_or(u32::MAX),
-                entry,
-                args: operation.change(),
-                authorized_capabilities: &self.authorized_capabilities,
-                skill_id: None,
-                subagent_depth: 0,
-            };
-            let gate_outcome = evaluate_tool_execution(&self.state.db, gate)?;
-            let result = if let Some(result) = gate_outcome.tool_result {
-                result
-            } else if checkpoint_stage == DurableApplyCheckpointStage::Dispatching {
-                let receipt = self
-                    .state
-                    .vault_path()
-                    .map(|vault| classify_operation_disk_receipt(&vault, operation))
-                    .unwrap_or(FrozenWriteReceipt::Unknown);
-                match receipt {
-                    FrozenWriteReceipt::AlreadyApplied => {
-                        self.append_durable_stage(
-                            plan,
-                            DurableApplyCheckpointStage::Applied,
-                            index + 1,
-                            snapshot.run.state_version,
-                        )?;
-                        checkpoint_stage = DurableApplyCheckpointStage::Applied;
-                        recovered_write_receipt_result(entry.name, operation)
-                    }
-                    FrozenWriteReceipt::NotYetApplied => {
-                        self.dispatch_frozen_and_checkpoint(
-                            plan,
-                            operation,
-                            entry.name,
-                            index,
-                            snapshot.run.state_version,
-                            &mut checkpoint_stage,
-                        )
-                        .await?
-                    }
-                    FrozenWriteReceipt::Unknown => {
-                        failed_tool_call(entry.name, "frozen_change_write_receipt_unknown")
-                    }
-                }
-            } else if revalidate_frozen_hash_pairs(
-                self.state.as_ref(),
-                operation.base_content_hashes(),
-            )
-            .is_err()
-            {
-                failed_tool_call(entry.name, "frozen_change_base_hash_drift")
-            } else {
-                self.append_durable_stage(
-                    plan,
-                    DurableApplyCheckpointStage::Dispatching,
-                    index,
-                    snapshot.run.state_version,
-                )?;
-                checkpoint_stage = DurableApplyCheckpointStage::Dispatching;
-                self.dispatch_frozen_and_checkpoint(
-                    plan,
-                    operation,
-                    entry.name,
-                    index,
-                    snapshot.run.state_version,
-                    &mut checkpoint_stage,
-                )
-                .await?
-            };
-            audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
-            append_model_tool_completed(
-                &self.state.db,
-                self.accepted,
-                snapshot.run.state_version,
-                self.sink,
-                entry.name,
-                operation.tool_call_id(),
-                if result.success {
-                    "已执行已确认的变更"
-                } else {
-                    "已确认的变更未执行"
-                },
-                result.duration_ms,
-                result.success,
-            )?;
-            let succeeded = result.success;
-            results.push(result);
-            if !succeeded {
-                break;
-            }
-        }
-        Ok(crate::ai_runtime::frozen_change_plan::merge_confirmed_results(plan, start, &results))
-    }
-
-    fn append_durable_stage(
-        &self,
-        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
-        stage: DurableApplyCheckpointStage,
-        next_operation_index: usize,
-        state_version: u64,
-    ) -> AppResult<()> {
-        AgentRunRepository::append_checkpoint_step(
-            &self.state.db,
-            AppendRunCheckpointInput {
-                run_id: self.accepted.run_id.clone(),
-                state_version,
-                checkpoint: durable_apply_checkpoint(plan, stage, next_operation_index)?,
-            },
-        )
-    }
-
-    async fn dispatch_frozen_and_checkpoint(
-        &self,
-        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
-        operation: &crate::ai_runtime::frozen_change_plan::FrozenChangeOperation,
-        tool_name: &str,
-        index: usize,
-        state_version: u64,
-        checkpoint_stage: &mut DurableApplyCheckpointStage,
-    ) -> AppResult<ToolCallResult> {
-        let result = self
-            .dispatch_non_web_tool(
-                tool_name,
-                operation.change(),
-                Some(plan.relative_paths()),
-                Some(plan.vault_id()),
-            )
-            .await;
-        if result.success {
-            self.append_durable_stage(
-                plan,
-                DurableApplyCheckpointStage::Applied,
-                index + 1,
-                state_version,
-            )?;
-            *checkpoint_stage = DurableApplyCheckpointStage::Applied;
-        }
-        Ok(result)
-    }
-
     async fn dispatch_non_web_tool(
         &self,
         tool_name: &str,
@@ -1104,7 +863,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             app_handle: self.app_handle.clone(),
             attachment_count: 0,
             skill_activation_plan: self.skill_activation_plan.as_ref(),
-            native_search_endpoint: self.native_search_endpoint.clone(),
+            web_action: None,
         };
         dispatch_tool_with_retry(self.state.as_ref(), &dispatch_context, tool_name, args).await
     }
@@ -1293,7 +1052,7 @@ fn local_evidence_input_from_packet(value: &serde_json::Value) -> Option<LocalEv
 /// provider must never be asked for that many raw search bodies in one strict
 /// prefetch. A response that exceeds the host cap gets exactly one smaller
 /// retry; this preserves the cap rather than hiding an unbounded payload.
-fn validate_public_fetch_urls(urls: &[String]) -> AppResult<Vec<String>> {
+pub(crate) fn validate_public_fetch_urls(urls: &[String]) -> AppResult<Vec<String>> {
     urls.iter()
         .map(|url| {
             let normalized = normalize_fetch_url(url);
@@ -1751,7 +1510,15 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             && self.external_snapshot(parsed_name).is_some()
     }
 
-    fn record_tool_loop_diagnostic(&self, event: serde_json::Value) {
+    fn record_tool_loop_diagnostic(&self, mut event: serde_json::Value) {
+        // Provider call IDs are opaque input. Preserve equality without persisting
+        // their raw text, including explicit recovery links carried by audit events.
+        for key in ["callId", "recoveryOfCallId"] {
+            if let Some(call_id) = event.get(key).and_then(serde_json::Value::as_str) {
+                let digest = crate::cas::hash::content_hash_str(call_id);
+                event[key] = serde_json::json!(format!("tool-call:{}", &digest[..24]));
+            }
+        }
         let parent_run_id = crate::ai_runtime::agent_tool_loop::parent_run_id_for_provider_scope(
             &self.accepted.run_id,
         );
@@ -1767,7 +1534,8 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or(0),
             call_id: event
-                .get("tool")
+                .get("callId")
+                .or_else(|| event.get("tool"))
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("loop")
                 .to_string(),
@@ -1932,7 +1700,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     ) -> bool {
         crate::ai_runtime::run_context::history_coverage_is_incomplete(
             Some(memory),
-            &self.context.recent_messages,
+            &self.context.omitted_history_sequences,
         )
     }
 
@@ -2161,11 +1929,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             };
             self.record_tool_loop_diagnostic(
                 serde_json::json!({"event":"dispatch", "tool":entry.name,
+                "callId":persisted_tool_call_id,
                 "host":call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX)}),
             );
             let mut result = if let Some(result) = gate_outcome.tool_result {
                 result
-            } else if let Some(blocked) = self.format_gate(entry.name, &args) {
+            } else if let Some(blocked) = self.format_gate(entry.name, &args, &BTreeMap::new())? {
                 blocked
             } else if entry.requires_confirmation {
                 self.request_change_confirmation(
@@ -2189,6 +1958,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     state_version,
                     call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX),
                     &persisted_tool_call_id,
+                    step,
                 )
                 .await?
             } else {
@@ -2196,6 +1966,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     .await
             };
             self.record_tool_loop_diagnostic(serde_json::json!({"event":"result", "tool":entry.name,
+                "callId":persisted_tool_call_id,
                 "success":result.success, "reason": self.web_failure().map(|failure| failure.code.as_str()),
                 "resultCount": result.output.get("count").and_then(serde_json::Value::as_u64).unwrap_or(0),
                 "brokerAttempts":self.web_attempt_count()}));
@@ -2257,11 +2028,25 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         run_id: &'a str,
         calls: &'a [crate::ai_runtime::ToolCall],
         first_step: u32,
-    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = AppResult<ChangeSetRequestOutcome>> + Send + 'a>> {
         Box::pin(async move {
             if run_id != self.accepted.run_id || calls.is_empty() {
                 return Err(AppError::msg("mixed_confirmation_batch"));
             }
+            let reject_batch = |blocked: ToolCallResult, rejected_id: &str| {
+                ChangeSetRequestOutcome::Rejected(
+                    calls
+                        .iter()
+                        .map(|candidate| {
+                            let mut result = blocked.clone();
+                            result.tool_name = candidate.function.name.clone();
+                            result.output["rejectedCallId"] = serde_json::json!(rejected_id);
+                            result.output["batchNotDispatched"] = serde_json::json!(true);
+                            (candidate.id.clone(), result)
+                        })
+                        .collect(),
+                )
+            };
             let mut prepared = Vec::with_capacity(calls.len());
             let mut operations = Vec::with_capacity(calls.len());
             let mut virtual_documents = BTreeMap::new();
@@ -2294,21 +2079,34 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 };
                 let outcome = evaluate_tool_execution(&self.state.db, gate)
                     .map_err(|_| AppError::msg("tool_permission_check_failed"))?;
-                if outcome.tool_result.is_some()
-                    || (!entry.requires_confirmation && !outcome.decision.can_execute_now())
-                {
-                    return Err(AppError::msg("mixed_confirmation_batch"));
+                if let Some(blocked) = outcome.tool_result {
+                    return Ok(reject_batch(blocked, &call.id));
                 }
-                if self.format_gate(entry.name, &args).is_some() {
-                    // Fail closed before freeze so no confirmation lifecycle is started.
-                    return Err(AppError::msg("format_preservation_unproven"));
+                match self.format_gate(entry.name, &args, &virtual_documents) {
+                    Ok(Some(blocked)) => return Ok(reject_batch(blocked, &call.id)),
+                    Ok(None) => {}
+                    Err(_) => {
+                        return Ok(reject_batch(
+                            failed_tool_call(entry.name, "change_candidate_invalid"),
+                            &call.id,
+                        ))
+                    }
                 }
-                operations.push(self.freeze_change_operation(
+                let operation = match self.freeze_change_operation(
                     call,
                     entry,
                     &args,
                     &mut virtual_documents,
-                )?);
+                ) {
+                    Ok(operation) => operation,
+                    Err(_) => {
+                        return Ok(reject_batch(
+                            failed_tool_call(entry.name, "change_candidate_invalid"),
+                            &call.id,
+                        ))
+                    }
+                };
+                operations.push(operation);
                 prepared.push((call, entry, args, step));
             }
             let vault_id = self
@@ -2316,7 +2114,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 .vault_path()
                 .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
                 .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
-            let plan = crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
+            let plan = match crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
                 crate::ai_runtime::frozen_change_plan::FrozenChangeSetInput {
                     confirmation_id: uuid::Uuid::new_v4().to_string(),
                     run_id: self.accepted.run_id.clone(),
@@ -2327,7 +2125,15 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
                         + CHANGE_CONFIRMATION_TTL_MS,
                 },
-            )?;
+            ) {
+                Ok(plan) => plan,
+                Err(_) => {
+                    return Ok(reject_batch(
+                        failed_tool_call(&calls[0].function.name, "change_candidate_invalid"),
+                        &calls[0].id,
+                    ))
+                }
+            };
             let mut state_version = None;
             let mut started_lifecycles = Vec::with_capacity(prepared.len());
             for (call, entry, args, step) in prepared {
@@ -2400,7 +2206,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     "Frozen confirmation was persisted but could not be delivered to the event sink"
                 );
             }
-            Ok(())
+            Ok(ChangeSetRequestOutcome::Frozen)
         })
     }
 
@@ -2938,12 +2744,18 @@ impl NormalRunToolExecutor<'_> {
                     completion_tokens: outcome.completion_tokens,
                     total_tokens: outcome.total_tokens,
                 };
-                crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
-                    spec,
-                    outcome.content,
-                    evidence_ids,
-                    budget,
-                )
+                if outcome.model_turns == 0 || outcome.terminal.is_host_authored() {
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error_with_budget(
+                        spec, "agent_run_child_evidence_limited", budget, evidence_ids,
+                    )
+                } else {
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
+                        spec,
+                        outcome.content,
+                        evidence_ids,
+                        budget,
+                    )
+                }
             }
             Err(error) => {
                 let budget = crate::ai_runtime::subagent_coordinator::SubagentBudgetUsage {
@@ -3184,7 +2996,9 @@ fn frozen_base_content_hashes(
         }
     }
     for material in &context.materials {
-        if relative_paths.contains(&material.source_path) {
+        if relative_paths.contains(&material.source_path)
+            && !hashes.iter().any(|(path, _)| path == &material.source_path)
+        {
             hashes.insert((material.source_path.clone(), material.content_hash.clone()));
         }
     }
@@ -3522,6 +3336,44 @@ fn register_model_web_evidence(
     items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
     limit: usize,
 ) -> AppResult<Vec<i64>> {
+    let evidence_ids = register_web_evidence_for_run(db, &accepted.run_id, items, limit)?;
+    debug_assert!(context.session_id > 0);
+    if let Some(sink) = event_sink {
+        for evidence_id in &evidence_ids {
+            let event = AgentRunRepository::append_event(
+                db,
+                AppendRunEventInput {
+                    run_id: accepted.run_id.clone(),
+                    state_version,
+                    event_type: RunEventType::EvidenceRegistered,
+                    payload: RunEventPayload::EvidenceRegistered {
+                        evidence_id: evidence_id.to_string(),
+                    },
+                },
+            )?;
+            sink.emit(&event)?;
+        }
+    }
+    Ok(evidence_ids)
+}
+
+/// Register bounded, fetched bodies against the persisted Run's own user turn.
+/// Both Web dispatch paths share this evidence boundary.
+pub(crate) fn register_web_evidence_for_run(
+    db: &Database,
+    run_id: &str,
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    limit: usize,
+) -> AppResult<Vec<i64>> {
+    let (session_id, message_seq_first): (i64, i64) = db.with_read_conn(|conn| {
+        Ok(conn.query_row(
+            "SELECT r.session_id, m.seq FROM agent_runs r
+             JOIN session_messages m ON m.session_id = r.session_id AND m.turn_id = r.turn_id
+             WHERE r.run_id = ?1 AND m.role = 'user'",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    })?;
     let mut evidence_ids = Vec::new();
     for item in items
         .iter()
@@ -3535,9 +3387,9 @@ fn register_model_web_evidence(
         let registered = AgentEvidenceRepository::register_web(
             db,
             WebEvidenceInput {
-                session_id: context.session_id,
-                run_id: accepted.run_id.clone(),
-                message_seq_first: context.message_seq_first,
+                session_id,
+                run_id: run_id.to_owned(),
+                message_seq_first,
                 material_role: MaterialRole::Lookup,
                 title: item.title,
                 url: item.url,
@@ -3556,20 +3408,6 @@ fn register_model_web_evidence(
                 failure_reason: None,
             },
         )?;
-        if let Some(sink) = event_sink {
-            let event = AgentRunRepository::append_event(
-                db,
-                AppendRunEventInput {
-                    run_id: accepted.run_id.clone(),
-                    state_version,
-                    event_type: RunEventType::EvidenceRegistered,
-                    payload: RunEventPayload::EvidenceRegistered {
-                        evidence_id: registered.evidence_id.to_string(),
-                    },
-                },
-            )?;
-            sink.emit(&event)?;
-        }
         evidence_ids.push(registered.evidence_id);
     }
     Ok(evidence_ids)
@@ -4013,6 +3851,77 @@ mod tests {
 
     struct FailToolStartedSink;
 
+    #[tokio::test]
+    async fn review_regression_ef_production_results_keep_distinct_call_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::new(directory.path().join("data")).unwrap();
+        let accepted = RunIntake::start(&state.db, request()).unwrap();
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .unwrap();
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .unwrap();
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "fixture".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .unwrap();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["system_time_now".into()]);
+        for (step, call_id) in [(1, "private-call-one"), (2, "private-call-two")] {
+            assert!(
+                executor
+                    .execute(
+                        &accepted.run_id,
+                        &ToolCall::new(call_id, "system_time_now", "{}"),
+                        step
+                    )
+                    .await
+                    .unwrap()
+                    .success
+            );
+        }
+        let events =
+            crate::ai_runtime::boundary_events::query_by_run(&state.db, &accepted.run_id).unwrap();
+        let results = events
+            .iter()
+            .filter(|event| event.payload["event"] == "result")
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 2);
+        assert_ne!(results[0].call_id, results[1].call_id);
+        assert!(results
+            .iter()
+            .all(|event| !event.call_id.contains("private-call")));
+    }
+
     impl RunEventSink for FailToolStartedSink {
         fn emit(&self, event: &AssistantRunEvent) -> AppResult<()> {
             if matches!(event.payload(), RunEventPayload::ToolStarted { .. }) {
@@ -4264,6 +4173,68 @@ mod tests {
 
     fn web_failure() -> super::WebFailure {
         super::WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
+    }
+
+    #[tokio::test]
+    async fn review_regression_a_zero_turn_or_host_limited_child_never_reports_success() {
+        for child_turns in [0, 1] {
+            let directory = tempfile::tempdir().unwrap();
+            let state = AppState::new(directory.path().join("data")).unwrap();
+            let accepted = RunIntake::start(&state.db, request()).unwrap();
+            let context = RunContextAssembler::assemble(
+                &state.db,
+                None,
+                &accepted.session.session_key,
+                &accepted.run_id,
+            )
+            .unwrap();
+            let sink = RecordingSink::default();
+            let mut policy = RunBudgetPolicy::standard();
+            policy.child_input_tokens_per_turn = 1000;
+            policy.child_output_tokens_per_turn = 100;
+            policy.child_max_model_turns = child_turns;
+            let executor = NormalRunToolExecutor::new(
+                &state,
+                None,
+                &accepted,
+                &context,
+                Vec::new(),
+                policy,
+                &sink,
+                Vec::new(),
+            );
+            let provider = ScriptedChildProvider {
+                responses: Mutex::new(VecDeque::from([GatewayResponse {
+                    content: None,
+                    tool_calls: vec![ToolCall::new("invalid-child-tool", "not_authorized", "{}")],
+                    finish_reason: "tool_calls".into(),
+                    usage: crate::ai_types::TokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 10,
+                        total_tokens: 20,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }])),
+                tool_surfaces: Mutex::new(Vec::new()),
+                budgets: Mutex::new(Vec::new()),
+            };
+            let spec = crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::from_tool_call(
+                &accepted.run_id,
+                &ToolCall::new("review-child", "spawn_subagent", r#"{"task":"review"}"#),
+                None,
+                Vec::new(),
+                None,
+            );
+            let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::new(&accepted.run_id, 8);
+            let (report, _, _) = executor
+                .execute_one_child_run(&accepted.run_id, &spec, &provider, &[])
+                .await;
+            assert_eq!(report.confidence, 0);
+            assert!(!report.errors.is_empty());
+            assert_eq!(report.budget.model_turns, child_turns);
+            assert_eq!(provider.budgets.lock().unwrap().len(), child_turns as usize);
+        }
     }
 
     #[test]

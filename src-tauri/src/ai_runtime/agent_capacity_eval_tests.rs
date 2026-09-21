@@ -2224,6 +2224,13 @@ async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary()
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let sink = CapacityNoopSink;
     let provider =
         FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)
@@ -2283,6 +2290,13 @@ async fn empty_stream_retries_once_then_fails_over_before_any_visible_output() {
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let sink = CapacityNoopSink;
     let provider =
         FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)
@@ -2364,6 +2378,13 @@ async fn bounded_recovery_retries_only_the_original_route_before_advancing_candi
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let sink = CapacityNoopSink;
     let provider =
         FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)

@@ -633,3 +633,19 @@ fn d05_write_receipt_classifier_distinguishes_base_expected_and_unknown() {
         FrozenWriteReceipt::Unknown
     );
 }
+
+#[test]
+fn review_regression_b_supported_english_format_requests_have_no_web_surface() {
+    for message in [
+        "Please format this note",
+        "normalize the markdown formatting",
+    ] {
+        let mut start = request();
+        start.web_enabled = true;
+        start.turn.message = message.into();
+        start.turn.explicit_references = vec![valid_reference()];
+        let envelope = RunIntake::resolve_envelope(&start).unwrap();
+        assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
+        assert!(!has_capability(&envelope, "web.search"));
+    }
+}

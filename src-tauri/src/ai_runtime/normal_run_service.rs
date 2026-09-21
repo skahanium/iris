@@ -85,19 +85,41 @@ pub(crate) async fn execute_post_confirmation_verification(
     state: Arc<AppState>,
     accepted: AssistantRunAccepted,
     vault: Option<PathBuf>,
-    targets: &[String],
-    expected_post_hashes: &[(String, String)],
+    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
     execution_report: &str,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     let db = Arc::clone(&state.db);
+    let targets = plan.relative_paths();
+    let input = AgentRunRepository::prompt_input_for_session(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )?
+    .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+    // read_note returns a whole note. A write confirmation or a bounded source
+    // selection does not grant permission to send that whole body to a model.
+    if targets.iter().any(|path| {
+        !input.explicit_references.iter().any(|reference| {
+            reference.kind == crate::ai_types::ContextReferenceKind::Note
+                && reference.file_path.as_deref() == Some(path.as_str())
+                && reference.utf8_range.is_none()
+                && !reference.stale
+                && reference.invalid_reason.is_none()
+        })
+    }) {
+        return Err(AppError::msg(
+            "post_confirmation_verification_scope_unavailable",
+        ));
+    }
     let context =
-        crate::ai_runtime::run_context::RunContextAssembler::assemble_with_expected_hashes(
+        crate::ai_runtime::run_context::RunContextAssembler::assemble_at_confirmed_boundary(
             &db,
             vault.as_deref(),
             &accepted.session.session_key,
             &accepted.run_id,
-            expected_post_hashes,
+            &plan.all_expected_post_content_hashes(),
+            plan.operations(),
         )?;
     let decision = evaluate_normal_run_policy(&db, &accepted)?;
     if decision.denial_code.is_some() {

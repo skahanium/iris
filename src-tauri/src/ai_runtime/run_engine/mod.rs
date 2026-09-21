@@ -736,6 +736,18 @@ impl RunEngine {
                     .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
             }
         };
+        let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+            db,
+            run_id,
+            if resume_running {
+                crate::ai_runtime::model_turn_ledger::BudgetPhase::PostConfirmation
+            } else {
+                crate::ai_runtime::model_turn_ledger::BudgetPhase::Main
+            },
+            &budget_policy,
+        )?;
+        let budget_provider = RunBudgetProvider { provider, db };
+        let provider = &budget_provider;
         let preparing_version = match snapshot.run.state {
             RunState::Running if resume_running => snapshot.run.state_version,
             RunState::Preparing => snapshot.run.state_version,
@@ -1297,6 +1309,14 @@ impl RunEngine {
             max_completion_tokens: Some(budget_policy.max_completion_tokens),
             max_turn_output_tokens: Some(budget_policy.max_turn_output_tokens),
         };
+        let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+            db,
+            run_id,
+            crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+            &budget_policy,
+        )?;
+        let budget_provider = RunBudgetProvider { provider, db };
+        let provider = &budget_provider;
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
@@ -1363,9 +1383,16 @@ impl RunEngine {
             )
         };
         let model_started_at = Instant::now();
-        let response = provider
-            .answer_turn(run_id, messages, &[], turn_budget, &mut observer)
-            .await;
+        let response = crate::ai_runtime::agent_tool_loop::answer_budgeted_turn(
+            provider,
+            run_id,
+            messages,
+            &[],
+            turn_budget,
+            &mut observer,
+            crate::ai_runtime::model_turn_ledger::AttemptPurpose::FinalSynthesis,
+        )
+        .await;
         let response = match response {
             Ok(response) => response,
             Err(error) => {

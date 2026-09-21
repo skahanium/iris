@@ -208,6 +208,7 @@ fn failed_http() -> NativeSearchHttpResult {
 }
 
 struct V04Harness {
+    _budget: super::model_turn_ledger::BindGuard,
     _directory: tempfile::TempDir,
     state: std::sync::Arc<AppState>,
     accepted: super::run_contract::AssistantRunAccepted,
@@ -217,6 +218,10 @@ struct V04Harness {
 
 impl V04Harness {
     fn new() -> Self {
+        Self::with_request(request())
+    }
+
+    fn with_request(input: AssistantRunStartRequest) -> Self {
         let directory = tempfile::tempdir().expect("tempdir");
         let data_dir = directory.path().join("data");
         let config_dir = directory.path().join("config");
@@ -226,7 +231,7 @@ impl V04Harness {
         let state = AppState::new(data_dir).expect("app state");
         crate::credentials::set_api_key("iris.llm.minimax", FAKE_TOKEN).expect("fake token");
         write_setting(&state.db, "web_search_enabled", &json!(true));
-        let accepted = RunIntake::start(&state.db, request()).expect("accept");
+        let accepted = RunIntake::start(&state.db, input).expect("accept");
         let context = RunContextAssembler::assemble(
             &state.db,
             None,
@@ -235,8 +240,23 @@ impl V04Harness {
         )
         .expect("context");
         let sink = RecordingSink::default();
+        super::agent_run_repository::AgentRunRepository::persist_authorization_snapshot(
+            &state.db,
+            &accepted.session.session_key,
+            &accepted.run_id,
+            &[CapabilityId::new("web.search")],
+        )
+        .unwrap();
+        let budget = super::model_turn_ledger::BindGuard::persisted(
+            &state.db,
+            &accepted.run_id,
+            super::model_turn_ledger::BudgetPhase::Main,
+            &RunBudgetPolicy::for_envelope(&context.envelope),
+        )
+        .unwrap();
         begin(&state, &accepted, &sink);
         Self {
+            _budget: budget,
             _directory: directory,
             state,
             accepted,
@@ -268,15 +288,47 @@ impl V04Harness {
 fn dispatch_search_ctx<'a>(
     harness: &'a V04Harness,
     retrieval_scope: &'a crate::ai_runtime::retrieval_scope::RetrievalScope,
-    endpoint: Option<NativeSearchEndpointRef>,
+    action: &'a super::web_evidence_broker::WebEvidenceBrokerInput,
 ) -> crate::ai_runtime::tool_dispatch::ToolDispatchContext<'a> {
     let mut ctx = crate::ai_runtime::tool_dispatch::ToolDispatchContext::for_tests(retrieval_scope);
     ctx.db = Some(&harness.state.db);
     ctx.run_id = Some(&harness.accepted.run_id);
     ctx.web_search_enabled = true;
     ctx.max_web_fetches = 5;
-    ctx.native_search_endpoint = endpoint;
+    ctx.web_action = Some(action);
     ctx
+}
+
+fn dispatch_search_action(
+    harness: &V04Harness,
+    endpoint: Option<NativeSearchEndpointRef>,
+) -> super::web_evidence_broker::WebEvidenceBrokerInput {
+    super::web_evidence_broker::WebEvidenceBrokerInput {
+        query: "contract".into(),
+        urls: Vec::new(),
+        enabled: true,
+        max_search_results: 5,
+        max_fetches: 0,
+        provider_snapshots: mcp_runtime_registry::resolve_web_search_provider_route(
+            &harness.state.db,
+        )
+        .unwrap(),
+        provider_selection_frozen: true,
+        search_identity: super::dual_path_search::SearchActionIdentity {
+            run_id: harness.accepted.run_id.clone(),
+            input_revision: harness.accepted.turn_id.clone(),
+            action_id: "v04-secondary-action".into(),
+            tool_surface_version: "fixture-surface".into(),
+            attempt: 1,
+            ..Default::default()
+        },
+        search_deadline: Some(
+            tokio::time::Instant::now()
+                + super::native_search_adapter::web_search_call_deadline(endpoint.as_ref()),
+        ),
+        web_revocation_epoch: super::model_gateway::web_revocation_epoch(),
+        native_endpoint: endpoint,
+    }
 }
 
 fn seed_page(db: &Database, url: &str, body: &str) {
@@ -621,7 +673,8 @@ async fn v04_dispatch_tool_web_search_attempts_native_when_endpoint_is_frozen() 
         vec![ok_http(recorded_minimax_body())],
     );
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
-    let ctx = dispatch_search_ctx(&harness, &retrieval_scope, Some(minimax_endpoint()));
+    let action = dispatch_search_action(&harness, Some(minimax_endpoint()));
+    let ctx = dispatch_search_ctx(&harness, &retrieval_scope, &action);
     let result = crate::ai_runtime::tool_dispatch::dispatch_tool(
         harness.state.as_ref(),
         &ctx,
@@ -651,7 +704,8 @@ async fn v04_dispatch_tool_web_search_skips_native_when_endpoint_is_absent() {
         vec![ok_http(recorded_minimax_body())],
     );
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
-    let ctx = dispatch_search_ctx(&harness, &retrieval_scope, None);
+    let action = dispatch_search_action(&harness, None);
+    let ctx = dispatch_search_ctx(&harness, &retrieval_scope, &action);
     let result = crate::ai_runtime::tool_dispatch::dispatch_tool(
         harness.state.as_ref(),
         &ctx,
@@ -722,4 +776,257 @@ async fn v04_web_fetch_keeps_successful_body_when_one_url_fails() {
         .expect("failed url status");
     assert_eq!(failed["status"], "snapshot_unavailable");
     assert!(failed.get("excerpt").and_then(Value::as_str).is_none());
+}
+
+#[tokio::test]
+async fn review_regression_d_production_native_in_flight_cancel_retains_mcp_and_unknown_attempt() {
+    let harness = V04Harness::new();
+    upsert_mcp(&harness.state.db, "review-cancel", "search-only");
+    let snapshots = freeze_route(&harness.state.db, &["review-cancel"]);
+    let recorded = install_native(
+        &harness.accepted.run_id,
+        vec![ok_http(recorded_minimax_body())],
+    );
+    recorded.block_response();
+    let executor = harness.executor(snapshots, Some(minimax_endpoint()));
+    let call = search_call("review-cancel-native");
+    let work = executor.execute(&harness.accepted.run_id, &call, 1);
+    tokio::pin!(work);
+    let result = tokio::select! {
+        result = &mut work => result,
+        _ = recorded.wait_until_dispatched() => {
+            super::model_gateway::request_abort(&harness.accepted.run_id);
+            work.await
+        },
+    };
+    super::model_gateway::clear_abort(&harness.accepted.run_id);
+    let result = result.expect("tool result records completed MCP evidence");
+    assert_ne!(result.output["dualPath"]["native"]["succeeded"], true);
+    assert_eq!(recorded.call_count(), 1, "{}", result.output);
+    assert_eq!(super::model_turn_ledger::used(&harness.accepted.run_id), 1);
+    let (snapshot, _) = super::agent_run_repository::AgentRunRepository::model_budget_snapshot(
+        &harness.state.db,
+        &harness.accepted.run_id,
+    )
+    .unwrap();
+    let snapshot = snapshot.unwrap();
+    assert_eq!(snapshot["attempts"][0]["usage_known"], false);
+    assert_eq!(snapshot["attempts"][0]["dispatched"], true);
+}
+
+#[tokio::test]
+async fn review_regression_d_production_revocation_before_retry_does_not_revive_after_reenable() {
+    let harness = V04Harness::new();
+    upsert_mcp(&harness.state.db, "review-revoke", "search-only");
+    let snapshots = freeze_route(&harness.state.db, &["review-revoke"]);
+    let recorded = install_native(
+        &harness.accepted.run_id,
+        vec![
+            ok_http(recorded_text_only_body()),
+            ok_http(recorded_minimax_body()),
+        ],
+    );
+    recorded.before_response(super::model_gateway::notify_web_revoked);
+    let executor = harness.executor(snapshots, Some(minimax_endpoint()));
+    let result = executor
+        .execute(
+            &harness.accepted.run_id,
+            &search_call("review-revoked-native"),
+            1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(recorded.call_count(), 1, "{}", result.output);
+    assert_ne!(result.output["dualPath"]["native"]["succeeded"], true);
+    assert_eq!(result.output["dualPath"]["mcp"]["succeeded"], true);
+}
+
+#[tokio::test]
+async fn review_regression_d_adapter_frozen_prompt_limit_rejects_before_post() {
+    let harness = V04Harness::new();
+    upsert_mcp(&harness.state.db, "budget-limit-fixture", "search-only");
+    let policy = AgentRunRepository::budget_policy_for_session(
+        &harness.state.db,
+        &harness.accepted.session.session_key,
+        &harness.accepted.run_id,
+    )
+    .unwrap()
+    .unwrap();
+    let recorded = install_native(
+        &harness.accepted.run_id,
+        vec![ok_http(recorded_minimax_body())],
+    );
+    let action = dispatch_search_action(&harness, Some(minimax_endpoint()));
+    let control = super::native_search_adapter::SearchExecutionControl {
+        db: &harness.state.db,
+        run_id: harness.accepted.run_id.clone(),
+        deadline: action.search_deadline.unwrap(),
+        revocation_epoch: action.web_revocation_epoch,
+    };
+    let oversized_query = "法".repeat(policy.max_prompt_tokens as usize * 4);
+    let result = super::native_search_adapter::execute_production_route(
+        &control,
+        action.native_endpoint.as_ref(),
+        &action.search_identity,
+        &oversized_query,
+    )
+    .await;
+    assert_eq!(recorded.call_count(), 0);
+    assert_eq!(result.dispatched_attempts, 0);
+    assert_eq!(super::model_turn_ledger::used(&harness.accepted.run_id), 0);
+    assert_eq!(
+        result.failure,
+        Some(super::dual_path_search::RouteFailureClass::ProtocolOrResultInsufficient)
+    );
+}
+
+#[tokio::test]
+async fn review_regression_d_adapter_unknown_prompt_reserves_frozen_limit() {
+    let harness = V04Harness::new();
+    upsert_mcp(&harness.state.db, "budget-unknown-fixture", "search-only");
+    let policy = AgentRunRepository::budget_policy_for_session(
+        &harness.state.db,
+        &harness.accepted.session.session_key,
+        &harness.accepted.run_id,
+    )
+    .unwrap()
+    .unwrap();
+    let mut body = recorded_minimax_body();
+    body["usage"] = json!({"output_tokens":7});
+    let recorded = install_native(&harness.accepted.run_id, vec![ok_http(body)]);
+    let action = dispatch_search_action(&harness, Some(minimax_endpoint()));
+    let control = super::native_search_adapter::SearchExecutionControl {
+        db: &harness.state.db,
+        run_id: harness.accepted.run_id.clone(),
+        deadline: action.search_deadline.unwrap(),
+        revocation_epoch: action.web_revocation_epoch,
+    };
+    let result = super::native_search_adapter::execute_production_route(
+        &control,
+        action.native_endpoint.as_ref(),
+        &action.search_identity,
+        &action.query,
+    )
+    .await;
+    assert_eq!(recorded.call_count(), 1);
+    let (snapshot, _) =
+        AgentRunRepository::model_budget_snapshot(&harness.state.db, &harness.accepted.run_id)
+            .unwrap();
+    let snapshot = snapshot.unwrap();
+    assert_eq!(
+        snapshot["attempts"][0]["reserved_prompt"],
+        policy.max_prompt_tokens
+    );
+    assert_eq!(result.completion_tokens, Some(7));
+    assert!(result.usage_unknown);
+}
+
+#[tokio::test]
+async fn review_regression_d_adapter_child_uses_frozen_child_prompt_limit() {
+    let mut input = request();
+    input.turn.message = "请委派子任务并联网核实".into();
+    let harness = V04Harness::with_request(input);
+    upsert_mcp(&harness.state.db, "budget-child-fixture", "search-only");
+    let policy = AgentRunRepository::budget_policy_for_session(
+        &harness.state.db,
+        &harness.accepted.session.session_key,
+        &harness.accepted.run_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(policy.child_input_tokens_per_turn > 0);
+    assert!(policy.child_input_tokens_per_turn < policy.max_prompt_tokens);
+    let scope = super::agent_tool_loop::scoped_child_provider_run_id(
+        &harness.accepted.run_id,
+        "fixture-child",
+    );
+    let _child = super::model_turn_ledger::BindGuard::new(&scope, policy.child_max_model_turns);
+    let mut body = recorded_minimax_body();
+    body["usage"] = json!({"output_tokens":7});
+    let recorded = install_native(&harness.accepted.run_id, vec![ok_http(body)]);
+    let mut action = dispatch_search_action(&harness, Some(minimax_endpoint()));
+    action.search_identity.child_run_id = Some(scope.clone());
+    let control = super::native_search_adapter::SearchExecutionControl {
+        db: &harness.state.db,
+        run_id: harness.accepted.run_id.clone(),
+        deadline: action.search_deadline.unwrap(),
+        revocation_epoch: action.web_revocation_epoch,
+    };
+    let query = "法".repeat(policy.child_input_tokens_per_turn as usize + 1);
+    let result = super::model_turn_ledger::with_scope(
+        &scope,
+        super::native_search_adapter::execute_production_route(
+            &control,
+            action.native_endpoint.as_ref(),
+            &action.search_identity,
+            &query,
+        ),
+    )
+    .await;
+    assert_eq!(recorded.call_count(), 0);
+    assert!(result.failure.is_some());
+    let result = super::model_turn_ledger::with_scope(
+        &scope,
+        super::native_search_adapter::execute_production_route(
+            &control,
+            action.native_endpoint.as_ref(),
+            &action.search_identity,
+            "contract",
+        ),
+    )
+    .await;
+    assert!(result.has_retrieval_credentials);
+    assert_eq!(recorded.call_count(), 1);
+    let (snapshot, _) =
+        AgentRunRepository::model_budget_snapshot(&harness.state.db, &harness.accepted.run_id)
+            .unwrap();
+    assert_eq!(
+        snapshot.unwrap()["attempts"][0]["reserved_prompt"],
+        policy.child_input_tokens_per_turn
+    );
+}
+
+#[tokio::test]
+async fn review_regression_d_production_native_deadline_keeps_completed_mcp() {
+    let harness = V04Harness::new();
+    upsert_mcp(&harness.state.db, "deadline-mcp-fixture", "search-only");
+    let _snapshots = freeze_route(&harness.state.db, &["deadline-mcp-fixture"]);
+    let recorded = install_native(
+        &harness.accepted.run_id,
+        vec![ok_http(recorded_minimax_body())],
+    );
+    recorded.block_response();
+    let mut action = dispatch_search_action(&harness, Some(minimax_endpoint()));
+    // The recorded transport controls only the deadline wait; production
+    // dispatch, authorization, budget settlement and partial-result handling run.
+    let frozen_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    action.search_deadline = Some(frozen_deadline);
+    let retrieval_scope = Default::default();
+    let ctx = dispatch_search_ctx(&harness, &retrieval_scope, &action);
+    let args = json!({"query":"contract"});
+    let work =
+        crate::ai_runtime::tool_dispatch::dispatch_tool(&harness.state, &ctx, "web_search", &args);
+    tokio::pin!(work);
+    tokio::select! {
+        result = &mut work => panic!("native must enter before deadline: {:?}", result.error),
+        _ = recorded.wait_until_dispatched() => {},
+    }
+    assert_eq!(recorded.captured_deadlines(), [frozen_deadline]);
+    recorded.elapse_deadline();
+    let result = work.await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(recorded.call_count(), 1);
+    assert_eq!(recorded.captured_deadlines(), [frozen_deadline]);
+    assert_eq!(result.output["dualPath"]["mcp"]["succeeded"], true);
+    assert_eq!(result.output["dualPath"]["native"]["succeeded"], false);
+    assert_eq!(
+        result.output["dualPath"]["native"]["failed"],
+        "temporary_failure"
+    );
+    assert_eq!(result.output["dualPath"]["usage"]["nativeAttempts"], 1);
+    assert_eq!(
+        result.output["dualPath"]["usage"]["nativeUsageUnknown"],
+        true
+    );
+    assert!(result.output["count"].as_u64().unwrap() > 0);
 }

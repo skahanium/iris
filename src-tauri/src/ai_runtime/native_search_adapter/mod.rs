@@ -16,11 +16,10 @@ use crate::ai_runtime::dual_path_search::{
     NativeSearchSupport, RouteAttemptOutcome, RouteFailureClass, SearchActionIdentity,
 };
 use crate::ai_runtime::native_search_subrequest::{
-    collect_search_event_kinds, construct_native_search_subrequest,
-    extract_reported_completion_tokens, extract_reported_prompt_tokens, native_search_support_for,
-    NativeSearchEndpointRef, NativeSearchParse, NativeSearchPublicScope,
-    NativeSearchRequestIdentity, NativeSearchSubrequest, NativeSearchSubrequestDraft,
-    RetrievalObservation,
+    construct_native_search_subrequest, extract_reported_completion_tokens,
+    extract_reported_prompt_tokens, native_search_support_for, NativeSearchEndpointRef,
+    NativeSearchParse, NativeSearchPublicScope, NativeSearchRequestIdentity,
+    NativeSearchSubrequest, NativeSearchSubrequestDraft,
 };
 use crate::credentials::llm_credential_service;
 
@@ -33,6 +32,64 @@ use self::minimax_m3::MinimaxM3NativeSearchAdapter;
 const MCP_SEARCH_DEADLINE: Duration = Duration::from_secs(20);
 const NATIVE_SEARCH_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 const NATIVE_SEARCH_DEADLINE_BUFFER: Duration = Duration::from_secs(10);
+
+/// One action's immutable lifetime. Retries reuse this control, including the
+/// revocation generation and absolute deadline captured by the dispatch entry.
+pub(crate) struct SearchExecutionControl<'a> {
+    pub(crate) db: &'a crate::storage::db::Database,
+    pub(crate) run_id: String,
+    pub(crate) deadline: tokio::time::Instant,
+    pub(crate) revocation_epoch: u64,
+}
+
+impl SearchExecutionControl<'_> {
+    pub(crate) fn check(&self) -> bool {
+        use crate::ai_runtime::model_gateway;
+        if self.run_id.is_empty()
+            || tokio::time::Instant::now() >= self.deadline
+            || model_gateway::is_abort_requested(&self.run_id)
+            || model_gateway::web_revocation_epoch() != self.revocation_epoch
+        {
+            return false;
+        }
+        self.db
+            .with_read_conn(|conn| {
+                use rusqlite::OptionalExtension;
+                let capabilities: String = conn.query_row(
+                    "SELECT a.allowed_capabilities_json FROM agent_run_authorizations a
+                 JOIN agent_runs r ON r.run_id = a.run_id
+                 WHERE a.run_id = ?1 AND r.status = 'running'",
+                    [&self.run_id],
+                    |row| row.get(0),
+                )?;
+                let capabilities: Vec<String> = serde_json::from_str(&capabilities)?;
+                let setting: Option<String> = conn
+                    .query_row(
+                        "SELECT value FROM settings WHERE key = 'web_search_enabled'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let enabled = match setting {
+                    None => true,
+                    Some(raw) => serde_json::from_str::<Value>(&raw)?.as_bool() == Some(true),
+                };
+                Ok(enabled
+                    && capabilities
+                        .iter()
+                        .any(|capability| capability == "web.search"))
+            })
+            .unwrap_or(false)
+    }
+
+    pub(crate) async fn cancelled_or_revoked(&self) {
+        tokio::select! {
+            _ = crate::ai_runtime::model_gateway::wait_for_abort(&self.run_id) => {},
+            _ = crate::ai_runtime::model_gateway::wait_for_web_revocation(self.revocation_epoch) => {},
+            _ = tokio::time::sleep_until(self.deadline) => {},
+        }
+    }
+}
 
 /// Outer `web_search` deadline. Native Available adds the native HTTP bound.
 pub(crate) fn web_search_call_deadline(endpoint: Option<&NativeSearchEndpointRef>) -> Duration {
@@ -53,11 +110,18 @@ pub(crate) struct NativeSearchHttpResult {
 
 /// Posts one native-search JSON request. Implementations must not log secrets.
 pub(crate) trait NativeSearchTransport {
+    /// Wait for the adapter's absolute deadline. Recorded transports may drive
+    /// this boundary without replacing dispatch, authorization or settlement.
+    async fn wait_until_deadline(&self, deadline: tokio::time::Instant) {
+        tokio::time::sleep_until(deadline).await;
+    }
+
     async fn post_json(
         &self,
         url: &str,
         body: &Value,
         headers: &[(String, String)],
+        before_dispatch: &(dyn Fn() -> bool + Sync),
     ) -> NativeSearchHttpResult;
 }
 
@@ -73,6 +137,7 @@ pub(crate) trait NativeSearchModelAdapter: Send + Sync {
     fn request_url(&self, api_base: &str) -> Result<String, RouteFailureClass>;
     fn outbound_body(&self, subrequest: &NativeSearchSubrequest) -> Value;
     fn parse_response(&self, body: &Value) -> NativeSearchParse;
+    fn constrain_output(&self, body: &mut Value, max_tokens: u32);
     /// HTTP headers including the credential. Must not be logged.
     fn http_headers(&self, token: &str) -> Vec<(String, String)> {
         vec![
@@ -171,13 +236,79 @@ pub(crate) fn lookup_production_adapter(
         .find(|adapter| adapter.matches(model_id))
 }
 
-/// Execute one constructed native-search subrequest through `transport`.
+/// Test seam: fixtures explicitly bind the same ledger used by production.
+#[cfg(test)]
 pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
     draft: NativeSearchSubrequestDraft,
     transport: &T,
     bearer: Option<&str>,
     api_base: &str,
 ) -> RouteAttemptOutcome {
+    execute_controlled_native_search(None, draft, transport, bearer, api_base).await
+}
+
+fn native_search_turn_budget(
+    control: Option<&SearchExecutionControl<'_>>,
+    is_child: bool,
+) -> Option<crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget> {
+    let policy = if let Some(control) = control {
+        use crate::ai_runtime::agent_run_repository::AgentRunRepository;
+        let run = AgentRunRepository::get(control.db, &control.run_id).ok()??;
+        AgentRunRepository::budget_policy_for_session(
+            control.db,
+            &run.run.session.session_key,
+            &control.run_id,
+        )
+        .ok()??
+    } else {
+        #[cfg(test)]
+        {
+            crate::ai_runtime::run_contract::RunBudgetPolicy::standard()
+        }
+        #[cfg(not(test))]
+        {
+            return None;
+        }
+    };
+    let prompt = if is_child {
+        policy
+            .child_input_tokens_per_turn
+            .min(policy.max_prompt_tokens)
+    } else {
+        policy.max_prompt_tokens
+    };
+    let output = if is_child {
+        policy
+            .child_output_tokens_per_turn
+            .min(policy.max_turn_output_tokens)
+    } else {
+        policy.max_turn_output_tokens
+    }
+    .min(2048);
+    if prompt == 0 || output == 0 {
+        return None;
+    }
+    Some(crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
+        max_prompt_tokens: Some(prompt),
+        max_completion_tokens: Some(policy.max_completion_tokens),
+        max_turn_output_tokens: Some(output),
+    })
+}
+
+/// Execute with one action control across every transport attempt. Production
+/// callers must provide the Run-bound control; only offline fixtures omit it.
+pub(crate) async fn execute_controlled_native_search<T: NativeSearchTransport>(
+    control: Option<&SearchExecutionControl<'_>>,
+    draft: NativeSearchSubrequestDraft,
+    transport: &T,
+    bearer: Option<&str>,
+    api_base: &str,
+) -> RouteAttemptOutcome {
+    use crate::ai_runtime::model_turn_ledger::{self, AttemptPurpose};
+    #[cfg(not(test))]
+    if control.is_none() {
+        return protocol_insufficient();
+    }
     let Some(adapter) = lookup_production_adapter(&draft.endpoint.model_id) else {
         return protocol_insufficient();
     };
@@ -185,6 +316,9 @@ pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
         Ok(subrequest) => subrequest,
         Err(_) => return protocol_insufficient(),
     };
+    if control.is_some_and(|c| c.run_id != constructed.identity.run_id || !c.check()) {
+        return protocol_insufficient();
+    }
     let url = match adapter.request_url(api_base) {
         Ok(url) if url.starts_with("https://") => url,
         _ => return transport_failure(),
@@ -192,58 +326,196 @@ pub(crate) async fn execute_native_search<T: NativeSearchTransport>(
     let Some(token) = bearer.filter(|value| !value.is_empty()) else {
         return temporary_failure();
     };
-    let body = adapter.outbound_body(&constructed);
+    let mut body = adapter.outbound_body(&constructed);
     let headers = adapter.http_headers(token);
-    if crate::ai_runtime::model_turn_ledger::claim(&constructed.identity.run_id).is_err() {
-        return protocol_insufficient();
-    }
-    let mut result = transport.post_json(&url, &body, &headers).await;
-    if result.transport_failed {
+    // Known construction failures are rejected before acquiring any reservation.
+    if reqwest::Url::parse(&url).is_err()
+        || headers.iter().any(|(name, value)| {
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_err()
+                || reqwest::header::HeaderValue::from_str(value).is_err()
+        })
+    {
         return transport_failure();
     }
-    let mut outcome = match result.status {
-        200 => outcome_from_isolated_parse(
-            adapter.parse_response(&result.body),
-            &constructed,
-            &result.body,
-        ),
-        401 | 403 | 429 => return temporary_failure(),
-        _ => return transport_failure(),
+    let mut accumulated = RouteAttemptOutcome::default();
+    let deadline = control.map_or_else(
+        || tokio::time::Instant::now() + NATIVE_SEARCH_HTTP_TIMEOUT,
+        |c| {
+            c.deadline
+                .min(tokio::time::Instant::now() + NATIVE_SEARCH_HTTP_TIMEOUT)
+        },
+    );
+    let scope = model_turn_ledger::current_scope(&constructed.identity.run_id);
+    let db = control.map(|c| c.db);
+    let Some(budget) = native_search_turn_budget(
+        control,
+        scope != constructed.identity.run_id || constructed.identity.child_run_id.is_some(),
+    ) else {
+        return protocol_insufficient();
     };
-    if adapter.retry_text_only_once()
-        && result.status == 200
-        && outcome.generated_text_only
-        && !outcome.has_retrieval_credentials
-    {
-        if crate::ai_runtime::model_turn_ledger::claim(&constructed.identity.run_id).is_err() {
-            return outcome;
+    adapter.constrain_output(&mut body, budget.max_turn_output_tokens.unwrap_or(0));
+    let mut attempt_ids = Vec::new();
+    for attempt in 0..=u32::from(adapter.retry_text_only_once()) {
+        if control.is_some_and(|c| !c.check())
+            || crate::ai_runtime::model_gateway::is_abort_requested(&scope)
+            || tokio::time::Instant::now() >= deadline
+        {
+            accumulated.failure = Some(RouteFailureClass::TemporaryFailure);
+            accumulated.has_retrieval_credentials = false;
+            return accumulated;
         }
-        result = transport.post_json(&url, &body, &headers).await;
-        if result.transport_failed {
-            return transport_failure();
+        let prompt = u32::try_from(crate::ai_runtime::text_support::estimate_tokens(
+            &body.to_string(),
+        ))
+        .unwrap_or(u32::MAX);
+        if budget.max_prompt_tokens.is_none_or(|limit| prompt > limit) {
+            accumulated.failure = Some(RouteFailureClass::ProtocolOrResultInsufficient);
+            return accumulated;
         }
-        outcome = match result.status {
-            200 => outcome_from_isolated_parse(
-                adapter.parse_response(&result.body),
-                &constructed,
-                &result.body,
-            ),
-            401 | 403 | 429 => temporary_failure(),
-            _ => transport_failure(),
+        let lease = match model_turn_ledger::claim_attempt(
+            db,
+            &scope,
+            AttemptPurpose::NativeSearch,
+            budget,
+        ) {
+            Ok(lease) => lease,
+            Err(_) => {
+                accumulated.failure = Some(RouteFailureClass::ProtocolOrResultInsufficient);
+                return accumulated;
+            }
         };
+        adapter.constrain_output(&mut body, lease.budget.max_turn_output_tokens.unwrap_or(0));
+        attempt_ids.push(lease.id);
+        let dispatched = std::sync::atomic::AtomicBool::new(false);
+        let before_dispatch = || {
+            if control.is_some_and(|c| !c.check())
+                || tokio::time::Instant::now() >= deadline
+                || model_turn_ledger::mark_dispatched(db, &lease).is_err()
+            {
+                return false;
+            }
+            dispatched.store(true, std::sync::atomic::Ordering::Release);
+            true
+        };
+        let post = transport.post_json(&url, &body, &headers, &before_dispatch);
+        let stopped = async {
+            if let Some(control) = control {
+                control.cancelled_or_revoked().await;
+            } else {
+                crate::ai_runtime::model_gateway::wait_for_abort(&scope).await;
+            }
+        };
+        let result = tokio::select! {
+            biased;
+            _ = stopped => None,
+            _ = transport.wait_until_deadline(deadline) => None,
+            response = post => Some(response),
+        };
+        let prompt = result
+            .as_ref()
+            .and_then(|r| extract_reported_prompt_tokens(&r.body));
+        let completion = result
+            .as_ref()
+            .and_then(|r| extract_reported_completion_tokens(&r.body));
+        let usage =
+            (prompt.is_some() || completion.is_some()).then(|| crate::ai_types::TokenUsage {
+                prompt_tokens: prompt.unwrap_or(0),
+                completion_tokens: completion.unwrap_or(0),
+                total_tokens: prompt.unwrap_or(0).saturating_add(completion.unwrap_or(0)),
+                ..Default::default()
+            });
+        if dispatched.load(std::sync::atomic::Ordering::Acquire) {
+            accumulated.dispatched_attempts += 1;
+            accumulated.internal_provider_attempts += 1;
+        }
+        if model_turn_ledger::settle_attempt(db, &lease, usage.as_ref()).is_err() {
+            accumulated.failure = Some(RouteFailureClass::TransportOrProviderFailure);
+            return accumulated;
+        }
+        (
+            accumulated.prompt_tokens,
+            accumulated.completion_tokens,
+            accumulated.usage_unknown,
+        ) = model_turn_ledger::usage_for_attempts(&lease.root_run_id, &attempt_ids);
+        let status = result.as_ref().map(|result| result.status);
+        let exceeds_budget = prompt.is_some_and(|tokens| {
+            lease
+                .budget
+                .max_prompt_tokens
+                .is_some_and(|limit| tokens > limit)
+        }) || completion.is_some_and(|tokens| {
+            lease
+                .budget
+                .max_turn_output_tokens
+                .is_some_and(|limit| tokens > limit)
+        });
+        let mut outcome = if exceeds_budget {
+            RouteAttemptOutcome {
+                failure: Some(RouteFailureClass::ProtocolOrResultInsufficient),
+                ..Default::default()
+            }
+        } else {
+            match result {
+                Some(result) if !result.transport_failed => match result.status {
+                    200 => outcome_from_isolated_parse(
+                        adapter.parse_response(&result.body),
+                        &result.body,
+                    ),
+                    401 | 403 | 429 => temporary_failure(),
+                    _ => transport_failure(),
+                },
+                Some(_) => transport_failure(),
+                None => temporary_failure(),
+            }
+        };
+        if control.is_some_and(|c| !c.check())
+            || crate::ai_runtime::model_gateway::is_abort_requested(&scope)
+        {
+            outcome = temporary_failure();
+        }
+        if let Some(db) = db {
+            record_native_attempt(
+                db,
+                &constructed.identity,
+                lease.id,
+                status,
+                dispatched.load(std::sync::atomic::Ordering::Acquire),
+                &outcome,
+                (prompt, completion),
+            );
+        }
+        accumulated.candidates = outcome.candidates;
+        accumulated.has_retrieval_credentials = outcome.has_retrieval_credentials;
+        accumulated.generated_text_only = outcome.generated_text_only;
+        accumulated.failure = outcome.failure;
+        if !outcome.generated_text_only || outcome.has_retrieval_credentials || attempt > 0 {
+            break;
+        }
     }
-    outcome
+    accumulated
 }
 
 /// Production native route: hydrate credentials and POST through the live client.
 pub(crate) async fn execute_production_route(
+    control: &SearchExecutionControl<'_>,
     endpoint: Option<&NativeSearchEndpointRef>,
     identity: &SearchActionIdentity,
     query: &str,
 ) -> RouteAttemptOutcome {
+    if !control.check() {
+        return protocol_insufficient();
+    }
     let Some(endpoint) = endpoint.cloned() else {
         return protocol_insufficient();
     };
+    if endpoint.api_base.as_deref().is_none_or(str::is_empty)
+        || endpoint
+            .credential_service
+            .as_deref()
+            .is_none_or(str::is_empty)
+    {
+        return protocol_insufficient();
+    }
     let Some(adapter) = lookup_production_adapter(&endpoint.model_id) else {
         return protocol_insufficient();
     };
@@ -276,7 +548,10 @@ pub(crate) async fn execute_production_route(
         public_scope: NativeSearchPublicScope::default(),
         identity: NativeSearchRequestIdentity {
             run_id: identity.run_id.clone(),
-            input_revision: identity.input_revision,
+            input_revision: identity.input_revision.clone(),
+            child_run_id: identity.child_run_id.clone(),
+            model_turn: identity.model_turn,
+            tool_surface_version: identity.tool_surface_version.clone(),
             parent_call_id: identity.action_id.clone(),
             attempt: identity.attempt,
         },
@@ -285,7 +560,8 @@ pub(crate) async fn execute_production_route(
     };
     #[cfg(test)]
     if let Some(transport) = recorded_transport_for_run(&identity.run_id) {
-        return execute_native_search(
+        return execute_controlled_native_search(
+            Some(control),
             draft,
             &transport,
             secret.as_ref().map(|value| value.as_str()),
@@ -293,7 +569,8 @@ pub(crate) async fn execute_production_route(
         )
         .await;
     }
-    execute_native_search(
+    execute_controlled_native_search(
+        Some(control),
         draft,
         &LiveNativeSearchTransport,
         secret.as_ref().map(|value| value.as_str()),
@@ -302,7 +579,50 @@ pub(crate) async fn execute_production_route(
     .await
 }
 
-struct LiveNativeSearchTransport;
+fn record_native_attempt(
+    db: &crate::storage::db::Database,
+    identity: &NativeSearchRequestIdentity,
+    attempt_id: u32,
+    status: Option<u16>,
+    dispatched: bool,
+    outcome: &RouteAttemptOutcome,
+    usage: (Option<u32>, Option<u32>),
+) {
+    let (prompt, completion) = usage;
+    let correlation = crate::ai_runtime::boundary_events::BoundaryCorrelation {
+        run_id: identity.run_id.clone(),
+        input_revision: identity.input_revision.clone(),
+        parent_run_id: identity
+            .child_run_id
+            .as_ref()
+            .map(|_| identity.run_id.clone()),
+        child_run_id: identity.child_run_id.clone(),
+        model_turn: identity.model_turn,
+        call_id: identity.parent_call_id.clone(),
+        attempt_id: format!("native-{attempt_id}"),
+        tool_surface_version: identity.tool_surface_version.clone(),
+        protocol_adapter: "native_search_subrequest".into(),
+    };
+    let status_class = match status {
+        Some(200..=299) => "2xx",
+        Some(400..=499) => "4xx",
+        Some(500..=599) => "5xx",
+        _ => "unknown",
+    };
+    let _ = crate::ai_runtime::boundary_events::record_native_search_observation(
+        db,
+        &correlation,
+        &serde_json::json!({
+            "kind":"native_search_subrequest", "origin":"isolated_subrequest", "https":true,
+            "statusClass":status_class, "hasRetrievalCredentials":outcome.has_retrieval_credentials,
+            "citationCount":outcome.candidates.len(), "promptTokens":prompt, "completionTokens":completion,
+            "tokenUsageReported":prompt.is_some() && completion.is_some(), "dispatched":dispatched,
+            "budgetKind":"model_auxiliary_request", "isNetworkToolDispatch":false
+        }),
+    );
+}
+
+pub(super) struct LiveNativeSearchTransport;
 
 #[cfg(test)]
 thread_local! {
@@ -352,16 +672,40 @@ fn recorded_bearer_for_run(run_id: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+type RecordedResponseHook = std::sync::Arc<std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>>;
+
+#[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct RecordedNativeSearchTransport {
     results: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<NativeSearchHttpResult>>>,
     call_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
     captured_urls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     captured_headers: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    blocked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    entered: std::sync::Arc<tokio::sync::Notify>,
+    deadline_elapsed: std::sync::Arc<tokio::sync::Notify>,
+    captured_deadlines: std::sync::Arc<std::sync::Mutex<Vec<tokio::time::Instant>>>,
+    before_response: RecordedResponseHook,
 }
 
 #[cfg(test)]
 impl RecordedNativeSearchTransport {
+    pub(crate) fn block_response(&self) {
+        self.blocked
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    pub(crate) async fn wait_until_dispatched(&self) {
+        self.entered.notified().await;
+    }
+    pub(crate) fn elapse_deadline(&self) {
+        self.deadline_elapsed.notify_one();
+    }
+    pub(crate) fn captured_deadlines(&self) -> Vec<tokio::time::Instant> {
+        self.captured_deadlines.lock().unwrap().clone()
+    }
+    pub(crate) fn before_response(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self.before_response.lock().unwrap() = Some(Box::new(hook));
+    }
     pub(crate) fn call_count(&self) -> u32 {
         self.call_count.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -391,12 +735,28 @@ impl RecordedNativeSearchTransport {
 
 #[cfg(test)]
 impl NativeSearchTransport for RecordedNativeSearchTransport {
+    async fn wait_until_deadline(&self, deadline: tokio::time::Instant) {
+        self.captured_deadlines.lock().unwrap().push(deadline);
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {},
+            _ = self.deadline_elapsed.notified() => {},
+        }
+    }
+
     async fn post_json(
         &self,
         url: &str,
         _body: &Value,
         headers: &[(String, String)],
+        before_dispatch: &(dyn Fn() -> bool + Sync),
     ) -> NativeSearchHttpResult {
+        if !before_dispatch() {
+            return NativeSearchHttpResult {
+                status: 0,
+                body: Value::Null,
+                transport_failed: true,
+            };
+        }
         self.call_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.captured_urls
@@ -407,6 +767,13 @@ impl NativeSearchTransport for RecordedNativeSearchTransport {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .extend(headers.iter().cloned());
+        if let Some(hook) = self.before_response.lock().unwrap().as_ref() {
+            hook();
+        }
+        self.entered.notify_one();
+        if self.blocked.load(std::sync::atomic::Ordering::Acquire) {
+            std::future::pending::<()>().await;
+        }
         self.results
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -459,6 +826,11 @@ pub(crate) fn install_recorded_native_search_transport(
         call_count: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
         captured_urls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         captured_headers: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        blocked: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        entered: std::sync::Arc::new(tokio::sync::Notify::new()),
+        deadline_elapsed: std::sync::Arc::new(tokio::sync::Notify::new()),
+        captured_deadlines: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        before_response: std::sync::Arc::new(std::sync::Mutex::new(None)),
     };
     recorded_native_search_by_run()
         .lock()
@@ -543,6 +915,7 @@ impl NativeSearchTransport for LiveNativeSearchTransport {
         url: &str,
         body: &Value,
         headers: &[(String, String)],
+        before_dispatch: &(dyn Fn() -> bool + Sync),
     ) -> NativeSearchHttpResult {
         let failed = NativeSearchHttpResult {
             status: 0,
@@ -566,7 +939,13 @@ impl NativeSearchTransport for LiveNativeSearchTransport {
         for (name, value) in headers {
             request = request.header(name.as_str(), value.as_str());
         }
-        let request = request.json(body).send().await;
+        let Ok(request) = request.json(body).build() else {
+            return failed;
+        };
+        if !before_dispatch() {
+            return failed;
+        }
+        let request = client.execute(request).await;
         let Ok(response) = request else {
             return failed;
         };
@@ -616,26 +995,8 @@ fn attach_reported_usage(outcome: &mut RouteAttemptOutcome, body: &Value) {
     outcome.completion_tokens = extract_reported_completion_tokens(body);
 }
 
-fn outcome_from_isolated_parse(
-    parse: NativeSearchParse,
-    constructed: &NativeSearchSubrequest,
-    body: &Value,
-) -> RouteAttemptOutcome {
-    let observation = RetrievalObservation::from_isolated_parse(
-        SearchActionIdentity {
-            run_id: constructed.identity.run_id.clone(),
-            input_revision: constructed.identity.input_revision,
-            action_id: constructed.identity.parent_call_id.clone(),
-            attempt: constructed.identity.attempt,
-        },
-        &parse,
-        collect_search_event_kinds(body),
-        extract_reported_prompt_tokens(body),
-        extract_reported_completion_tokens(body),
-    );
+fn outcome_from_isolated_parse(parse: NativeSearchParse, body: &Value) -> RouteAttemptOutcome {
     let mut outcome = parse.into_route_outcome();
-    outcome.prompt_tokens = observation.prompt_tokens;
-    outcome.completion_tokens = observation.completion_tokens;
     attach_reported_usage(&mut outcome, body);
     outcome
 }

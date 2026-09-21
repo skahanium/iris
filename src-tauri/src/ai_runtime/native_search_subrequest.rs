@@ -60,8 +60,14 @@ pub(crate) struct NativeSearchPublicScope {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeSearchRequestIdentity {
     pub run_id: String,
-    pub input_revision: u32,
+    pub input_revision: String,
     pub parent_call_id: String,
+    #[serde(default)]
+    pub child_run_id: Option<String>,
+    #[serde(default)]
+    pub model_turn: u32,
+    #[serde(default)]
+    pub tool_surface_version: String,
     pub attempt: u32,
 }
 
@@ -190,10 +196,13 @@ pub(crate) fn parse_native_search_payload(
     family: NativeSearchPayloadFamily,
     value: &Value,
 ) -> NativeSearchParse {
-    let structured = match family {
-        NativeSearchPayloadFamily::OpenAiShaped => has_openai_structured_search(value),
-        NativeSearchPayloadFamily::GeminiShaped => has_gemini_structured_search(value),
-        NativeSearchPayloadFamily::AnthropicShaped => has_anthropic_structured_search(value),
+    let (structured, candidates) = match family {
+        NativeSearchPayloadFamily::OpenAiShaped => openai_search_hits(value),
+        NativeSearchPayloadFamily::GeminiShaped => (
+            has_gemini_structured_search(value),
+            collect_structured_https_hits(value),
+        ),
+        NativeSearchPayloadFamily::AnthropicShaped => anthropic_search_hits(value),
     };
     if !structured {
         return NativeSearchParse {
@@ -203,7 +212,6 @@ pub(crate) fn parse_native_search_payload(
             failure: Some(RouteFailureClass::ProtocolOrResultInsufficient),
         };
     }
-    let candidates = collect_structured_https_hits(value);
     if candidates.is_empty() {
         return NativeSearchParse {
             candidates,
@@ -284,38 +292,90 @@ fn test_adapter_registry() -> &'static std::sync::Mutex<std::collections::HashSe
     REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
-fn has_openai_structured_search(value: &Value) -> bool {
-    let mut completed_call = false;
-    let mut citation = false;
-    walk_json(value, &mut |node| {
-        if node.get("type").and_then(Value::as_str) == Some("web_search_call")
-            && node.get("status").and_then(Value::as_str) == Some("completed")
-        {
-            completed_call = true;
+fn openai_search_hits(value: &Value) -> (bool, Vec<SearchHit>) {
+    if value
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status != "completed")
+    {
+        return (false, Vec::new());
+    }
+    let output = value["output"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let completed = output
+        .iter()
+        .any(|item| item["type"] == "web_search_call" && item["status"] == "completed");
+    let mut hits = Vec::new();
+    if completed {
+        for message in output.iter().filter(|item| item["type"] == "message") {
+            for part in message["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|part| part["type"] == "output_text")
+            {
+                for citation in part["annotations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|citation| citation["type"] == "url_citation")
+                {
+                    if let Some(url) = citation["url"].as_str() {
+                        push_https_hit(
+                            &mut hits,
+                            url,
+                            citation["title"].as_str().unwrap_or_default(),
+                        );
+                    }
+                }
+            }
         }
-        if node.get("type").and_then(Value::as_str) == Some("url_citation") {
-            citation = true;
-        }
-    });
-    completed_call && citation
+    }
+    (completed && !hits.is_empty(), hits)
 }
 
-fn has_anthropic_structured_search(value: &Value) -> bool {
-    let mut web_search_use = false;
-    let mut tool_result = false;
-    walk_json(
-        value,
-        &mut |node| match node.get("type").and_then(Value::as_str) {
-            Some("server_tool_use")
-                if node.get("name").and_then(Value::as_str) == Some("web_search") =>
-            {
-                web_search_use = true;
+fn anthropic_search_hits(value: &Value) -> (bool, Vec<SearchHit>) {
+    let blocks = value["content"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let calls = blocks
+        .iter()
+        .filter(|item| item["type"] == "server_tool_use" && item["name"] == "web_search")
+        .filter_map(|item| item["id"].as_str())
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
+    let mut valid_result = false;
+    let mut hits = Vec::new();
+    for result in blocks
+        .iter()
+        .filter(|item| item["type"] == "web_search_tool_result")
+    {
+        if !result["tool_use_id"]
+            .as_str()
+            .is_some_and(|id| calls.contains(&id))
+        {
+            continue;
+        }
+        let Some(results) = result["content"].as_array() else {
+            continue;
+        };
+        if results
+            .iter()
+            .any(|item| item["type"] != "web_search_result")
+        {
+            continue;
+        }
+        valid_result = true;
+        for hit in results {
+            if let Some(url) = hit["url"].as_str() {
+                push_https_hit(&mut hits, url, hit["title"].as_str().unwrap_or_default());
             }
-            Some("web_search_tool_result") => tool_result = true,
-            _ => {}
-        },
-    );
-    web_search_use && tool_result
+        }
+    }
+    (valid_result, hits)
 }
 
 fn has_gemini_structured_search(value: &Value) -> bool {
@@ -364,7 +424,10 @@ fn collect_structured_https_hits(value: &Value) -> Vec<SearchHit> {
 }
 
 fn push_https_hit(hits: &mut Vec<SearchHit>, url: &str, title: &str) {
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://")
+        || !reqwest::Url::parse(url)
+            .is_ok_and(|parsed| parsed.scheme() == "https" && parsed.host_str().is_some())
+    {
         return;
     }
     if hits.iter().any(|hit| hit.url == url) {
@@ -554,6 +617,7 @@ pub(crate) fn extract_reported_completion_tokens(value: &Value) -> Option<u32> {
 }
 
 impl RetrievalObservation {
+    #[cfg(test)]
     pub(crate) fn from_isolated_parse(
         identity: SearchActionIdentity,
         parse: &NativeSearchParse,
@@ -595,9 +659,10 @@ mod tests {
     fn identity() -> NativeSearchRequestIdentity {
         NativeSearchRequestIdentity {
             run_id: "run-k12".into(),
-            input_revision: 3,
+            input_revision: "3".into(),
             parent_call_id: "call-parent".into(),
             attempt: 1,
+            ..Default::default()
         }
     }
 
@@ -733,11 +798,13 @@ mod tests {
             "content": [
                 {
                     "type": "server_tool_use",
+                    "id": "fixture-search-call",
                     "name": "web_search",
                     "input": { "query": "Shanghai weather today" }
                 },
                 {
                     "type": "web_search_tool_result",
+                    "tool_use_id": "fixture-search-call",
                     "content": [{
                         "type": "web_search_result",
                         "title": "example weather",
@@ -785,6 +852,7 @@ mod tests {
                 generated_text_only: false,
                 failure: None,
                 internal_provider_attempts: 1,
+                dispatched_attempts: 1,
                 ..Default::default()
             }
         }
@@ -811,7 +879,13 @@ mod tests {
                 !blob.contains("笔记正文") && !blob.contains("notes/vault/secret.md"),
                 "native executor must not forward notes: {blob}"
             );
-            parse_native_search_payload(self.family, &self.payload).into_route_outcome()
+            let mut outcome =
+                parse_native_search_payload(self.family, &self.payload).into_route_outcome();
+            // This route represents one executed fixture request; credential
+            // parsing alone deliberately cannot manufacture a dispatch fact.
+            outcome.dispatched_attempts = 1;
+            outcome.internal_provider_attempts = 1;
+            outcome
         }
     }
 
@@ -834,7 +908,7 @@ mod tests {
         .expect("approved query must construct");
         assert_eq!(sub.query, "approved query");
         assert_eq!(sub.identity.run_id, "run-k12");
-        assert_eq!(sub.identity.input_revision, 3);
+        assert_eq!(sub.identity.input_revision, "3");
         assert_eq!(sub.identity.parent_call_id, "call-parent");
         assert_eq!(sub.identity.attempt, 1);
         assert_eq!(sub.endpoint.model_id, "qwen2.5:7b");
@@ -854,6 +928,68 @@ mod tests {
         let error = construct_native_search_subrequest(draft("   ", None))
             .expect_err("empty query must be rejected");
         assert_eq!(error, NativeSearchConstructError::EmptyQuery);
+    }
+
+    #[test]
+    fn review_regression_d_anthropic_credentials_require_successful_matching_result() {
+        let adapter = crate::ai_runtime::native_search_adapter::lookup_production_adapter(
+            "deepseek-v4-flash",
+        )
+        .unwrap();
+        let mut response = json!({"content": [
+            {"type":"server_tool_use", "name":"web_search", "id":"s1"},
+            {"type":"web_search_tool_result", "tool_use_id":"s1", "content":{
+                "type":"web_search_tool_result_error", "error_code":"unavailable"}},
+            {"type":"text", "text":"unrelated", "citations":[{
+                "type":"url_citation", "url":"https://unrelated.example/a"}]}
+        ]});
+        assert!(!adapter.parse_response(&response).has_retrieval_credentials);
+        response["content"][1]["content"] =
+            json!([{"type":"web_search_result", "url":"https://found.example/a"}]);
+        response["content"][1]["tool_use_id"] = json!("other");
+        assert!(!adapter.parse_response(&response).has_retrieval_credentials);
+        response["content"][1]["tool_use_id"] = json!("s1");
+        let parsed = adapter.parse_response(&response);
+        assert!(parsed.has_retrieval_credentials);
+        assert_eq!(parsed.candidates.len(), 1);
+        assert_eq!(parsed.candidates[0].url, "https://found.example/a");
+    }
+
+    #[test]
+    fn review_regression_d_invalid_https_spelling_is_not_retrieval_credentials() {
+        for invalid in ["https://", "https://bad host/path"] {
+            let mut responses = minimax_responses_live_shape_fixture();
+            responses["output"][1]["content"][0]["annotations"][0]["url"] = json!(invalid);
+            let mut anthropic = deepseek_anthropic_live_shape_fixture();
+            anthropic["content"][1]["content"][0]["url"] = json!(invalid);
+            for (model, body) in [("MiniMax-M3", responses), ("deepseek-v4-flash", anthropic)] {
+                let adapter =
+                    crate::ai_runtime::native_search_adapter::lookup_production_adapter(model)
+                        .unwrap();
+                let parsed = adapter.parse_response(&body);
+                assert!(!parsed.has_retrieval_credentials, "{model}: {invalid}");
+                assert!(parsed.candidates.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn review_regression_d_responses_require_completed_response_and_scoped_citations() {
+        let adapter =
+            crate::ai_runtime::native_search_adapter::lookup_production_adapter("MiniMax-M3")
+                .unwrap();
+        for status in ["failed", "incomplete", "in_progress"] {
+            let mut response = minimax_responses_live_shape_fixture();
+            response["status"] = json!(status);
+            assert!(
+                !adapter.parse_response(&response).has_retrieval_credentials,
+                "{status}"
+            );
+        }
+        let mut response = minimax_responses_live_shape_fixture();
+        response["output"][1]["content"] = json!([]);
+        response["metadata"] = json!({"type":"url_citation", "url":"https://unrelated.example/a"});
+        assert!(!adapter.parse_response(&response).has_retrieval_credentials);
     }
 
     #[test]
@@ -987,9 +1123,10 @@ mod tests {
         let isolated = RetrievalObservation::from_isolated_parse(
             SearchActionIdentity {
                 run_id: "run-1".into(),
-                input_revision: 1,
+                input_revision: "1".into(),
                 action_id: "web_search".into(),
                 attempt: 1,
+                ..Default::default()
             },
             &parse_native_search_payload(NativeSearchPayloadFamily::OpenAiShaped, &value),
             leak.event_kinds.clone(),
@@ -1045,6 +1182,7 @@ mod tests {
             &json!({
                 "content": [{
                     "type": "server_tool_use",
+                    "id": "fixture-search-call",
                     "name": "web_search",
                     "input": { "query": "q" }
                 }]
@@ -1061,6 +1199,7 @@ mod tests {
             &json!({
                 "content": [{
                     "type": "web_search_tool_result",
+                    "tool_use_id": "fixture-search-call",
                     "content": [{
                         "type": "web_search_result",
                         "url": "https://weather.example/shanghai"
@@ -1106,9 +1245,10 @@ mod tests {
             DualPathSearchRequest {
                 identity: SearchActionIdentity {
                     run_id: "run-k12".into(),
-                    input_revision: 1,
+                    input_revision: "1".into(),
                     action_id: "web_search".into(),
                     attempt: 1,
+                    ..Default::default()
                 },
                 query: "approved query".into(),
                 allow_second_route: true,
@@ -1205,9 +1345,10 @@ mod tests {
             DualPathSearchRequest {
                 identity: SearchActionIdentity {
                     run_id: "run-k12-adapter".into(),
-                    input_revision: 1,
+                    input_revision: "1".into(),
                     action_id: "web_search".into(),
                     attempt: 1,
+                    ..Default::default()
                 },
                 query: "approved query".into(),
                 allow_second_route: true,

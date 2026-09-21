@@ -1,20 +1,5 @@
 #!/usr/bin/env node
-/**
- * Agent Harness 文档体系检查器 (X01)
- *
- * 规则见 agent-harness/rules/objects.md（身份、标记、指纹、引用）
- *   与 agent-harness/rules/governance.md（状态、关系、复核、阻断）。
- *
- * 用法：
- *   node scripts/agent-harness-check.mjs                # 检查；结构违规退出码 1，基础设施失败退出码 2
- *   node scripts/agent-harness-check.mjs --json         # 机器可读输出（含 --registry 用于负例自测）
- *   node scripts/agent-harness-check.mjs --reconcile    # 接受内容变化：写回指纹与新修订，并生成变更记录
- *
- * 纪律（governance.md §8）：
- *   - 结构检查失败返回非零；执行基础设施失败也返回非零，两者用不同退出码；
- *   - 不捕获异常后返回空集合，不把“无法检查”解释为“没有问题”；
- *   - 只计算与报告，不静默修改文档。
- */
+/** Agent Harness 检查器；规则、命令与退出码见 rules/governance.md。 */
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -32,12 +17,12 @@ import {
   isContainerRegistration,
   normalizeContainerId,
   reviewerIdentity,
+  isIndependentReview,
+  reviewCoversCurrentObject,
 } from "./agent-harness-identity.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
-
-// ── CLI ───────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
 const options = {
@@ -99,8 +84,6 @@ const catalogPath = options.catalog ?? path.join(harnessRoot, "catalog.mjs");
 const archiveRoot = path.join(harnessRoot, "archive");
 const docsIndexPath = path.join(options.root, "docs", "README.md");
 
-// ── 结果收集 ──────────────────────────────────────────────────
-
 const violations = [];
 const infrastructure = [];
 const warnings = [];
@@ -143,8 +126,6 @@ function readJson(filePath, check) {
     return null;
   }
 }
-
-// ── 标记解析 ──────────────────────────────────────────────────
 
 // 容器标识：单对象文件用对象自身 ID 作为文件级容器；多对象文件（评测系统、决定记录、
 // 目录索引）用登记表显式指定的容器 ID。见 rules/objects.md §2.3。
@@ -464,8 +445,6 @@ function parseObjects(filePath, fileText) {
   return { objects, fileObject, containers };
 }
 
-// ── 目录与文件发现 ────────────────────────────────────────────
-
 function walk(dir) {
   const result = [];
   let entries;
@@ -516,8 +495,6 @@ function discoverManagedFiles(catalogFiles) {
   for (const rel of Object.keys(catalogFiles)) discovered.add(rel);
   return discovered;
 }
-
-// ── 合同要素（成熟度 defined 的判据） ────────────────────────
 
 const CONTRACT_ELEMENTS = {
   module: [
@@ -591,8 +568,6 @@ function missingContractElements(kind, body) {
     .filter(([, ...patterns]) => !patterns.every((re) => re.test(body)))
     .map(([label]) => label);
 }
-
-// ── 主流程 ────────────────────────────────────────────────────
 
 async function loadCatalog() {
   if (!existsSync(catalogPath)) {
@@ -875,27 +850,35 @@ function computeReadiness(
   return result;
 }
 
-/**
- * 台账里的陈旧条目只保留**仍未解封**的那些。
- *
- * governance §5.2 第 6 条要求解封必须由一条针对当前指纹的新复核完成；因此当同一
- * 对象已有复核绑定到当前指纹时，旧绑定就不再是缺口。若把历史条目的存在本身当成
- * 缺口，台账只会单调增长、永远清不掉，最后所有人都学会无视它——那是永久豁免名单
- * 的翻版，只是换成了永久告警名单。历史记录本身照旧保留在 reviews[] 里，不改写。
- */
+/** Only report still-unsealed objects; historical bindings remain immutable. */
 function openStaleBindings(staleBindings, registry, currentFingerprints) {
   const sealed = new Set();
   for (const review of registry.reviews ?? []) {
+    const change = (registry.changes ?? []).find(
+      (entry) => entry.id === review.change,
+    );
+    if (!isIndependentReview(review, change)) continue;
     for (const object of review.objects ?? []) {
       const recorded = currentFingerprints.get(object.id);
-      if (recorded && object.fingerprint === recorded.fingerprint) {
+      if (
+        reviewCoversCurrentObject(
+          review,
+          change,
+          object.id,
+          recorded?.fingerprint,
+        )
+      ) {
         sealed.add(object.id);
       }
     }
   }
-  return staleBindings
-    .filter((gap) => !sealed.has(gap.object))
-    .map((gap) => ({ ...gap }));
+  return [
+    ...new Map(
+      staleBindings
+        .filter((gap) => !sealed.has(gap.object))
+        .map((gap) => [gap.object, { ...gap }]),
+    ).values(),
+  ];
 }
 
 function checkReviews(
@@ -906,6 +889,13 @@ function checkReviews(
   staleBindings,
   fileEntries,
 ) {
+  // Historical explicit container IDs always resolve to the file fingerprint,
+  // never to a same-named child definition. This is a read-only lookup alias.
+  for (const entry of Object.values(fileEntries ?? {})) {
+    const id = `${normalizeContainerId(entry.container)}${FILE_OBJECT_SUFFIX}`;
+    if (!currentFingerprints.has(id))
+      currentFingerprints.set(id, { fingerprint: entry.fingerprint });
+  }
   const changes = registry?.changes ?? [];
   const reviews = registry?.reviews ?? [];
   const changeById = new Map(changes.map((entry) => [entry.id, entry]));
@@ -968,7 +958,13 @@ function checkReviews(
         );
         continue;
       }
-      const review = reviewById.get(change.review);
+      const review =
+        reviews.find(
+          (entry) =>
+            entry.id === change.review && isIndependentReview(entry, change),
+        ) ??
+        reviews.find((entry) => isIndependentReview(entry, change)) ??
+        reviewById.get(change.review);
       if (!review) {
         violation(
           "reviews",
@@ -1033,16 +1029,11 @@ function checkReviews(
         // 不阻断检查，改为缺口（governance §5.2：复核之后对象又变化 → 该对象不能解封，
         // 而不是整条复核失效、也不是整次检查失败）。
         if (object.fingerprint === null || object.stale === true) {
-          if (
-            object.fingerprint !== null &&
-            object.fingerprint !== recorded.fingerprint
-          ) {
-            staleBindings.push({
-              review: review.id,
-              object: object.id,
-              reason: "复核写入后对象又变化，绑定停留在旧指纹",
-            });
-          }
+          staleBindings.push({
+            review: review.id,
+            object: object.id,
+            reason: "复核绑定已标记陈旧或缺失，不能覆盖当前内容",
+          });
           continue;
         }
         if (object.fingerprint !== recorded.fingerprint) {
@@ -1080,13 +1071,7 @@ function checkReviews(
     }
   }
 
-  // 每个架构/治理变更**至少要有一条非作者自签的复核**。
-  //
-  // 只校验 `change.review` 指向的那一条是不够的：一条自签复核可以留在
-  // `reviews[]` 里而不被任何 change 引用，于是它既不会被上面的循环比对、也不会
-  // 计入缺口——它只是躺在登记表里，看起来像一条已完成的复核。这正是
-  // REV-2026-09-19-47／48／54／56 的状态：被独立复核取代之后，它们成了无人引用的
-  // 自签，而检查器对此全绿。
+  // 历史自签可以保留，但不能充当有效独立复核。
   for (const change of changes) {
     if (
       change.classification !== "architecture" &&
@@ -1095,10 +1080,8 @@ function checkReviews(
       continue;
     }
     const changeIdentity = reviewerIdentity(change.author);
-    const unsealed = reviews.some(
-      (entry) =>
-        entry.change === change.id &&
-        reviewerIdentity(entry.author) !== changeIdentity,
+    const unsealed = reviews.some((entry) =>
+      isIndependentReview(entry, change),
     );
     if (!unsealed) {
       const selfSigned = reviews.filter(
@@ -1112,8 +1095,26 @@ function checkReviews(
           ? `架构/治理变更 ${change.id} 只有作者自签的复核（${selfSigned
               .map((entry) => entry.id)
               .join("、")}），没有一条由其他身份作出的复核`
-          : `架构/治理变更 ${change.id} 没有任何复核记录`,
+          : `架构/治理变更 ${change.id} 没有有效的独立复核记录`,
       );
+    }
+    for (const object of change.objects ?? []) {
+      if (
+        !reviews.some((review) =>
+          reviewCoversCurrentObject(
+            review,
+            change,
+            object.id,
+            currentFingerprints.get(object.id)?.fingerprint,
+          ),
+        )
+      ) {
+        staleBindings.push({
+          review: change.review,
+          object: object.id,
+          reason: "变更对象缺少独立复核覆盖",
+        });
+      }
     }
   }
 
@@ -1330,8 +1331,6 @@ async function writeRegistry(registry, next) {
   );
   return registry;
 }
-
-// ── 执行 ──────────────────────────────────────────────────────
 
 const catalog = await loadCatalog();
 
@@ -1722,10 +1721,7 @@ if (catalog && !infrastructure.length) {
       if (!current) continue;
       if (recorded.fingerprint === current.fingerprint) continue;
       const baseId = recorded.registration ?? recorded.container ?? rel;
-      const containerId = declaredRegistration(
-        normalizeContainerId(baseId),
-        rel,
-      );
+      const containerId = `${normalizeContainerId(baseId)}${FILE_OBJECT_SUFFIX}`;
       changed.push({
         id: containerId,
         from: 0,
@@ -1940,7 +1936,6 @@ if (infrastructure.length > 0) {
   process.exit(2);
 }
 
-// ── 输出与退出码 ──────────────────────────────────────────────
 // 单一输出路径：结构违规返回 1，基础设施失败返回 2，二者都完整执行过检查循环时分别报告。
 
 if (options.json) {

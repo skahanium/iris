@@ -206,7 +206,7 @@ async fn parent_turn_keeps_the_frozen_ceiling_while_reserving_final_synthesis() 
     let budgets = provider.budgets.lock().expect("budget lock");
     assert_eq!(budgets.len(), 2);
     assert_eq!(budgets[0].max_prompt_tokens, Some(128_000));
-    assert_eq!(budgets[0].max_completion_tokens, Some(12_000));
+    assert_eq!(budgets[0].max_completion_tokens, Some(4_000));
     assert_eq!(budgets[0].max_turn_output_tokens, Some(4_000));
     assert_eq!(budgets[1].max_prompt_tokens, Some(128_000));
     assert!(
@@ -818,7 +818,7 @@ async fn frozen_category_caps_reject_the_first_call_beyond_each_boundary() {
         (
             "unknown_frozen_external_read",
             readonly_tool_spec("unknown_frozen_external_read"),
-            6,
+            0,
         ),
     ] {
         let calls = (0..=allowed_dispatches)
@@ -1636,12 +1636,18 @@ impl ToolLoopExecutor for ChangeSetRecordingExecutor {
         _run_id: &'a str,
         calls: &'a [ToolCall],
         _first_step: u32,
-    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<super::agent_tool_loop::ChangeSetRequestOutcome>>
+                + Send
+                + 'a,
+        >,
+    > {
         self.batches
             .lock()
             .expect("batch lock")
             .push(calls.iter().map(|call| call.id.clone()).collect());
-        Box::pin(async { Ok(()) })
+        Box::pin(async { Ok(super::agent_tool_loop::ChangeSetRequestOutcome::Frozen) })
     }
 }
 
@@ -1860,10 +1866,8 @@ async fn partial_visible_stream_error_recovers_once_with_same_provider_and_no_to
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     assert_eq!(
         outcome.completion_tokens,
-        crate::ai_runtime::text_support::estimate_tokens("已经露出的开头，") as u32
-            + crate::ai_runtime::text_support::estimate_tokens("这是同一回答的续写，现已完整。")
-                as u32,
-        "the recovery budget includes the visible draft exactly once"
+        8_000,
+        "both unknown-usage attempts retain their output reservation; visible text is not provider usage"
     );
     assert!(provider
         .recovery_tools
@@ -1937,7 +1941,7 @@ async fn interrupted_visible_drafts_count_against_per_turn_and_cumulative_budget
 
     for (draft_tokens, expected_error) in [
         (LIMIT - 1, None),
-        (LIMIT, Some("agent_run_tool_loop_limit")),
+        (LIMIT, None),
         (LIMIT + 1, Some("agent_run_output_too_long")),
     ] {
         let provider = InterruptedThenRecoveryProvider {
@@ -1991,9 +1995,10 @@ async fn interrupted_visible_drafts_count_against_per_turn_and_cumulative_budget
         match expected_error {
             None => {
                 let outcome =
-                    result.expect("N-1 visible draft leaves exactly one completion token");
+                    result.expect("unknown usage exhausts the allowance with a bounded limitation");
+                assert_host_evidence_limited(&outcome);
                 assert_eq!(outcome.completion_tokens, LIMIT as u32);
-                assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+                assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
             }
             Some(expected_error) => {
                 assert_eq!(
@@ -2053,7 +2058,12 @@ fn scripted_tool_calls_response(calls: Vec<ToolCall>) -> super::model_gateway::G
     super::model_gateway::GatewayResponse {
         content: None,
         tool_calls: calls,
-        usage: Default::default(),
+        usage: crate::ai_types::TokenUsage {
+            prompt_tokens: 10,
+            completion_tokens: 1,
+            total_tokens: 11,
+            ..Default::default()
+        },
         finish_reason: "tool_calls".into(),
         ..Default::default()
     }
@@ -2063,7 +2073,12 @@ fn scripted_final_response(content: &str) -> super::model_gateway::GatewayRespon
     super::model_gateway::GatewayResponse {
         content: Some(content.into()),
         tool_calls: Vec::new(),
-        usage: Default::default(),
+        usage: crate::ai_types::TokenUsage {
+            prompt_tokens: 10,
+            completion_tokens: 1,
+            total_tokens: 11,
+            ..Default::default()
+        },
         finish_reason: "stop".into(),
         ..Default::default()
     }
@@ -3808,4 +3823,44 @@ async fn model_turn_exhaustion_publishes_a_bounded_limitation() {
         outcome.content
     );
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn review_regression_a_child_after_two_parent_attempts_still_executes() {
+    let root = "review-parent-two-then-child";
+    let _guard = super::model_turn_ledger::BindGuard::new(root, 8);
+    super::model_turn_ledger::claim(root).unwrap();
+    super::model_turn_ledger::claim(root).unwrap();
+    let child = super::agent_tool_loop::scoped_child_provider_run_id(root, "first-child");
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([scripted_final_response("子任务完成")])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut usage = super::agent_tool_loop::AgentToolLoopUsage::default();
+    let mut policy = RunBudgetPolicy::standard();
+    policy.child_max_model_turns = 2;
+    policy.child_input_tokens_per_turn = 1000;
+    policy.child_output_tokens_per_turn = 100;
+    let outcome = AgentToolLoop::from_child_policy(&policy)
+        .execute_child(
+            &provider,
+            &executor,
+            root,
+            &child,
+            Vec::new(),
+            Vec::new(),
+            &mut NoopObserver,
+            &mut usage,
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.model_turns, 1);
+    assert_eq!(outcome.content, "子任务完成");
+    assert_eq!(usage.model_turns, 1);
+    assert_eq!(super::model_turn_ledger::used(root), 3);
 }

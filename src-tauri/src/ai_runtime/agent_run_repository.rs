@@ -23,6 +23,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
+#[path = "agent_run_repository/budget.rs"]
+mod budget;
+
 const MAX_SAFE_EVENT_TEXT_CHARS: usize = 2_000;
 const MAX_REASONING_SUMMARY_CHARS: usize = 1_500;
 

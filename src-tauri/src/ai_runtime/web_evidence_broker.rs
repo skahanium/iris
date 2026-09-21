@@ -1,18 +1,21 @@
 //! Unified network evidence broker for research workflows.
 
 mod completeness;
+mod query_planning;
+use crate::ai_runtime::native_search_adapter::SearchExecutionControl;
 use chrono::Utc;
 use futures_util::stream::{self, StreamExt};
+pub(crate) use query_planning::plan_search_queries;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::ai_runtime::dual_path_search::{
-    coordinate_dual_path_search, record_native_search_boundary, DualPathSearchOutcome,
-    DualPathSearchRequest, ProductionNativeSearchRoute, ProductionNativeSearchSupport,
-    RouteAttemptOutcome, RouteFailureClass, SearchActionIdentity, SearchChannel, SearchHit,
-    SearchRoute,
+    coordinate_dual_path_search, DualPathSearchOutcome, DualPathSearchRequest,
+    ProductionNativeSearchRoute, ProductionNativeSearchSupport, RouteAttemptOutcome,
+    RouteFailureClass, SearchActionIdentity, SearchChannel, SearchHit, SearchRoute,
 };
 use crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef;
 use crate::ai_runtime::run_contract::SafeRunErrorCode;
@@ -63,6 +66,8 @@ pub struct WebEvidenceBrokerInput {
     pub(crate) search_identity: SearchActionIdentity,
     /// Frozen model/endpoint for C10 native-search probing. Backup dispatch omits it.
     pub(crate) native_endpoint: Option<NativeSearchEndpointRef>,
+    pub(crate) search_deadline: Option<tokio::time::Instant>,
+    pub(crate) web_revocation_epoch: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -135,13 +140,18 @@ pub async fn collect_web_evidence_with_usage(
     db: &Database,
     input: WebEvidenceBrokerInput,
 ) -> AppResult<WebEvidenceBrokerOutput> {
-    let planned_queries = plan_search_queries(&input.query);
+    // A frozen host action authorizes exactly this query. Further exploration
+    // is a new model action with its own identity and accounting.
+    let planned_queries = if input.provider_selection_frozen {
+        initial_run_search_queries(&input.query)
+    } else {
+        plan_search_queries(&input.query)
+    };
     collect_web_evidence_with_queries(db, input, planned_queries).await
 }
 
 /// Collect the first required Run evidence from exactly one original user query.
-/// The normal Broker path may broaden an interactive tool call into bounded query variants;
-/// the pre-answer stage must remain deterministic and low-latency instead.
+/// Frozen interactive actions use the same one-query execution contract.
 pub async fn collect_initial_run_web_evidence_with_usage(
     db: &Database,
     input: WebEvidenceBrokerInput,
@@ -166,6 +176,20 @@ async fn collect_web_evidence_with_queries(
         });
     }
 
+    let control = input
+        .search_deadline
+        .map(|deadline| SearchExecutionControl {
+            db,
+            run_id: input.search_identity.run_id.clone(),
+            deadline,
+            revocation_epoch: input.web_revocation_epoch,
+        });
+    if ((input.max_search_results > 0 && !planned_queries.is_empty()) || !input.urls.is_empty())
+        && (!input.provider_selection_frozen
+            || !control.as_ref().is_some_and(SearchExecutionControl::check))
+    {
+        return Err(AppError::msg("web_action_context_invalid"));
+    }
     let mut collected = Vec::new();
     let mut usage = WebEvidenceUsage::default();
     let mut dual_path = DualPathSearchOutcome {
@@ -178,11 +202,8 @@ async fn collect_web_evidence_with_queries(
         let collection = collect_planned_query_fetches(
             db,
             planned_queries,
-            input.max_search_results,
-            &input.provider_snapshots,
-            input.provider_selection_frozen,
-            input.search_identity,
-            input.native_endpoint,
+            &input,
+            control.as_ref().expect("search context checked"),
         )
         .await;
         dual_path = collection.dual_path;
@@ -236,13 +257,14 @@ async fn collect_web_evidence_with_queries(
             .max_search_results
             .saturating_add(allowed_fetch_urls.len()),
     );
-    let (items, successful_fetch_providers) = enrich_with_page_fetches(
+    let (items, successful_fetch_providers) = enrich_with_page_fetches_controlled(
         db,
         items,
         input.max_fetches,
         &allowed_fetch_urls,
         &input.provider_snapshots,
         input.provider_selection_frozen,
+        control.as_ref(),
     )
     .await?;
     usage.successful_page_fetches =
@@ -321,142 +343,6 @@ pub fn web_evidence_items_to_packets_with_excerpt_limit(
             corpus: None,
         })
         .collect()
-}
-
-pub(crate) fn plan_search_queries(raw_query: &str) -> Vec<String> {
-    let sanitized = sanitize_search_query(raw_query);
-    if sanitized.is_empty() {
-        return Vec::new();
-    }
-    let mut planned = Vec::new();
-    push_unique_query(&mut planned, sanitized.clone());
-
-    for segment in sanitized.split(['。', '？', '?', '！', '!', '\n', ';', '；']) {
-        let segment = segment.trim();
-        if segment.len() >= 4 {
-            push_unique_query(&mut planned, truncate_query(segment, 120));
-        }
-        if planned.len() >= 3 {
-            break;
-        }
-    }
-
-    if planned.len() < 3 {
-        let keywords = keyword_query(&sanitized);
-        if !keywords.is_empty() {
-            push_unique_query(&mut planned, keywords);
-        }
-    }
-
-    planned.truncate(3);
-    planned
-}
-
-fn push_unique_query(planned: &mut Vec<String>, query: String) {
-    let normalized = normalize_query_whitespace(&query);
-    if normalized.is_empty() {
-        return;
-    }
-    if !planned
-        .iter()
-        .any(|existing| existing.eq_ignore_ascii_case(&normalized))
-    {
-        planned.push(normalized);
-    }
-}
-
-fn sanitize_search_query(raw_query: &str) -> String {
-    let redacted_digits = redact_long_digit_runs(raw_query);
-    let kept_tokens = redacted_digits
-        .split_whitespace()
-        .filter(|token| !is_sensitive_query_token(token))
-        .collect::<Vec<_>>()
-        .join(" ");
-    truncate_query(&normalize_query_whitespace(&kept_tokens), 160)
-}
-
-fn redact_long_digit_runs(input: &str) -> String {
-    let mut out = String::new();
-    let mut digit_run = String::new();
-    for ch in input.chars() {
-        if ch.is_ascii_digit() {
-            digit_run.push(ch);
-            continue;
-        }
-        flush_digit_run(&mut out, &mut digit_run);
-        out.push(ch);
-    }
-    flush_digit_run(&mut out, &mut digit_run);
-    out
-}
-
-fn flush_digit_run(out: &mut String, digit_run: &mut String) {
-    if digit_run.is_empty() {
-        return;
-    }
-    if digit_run.len() < 7 {
-        out.push_str(digit_run);
-    } else {
-        out.push(' ');
-    }
-    digit_run.clear();
-}
-
-fn is_sensitive_query_token(token: &str) -> bool {
-    let trimmed = token.trim_matches(|ch: char| ch.is_ascii_punctuation());
-    let lower = trimmed.to_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || (trimmed.contains('@') && trimmed.contains('.'))
-}
-
-fn keyword_query(query: &str) -> String {
-    let stopwords = [
-        "请", "帮我", "一下", "关于", "这个", "那个", "需要", "搜索", "查询", "总结", "核对",
-        "please", "search", "about", "with", "from", "that", "this", "the", "and", "for",
-    ];
-    let mut words = Vec::new();
-    for token in query.split(|ch: char| {
-        ch.is_whitespace()
-            || matches!(
-                ch,
-                ',' | '.' | ':' | '：' | '，' | '。' | '?' | '？' | '!' | '！' | ';' | '；'
-            )
-    }) {
-        let token = token.trim();
-        if token.len() < 2 {
-            continue;
-        }
-        if stopwords
-            .iter()
-            .any(|word| token.eq_ignore_ascii_case(word))
-        {
-            continue;
-        }
-        if !words
-            .iter()
-            .any(|word: &&str| word.eq_ignore_ascii_case(token))
-        {
-            words.push(token);
-        }
-        if words.len() >= 8 {
-            break;
-        }
-    }
-    truncate_query(&words.join(" "), 120)
-}
-
-fn truncate_query(query: &str, max_chars: usize) -> String {
-    query.chars().take(max_chars).collect::<String>()
-}
-
-fn normalize_query_whitespace(query: &str) -> String {
-    query
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim_matches([' ', '\n', '\t', '。', '，', ',', '.', '？', '?'])
-        .to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -559,6 +445,8 @@ async fn collect_search_provider_fetches(
     max_search_results: usize,
     provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     provider_selection_frozen: bool,
+    control: &SearchExecutionControl<'_>,
+    dispatched: &AtomicU32,
 ) -> Vec<Result<SearchProviderFetch, String>> {
     let candidates =
         match search_provider_candidates(db, provider_snapshots, provider_selection_frozen) {
@@ -569,6 +457,9 @@ async fn collect_search_provider_fetches(
     let has_backup = candidates.len() > 1;
     let mut failures = Vec::new();
     for (position, candidate) in candidates.into_iter().enumerate() {
+        if !control.check() {
+            break;
+        }
         let SearchProviderCandidate::Mcp(provider_id) = candidate;
         let timeout = search_provider_timeout(position, started);
         if timeout.is_zero() {
@@ -583,6 +474,7 @@ async fn collect_search_provider_fetches(
             max_search_results,
             expected_snapshot,
             timeout,
+            (control, dispatched),
         )
         .await;
         match result {
@@ -596,7 +488,13 @@ async fn collect_search_provider_fetches(
         // With a route the next provider is the retry. Preserve the legacy
         // short backoff only for a single configured provider.
         if !has_backup && position == 0 && is_retryable_search_failure_result(failures.last()) {
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            tokio::select! {
+                _ = control.cancelled_or_revoked() => break,
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {},
+            }
+            if !control.check() {
+                break;
+            }
             let retry_timeout = search_provider_timeout(position, started);
             if !retry_timeout.is_zero() {
                 let retry = collect_mcp_search_provider_fetch(
@@ -606,6 +504,7 @@ async fn collect_search_provider_fetches(
                     max_search_results,
                     expected_snapshot,
                     retry_timeout,
+                    (control, dispatched),
                 )
                 .await
                 .map_err(|error| error.to_string());
@@ -645,19 +544,25 @@ struct BrokerMcpSearchRoute<'a> {
         &'a [crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     provider_selection_frozen: bool,
     captured: Mutex<Vec<Result<SearchProviderFetch, String>>>,
+    control: &'a SearchExecutionControl<'a>,
 }
 
 impl SearchRoute for BrokerMcpSearchRoute<'_> {
     async fn execute(&self, query: &str) -> RouteAttemptOutcome {
+        let dispatched = AtomicU32::new(0);
         let fetches = collect_search_provider_fetches(
             self.db,
             query,
             self.max_search_results,
             self.provider_snapshots,
             self.provider_selection_frozen,
+            self.control,
+            &dispatched,
         )
         .await;
-        let outcome = mcp_fetches_to_route_outcome(&fetches);
+        let mut outcome = mcp_fetches_to_route_outcome(&fetches);
+        outcome.dispatched_attempts = dispatched.load(Ordering::Acquire);
+        outcome.internal_provider_attempts = outcome.dispatched_attempts;
         *self
             .captured
             .lock()
@@ -744,7 +649,7 @@ fn native_web_evidence_items(outcome: &DualPathSearchOutcome) -> Vec<WebEvidence
             completeness: Default::default(),
             provider_id: "native.search".into(),
             provider_kind: "native".into(),
-            cost_class: "free".into(),
+            cost_class: "unknown".into(),
             extraction_method: "search_snippet".into(),
             trust_level: "external_untrusted".into(),
             retrieval_reason: "web.search".into(),
@@ -761,12 +666,14 @@ fn native_web_evidence_items(outcome: &DualPathSearchOutcome) -> Vec<WebEvidence
 async fn collect_planned_query_fetches(
     db: &Database,
     planned_queries: Vec<String>,
-    max_search_results: usize,
-    provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
-    provider_selection_frozen: bool,
-    search_identity: SearchActionIdentity,
-    native_endpoint: Option<NativeSearchEndpointRef>,
+    input: &WebEvidenceBrokerInput,
+    control: &SearchExecutionControl<'_>,
 ) -> PlannedSearchCollection {
+    let max_search_results = input.max_search_results;
+    let provider_snapshots = &input.provider_snapshots;
+    let provider_selection_frozen = input.provider_selection_frozen;
+    let search_identity = &input.search_identity;
+    let native_endpoint = &input.native_endpoint;
     let mut fetches = Vec::new();
     let mut dual_path = DualPathSearchOutcome {
         identity: search_identity.clone(),
@@ -775,6 +682,9 @@ async fn collect_planned_query_fetches(
     let mut native_usage = 0_u32;
     let mut mcp_usage = 0_u32;
     for (index, query) in planned_queries.iter().enumerate() {
+        if !control.check() {
+            break;
+        }
         let mut identity = search_identity.clone();
         if identity.action_id.trim().is_empty() {
             identity.action_id = "web_search".into();
@@ -788,6 +698,7 @@ async fn collect_planned_query_fetches(
             provider_snapshots,
             provider_selection_frozen,
             captured: Mutex::new(Vec::new()),
+            control,
         };
         let outcome = coordinate_dual_path_search(
             DualPathSearchRequest {
@@ -801,6 +712,7 @@ async fn collect_planned_query_fetches(
             &ProductionNativeSearchRoute {
                 endpoint: native_endpoint.clone(),
                 identity: identity.clone(),
+                control: Some(control),
             },
             &mcp_route,
         )
@@ -808,7 +720,6 @@ async fn collect_planned_query_fetches(
         native_usage = native_usage.saturating_add(outcome.usage.native);
         mcp_usage = mcp_usage.saturating_add(outcome.usage.mcp);
         fetches.extend(mcp_route.take_fetches());
-        record_native_search_boundary(db, &outcome);
         if index == 0 {
             dual_path = outcome;
         }
@@ -827,7 +738,12 @@ async fn collect_mcp_search_provider_fetch(
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
     request_timeout: Duration,
+    execution: (&SearchExecutionControl<'_>, &AtomicU32),
 ) -> AppResult<SearchProviderFetch> {
+    let (control, dispatched) = execution;
+    if !control.check() {
+        return Err(AppError::msg("web_action_revoked"));
+    }
     ensure_provider_circuit_allows(provider_id)?;
     let (provider, mapping_json) =
         resolve_mcp_provider_mapping(db, provider_id, "web.search", expected_snapshot)?;
@@ -837,8 +753,12 @@ async fn collect_mcp_search_provider_fetch(
         &mapping_json,
         query,
         max_search_results,
-        request_timeout,
-        true,
+        request_timeout.min(
+            control
+                .deadline
+                .saturating_duration_since(tokio::time::Instant::now()),
+        ),
+        Some((control, dispatched)),
     )
     .await;
     let probe = match probe_result {
@@ -880,7 +800,7 @@ pub(crate) async fn probe_mcp_search_provider_without_recording(
         query,
         max_results,
         request_timeout,
-        false,
+        None,
     )
     .await
 }
@@ -892,8 +812,9 @@ async fn call_mcp_search_provider(
     query: &str,
     max_results: usize,
     request_timeout: Duration,
-    record_health: bool,
+    control: Option<(&SearchExecutionControl<'_>, &AtomicU32)>,
 ) -> AppResult<McpSearchProviderProbe> {
+    let record_health = control.is_some();
     let effective_mapping = effective_mcp_search_mapping(db, &provider.profile_id, mapping_json);
     let arguments = build_mcp_search_arguments(&effective_mapping, query, max_results);
     let argument_keys = arguments
@@ -915,7 +836,10 @@ async fn call_mcp_search_provider(
             false
         };
     let started = Instant::now();
-    let call_result = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
+    if control.is_some_and(|(control, _)| !control.check()) {
+        return Err(AppError::msg("web_action_revoked"));
+    }
+    let call_future = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
         db,
         provider,
         arguments,
@@ -932,8 +856,20 @@ async fn call_mcp_search_provider(
             stdio_session_idle_timeout:
                 crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         },
-    )
-    .await;
+    );
+    let call_result = if let Some((control, dispatched)) = control {
+        let dispatched_call = async {
+            dispatched.fetch_add(1, Ordering::AcqRel);
+            call_future.await
+        };
+        tokio::select! {
+            biased;
+            _ = control.cancelled_or_revoked() => return Err(AppError::msg("web_action_revoked")),
+            result = dispatched_call => result,
+        }
+    } else {
+        call_future.await
+    };
     let call = match call_result {
         Ok(call) => call,
         Err(error) => {
@@ -1663,7 +1599,7 @@ pub(crate) fn web_evidence_items_from_search_fetch(
                 completeness: Default::default(),
                 provider_id: fetch.provider_id.clone(),
                 provider_kind: fetch.provider_kind.clone(),
-                cost_class: "free".into(),
+                cost_class: "unknown".into(),
                 extraction_method: "search_snippet".into(),
                 trust_level: "external_untrusted".into(),
                 retrieval_reason: "web.search".into(),
@@ -1930,6 +1866,7 @@ pub(crate) fn fetch_provider_candidates(
     candidates
 }
 
+#[cfg(test)]
 pub(crate) async fn enrich_with_page_fetches(
     db: &Database,
     items: Vec<WebEvidenceItem>,
@@ -1937,6 +1874,27 @@ pub(crate) async fn enrich_with_page_fetches(
     allowed_fetch_urls: &std::collections::BTreeSet<String>,
     provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     provider_selection_frozen: bool,
+) -> AppResult<(Vec<WebEvidenceItem>, Vec<(String, String)>)> {
+    enrich_with_page_fetches_controlled(
+        db,
+        items,
+        max_fetches,
+        allowed_fetch_urls,
+        provider_snapshots,
+        provider_selection_frozen,
+        None,
+    )
+    .await
+}
+
+async fn enrich_with_page_fetches_controlled(
+    db: &Database,
+    items: Vec<WebEvidenceItem>,
+    max_fetches: usize,
+    allowed_fetch_urls: &std::collections::BTreeSet<String>,
+    provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+    provider_selection_frozen: bool,
+    control: Option<&SearchExecutionControl<'_>>,
 ) -> AppResult<(Vec<WebEvidenceItem>, Vec<(String, String)>)> {
     if max_fetches == 0 {
         return Ok((items, Vec::new()));
@@ -1967,6 +1925,7 @@ pub(crate) async fn enrich_with_page_fetches(
                         Some(&origin_provider_id),
                         provider_snapshots,
                         provider_selection_frozen,
+                        control,
                     ),
                 )
                 .await
@@ -2013,6 +1972,7 @@ async fn fetch_url_with_providers(
     origin_provider_id: Option<&str>,
     provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     provider_selection_frozen: bool,
+    control: Option<&SearchExecutionControl<'_>>,
 ) -> AppResult<PageProviderFetch> {
     let mut failures = Vec::new();
     for candidate in fetch_provider_candidates(
@@ -2021,24 +1981,38 @@ async fn fetch_url_with_providers(
         provider_snapshots,
         provider_selection_frozen,
     ) {
-        let result = match candidate {
-            FetchProviderCandidate::Mcp(provider_id) => {
-                let expected_snapshot = provider_snapshots
-                    .iter()
-                    .find(|snapshot| snapshot.id == provider_id);
-                tokio::time::timeout(
+        if control.is_some_and(|c| !c.check()) {
+            return Err(AppError::msg("web_action_revoked"));
+        }
+        let request = async {
+            match candidate {
+                FetchProviderCandidate::Mcp(provider_id) => {
+                    let expected_snapshot = provider_snapshots
+                        .iter()
+                        .find(|snapshot| snapshot.id == provider_id);
+                    tokio::time::timeout(
+                        WEB_FETCH_PROVIDER_TIMEOUT,
+                        collect_mcp_page_fetch(db, url, &provider_id, expected_snapshot),
+                    )
+                    .await
+                    .unwrap_or_else(|_| Err(AppError::msg("agent_run_web_provider_timeout")))
+                }
+                FetchProviderCandidate::Native => tokio::time::timeout(
                     WEB_FETCH_PROVIDER_TIMEOUT,
-                    collect_mcp_page_fetch(db, url, &provider_id, expected_snapshot),
+                    collect_native_page_fetch(db, url),
                 )
                 .await
-                .unwrap_or_else(|_| Err(AppError::msg("agent_run_web_provider_timeout")))
+                .unwrap_or_else(|_| Err(AppError::msg("agent_run_web_provider_timeout"))),
             }
-            FetchProviderCandidate::Native => tokio::time::timeout(
-                WEB_FETCH_PROVIDER_TIMEOUT,
-                collect_native_page_fetch(db, url),
-            )
-            .await
-            .unwrap_or_else(|_| Err(AppError::msg("agent_run_web_provider_timeout"))),
+        };
+        let result = if let Some(control) = control {
+            tokio::select! {
+                biased;
+                _ = control.cancelled_or_revoked() => return Err(AppError::msg("web_action_revoked")),
+                result = request => result,
+            }
+        } else {
+            request.await
         };
         match result {
             Ok(fetch) => return Ok(fetch),
@@ -2508,7 +2482,7 @@ fn failed_evidence_item_with_kind(
         completeness: Default::default(),
         provider_id: provider_id.into(),
         provider_kind: provider_kind.into(),
-        cost_class: "free".into(),
+        cost_class: "unknown".into(),
         raw_result_hash,
         extraction_method: "none".into(),
         trust_level: "external_untrusted".into(),

@@ -210,6 +210,17 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>>;
 
+    /// Production transports account for each actual retry/failover attempt.
+    fn manages_attempt_budget(&self) -> bool {
+        false
+    }
+
+    /// Durable root adapters expose their existing repository to the common
+    /// attempt wrapper; standalone fixtures retain the same in-memory ledger.
+    fn budget_database(&self) -> Option<&Database> {
+        None
+    }
+
     /// Record the first concrete tool dispatch for this provider continuation.
     /// A model merely proposing a call does not make a cross-provider retry
     /// unsafe: the Host may still reject or defer that proposal before any
@@ -224,6 +235,19 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
     fn on_tool_proposals_not_dispatched(&self, _run_id: &str) -> AppResult<()> {
         Ok(())
     }
+}
+
+#[path = "agent_tool_loop/budget.rs"]
+mod budget;
+pub(crate) use budget::answer_budgeted_turn;
+use budget::plan_tool_proposals;
+
+/// Confirmation preflight either persists one frozen batch or supplies one
+/// rejection observation for every original call. Operational failures stay Err.
+#[derive(Debug)]
+pub(crate) enum ChangeSetRequestOutcome {
+    Frozen,
+    Rejected(Vec<(String, ToolCallResult)>),
 }
 
 /// Run-bound side of a tool loop.
@@ -244,6 +268,16 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     /// True when this parsed name is a Run-surface mapping, not a catalog tool.
     fn mapped_tool_name(&self, _parsed_name: &str) -> bool {
         false
+    }
+
+    /// One classification shared by projection, reservation, and dispatch.
+    /// Dynamic tools only acquire ExternalRead after the executor proves their
+    /// frozen Run mapping; unknown names never receive an implicit allowance.
+    fn tool_budget_class(&self, name: &str) -> Option<ToolBudgetClass> {
+        catalog_tool_budget_class(name).or_else(|| {
+            self.mapped_tool_name(name)
+                .then_some(ToolBudgetClass::ExternalRead)
+        })
     }
 
     /// Read-only, Run-specific validation after JSON/schema validation and
@@ -321,7 +355,7 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         _run_id: &'a str,
         _calls: &'a [ToolCall],
         _first_step: u32,
-    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = AppResult<ChangeSetRequestOutcome>> + Send + 'a>> {
         Box::pin(async { Err(AppError::msg("confirmation_batch_not_supported")) })
     }
 
@@ -479,36 +513,6 @@ impl AgentToolLoop {
         }
     }
 
-    fn tool_call_limit(&self, class: ToolBudgetClass) -> u32 {
-        match class {
-            ToolBudgetClass::Local => self.max_local_tool_calls,
-            ToolBudgetClass::Network => self.max_network_tool_calls,
-            ToolBudgetClass::ExternalRead => self.max_external_read_tool_calls,
-            ToolBudgetClass::Runtime => self.max_runtime_tool_calls,
-            ToolBudgetClass::ConfirmedChange => self.max_confirmed_change_calls,
-        }
-    }
-
-    fn loop_projection(
-        &self,
-        remaining_model_turns: u32,
-        tool_calls: u32,
-        tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
-        tools: &[ToolSpec],
-    ) -> LoopProjection {
-        project_loop(
-            remaining_model_turns,
-            tool_calls,
-            self.max_tool_calls,
-            tool_calls_by_class,
-            |class| self.tool_call_limit(class),
-            &tools
-                .iter()
-                .filter_map(|tool| catalog_tool_budget_class(&tool.name))
-                .collect::<HashSet<_>>(),
-        )
-    }
-
     /// Run model turns until a non-empty final answer is received or a bound is reached.
     pub(crate) async fn execute(
         &self,
@@ -663,7 +667,12 @@ impl AgentToolLoop {
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
         mut usage: Option<&mut AgentToolLoopUsage>,
     ) -> AppResult<AgentToolLoopOutcome> {
-        let _ledger = model_turn_ledger::BindGuard::new(run_id, self.max_model_turns);
+        let _ledger = model_turn_ledger::BindGuard::new(provider_run_id, self.max_model_turns);
+        model_turn_ledger::configure_scope(
+            provider_run_id,
+            self.turn_budget,
+            run_id == provider_run_id,
+        )?;
         let allowed_tools = tools
             .iter()
             .map(|tool| tool.name.as_str())
@@ -708,6 +717,7 @@ impl AgentToolLoop {
         let mut rejected_rounds = 0_u8;
         let mut failed_service_rounds = 0_u8;
         let mut synthesis_required = false;
+        let mut rejected_confirmation_summary = None;
         let synthesis_tools = tools
             .iter()
             .filter(|tool| tool.name == FINAL_ANSWER_TOOL_NAME)
@@ -716,7 +726,7 @@ impl AgentToolLoop {
         let requires_factual_completion =
             executor.requires_web_evidence() || executor.requires_external_evidence();
 
-        let outcome = async {
+        let outcome = model_turn_ledger::with_scope(provider_run_id, async {
         ensure_run_not_cancelled(run_id)?;
         if model_turns.saturating_add(1) < self.max_model_turns {
             if let Some(compaction) = executor.conversation_memory_compaction_request()? {
@@ -754,13 +764,14 @@ impl AgentToolLoop {
                     usage.model_turns = model_turns;
                 }
                 let started = std::time::Instant::now();
-                let result = provider
-                    .answer_turn(
+                let result = answer_budgeted_turn(
+                        provider,
                         provider_run_id,
                         &compaction_messages,
                         &[],
                         compaction_budget,
                         &mut silent_observer,
+                        model_turn_ledger::AttemptPurpose::Compaction,
                     )
                     .await;
                 let output = result
@@ -839,9 +850,10 @@ impl AgentToolLoop {
             .rposition(|message| matches!(message.role, MessageRole::User))
             .unwrap_or(messages.len());
         while model_turns < self.max_model_turns
-            && model_turn_ledger::used(run_id) < self.max_model_turns {
+            && model_turn_ledger::remaining(provider_run_id) > 0 {
             ensure_run_not_cancelled(run_id)?;
-            let is_final_model_turn = model_turns.saturating_add(1) >= self.max_model_turns;
+            let is_final_model_turn = model_turn_ledger::remaining(provider_run_id) <= 1;
+            completion_tokens = model_turn_ledger::accounting(provider_run_id).2;
             let remaining_completion_tokens = self
                 .turn_budget
                 .max_completion_tokens
@@ -869,6 +881,7 @@ impl AgentToolLoop {
             let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some()
                 || synthesis_required
                 || source_binding_repair_required
+                || is_final_model_turn
             {
                 &synthesis_tools
             } else {
@@ -913,24 +926,28 @@ impl AgentToolLoop {
             }
             model_turns += 1;
             if let Some(usage) = usage.as_deref_mut() {
-                usage.model_turns = model_turn_ledger::used(run_id).max(model_turns);
+                usage.model_turns = model_turn_ledger::used(provider_run_id).max(model_turns);
             }
             executor.record_tool_loop_diagnostic(serde_json::json!({"event":"model", "modelTurns":model_turns}));
             let model_started_at = std::time::Instant::now();
             if executor.requires_web_observation() && !web_observation_performed {
                 observer.on_tools_starting()?;
             }
-            let provider_turn = provider.answer_turn(
+            let provider_turn = answer_budgeted_turn(
+                provider,
                 provider_run_id,
                 &messages,
                 active_tools,
                 model_turn_budget,
                 observer,
+                if is_final_model_turn || synthesis_required || source_binding_repair_required || incomplete_final_draft.is_some() {
+                    model_turn_ledger::AttemptPurpose::FinalSynthesis
+                } else { model_turn_ledger::AttemptPurpose::Model },
             );
             let mut response = match provider_turn.await {
                 Ok(response) => {
                     if let Some(usage) = usage.as_deref_mut() {
-                        usage.model_turns = model_turn_ledger::used(run_id)
+                        usage.model_turns = model_turn_ledger::used(provider_run_id)
                             .max(model_turns);
                     }
                     response
@@ -1303,7 +1320,7 @@ impl AgentToolLoop {
                 let (message, _) = tool_result_message(
                     call,
                     &result,
-                    self.loop_projection(self.max_model_turns.saturating_sub(model_turns), tool_calls, &tool_calls_by_class, active_tools),
+                    self.loop_projection(model_turn_ledger::remaining(provider_run_id), tool_calls, &tool_calls_by_class, active_tools, executor),
                 )?;
                 messages.push(message);
                 continue;
@@ -1332,20 +1349,43 @@ impl AgentToolLoop {
                     .get(&ToolBudgetClass::ConfirmedChange)
                     .copied()
                     .unwrap_or_default();
-                if !all_confirmation_calls || !all_valid {
-                    return Err(AppError::msg("mixed_confirmation_batch"));
-                }
                 if tool_calls.saturating_add(requested) > self.max_tool_calls
                     || class_used.saturating_add(requested)
                         > self.tool_call_limit(ToolBudgetClass::ConfirmedChange)
                 {
-                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+                    return Ok(evidence_limited_outcome(executor.evidence_limited_response(), model_turns, tool_calls, prompt_tokens, completion_tokens, total_tokens));
                 }
                 observer.on_tools_starting()?;
-                executor
-                    .request_change_set(run_id, &response.tool_calls, tool_calls.saturating_add(1))
-                    .await?;
-                return Err(AppError::msg(CONFIRMATION_PENDING_ERROR));
+                let request_outcome = if !all_confirmation_calls || !all_valid {
+                    ChangeSetRequestOutcome::Rejected(response.tool_calls.iter().map(|call|
+                        (call.id.clone(), rejected_result(call, "mixed_confirmation_batch"))).collect())
+                } else {
+                    executor.request_change_set(run_id, &response.tool_calls, tool_calls.saturating_add(1)).await?
+                };
+                match request_outcome {
+                    ChangeSetRequestOutcome::Frozen => return Err(AppError::msg(CONFIRMATION_PENDING_ERROR)),
+                    ChangeSetRequestOutcome::Rejected(results) => {
+                        // Preserve a complete provider-neutral call/result pair
+                        // for the entire rejected batch. No side effect ran.
+                        if results.len() != response.tool_calls.len()
+                            || response.tool_calls.iter().zip(&results).any(|(call, (id, result))|
+                                call.id != *id || call.function.name != result.tool_name || result.success)
+                        {
+                            return Err(AppError::msg("confirmation_feedback_identity_invalid"));
+                        }
+                        rejected_confirmation_summary = Some(budget::confirmation_rejection_summary(&results));
+                        provider.on_tool_proposals_not_dispatched(provider_run_id)?;
+                        messages.push(assistant_tool_message(&response));
+                        for (call, (_, result)) in response.tool_calls.iter().zip(&results) {
+                            let projection = self.loop_projection(model_turn_ledger::remaining(provider_run_id), tool_calls, &tool_calls_by_class, active_tools, executor);
+                            messages.push(tool_result_message(call, result, projection)?.0);
+                        }
+                        observer.on_tools_finished()?;
+                        rejected_rounds = rejected_rounds.saturating_add(1);
+                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair", "round":rejected_rounds, "reason":"confirmation_preflight"}));
+                        continue;
+                    }
+                }
             }
 
             // A model that proposes tools instead of answering still owes the
@@ -1391,6 +1431,7 @@ impl AgentToolLoop {
                 &executions,
                 &fingerprints,
                 self,
+                executor,
             );
             for (call, disposition) in &mut proposal_dispositions {
                 if *disposition == ToolCallDisposition::Dispatched {
@@ -1493,8 +1534,8 @@ impl AgentToolLoop {
                             }
                             rejected_result(call, "tool_call_budget_exhausted")
                         } else {
-                            let class = catalog_tool_budget_class(&call.function.name)
-                                .unwrap_or(ToolBudgetClass::ExternalRead);
+                            let class = executor.tool_budget_class(&call.function.name)
+                                .ok_or_else(|| AppError::run(SafeRunErrorCode::ToolLoopLimit))?;
                             let used = tool_calls_by_class.entry(class).or_insert(0);
                             if *used >= self.tool_call_limit(class) {
                                 rejected_result(call, "tool_category_budget_exhausted")
@@ -1528,7 +1569,7 @@ impl AgentToolLoop {
                                 let result = match execution {
                                     Ok(result) => result,
                                     Err(error) => {
-                                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"tool_error", "tool":crate::ai_runtime::tool_catalog::catalog_find(&call.function.name).map_or("unknown", |entry| entry.name), "reason":SafeRunErrorCode::from_app_error(&error).as_str()}));
+                                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"tool_error", "callId":call.id, "tool":crate::ai_runtime::tool_catalog::catalog_find(&call.function.name).map_or("unknown", |entry| entry.name), "reason":SafeRunErrorCode::from_app_error(&error).as_str()}));
                                         if SafeRunErrorCode::from_app_error(&error) == SafeRunErrorCode::ToolLoopLimit {
                                             observer.on_tools_finished()?;
                                             return Ok(evidence_limited_outcome(executor.evidence_limited_response(),model_turns,tool_calls,prompt_tokens,completion_tokens,total_tokens));
@@ -1550,10 +1591,11 @@ impl AgentToolLoop {
                 };
                 let projection = self
                     .loop_projection(
-                        self.max_model_turns.saturating_sub(model_turns),
+                        model_turn_ledger::remaining(provider_run_id),
                         tool_calls,
                         &tool_calls_by_class,
                         active_tools,
+                        executor,
                     )
                     .with_failure_type(observation_failure_type(&result));
                 let projected = tool_result_message(call, &result, projection);
@@ -1593,7 +1635,7 @@ impl AgentToolLoop {
             }
             observer.on_tools_finished()?;
             if let Some(usage) = usage.as_deref_mut() {
-                usage.model_turns = model_turn_ledger::used(run_id).max(model_turns);
+                usage.model_turns = model_turn_ledger::used(provider_run_id).max(model_turns);
             }
             if round_had_success {
                 failed_service_rounds = 0;
@@ -1605,7 +1647,7 @@ impl AgentToolLoop {
             // Envelope only: last model turn or exhausted tool-call ledger.
             // Recipe counters (`no_progress_rounds`, `failed_service_rounds`)
             // do not close the surface (R11, R12).
-            let final_turn_must_be_reserved = model_turns.saturating_add(1) >= self.max_model_turns;
+            let final_turn_must_be_reserved = model_turn_ledger::remaining(provider_run_id) <= 1;
             if tool_calls >= self.max_tool_calls || final_turn_must_be_reserved {
                 synthesis_required = true;
             }
@@ -1640,7 +1682,44 @@ impl AgentToolLoop {
             completion_tokens,
             total_tokens,
         ))
-        }.await;
+        }).await;
+        // An unfrozen candidate is a different user-visible limitation from
+        // missing research evidence. Preserve that fact even when the next
+        // provider attempt itself fails to acquire its budget lease.
+        let outcome = match (outcome, rejected_confirmation_summary) {
+            (Err(error), Some(summary))
+                if SafeRunErrorCode::from_app_error(&error) == SafeRunErrorCode::ToolLoopLimit =>
+            {
+                Ok(evidence_limited_outcome(
+                    summary,
+                    model_turns,
+                    tool_calls,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                ))
+            }
+            (Ok(mut result), Some(summary)) if result.terminal.is_host_authored() => {
+                result.content = summary;
+                Ok(result)
+            }
+            (result, _) => result,
+        };
+        let (used_turns, used_prompt, used_completion) =
+            model_turn_ledger::accounting(provider_run_id);
+        if let Some(usage) = usage {
+            usage.model_turns = used_turns;
+            usage.prompt_tokens = used_prompt;
+            usage.completion_tokens = used_completion;
+            usage.total_tokens = used_prompt.saturating_add(used_completion);
+        }
+        let outcome = outcome.map(|mut result| {
+            result.model_turns = used_turns;
+            result.prompt_tokens = used_prompt;
+            result.completion_tokens = used_completion;
+            result.total_tokens = used_prompt.saturating_add(used_completion);
+            result
+        });
         let exit_reason = match &outcome {
             // The typed terminal decides this, not the body text and not a
             // synthetic Provider finish reason.
@@ -1677,101 +1756,6 @@ impl StreamEventObserver for SilentStreamObserver {
     ) -> AppResult<()> {
         Ok(())
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn plan_tool_proposals<'a>(
-    calls: &'a [ToolCall],
-    active_allowed_tools: &HashSet<&str>,
-    active_tools: &[ToolSpec],
-    discovery_calls_this_turn: u32,
-    tool_calls: u32,
-    tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
-    executions: &HashMap<String, ExecutionRecord>,
-    fingerprints: &HashMap<String, u32>,
-    loop_policy: &AgentToolLoop,
-) -> Vec<(&'a ToolCall, ToolCallDisposition)> {
-    let mut planned_discovery = discovery_calls_this_turn;
-    let mut planned_total = tool_calls;
-    let mut planned_by_class = tool_calls_by_class.clone();
-    let mut planned_fingerprints = fingerprints.clone();
-    calls
-        .iter()
-        .map(|call| {
-            let executor_owns_invalid_arguments =
-                call.function.name == "spawn_subagent" && valid_call_identity(call);
-            let rejection = if !active_allowed_tools.contains(call.function.name.as_str()) {
-                Some("tool_not_in_run_surface")
-            } else if call.id.trim().is_empty() {
-                Some("missing_call_id")
-            } else if !valid_call_arguments(call) && !executor_owns_invalid_arguments {
-                Some("invalid_arguments_json")
-            } else if !executor_owns_invalid_arguments
-                && active_tools
-                    .iter()
-                    .find(|tool| tool.name == call.function.name)
-                    .is_some_and(|tool| {
-                        let args =
-                            serde_json::from_str::<serde_json::Value>(&call.function.arguments)
-                                .unwrap_or_default();
-                        matches!(
-                            crate::ai_runtime::guardrails::verify_tool_args(
-                                &call.function.name,
-                                &args,
-                                &tool.input_schema
-                            ),
-                            crate::ai_runtime::guardrails::GuardResult::Block { .. }
-                        )
-                    })
-            {
-                Some("arguments_schema_mismatch")
-            } else if planned_total >= loop_policy.max_tool_calls {
-                Some("tool_call_budget_exhausted")
-            } else {
-                None
-            };
-            if let Some(reason) = rejection {
-                return (call, ToolCallDisposition::Rejected(reason));
-            }
-            let fingerprint = tool_fingerprint(call);
-            if executions
-                .get(&fingerprint)
-                .is_some_and(ExecutionRecord::blocks_execution)
-            {
-                return (
-                    call,
-                    ToolCallDisposition::Rejected("tool_call_already_succeeded"),
-                );
-            }
-            if is_discovery_call(call) && planned_discovery >= MAX_DISCOVERY_CALLS_PER_MODEL_TURN {
-                return (call, ToolCallDisposition::Deferred);
-            }
-            let count = planned_fingerprints.entry(fingerprint).or_insert(0);
-            *count = count.saturating_add(1);
-            if *count > MAX_REPEAT_CALLS
-                && !executions
-                    .get(&tool_fingerprint(call))
-                    .is_some_and(|record| record.compacted)
-            {
-                return (call, ToolCallDisposition::Rejected("tool_call_repeated"));
-            }
-            let class = catalog_tool_budget_class(&call.function.name)
-                .unwrap_or(ToolBudgetClass::ExternalRead);
-            let used = planned_by_class.entry(class).or_default();
-            if *used >= loop_policy.tool_call_limit(class) {
-                return (
-                    call,
-                    ToolCallDisposition::Rejected("tool_category_budget_exhausted"),
-                );
-            }
-            if is_discovery_call(call) {
-                planned_discovery = planned_discovery.saturating_add(1);
-            }
-            planned_total = planned_total.saturating_add(1);
-            *used = used.saturating_add(1);
-            (call, ToolCallDisposition::Dispatched)
-        })
-        .collect()
 }
 
 fn tool_proposal_feedback_instruction(

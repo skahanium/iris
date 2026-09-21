@@ -37,6 +37,9 @@ mod streaming_witness;
 mod usage_impl;
 
 pub use abort_impl::{clear_abort, is_abort_requested, request_abort};
+pub(crate) use abort_impl::{
+    notify_web_revoked, wait_for_abort, wait_for_web_revocation, web_revocation_epoch,
+};
 use anthropic_response_impl::parse_anthropic_response;
 pub use body_impl::{build_chat_completions_body, GatewayRequest, LlmFunctionDef, LlmToolDef};
 use body_impl::{build_llm_api_body, uses_openai_responses};
@@ -394,6 +397,28 @@ impl ModelGateway {
             false,
             run_observer_stream_surface(),
             true,
+            None,
+        )
+        .await
+    }
+
+    /// Run-owned dispatch hook executes only when the validated HTTP future is polled.
+    pub(crate) async fn send_streaming_request_with_dispatch(
+        &self,
+        request_id: &str,
+        request: GatewayRequest,
+        observer: &mut dyn StreamEventObserver,
+        before_dispatch: &(dyn Fn() -> AppResult<()> + Send + Sync),
+    ) -> AppResult<GatewayResponse> {
+        streaming_impl::send_streaming_request_to_observer(
+            &self.client,
+            request_id,
+            request,
+            observer,
+            false,
+            run_observer_stream_surface(),
+            true,
+            Some(before_dispatch),
         )
         .await
     }

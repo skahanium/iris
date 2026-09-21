@@ -32,7 +32,7 @@ async fn rejected_patch_is_not_a_successful_dispatch_and_creates_no_version() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
-        native_search_endpoint: None,
+        web_action: None,
     };
     let result = dispatch_tool(
         &state,
@@ -108,7 +108,7 @@ async fn confirmed_write_rejects_a_live_vault_that_does_not_match_the_frozen_ide
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
-        native_search_endpoint: None,
+        web_action: None,
     };
     let result = dispatch_tool(
         &state,
