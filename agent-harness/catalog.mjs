@@ -1553,7 +1553,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q17" },
     blocks: blocks("acceptance", ["D04"]),
-    note: "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。",
+    note: "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。**本条目前没有任何 verify 记录，这是有意的、不是遗漏**：唯一所需证据是 V05 逐端点真实调用，而它需要用户先批准四件事（端点范围、费用上限、凭据、原生搜索端点），见 docs/eval/results/2026-09-19-v05-live-window.md；未获批准前一条也不运行。因此不得用 V03 机械记录或 V04 生产入口录制回放来充抵本条，也不得因本条缺证据而误判为「施工方漏绑」。",
   },
   Q18: {
     kind: "issue",

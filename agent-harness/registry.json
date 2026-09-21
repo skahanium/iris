@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 143,
+  "registryRevision": 144,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-21T13:22:35.146Z"
+    "recordedAt": "2026-09-21T13:24:04.793Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "9f3cbc620b92eb9554a4e288cb3d7ef8"
+      "fingerprint": "c6cf70e4ce7fedaeeab5f65ef2858d53"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -3233,7 +3233,7 @@
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。"
+      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。**本条目前没有任何 verify 记录，这是有意的、不是遗漏**：唯一所需证据是 V05 逐端点真实调用，而它需要用户先批准四件事（端点范围、费用上限、凭据、原生搜索端点），见 docs/eval/results/2026-09-19-v05-live-window.md；未获批准前一条也不运行。因此不得用 V03 机械记录或 V04 生产入口录制回放来充抵本条，也不得因本条缺证据而误判为「施工方漏绑」。"
     },
     "Q18": {
       "kind": "issue",
