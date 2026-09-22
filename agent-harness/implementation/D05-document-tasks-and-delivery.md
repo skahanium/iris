@@ -41,6 +41,13 @@
 - **本波明确不做**：C24 独立候选 UI／DiffView；K15 `completed|partial|blocked` 新持久字段；N23 撤回≠重规划；关闭 Q14；V05／D04／D06。不回头做双路，不授予本波未要求的 `document.transform`。
 - **不能当作关闭证据**：生成≠写盘与安全投影不能推出 N04／Q14／D05 已验收；Draft 信封仍只有 `note.propose_patch`、没有 `note.apply_patch`。
 
+**本波执行事实（2026-09-22 第四波，不关闭）**
+
+- **已落地（本波接线，不造轮子）**：`classify_task_outcome`（`delivery_outcome.rs`）从 Host 限制身份与写入回执派生 `completed`／`partial`／`blocked`，写入既有 `Completed` 事件 JSON 的可选 `taskOutcome`。Run 生命周期仍是 `Completed`／`Failed`／`Cancelled`。历史事件缺字段反序列化为空。
+- **本波做**：Host 限制说明保持 Run `Completed`、任务结果 `blocked`；确认后部分写入为 `partial`；普通回答或全部写入为 `completed`。界面只对 `partial`／`blocked` 出 warning 条，不加成功横幅、不用 destructive、不写「模型能力降级」。机械 `V03` 与生产入口 `V04` 绑 `d05_delivery_outcome_tests.rs`。不把 D05／C25／K15／N11／Q14／N04 标 closed 或 `verification.passed`。
+- **本波明确不做**：DiffView／新候选 UI；K15 独立 SQLite 列或 `agent_runs` 新列；把 `capability_degraded` 映射为 `partial`；关闭 Q14；N23；V05／D04／D06。不回头做双路，不授予本波未要求的 `document.transform`。
+- **不能当作关闭证据**：事件上有 `taskOutcome` 不能推出 N04／Q14／D05 已验收；确认卡片仍无 Markdown 差异。
+
 **修复复核（2026-09-22，不变更验收登记）**
 
 - 格式保持门按「参数／权限 → 整文 hash → 虚拟整文候选 → 整文保持 → 冻结」执行，局部数字、链接显示文字、锚点与代码正文不能被结构归一化掩盖。中英文格式意图与 Intake 复用判据，显式核实／时效需求仍优先。

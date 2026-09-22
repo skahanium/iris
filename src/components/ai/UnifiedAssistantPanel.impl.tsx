@@ -12,6 +12,7 @@ import {
   AssistantRunWebVerificationFailed,
 } from "@/components/ai/AssistantRunCapabilityDegraded";
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
+import { AssistantTaskOutcome } from "@/components/ai/AssistantTaskOutcome";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
@@ -567,6 +568,12 @@ export function UnifiedAssistantPanel({
             </Button>
           ) : null}
         </section>
+      ) : null}
+      {assistantRun.eventState?.taskOutcome === "partial" ||
+      assistantRun.eventState?.taskOutcome === "blocked" ? (
+        <div className={cn("w-full", assistantFocus && "ai-focus-column")}>
+          <AssistantTaskOutcome outcome={assistantRun.eventState.taskOutcome} />
+        </div>
       ) : null}
       <ErrorBoundary scope="AI 对话区">
         <ConversationSurface

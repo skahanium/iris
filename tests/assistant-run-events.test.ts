@@ -976,4 +976,54 @@ describe("userVisibleRunFailureMessage", () => {
       ),
     ).toBe("本次回答已取消。");
   });
+
+  it("回放 completed 时投影 taskOutcome，缺字段为 null", () => {
+    const without = reduce([
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(2, "completed", { kind: "completed", messageId: "message-001" }, 2),
+    ]);
+    expect(without.taskOutcome).toBeNull();
+
+    const blocked = reduce([
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(
+        2,
+        "completed",
+        {
+          kind: "completed",
+          messageId: "message-002",
+          taskOutcome: "blocked",
+        },
+        2,
+      ),
+    ]);
+    expect(blocked.taskOutcome).toBe("blocked");
+
+    const partial = reduce([
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(
+        2,
+        "completed",
+        {
+          kind: "completed",
+          messageId: "message-003",
+          taskOutcome: "partial",
+        },
+        2,
+      ),
+    ]);
+    expect(partial.taskOutcome).toBe("partial");
+  });
 });

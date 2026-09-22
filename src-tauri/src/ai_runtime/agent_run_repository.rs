@@ -4,6 +4,7 @@
 //! dispatch providers, emit IPC events, or provide a compatibility path for
 //! the legacy Harness. Stage 4 owns those responsibilities.
 
+use crate::ai_runtime::delivery_outcome::TaskOutcome;
 use crate::ai_runtime::prompt_contract::PROMPT_CONTRACT_VERSION;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::run_contract::{
@@ -285,6 +286,8 @@ pub(crate) struct FinalizeRunInput {
     /// Host-authored fallback reports persist the assistant message without
     /// replaying it as model `ContentDelta` streaming.
     pub(crate) publish_content_deltas: bool,
+    /// K15 task result attached to the Completed event; absent on historical rows.
+    pub(crate) task_outcome: Option<TaskOutcome>,
 }
 
 /// Safe process-event history for one latest Run belonging to a logical turn.
@@ -1056,6 +1059,7 @@ impl AgentRunRepository {
                     RunEventPayload::Completed {
                         message_id: Some(message_id.clone()),
                         source_summary: input.source_summary,
+                        task_outcome: input.task_outcome,
                     },
                 ).map_err(AppError::msg)?;
                 insert_event(conn, &event)?;

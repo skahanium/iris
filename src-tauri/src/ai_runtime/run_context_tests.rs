@@ -1583,6 +1583,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
             citation_map: serde_json::json!({}),
             source_summary: Vec::new(),
             publish_content_deltas: true,
+            task_outcome: None,
         },
     )
     .expect("completed run");
@@ -1799,6 +1800,7 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
             citation_map: serde_json::json!({}),
             source_summary: Vec::new(),
             publish_content_deltas: true,
+            task_outcome: None,
         },
     )
     .expect("first run finalized");
@@ -2142,6 +2144,7 @@ fn previous_run_safety_does_not_treat_local_evidence_as_web_success() {
             citation_map: serde_json::json!({}),
             source_summary: Vec::new(),
             publish_content_deltas: true,
+            task_outcome: None,
         },
     )
     .expect("first run finalized");

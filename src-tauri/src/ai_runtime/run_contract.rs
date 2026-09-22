@@ -1,5 +1,6 @@
 //! Shared, scene-free contracts for the unified Agent Run control plane.
 
+use crate::ai_runtime::delivery_outcome::TaskOutcome;
 use crate::ai_runtime::retrieval_scope::ContextScopeDto;
 use crate::ai_types::{ContentPart, ContextReferenceWire, SourceSpan};
 use serde::{Deserialize, Serialize};
@@ -1183,6 +1184,9 @@ pub(crate) enum RunEventPayload {
         /// Minimal source-origin category counts for the final answer.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         source_summary: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
+        /// K15 task result; absent on historical events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_outcome: Option<TaskOutcome>,
     },
     /// Safe terminal failure metadata.
     Failed {

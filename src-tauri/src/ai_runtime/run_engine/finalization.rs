@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai_runtime::delivery_outcome::{classify_task_outcome, DeliveryFacts, TaskOutcome};
 use crate::ai_types::CitationBinding;
 
 const MAX_FINAL_OUTPUT_CHARS: usize = 32_000;
@@ -43,7 +44,7 @@ pub(super) fn apply_required_web_degradation_notice(
 /// decide it. Because the body is not Provider output it is not run through
 /// model finish-reason/integrity recovery, and because it makes no attributed
 /// claim it carries no citations, no source summary and no evidence binding.
-pub(super) fn finalize_host_authored_limitation(
+pub(crate) fn finalize_host_authored_limitation(
     db: &Database,
     session: &AssistantSessionRef,
     run_id: &str,
@@ -61,6 +62,10 @@ pub(super) fn finalize_host_authored_limitation(
         None,
         None,
         None,
+        classify_task_outcome(&DeliveryFacts {
+            host_authored_limitation: true,
+            change_ops_complete: None,
+        }),
         sink,
     )
 }
@@ -449,6 +454,7 @@ pub(super) fn emit_run_terminal(
     citation_binding: Option<CitationBinding>,
     source_summary: Option<&crate::ai_runtime::provenance::SourceSummary>,
     attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
+    task_outcome: TaskOutcome,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     // All modern final answers use the same Run-local numbering as tool
@@ -519,6 +525,7 @@ pub(super) fn emit_run_terminal(
                 .map(crate::ai_runtime::provenance::SourceSummary::entries)
                 .unwrap_or_default(),
             publish_content_deltas: true,
+            task_outcome: Some(task_outcome),
         },
     ) {
         Ok(events) => events,
@@ -585,6 +592,7 @@ pub(super) fn finalize_and_emit_with_sink(
     citation_binding: Option<CitationBinding>,
     source_summary: Option<&crate::ai_runtime::provenance::SourceSummary>,
     attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
+    task_outcome: TaskOutcome,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     emit_run_terminal(
@@ -597,6 +605,7 @@ pub(super) fn finalize_and_emit_with_sink(
         citation_binding,
         source_summary,
         attribution,
+        task_outcome,
         sink,
     )
 }
@@ -785,7 +794,7 @@ mod apply_notice_tests {
         apply_required_web_degradation_notice, classify_provider_failure,
         classify_tool_loop_failure, emit_run_terminal, safe_failure_message,
         strip_unverified_web_urls, validate_web_urls_against_allowed, validated_final_model_answer,
-        validated_final_model_answer_with_telemetry,
+        validated_final_model_answer_with_telemetry, TaskOutcome,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::run_contract::{
@@ -867,6 +876,7 @@ mod apply_notice_tests {
             None,
             None,
             None,
+            TaskOutcome::Blocked,
             &NoopRunEventSink,
         )
         .expect("limitation completes");

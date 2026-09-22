@@ -8,8 +8,8 @@ mod providers;
 mod publication_tests;
 mod recovery;
 
-pub(crate) use finalization::classify_tool_loop_failure;
 use finalization::*;
+pub(crate) use finalization::{classify_tool_loop_failure, finalize_host_authored_limitation};
 #[cfg(test)]
 use observer::NoopRunEventSink;
 pub(crate) use observer::*;
@@ -39,6 +39,7 @@ use crate::ai_runtime::citation_linkify::{
     bind_strict_current_run_citations, linkify_web_citations,
 };
 use crate::ai_runtime::conversation_memory::ConversationMemory;
+use crate::ai_runtime::delivery_outcome::{classify_task_outcome, DeliveryFacts};
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
@@ -282,6 +283,10 @@ impl RunEngine {
                 citation_map: serde_json::json!({}),
                 source_summary: Vec::new(),
                 publish_content_deltas: false,
+                task_outcome: Some(classify_task_outcome(&DeliveryFacts {
+                    host_authored_limitation: false,
+                    change_ops_complete: Some(completed_all_operations),
+                })),
             },
         )?;
         for event in &events {
@@ -392,6 +397,10 @@ impl RunEngine {
             None,
             None,
             None,
+            classify_task_outcome(&DeliveryFacts {
+                host_authored_limitation: false,
+                change_ops_complete: None,
+            }),
             sink,
         )
     }
@@ -1272,6 +1281,10 @@ impl RunEngine {
             citation_binding,
             source_summary.as_ref(),
             attribution.as_deref(),
+            classify_task_outcome(&DeliveryFacts {
+                host_authored_limitation: false,
+                change_ops_complete: None,
+            }),
             sink,
         )
     }
@@ -1564,6 +1577,10 @@ impl RunEngine {
             citation_binding,
             None,
             None,
+            classify_task_outcome(&DeliveryFacts {
+                host_authored_limitation: false,
+                change_ops_complete: None,
+            }),
             sink,
         )
     }

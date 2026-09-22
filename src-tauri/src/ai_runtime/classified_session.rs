@@ -329,6 +329,7 @@ fn derive_legacy_lifecycle(
                 payload: serde_json::to_value(RunEventPayload::Completed {
                     message_id: None,
                     source_summary: Vec::new(),
+                    task_outcome: None,
                 })?,
                 created_at: created_at.to_string(),
             });
@@ -344,6 +345,7 @@ fn derive_legacy_lifecycle(
                     event.payload = serde_json::to_value(RunEventPayload::Completed {
                         message_id: Some(final_message_id),
                         source_summary: Vec::new(),
+                        task_outcome: None,
                     })?;
                 }
             }
@@ -782,6 +784,7 @@ pub(crate) fn classified_run_complete(
         RunEventPayload::Completed {
             message_id: Some(message_id),
             source_summary: Vec::new(),
+            task_outcome: Some(crate::ai_runtime::delivery_outcome::TaskOutcome::Completed),
         },
         now,
     )?;

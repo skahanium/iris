@@ -1270,6 +1270,7 @@ fn repository_refuses_second_completed_event_for_terminal_run() {
             payload: RunEventPayload::Completed {
                 message_id: None,
                 source_summary: Vec::new(),
+                task_outcome: None,
             },
         },
     );
@@ -1324,6 +1325,7 @@ fn generic_event_append_cannot_complete_a_run_without_final_message_transaction(
             payload: RunEventPayload::Completed {
                 message_id: Some("message-1".to_string()),
                 source_summary: Vec::new(),
+                task_outcome: None,
             },
         },
     );
@@ -1372,6 +1374,7 @@ fn finalization_writes_assistant_message_run_terminal_state_and_event_atomically
             citation_map: serde_json::json!({}),
             source_summary: Vec::new(),
             publish_content_deltas: true,
+            task_outcome: None,
         },
     )
     .expect("finalize run");

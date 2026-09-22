@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 155,
+  "registryRevision": 157,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-22T01:39:28.220Z"
+    "recordedAt": "2026-09-22T04:19:27.837Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -201,7 +201,7 @@
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "c59ecb368ed4ec5e7eb77eb1593b97bd"
+      "fingerprint": "f3d6484ae223d64ae301cbb5fcddc0f0"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "552235573fb37c2ddcdfd9e7600fc386"
+      "fingerprint": "cd26cf26084e3dea085f4d4932349bf4"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1024,7 +1024,7 @@
         "implements": ["K16", "L03", "L04"],
         "depends_on": ["C07", "C05"]
       },
-      "note": "D05 第三波：Host 侧 EditCandidate 已接线（生成≠写盘；确认事件无正文）。verification 仍 none。不是候选 UI、不是 K15 分字段、不是 N04/Q14 验收。"
+      "note": "D05 第四波：Host 侧 EditCandidate 仍在。verification 仍 none。不是候选 UI、不是 N04/Q14 验收。"
     },
     "C25": {
       "kind": "component",
@@ -1045,7 +1045,7 @@
       "work": null,
       "scope": [],
       "relations": { "implements": ["K15"], "depends_on": ["C23", "C02"] },
-      "note": null
+      "note": "D05 第四波：Completed.taskOutcome 派生 completed/partial/blocked；Host 限制≠Failed。verification 仍 none。不是 DiffView、新列或验收。"
     },
     "C26": {
       "kind": "component",
@@ -1219,8 +1219,8 @@
       "definition": {
         "file": "implementation/D05-document-tasks-and-delivery.md",
         "anchor": "D05",
-        "line": 100,
-        "endLine": 113,
+        "line": 107,
+        "endLine": 120,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
       "implementation": { "state": "unknown" },
@@ -1230,7 +1230,7 @@
       "relations": {
         "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
       },
-      "note": "2026-09-22 第三波：work.state=active。第一波 Intake LocalTransformation 与 Dispatching 回执仍在。第二波格式整理核对器仍在。第三波 C24 候选已接线（生成≠写盘；确认事件无正文）。不关 Q14/D05/N04；不是 K15 分字段、候选 UI 或 V05。"
+      "note": "2026-09-22 第四波：work.state=active。第一至三波仍在（Intake、格式门、C24 候选）。第四波 C25 交付表达：Completed.taskOutcome，Host 限制=blocked，部分写入=partial。不关 Q14/D05/N04/C25/K15；不是 DiffView、新列或 V05。"
     },
     "D06": {
       "kind": "work",
@@ -1826,7 +1826,7 @@
       "work": null,
       "scope": [],
       "relations": { "applies_to": ["C25", "C23", "C14"] },
-      "note": null
+      "note": "D05 第四波：任务结果挂在 Completed 事件可选字段，与 Run 生命周期分字段。verification 仍 none，不是验收。"
     },
     "K16": {
       "kind": "contract",
@@ -4480,13 +4480,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 39,
+      "revision": 41,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 90,
-        "fingerprint": "855993aadbf6dd5ed53ad82a92d1e750"
+        "endLine": 91,
+        "fingerprint": "e1aa5ec25620c417d5b90a84ac49b352"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4610,8 +4610,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 92,
-        "endLine": 114,
+        "line": 93,
+        "endLine": 115,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": { "state": "unknown" },
@@ -6834,6 +6834,50 @@
       "note": "确认事件只投影操作与字符计数，不含笔记正文。不是候选 UI。不把 C24 verification 标 passed。"
     },
     {
+      "object": "D05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_delivery_outcome_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_delivery_outcome",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
+      "at": "2026-09-22T04:20:00Z",
+      "applicability": "current",
+      "note": "D05 第四波机械覆盖：C25 taskOutcome（Host 限制=blocked、部分写入=partial、普通回答=completed、历史 JSON 缺字段）。本机 d05_delivery_outcome 10 passed。不关 D05/C25/K15/N11/Q14/N04，不把 verification 标 passed，不是 DiffView、新列或 V05。"
+    },
+    {
+      "object": "D05",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_delivery_outcome_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib c25_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
+      "at": "2026-09-22T04:20:00Z",
+      "applicability": "current",
+      "note": "D05 第四波生产入口：finalize_host_authored_limitation 发 Completed+blocked；部分/全部变更报告发 partial/completed。不关 D05，不把 verification 标 passed。"
+    },
+    {
+      "object": "C25",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_delivery_outcome_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_delivery_outcome",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "b63690cb7b325e9e9b251e97bd0beaf2",
+      "at": "2026-09-22T04:20:00Z",
+      "applicability": "current",
+      "note": "C25 任务结果与 Run 生命周期分字段已接线。不是 C25／K15 验收，不把 verification 标 passed，不关 D05。"
+    },
+    {
+      "object": "C25",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_delivery_outcome_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib c25_host_authored_limitation_emits_blocked_and_keeps_run_completed",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "b63690cb7b325e9e9b251e97bd0beaf2",
+      "at": "2026-09-22T04:20:00Z",
+      "applicability": "current",
+      "note": "Host 限制说明保持 Run Completed，任务结果 blocked；Completed 事件不含笔记正文。不是 DiffView。不把 C25 verification 标 passed。"
+    },
+    {
       "object": "K06",
       "kind": "V03",
       "testPath": "src-tauri/src/ai_runtime/model_turn_ledger.rs",
@@ -7177,7 +7221,7 @@
       "testPath": "scripts/agent-harness-check.test.mjs",
       "command": "npm run agent-harness:test",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
-      "fingerprint": "855993aadbf6dd5ed53ad82a92d1e750",
+      "fingerprint": "e1aa5ec25620c417d5b90a84ac49b352",
       "at": "2026-09-21T17:06:47.553904+00:00",
       "applicability": "current",
       "note": "整个检查器39通过：有效/空/占位/前缀/括注身份、独立与自签、无关对象、陈旧补充绑定、有效替代、同名文件/对象兼容。独立红例逐轮复核并修复；17条历史user身份来源仍待核实，不推断实际作者。",
@@ -21994,6 +22038,47 @@
           "fingerprintTo": "855993aadbf6dd5ed53ad82a92d1e750"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-22-90",
+      "at": "2026-09-22T04:13:58.576Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "D05 第四波：C25 交付表达接线；不关 Q14/D05/N04/C25/K15。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "c59ecb368ed4ec5e7eb77eb1593b97bd",
+          "fingerprintTo": "f3d6484ae223d64ae301cbb5fcddc0f0"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 39,
+          "revisionTo": 40,
+          "fingerprintFrom": "855993aadbf6dd5ed53ad82a92d1e750",
+          "fingerprintTo": "be858858c42e8b2da2829716751ae93c"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-22-91",
+      "at": "2026-09-22T04:19:27.837Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "D05 第四波：证据表格式化后重绑 V02 指纹。",
+      "review": null,
+      "objects": [
+        {
+          "id": "V02",
+          "revisionFrom": 40,
+          "revisionTo": 41,
+          "fingerprintFrom": "be858858c42e8b2da2829716751ae93c",
+          "fingerprintTo": "e1aa5ec25620c417d5b90a84ac49b352"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -23905,6 +23990,12 @@
       "author": "cursor-grok-4.6",
       "topic": "2026-09-22 D05 第三波：verify 绑编辑候选合同",
       "detail": "CHG-2026-09-22-89 细化后，为 D05／C24 追加绑 d05_edit_candidate_tests.rs 的 current V03／V04；V02 current 证据重绑新指纹（证据表补 C24 行并对齐 N04 链接标签）。治理复核 REV-2026-09-21-84／REV-2026-09-22-CODEX-30 的 V02 绑定标 stale，不改写旧指纹。不把 verification.state 标 passed，不关 Q14／D05／N04。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-22T04:20:00Z",
+      "author": "cursor-grok-4.6",
+      "topic": "2026-09-22 D05 第四波：verify 绑交付表达",
+      "detail": "CHG-2026-09-22-90／91 细化后，为 D05／C25 追加绑 d05_delivery_outcome_tests.rs 的 current V03／V04；V02 current 证据重绑新指纹（证据表补 C25 行，随后 Prettier 折行）。治理复核的 V02 绑定保持 stale，不改写旧指纹。不把 verification.state 标 passed，不关 Q14／D05／N04／C25／K15。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ]
 }

@@ -8,6 +8,7 @@ import type {
   ProviderSwitchReasonCode,
   RunRecoveryKind,
   RunState,
+  TaskOutcome,
   WebDecisionReason,
 } from "@/types/ai";
 
@@ -71,6 +72,8 @@ export interface AssistantRunEventState {
   pendingEvents: readonly AssistantRunEvent[];
   /** The first missing sequence to request through `assistant_run_get`. */
   resyncFromSeq: number | null;
+  /** K15 task result from the Completed event; null on historical Runs. */
+  taskOutcome: TaskOutcome | null;
 }
 
 const TERMINAL_STATES = new Set<RunState>(["completed", "failed", "cancelled"]);
@@ -102,6 +105,7 @@ export function createAssistantRunEventState(
     events: [],
     pendingEvents: [],
     resyncFromSeq: null,
+    taskOutcome: null,
   };
 }
 
@@ -292,6 +296,12 @@ function applyEvent(
             payload.kind === "cancelled"
           ? null
           : state.recovery,
+    taskOutcome:
+      payload.kind === "completed"
+        ? (payload.taskOutcome ?? null)
+        : payload.kind === "failed" || payload.kind === "cancelled"
+          ? null
+          : state.taskOutcome,
     provider:
       payload.kind === "provider_switched"
         ? {

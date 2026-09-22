@@ -242,6 +242,10 @@ v1.2.19 在现有 Rail 体系中增加 Workspace Navigator 与 Agent Focus Surfa
 
 模型的来源绑定标记与最终界面表达必须区分：模型可在采用来源的句段旁输出当前 Run 提供的 `[Wn]` 或精确来源链接，Harness 将其解析为既有徽章和来源区。禁止界面裸露内部标记，不能被提示词解释为禁止模型提交绑定；仍禁止另建来源附录。
 
+### AI 任务结果条
+
+`completed`／`partial`／`blocked` 是任务结果，不是 Run 生命周期。`partial` 与 `blocked` 使用 warning 条（`--warning`／`--warning-bg`），`aria-live="polite"`，禁止 `destructive`、禁止 `role="alert"`，不得写成「模型能力降级」。条不替代限制说明正文。`completed` 只保留合同字段，不另加成功横幅（过程栏「答复完毕」已表达提交）。
+
 ### AI 过程流
 
 过程事件应按 Run 与 assistant 消息一一绑定，不能以全局“最近过程”覆盖历史气泡。普通会话可从既有 Run 事件恢复安全阶段、工具状态和 provider summary；classified 会话维持易失处理，不创建历史过程记录。reasoning summary 仅限 provider 的显式可展示摘要，必须经过可见文本清理、敏感信息脱敏和长度限制；任何不支持该通道的模型仅显示阶段与工具进度。

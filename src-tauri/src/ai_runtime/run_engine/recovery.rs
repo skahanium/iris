@@ -152,6 +152,14 @@ impl RunEngine {
                                 citation_map: serde_json::json!({}),
                                 source_summary: Vec::new(),
                                 publish_content_deltas: true,
+                                task_outcome: Some(
+                                    crate::ai_runtime::delivery_outcome::classify_task_outcome(
+                                        &crate::ai_runtime::delivery_outcome::DeliveryFacts {
+                                            host_authored_limitation: false,
+                                            change_ops_complete: Some(true),
+                                        },
+                                    ),
+                                ),
                             },
                         )?;
                     } else {

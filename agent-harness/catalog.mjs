@@ -785,7 +785,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K16", "L03", "L04"],
     depends_on: ["C07", "C05"],
-    note: "D05 第三波：Host 侧 EditCandidate 已接线（生成≠写盘；确认事件无正文）。verification 仍 none。不是候选 UI、不是 K15 分字段、不是 N04/Q14 验收。",
+    note: "D05 第四波：Host 侧 EditCandidate 仍在。verification 仍 none。不是候选 UI、不是 N04/Q14 验收。",
   },
   C25: {
     kind: "component",
@@ -801,6 +801,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K15"],
     depends_on: ["C23", "C02"],
+    note: "D05 第四波：Completed.taskOutcome 派生 completed/partial/blocked；Host 限制≠Failed。verification 仍 none。不是 DiffView、新列或验收。",
   },
   C26: {
     kind: "component",
@@ -1014,6 +1015,7 @@ export const objects = {
     maturity: "defined",
     definition: { file: "contracts/K15-delivery-result.md", anchor: "K15" },
     applies_to: ["C25", "C23", "C14"],
+    note: "D05 第四波：任务结果挂在 Completed 事件可选字段，与 Run 生命周期分字段。verification 仍 none，不是验收。",
   },
   K16: {
     kind: "contract",
@@ -1288,7 +1290,7 @@ export const objects = {
     work: { state: "active" },
     scope: ["N02", "N03", "N04", "N11", "N23", "Q14"],
     depends_on: ["D02", "D03", "K05", "K15", "K16", "L03", "L04"],
-    note: "2026-09-22 第三波：work.state=active。第一波 Intake LocalTransformation 与 Dispatching 回执仍在。第二波格式整理核对器仍在。第三波 C24 候选已接线（生成≠写盘；确认事件无正文）。不关 Q14/D05/N04；不是 K15 分字段、候选 UI 或 V05。",
+    note: "2026-09-22 第四波：work.state=active。第一至三波仍在（Intake、格式门、C24 候选）。第四波 C25 交付表达：Completed.taskOutcome，Host 限制=blocked，部分写入=partial。不关 Q14/D05/N04/C25/K15；不是 DiffView、新列或 V05。",
   },
   D06: {
     kind: "work",

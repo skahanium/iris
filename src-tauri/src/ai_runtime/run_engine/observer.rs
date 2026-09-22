@@ -371,6 +371,7 @@ impl AgentRunStreamObserver<'_> {
                 citation_map: serde_json::json!({}),
                 source_summary: Vec::new(),
                 publish_content_deltas: true,
+                task_outcome: Some(crate::ai_runtime::delivery_outcome::TaskOutcome::Completed),
             },
         )?;
         for event in &events {

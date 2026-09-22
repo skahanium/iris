@@ -378,6 +378,9 @@ export type RunState =
 
 export type RunRecoveryKind = "resume_available" | "manual_review_required";
 
+/** K15 task result; separate from Run lifecycle. */
+export type TaskOutcome = "completed" | "partial" | "blocked";
+
 export type RunStageCode =
   | "preparing"
   | "preparing_tools"
@@ -664,6 +667,8 @@ export type AssistantRunEventPayload =
       kind: "completed";
       messageId: string | null;
       sourceSummary?: SourceSummaryEntry[];
+      /** K15 task result; absent on historical events. */
+      taskOutcome?: TaskOutcome;
     }
   | { kind: "failed"; code: AssistantRunErrorCode; message: string }
   | { kind: "cancelled"; reason: string };

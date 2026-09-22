@@ -80,9 +80,12 @@ pub mod conversation_memory;
 #[cfg(test)]
 mod d05_content_preservation_tests;
 #[cfg(test)]
+mod d05_delivery_outcome_tests;
+#[cfg(test)]
 mod d05_document_task_tests;
 #[cfg(test)]
 mod d05_edit_candidate_tests;
+pub(crate) mod delivery_outcome;
 pub(crate) mod direct_provider_route;
 pub(crate) mod document_policy_repository;
 pub(crate) mod edit_candidate;
