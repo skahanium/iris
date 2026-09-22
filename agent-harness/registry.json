@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 154,
+  "registryRevision": 155,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-21T17:33:11.725Z"
+    "recordedAt": "2026-09-22T01:39:28.220Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -201,7 +201,7 @@
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "e2a3182c05c1178e62f1536b78be44ff"
+      "fingerprint": "c59ecb368ed4ec5e7eb77eb1593b97bd"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
@@ -266,7 +266,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "e0014b2afeede22264e92ec29d526a36"
+      "fingerprint": "552235573fb37c2ddcdfd9e7600fc386"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1024,7 +1024,7 @@
         "implements": ["K16", "L03", "L04"],
         "depends_on": ["C07", "C05"]
       },
-      "note": "D05 第二波未做统一候选类型／UI；verification 仍 none。"
+      "note": "D05 第三波：Host 侧 EditCandidate 已接线（生成≠写盘；确认事件无正文）。verification 仍 none。不是候选 UI、不是 K15 分字段、不是 N04/Q14 验收。"
     },
     "C25": {
       "kind": "component",
@@ -1219,8 +1219,8 @@
       "definition": {
         "file": "implementation/D05-document-tasks-and-delivery.md",
         "anchor": "D05",
-        "line": 93,
-        "endLine": 106,
+        "line": 100,
+        "endLine": 113,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
       "implementation": { "state": "unknown" },
@@ -1230,7 +1230,7 @@
       "relations": {
         "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
       },
-      "note": "2026-09-21 第二波：work.state=active。第一波 Intake LocalTransformation 与 Dispatching 回执仍在。第二波格式整理核对器已接线（C23 行扫描；未证明则 format_preservation_unproven、不冻结确认）；T25 不是 N04 证明。不关 Q14/D05/N04；不是 K15 分字段、C24 统一候选或 V05。"
+      "note": "2026-09-22 第三波：work.state=active。第一波 Intake LocalTransformation 与 Dispatching 回执仍在。第二波格式整理核对器仍在。第三波 C24 候选已接线（生成≠写盘；确认事件无正文）。不关 Q14/D05/N04；不是 K15 分字段、候选 UI 或 V05。"
     },
     "D06": {
       "kind": "work",
@@ -4480,13 +4480,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 38,
+      "revision": 39,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 89,
-        "fingerprint": "32ecb31882b1bad911199465c830cb86"
+        "endLine": 90,
+        "fingerprint": "855993aadbf6dd5ed53ad82a92d1e750"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4610,8 +4610,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 91,
-        "endLine": 113,
+        "line": 92,
+        "endLine": 114,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": { "state": "unknown" },
@@ -6790,6 +6790,50 @@
       "note": "本波只说明润色不走格式保持门。不是 C24 统一候选合同，不把 C24 verification 标 passed。"
     },
     {
+      "object": "D05",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_edit_candidate_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_edit_candidate",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
+      "at": "2026-09-22T01:45:00Z",
+      "applicability": "current",
+      "note": "D05 第三波机械覆盖：C24 EditCandidate（缺字段/hash 漂移/字符计数/摘要不泄漏/不写盘）。本机 d05_edit_candidate 11 passed。不关 D05/N04/Q14，不把 verification 标 passed，不是候选 UI、K15 分字段或 V05。"
+    },
+    {
+      "object": "D05",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_edit_candidate_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib c24_",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
+      "at": "2026-09-22T01:45:00Z",
+      "applicability": "current",
+      "note": "D05 第三波生产入口：format_gate/freeze 必须经 prepare_edit_candidate；格式未证明与缺字段零确认；润色仍 CONFIRMATION_PENDING；确认事件无正文。不关 D05，不把 verification 标 passed。"
+    },
+    {
+      "object": "C24",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_edit_candidate_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib d05_edit_candidate",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "a134c89546702d47d643e6c4a1cad6f4",
+      "at": "2026-09-22T01:45:00Z",
+      "applicability": "current",
+      "note": "C24 Host 侧候选类型已接线。不是 C24 验收，不把 verification 标 passed，不关 D05。"
+    },
+    {
+      "object": "C24",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_edit_candidate_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib c24_confirmation_event_omits_note_body",
+      "environment": "local / Windows 10 / cargo test",
+      "fingerprint": "a134c89546702d47d643e6c4a1cad6f4",
+      "at": "2026-09-22T01:45:00Z",
+      "applicability": "current",
+      "note": "确认事件只投影操作与字符计数，不含笔记正文。不是候选 UI。不把 C24 verification 标 passed。"
+    },
+    {
       "object": "K06",
       "kind": "V03",
       "testPath": "src-tauri/src/ai_runtime/model_turn_ledger.rs",
@@ -7133,7 +7177,7 @@
       "testPath": "scripts/agent-harness-check.test.mjs",
       "command": "npm run agent-harness:test",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
-      "fingerprint": "32ecb31882b1bad911199465c830cb86",
+      "fingerprint": "855993aadbf6dd5ed53ad82a92d1e750",
       "at": "2026-09-21T17:06:47.553904+00:00",
       "applicability": "current",
       "note": "整个检查器39通过：有效/空/占位/前缀/括注身份、独立与自签、无关对象、陈旧补充绑定、有效替代、同名文件/对象兼容。独立红例逐轮复核并修复；17条历史user身份来源仍待核实，不推断实际作者。",
@@ -21926,6 +21970,30 @@
           "fingerprintTo": "454c69ff585227140faa37c1a1c7483a"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-22-89",
+      "at": "2026-09-22T01:39:28.220Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "D05 第三波：C24 统一编辑候选合同接线；不关 Q14/D05/N04。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "e2a3182c05c1178e62f1536b78be44ff",
+          "fingerprintTo": "c59ecb368ed4ec5e7eb77eb1593b97bd"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 38,
+          "revisionTo": 39,
+          "fingerprintFrom": "32ecb31882b1bad911199465c830cb86",
+          "fingerprintTo": "855993aadbf6dd5ed53ad82a92d1e750"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -23011,7 +23079,8 @@
         {
           "id": "V02",
           "revision": 38,
-          "fingerprint": "32ecb31882b1bad911199465c830cb86"
+          "fingerprint": "32ecb31882b1bad911199465c830cb86",
+          "stale": true
         },
         {
           "id": "Q08",
@@ -23074,7 +23143,8 @@
         {
           "id": "V02",
           "revision": 38,
-          "fingerprint": "32ecb31882b1bad911199465c830cb86"
+          "fingerprint": "32ecb31882b1bad911199465c830cb86",
+          "stale": true
         }
       ]
     },
@@ -23529,7 +23599,18 @@
     "G05": { "state": "closed" },
     "G06": { "state": "closed" }
   },
-  "gaps": [],
+  "gaps": [
+    {
+      "review": "REV-2026-09-21-84",
+      "object": "V02",
+      "reason": "变更对象缺少独立复核覆盖"
+    },
+    {
+      "review": "REV-2026-09-21-84",
+      "object": "D05#file",
+      "reason": "变更对象缺少独立复核覆盖"
+    }
+  ],
   "notes": [
     "本登记表由 scripts/agent-harness-check.mjs --reconcile 写入计算值（指纹、行号、修订）；身份、成熟度、关系与作用域在 agent-harness/catalog.mjs 人工维护。",
     "revision > 1 且 changes 中同一批 187 个对象全部变化，是建立期指纹比对缺陷（比较字段层级不一致）造成的假变化，不是 187 次真实修订；该缺陷已修复，此后无内容变化时 reconcile 不再产生变更记录。",
@@ -23818,6 +23899,12 @@
         "src-tauri/src/commands/settings.rs",
         "src-tauri/src/knowledge/regulations.rs"
       ]
+    },
+    {
+      "at": "2026-09-22T01:45:00Z",
+      "author": "cursor-grok-4.6",
+      "topic": "2026-09-22 D05 第三波：verify 绑编辑候选合同",
+      "detail": "CHG-2026-09-22-89 细化后，为 D05／C24 追加绑 d05_edit_candidate_tests.rs 的 current V03／V04；V02 current 证据重绑新指纹（证据表补 C24 行并对齐 N04 链接标签）。治理复核 REV-2026-09-21-84／REV-2026-09-22-CODEX-30 的 V02 绑定标 stale，不改写旧指纹。不把 verification.state 标 passed，不关 Q14／D05／N04。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ]
 }

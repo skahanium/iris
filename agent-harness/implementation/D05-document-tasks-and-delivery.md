@@ -34,6 +34,13 @@
 - **本波明确不做**：C24 独立候选类型／UI；K15 `completed|partial|blocked` 新持久字段；把 T25 升格为内容保持；完整 CommonMark AST；N23、D06、HR-7 live、Gemini 适配器、V05。不回头做 D04／G02／G03／Q17。
 - **不能当作关闭证据**：核对器通过空白样例不能推出 N04／D05 已验收；润色／翻译不走本门。
 
+**本波执行事实（2026-09-22 第三波，不关闭）**
+
+- **已落地（本波接线，不造轮子）**：Host 侧 `EditCandidate`／`prepare_edit_candidate`（`edit_candidate.rs`）走现有 `apply_patch` 预览。`format_gate` 与 `freeze_change_operation` 在确认前必须先形成候选；确认事件仍是 `ConfirmationRequired` 的 `summary` + `targets`，不含笔记正文、`original_text`／`replacement` 或 diff hunk。`added_chars`／`removed_chars` 是 Unicode 标量差值，不是 Myers diff。
+- **本波做**：`replace_selection`／`insert_text_at_cursor` 进入冻结前成为可独立复验的 C24 候选（路径、base／expected hash、字符增减）。缺字段、hash 漂移或 patch 拒绝则不冻结、不写盘。格式整理仍先过 C23 门；未证明不得产生可冻结候选。润色／翻译可以形成候选并 `CONFIRMATION_PENDING`。机械 `V03` 与生产入口 `V04` 绑 `d05_edit_candidate_tests.rs`。不把 D05／Q14／N04／C24 标 closed 或 `verification.passed`。
+- **本波明确不做**：C24 独立候选 UI／DiffView；K15 `completed|partial|blocked` 新持久字段；N23 撤回≠重规划；关闭 Q14；V05／D04／D06。不回头做双路，不授予本波未要求的 `document.transform`。
+- **不能当作关闭证据**：生成≠写盘与安全投影不能推出 N04／Q14／D05 已验收；Draft 信封仍只有 `note.propose_patch`、没有 `note.apply_patch`。
+
 **修复复核（2026-09-22，不变更验收登记）**
 
 - 格式保持门按「参数／权限 → 整文 hash → 虚拟整文候选 → 整文保持 → 冻结」执行，局部数字、链接显示文字、锚点与代码正文不能被结构归一化掩盖。中英文格式意图与 Intake 复用判据，显式核实／时效需求仍优先。
@@ -85,7 +92,7 @@
 - 不承诺现有规范化转换即可保证任意粘贴文章的内容保持；纯正则空白整理器不等于内容保持合同已经实现。
 - 不把生成候选扩张为文件写入授权：新内容通常由用户插入，实际写入继续经确认边界。
 - 不设发布分数、数值门槛与版本排期承诺；版本排期唯一来源是 [ROADMAP.md](../../ROADMAP.md)。
-- 不因本文件存在而声明 `N04`、`Q14` 已达成或已验证：本工作包第一波与第二波均已开工，仍未关闭。
+- 不因本文件存在而声明 `N04`、`Q14` 已达成或已验证：本工作包第一波至第三波均已开工，仍未关闭。
 - 用户撤回已发布答案不等于 Host 在循环内替模型重规划（`N23`）。
 
 <!-- iris:end D05 -->

@@ -1,6 +1,13 @@
 //! Content-preserving candidate preparation and confirmed apply execution.
 
 use super::*;
+use crate::ai_runtime::content_preservation::{
+    check_format_preservation, is_format_preservation_request, unproven_tool_result,
+};
+use crate::ai_runtime::edit_candidate::{
+    blocked_unprepared_candidate, prepare_edit_candidate, safe_candidate_summary,
+    EditCandidateError,
+};
 
 impl NormalRunToolExecutor<'_> {
     pub(super) fn format_gate(
@@ -9,39 +16,70 @@ impl NormalRunToolExecutor<'_> {
         args: &serde_json::Value,
         virtual_documents: &BTreeMap<String, String>,
     ) -> AppResult<Option<ToolCallResult>> {
-        if !is_format_preservation_request(&self.context.user_message)
-            || !matches!(name, "replace_selection" | "insert_text_at_cursor")
-        {
+        if !matches!(name, "replace_selection" | "insert_text_at_cursor") {
             return Ok(None);
         }
         let paths = frozen_relative_paths(name, args, self.context);
-        let path = paths
-            .first()
-            .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-        let original = match virtual_documents.get(path) {
-            Some(body) => body.clone(),
-            None => {
-                let vault = self.state.vault_path()?;
-                let resolved =
-                    crate::storage::paths::validate_user_note_relative_path(&vault, path)?;
-                std::fs::read_to_string(resolved)?
-            }
+        let Some(path) = paths.first() else {
+            return Ok(Some(blocked_unprepared_candidate(
+                name,
+                &EditCandidateError::MissingFields,
+            )));
         };
-        let mut preview = virtual_documents.clone();
-        let mut hashes = frozen_base_content_hashes(args, self.context, &paths);
-        expected_post_content_hashes(
-            self.state.as_ref(),
-            name,
-            args,
-            &paths,
-            &mut hashes,
-            &mut preview,
-        )?;
-        let candidate = preview
-            .get(path)
-            .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
-        let report = check_format_preservation(&original, candidate);
-        Ok((!report.is_proven()).then(|| unproven_tool_result(name, &report)))
+        let (original, from_virtual) = self.write_tool_original(path, virtual_documents)?;
+        let preview_args = preview_args_for_candidate(args, path, &original, from_virtual);
+        let candidate = match prepare_edit_candidate(name, &preview_args, &original) {
+            Ok(candidate) => candidate,
+            Err(err) => return Ok(Some(blocked_unprepared_candidate(name, &err))),
+        };
+        if is_format_preservation_request(&self.context.user_message) {
+            let report = check_format_preservation(&original, &candidate.candidate_body);
+            if !report.is_proven() {
+                return Ok(Some(unproven_tool_result(name, &report)));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(super) fn confirmation_summary_for_plan(
+        &self,
+        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
+        args: &serde_json::Value,
+        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+    ) -> String {
+        if matches!(entry.name, "replace_selection" | "insert_text_at_cursor") {
+            if let Some(path) = frozen_relative_paths(entry.name, args, self.context).first() {
+                if let Ok((original, from_virtual)) =
+                    self.write_tool_original(path, &BTreeMap::new())
+                {
+                    let preview_args =
+                        preview_args_for_candidate(args, path, &original, from_virtual);
+                    if let Ok(candidate) =
+                        prepare_edit_candidate(entry.name, &preview_args, &original)
+                    {
+                        return safe_candidate_summary(&candidate);
+                    }
+                }
+            }
+        }
+        format!(
+            "等待确认：{} 将修改 {} 个目标",
+            entry.name,
+            plan.relative_paths().len()
+        )
+    }
+
+    fn write_tool_original(
+        &self,
+        path: &str,
+        virtual_documents: &BTreeMap<String, String>,
+    ) -> AppResult<(String, bool)> {
+        if let Some(body) = virtual_documents.get(path) {
+            return Ok((body.clone(), true));
+        }
+        let vault = self.state.vault_path()?;
+        let resolved = crate::storage::paths::validate_user_note_relative_path(&vault, path)?;
+        Ok((std::fs::read_to_string(resolved)?, false))
     }
 
     pub(super) fn freeze_change_plan(
@@ -78,6 +116,33 @@ impl NormalRunToolExecutor<'_> {
         virtual_documents: &mut BTreeMap<String, String>,
     ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput> {
         let relative_paths = frozen_relative_paths(entry.name, args, self.context);
+        if matches!(entry.name, "replace_selection" | "insert_text_at_cursor") {
+            let path = relative_paths
+                .first()
+                .cloned()
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+            let (original, from_virtual) = self.write_tool_original(&path, virtual_documents)?;
+            let preview_args = preview_args_for_candidate(args, &path, &original, from_virtual);
+            let candidate = prepare_edit_candidate(entry.name, &preview_args, &original)
+                .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
+            virtual_documents.insert(path.clone(), candidate.candidate_body.clone());
+            let mut change = args.clone();
+            change["base_content_hash"] = serde_json::json!(candidate.base_content_hash);
+            return Ok(
+                crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput {
+                    tool_call_id: call.id.clone(),
+                    relative_paths,
+                    operation: entry.name.to_string(),
+                    base_content_hashes: vec![(path.clone(), candidate.base_content_hash)],
+                    expected_post_content_hashes: vec![(
+                        path,
+                        candidate.expected_post_content_hash,
+                    )],
+                    change,
+                    rollback_summary: rollback_summary(entry.name),
+                },
+            );
+        }
         let mut base_content_hashes =
             frozen_base_content_hashes(args, self.context, &relative_paths);
         let expected_post_content_hashes = expected_post_content_hashes(
@@ -88,12 +153,6 @@ impl NormalRunToolExecutor<'_> {
             &mut base_content_hashes,
             virtual_documents,
         )?;
-        let mut change = args.clone();
-        if matches!(entry.name, "replace_selection" | "insert_text_at_cursor") {
-            if let Some((_, hash)) = base_content_hashes.first() {
-                change["base_content_hash"] = serde_json::json!(hash);
-            }
-        }
         Ok(
             crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput {
                 tool_call_id: call.id.clone(),
@@ -101,7 +160,7 @@ impl NormalRunToolExecutor<'_> {
                 operation: entry.name.to_string(),
                 base_content_hashes,
                 expected_post_content_hashes,
-                change,
+                change: args.clone(),
                 rollback_summary: rollback_summary(entry.name),
             },
         )
@@ -322,4 +381,27 @@ impl NormalRunToolExecutor<'_> {
         }
         Ok(result)
     }
+}
+
+fn preview_args_for_candidate(
+    args: &serde_json::Value,
+    path: &str,
+    original_body: &str,
+    from_virtual: bool,
+) -> serde_json::Value {
+    let mut preview = args.clone();
+    let has_path = ["target_path", "path"].iter().any(|key| {
+        preview
+            .get(*key)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    });
+    if !has_path {
+        preview["target_path"] = serde_json::json!(path);
+    }
+    if from_virtual {
+        preview["base_content_hash"] =
+            serde_json::json!(crate::cas::hash::content_hash_str(original_body));
+    }
+    preview
 }

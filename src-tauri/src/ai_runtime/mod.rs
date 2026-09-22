@@ -81,8 +81,11 @@ pub mod conversation_memory;
 mod d05_content_preservation_tests;
 #[cfg(test)]
 mod d05_document_task_tests;
+#[cfg(test)]
+mod d05_edit_candidate_tests;
 pub(crate) mod direct_provider_route;
 pub(crate) mod document_policy_repository;
+pub(crate) mod edit_candidate;
 pub(crate) mod final_answer_integrity;
 pub(crate) mod final_answer_submission;
 pub(crate) mod frozen_change_plan;

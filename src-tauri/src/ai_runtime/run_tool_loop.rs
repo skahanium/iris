@@ -29,9 +29,6 @@ use crate::ai_runtime::agent_tool_loop::{
     AgentToolLoop, ChangeSetRequestOutcome, RequiredWebBootstrapObservation, ToolLoopExecutor,
     ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
 };
-use crate::ai_runtime::content_preservation::{
-    check_format_preservation, is_format_preservation_request, unproven_tool_result,
-};
 use crate::ai_runtime::frozen_change_plan::{
     classify_operation_disk_receipt, recovered_write_receipt_result, FrozenWriteReceipt,
 };
@@ -820,11 +817,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         state_version: u64,
     ) -> AppResult<()> {
         let plan = self.freeze_change_plan(call, entry, args)?;
-        let summary = format!(
-            "等待确认：{} 将修改 {} 个目标",
-            entry.name,
-            plan.relative_paths().len()
-        );
+        let summary = self.confirmation_summary_for_plan(entry, args, &plan);
         let event = AgentRunRepository::request_frozen_confirmation(
             &self.state.db,
             &plan,
@@ -1932,10 +1925,16 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 "callId":persisted_tool_call_id,
                 "host":call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX)}),
             );
-            let mut result = if let Some(result) = gate_outcome.tool_result {
+            let mut result = if let Some(result) = gate_outcome
+                .tool_result
+                .clone()
+                .filter(|result| result.error.as_deref() != Some("tool_arguments_invalid"))
+            {
                 result
             } else if let Some(blocked) = self.format_gate(entry.name, &args, &BTreeMap::new())? {
                 blocked
+            } else if let Some(result) = gate_outcome.tool_result {
+                result
             } else if entry.requires_confirmation {
                 self.request_change_confirmation(
                     call,

@@ -785,7 +785,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K16", "L03", "L04"],
     depends_on: ["C07", "C05"],
-    note: "D05 第二波未做统一候选类型／UI；verification 仍 none。",
+    note: "D05 第三波：Host 侧 EditCandidate 已接线（生成≠写盘；确认事件无正文）。verification 仍 none。不是候选 UI、不是 K15 分字段、不是 N04/Q14 验收。",
   },
   C25: {
     kind: "component",
@@ -1288,7 +1288,7 @@ export const objects = {
     work: { state: "active" },
     scope: ["N02", "N03", "N04", "N11", "N23", "Q14"],
     depends_on: ["D02", "D03", "K05", "K15", "K16", "L03", "L04"],
-    note: "2026-09-21 第二波：work.state=active。第一波 Intake LocalTransformation 与 Dispatching 回执仍在。第二波格式整理核对器已接线（C23 行扫描；未证明则 format_preservation_unproven、不冻结确认）；T25 不是 N04 证明。不关 Q14/D05/N04；不是 K15 分字段、C24 统一候选或 V05。",
+    note: "2026-09-22 第三波：work.state=active。第一波 Intake LocalTransformation 与 Dispatching 回执仍在。第二波格式整理核对器仍在。第三波 C24 候选已接线（生成≠写盘；确认事件无正文）。不关 Q14/D05/N04；不是 K15 分字段、候选 UI 或 V05。",
   },
   D06: {
     kind: "work",
