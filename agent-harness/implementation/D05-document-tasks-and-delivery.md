@@ -18,43 +18,7 @@
 | `L03` 编辑与候选应用链路       | 提供候选生成、确认与应用的交接顺序（本工作包按其顺序执行，不重复定义链路内容）                            |
 | `L04` 格式保持链路             | 提供格式整理的允许变化集合与验证交接顺序                                                                  |
 
-可施工与可验收**由计算得出**，不读历史标签：见 [治理规则](../rules/governance.md) §2.5。本轮该工作包状态是 `active`，登记不等于已验收；`acceptanceReady` 仍由未决问题计算，本波不关闭。
-
-**本波执行事实（2026-09-21 第一波，不关闭）**
-
-- **已落地（本波接线，不造轮子）**：`WebDecisionReason::LocalTransformation` 与 `is_local_transformation_request` 原先只用于 vault 工具面；现已接到 `ExclusionClassifier::resolve`。`instruction：body` 剥离后仍用未剥离全文判定显式核实／高风险，避免「翻译：请核实 https://…」被当成纯变换。`web.search` 仍只在 `web_enabled && freshness != Offline` 时进入信封。Durable Apply 派发前把 checkpoint 写成 `Dispatching`。
-- **本波做**：纯润色／格式整理在联网开关打开时也不进入 `web.search`（Q14 触发面；词表含「格式整理」等同义，不含裸「规范化」以免误伤知识问句）；「Summarize the latest breaking news」这类时效题仍给 `web.search`。`Dispatching` 先核验磁盘哈希：已是 `expected_post` 则跳过写入、仍是 base 则派发一次、两者都不是则失败关闭且不重放后缀。前缀已落地时跳过并只派发后缀。恢复把 `Dispatching` 前缀已写入判为可续跑，不得把 `Dispatching` 直接加成 `Applied`；磁盘不再匹配计划终点则该 Run 手动检查，不中断整批恢复。机械 `V03` 与生产入口 `V04`（`execute_confirmed_frozen_change_set`）绑 `d05_document_task_tests.rs`。不把 D05／Q14／C05／C06／C24 标 closed 或 `verification.passed`。
-- **本波明确不做**：N04 正文／顺序／链接目标程序化核对器；把 `doc_normalize_markdown` 升格为内容保持；K15 `completed|partial|blocked` 新持久字段；C24 独立候选类型／UI；N23 撤回≠重规划扩 scope；D06、HR-7 live、Gemini 适配器、V05。不回头做 D04／G02／G03／Q17。
-- **不能当作关闭证据**：斜杠命令 `useInlineAi.ts` 的 `webEnabled: false` 只是入口钉，不能单独关闭 Q14。
-
-**本波执行事实（2026-09-21 第二波，不关闭）**
-
-- **已落地（本波接线，不造轮子）**：独立纯函数 `check_format_preservation`／`is_format_preservation_request`（`content_preservation.rs`；旧选区辅助门仅供测试对照）。生产入口在单工具确认与变更集冻结前拦截；错误码 `format_preservation_unproven`。T25 `normalize_markdown` 仅作空白对照，**不是** N04 证明。
-- **本波做**：格式整理候选写入确认前核对正文信息、块顺序、链接目标；仅允许 CRLF／行尾空白／围栏外空行折叠、列表标记与序号、ATX `#` 个数。未证明则把缺口回给模型，不冻结确认、不自动写入。机械 `V03` 与生产入口 `V04` 绑 `d05_content_preservation_tests.rs`（含非空插入、缺字段、全角空格 unknown、链接目标、锚点与显示文字均保持）。不把 D05／Q14／N04／C23／C24 标 closed 或 `verification.passed`。
-- **本波明确不做**：C24 独立候选类型／UI；K15 `completed|partial|blocked` 新持久字段；把 T25 升格为内容保持；完整 CommonMark AST；N23、D06、HR-7 live、Gemini 适配器、V05。不回头做 D04／G02／G03／Q17。
-- **不能当作关闭证据**：核对器通过空白样例不能推出 N04／D05 已验收；润色／翻译不走本门。
-
-**本波执行事实（2026-09-22 第三波，不关闭）**
-
-- **已落地（本波接线，不造轮子）**：Host 侧 `EditCandidate`／`prepare_edit_candidate`（`edit_candidate.rs`）走现有 `apply_patch` 预览。`format_gate` 与 `freeze_change_operation` 在确认前必须先形成候选；确认事件仍是 `ConfirmationRequired` 的 `summary` + `targets`，不含笔记正文、`original_text`／`replacement` 或 diff hunk。`added_chars`／`removed_chars` 是 Unicode 标量差值，不是 Myers diff。
-- **本波做**：`replace_selection`／`insert_text_at_cursor` 进入冻结前成为可独立复验的 C24 候选（路径、base／expected hash、字符增减）。缺字段、hash 漂移或 patch 拒绝则不冻结、不写盘。格式整理仍先过 C23 门；未证明不得产生可冻结候选。润色／翻译可以形成候选并 `CONFIRMATION_PENDING`。机械 `V03` 与生产入口 `V04` 绑 `d05_edit_candidate_tests.rs`。不把 D05／Q14／N04／C24 标 closed 或 `verification.passed`。
-- **本波明确不做**：C24 独立候选 UI／DiffView；K15 `completed|partial|blocked` 新持久字段；N23 撤回≠重规划；关闭 Q14；V05／D04／D06。不回头做双路，不授予本波未要求的 `document.transform`。
-- **不能当作关闭证据**：生成≠写盘与安全投影不能推出 N04／Q14／D05 已验收；Draft 信封仍只有 `note.propose_patch`、没有 `note.apply_patch`。
-
-**本波执行事实（2026-09-22 第四波，不关闭）**
-
-- **已落地（本波接线，不造轮子）**：`classify_task_outcome`（`delivery_outcome.rs`）从 Host 限制身份与写入回执派生 `completed`／`partial`／`blocked`，写入既有 `Completed` 事件 JSON 的可选 `taskOutcome`。Run 生命周期仍是 `Completed`／`Failed`／`Cancelled`。历史事件缺字段反序列化为空。
-- **本波做**：Host 限制说明保持 Run `Completed`、任务结果 `blocked`；确认后部分写入为 `partial`；普通回答或全部写入为 `completed`。界面只对 `partial`／`blocked` 出 warning 条，不加成功横幅、不用 destructive、不写「模型能力降级」。机械 `V03` 与生产入口 `V04` 绑 `d05_delivery_outcome_tests.rs`。不把 D05／C25／K15／N11／Q14／N04 标 closed 或 `verification.passed`。
-- **本波明确不做**：DiffView／新候选 UI；K15 独立 SQLite 列或 `agent_runs` 新列；把 `capability_degraded` 映射为 `partial`；关闭 Q14；N23；V05／D04／D06。不回头做双路，不授予本波未要求的 `document.transform`。
-- **不能当作关闭证据**：事件上有 `taskOutcome` 不能推出 N04／Q14／D05 已验收；确认卡片仍无 Markdown 差异。
-
-**修复复核（2026-09-22，不变更验收登记）**
-
-- 格式保持门按「参数／权限 → 整文 hash → 虚拟整文候选 → 整文保持 → 冻结」执行，局部数字、链接显示文字、锚点与代码正文不能被结构归一化掩盖。中英文格式意图与 Intake 复用判据，显式核实／时效需求仍优先。
-- 变更集拒绝使用带类型的 `Frozen`／`Rejected` 结果；每个原调用收到对应失败反馈，全批在冻结前拒绝，允许有界纠偏且不计实际工具执行。资源不足交付限制说明。
-- 启动恢复和真实 `RunIntake::control(Resume)` 后 worker 共用计划／授权／Vault／检查点／磁盘回执边界；当前前缀 hash 装配后只执行后缀，保留前缀结果，不改历史计划 hash。目标按集合比较、执行仍按冻结顺序。
-- 选区仅精确映射已执行编辑；范围重叠歧义或无映射依据时不猜测。写后整文 `read_note` 复核仅限已显式授权整文的目标，否则 Host 保留真实写入报告并说明未复核。
-- 定向回归入口为 `d05_content_preservation_tests.rs` 的 `review_regression_b_*` 与 `src-tauri/src/commands/assistant_commands_tests.rs` 的 `review_regression_c_*`。这些是无实网的生产组合与机械回归，不替代桌面实测、V05、语义验收或本工作包关闭证据。
+可施工与可验收**由计算得出**，不读历史标签：见 [治理规则](../rules/governance.md) §2.5。本轮该工作包状态是 `active`，登记不等于已验收；`acceptanceReady` 仍由未决问题计算，本波不关闭。各波执行事实与范围外／跨波锁定见 [D05 施工日记](./D05-wave-log.md)，不写入本合同文件的文件级指纹。
 
 ## 二、改动范围
 
@@ -99,7 +63,7 @@
 - 不承诺现有规范化转换即可保证任意粘贴文章的内容保持；纯正则空白整理器不等于内容保持合同已经实现。
 - 不把生成候选扩张为文件写入授权：新内容通常由用户插入，实际写入继续经确认边界。
 - 不设发布分数、数值门槛与版本排期承诺；版本排期唯一来源是 [ROADMAP.md](../../ROADMAP.md)。
-- 不因本文件存在而声明 `N04`、`Q14` 已达成或已验证：本工作包第一波至第三波均已开工，仍未关闭。
+- 不因本文件存在而声明 `N04`、`Q14` 已达成或已验证：本工作包第一波至第四波均已开工，仍未关闭。施工日记见 [D05-wave-log.md](./D05-wave-log.md)。
 - 用户撤回已发布答案不等于 Host 在循环内替模型重规划（`N23`）。
 
 <!-- iris:end D05 -->

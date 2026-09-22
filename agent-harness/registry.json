@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 157,
+  "registryRevision": 158,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-22T04:19:27.837Z"
+    "recordedAt": "2026-09-22T07:44:45.034Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -34,7 +34,7 @@
       "kind": "version-roadmap",
       "role": "版本排期唯一来源；本体系不重复版本承诺",
       "refs": ["P01"],
-      "fingerprint": "9cd993a45a96d19494f0a99042a37f40"
+      "fingerprint": "1e568c146dd6818cf24adbf347a906f1"
     }
   },
   "files": {
@@ -116,7 +116,7 @@
     "contracts/K15-delivery-result.md": {
       "container": "K15",
       "registration": "K15#file",
-      "fingerprint": "f0a471afa73d0088a1bc0b661041dda3"
+      "fingerprint": "60ef227570b5b6ff42e40b42900f45d0"
     },
     "contracts/K16-verification-report.md": {
       "container": "K16",
@@ -201,12 +201,17 @@
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "f3d6484ae223d64ae301cbb5fcddc0f0"
+      "fingerprint": "763f7df0f7e64dac229e80a71154c882"
+    },
+    "implementation/D05-wave-log.md": {
+      "container": "FILE-D05-JOURNAL",
+      "registration": "FILE-D05-JOURNAL#file",
+      "fingerprint": "79b967672e4d341173b0fb788dfcd6dd"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
       "registration": "FILE-IMPLEMENTATION#file",
-      "fingerprint": "80e060d398e33b044b191035f8f699ec"
+      "fingerprint": "d42d145d74822debba0793e01e47631d"
     },
     "modules/README.md": {
       "container": "README-MODULES",
@@ -266,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "cd26cf26084e3dea085f4d4932349bf4"
+      "fingerprint": "b27330fa8dc79aa26e110aad3ae970bb"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1219,8 +1224,8 @@
       "definition": {
         "file": "implementation/D05-document-tasks-and-delivery.md",
         "anchor": "D05",
-        "line": 107,
-        "endLine": 120,
+        "line": 71,
+        "endLine": 84,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
       "implementation": { "state": "unknown" },
@@ -1319,6 +1324,27 @@
       },
       "note": null
     },
+    "FILE-D05-JOURNAL": {
+      "kind": "rules",
+      "name": "FILE-D05-JOURNAL",
+      "title": "implementation/D05-wave-log.md 的文件级容器",
+      "owner": "P03",
+      "maturity": "draft",
+      "revision": 1,
+      "definition": {
+        "file": "implementation/D05-wave-log.md",
+        "anchor": "FILE-D05-JOURNAL",
+        "line": 53,
+        "endLine": 59,
+        "fingerprint": "9311168c21dcbb777ce5e704b7a060f8"
+      },
+      "implementation": { "state": "unknown" },
+      "verification": { "state": "none" },
+      "work": null,
+      "scope": [],
+      "relations": {},
+      "note": "多对象文件的容器：承接前言与外围正文，不承载对象正式定义"
+    },
     "FILE-DECISIONS": {
       "kind": "rules",
       "name": "FILE-DECISIONS",
@@ -1371,8 +1397,8 @@
       "definition": {
         "file": "implementation/README.md",
         "anchor": "FILE-IMPLEMENTATION",
-        "line": 45,
-        "endLine": 53,
+        "line": 47,
+        "endLine": 55,
         "fingerprint": "bad9307c79e0801c99d3df4ad9d5aa7b"
       },
       "implementation": { "state": "unknown" },
@@ -1400,13 +1426,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          { "id": "D03", "at": "acceptance" },
-          { "id": "D05", "at": "acceptance" }
-        ]
-      },
-      "note": null
+      "relations": {},
+      "note": "本条 closed。第 3 项 spawn_subagent 参数归 Q06／D06，不随本条重开。已撤 D03／D05 验收阻断。"
     },
     "G02": {
       "kind": "issue",
@@ -1468,8 +1489,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
-      "note": null
+      "relations": {},
+      "note": "本条 closed，已撤 D01 验收阻断。"
     },
     "G05": {
       "kind": "issue",
@@ -1489,8 +1510,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D03", "at": "acceptance" }] },
-      "note": null
+      "relations": {},
+      "note": "本条 closed，已撤 D03 验收阻断。"
     },
     "G06": {
       "kind": "issue",
@@ -1510,8 +1531,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
-      "note": "关闭门槛：过早收束负例由 host_authority 的独立 verify 命令绑定（agent_tool_loop_host_authority_tests.rs），不写在 C14 备注里代替。字段级 mismatch（K16／C14）与 Anthropic 终止（C11／K04）不写入本条关闭条件。随 D02 验收关闭。"
+      "relations": {},
+      "note": "关闭门槛：过早收束负例由 host_authority 的独立 verify 命令绑定（agent_tool_loop_host_authority_tests.rs），不写在 C14 备注里代替。字段级 mismatch（K16／C14）与 Anthropic 终止（C11／K04）不写入本条关闭条件。随 D02 验收关闭。本条 closed，已撤 D02 验收阻断。"
     },
     "K01": {
       "kind": "contract",
@@ -1813,13 +1834,13 @@
       "title": "K15 交付结果与用户可见表达",
       "owner": "C25",
       "maturity": "defined",
-      "revision": 12,
+      "revision": 13,
       "definition": {
         "file": "contracts/K15-delivery-result.md",
         "anchor": "K15",
         "line": 13,
         "endLine": 107,
-        "fingerprint": "b5d197d66f42820ef83a738de88ca5b4"
+        "fingerprint": "53ef407556e44fd20addc83fa7ef491c"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -2881,8 +2902,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
-      "note": "调查结论：2026-09-14 那次无法唯一归因；同类现象的可定位性由 D01 交付。不阻断 D02。"
+      "relations": {},
+      "note": "调查结论：2026-09-14 那次无法唯一归因；同类现象的可定位性由 D01 交付。本条 closed，已撤 D01 验收阻断。"
     },
     "Q02": {
       "kind": "issue",
@@ -2902,13 +2923,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          { "id": "D03", "at": "acceptance" },
-          { "id": "D04", "at": "acceptance" }
-        ]
-      },
-      "note": "D03 验收已 closed。F01 promote 切片不重开、不重关；V04 双路仍归 G02／D04。"
+      "relations": {},
+      "note": "本条 closed。F01 promote 切片不重开、不重关；V04 双路仍归 G02／D04，不再由本条 blocks。"
     },
     "Q03": {
       "kind": "issue",
@@ -2928,13 +2944,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          { "id": "D01", "at": "acceptance" },
-          { "id": "D06", "at": "acceptance" }
-        ]
-      },
-      "note": null
+      "relations": {},
+      "note": "本条 closed，已撤 D01／D06 验收阻断。"
     },
     "Q04": {
       "kind": "issue",
@@ -2954,8 +2965,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
-      "note": "关闭门槛：Chat Completions 五类终止的现有 V03 机械记录（4 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04，不是本条关闭条件。Anthropic 五类只算 C11／K04，不扩大本条。"
+      "relations": {},
+      "note": "关闭门槛：Chat Completions 五类终止的现有 V03 机械记录（4 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04，不是本条关闭条件。Anthropic 五类只算 C11／K04，不扩大本条。本条 closed，已撤 D02 验收阻断。"
     },
     "Q05": {
       "kind": "issue",
@@ -3038,8 +3049,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D03", "at": "acceptance" }] },
-      "note": null
+      "relations": {},
+      "note": "本条 closed，已撤 D03 验收阻断。覆盖终点与裁剪边界不同源仍是已知限制，不构成本条阻断。"
     },
     "Q09": {
       "kind": "issue",
@@ -3059,8 +3070,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
-      "note": null
+      "relations": {},
+      "note": "本条 closed，已撤 D01 验收阻断。"
     },
     "Q10": {
       "kind": "issue",
@@ -3080,8 +3091,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D02", "at": "acceptance" }] },
-      "note": "关闭门槛：事实 1–3 的现有 V03 机械记录（5 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04。服务端搜索事件与引用不算本条（→ G03）。"
+      "relations": {},
+      "note": "关闭门槛：事实 1–3 的现有 V03 机械记录（5 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04。服务端搜索事件与引用不算本条（→ G03）。本条 closed，已撤 D02 验收阻断。"
     },
     "Q11": {
       "kind": "issue",
@@ -3101,13 +3112,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": {
-        "blocks": [
-          { "id": "D01", "at": "acceptance" },
-          { "id": "D06", "at": "acceptance" }
-        ]
-      },
-      "note": null
+      "relations": {},
+      "note": "本条 closed，已撤 D01／D06 验收阻断。"
     },
     "Q12": {
       "kind": "issue",
@@ -3127,8 +3133,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
-      "note": null
+      "relations": {},
+      "note": "本条 closed，已撤 D01 验收阻断。"
     },
     "Q13": {
       "kind": "issue",
@@ -3253,8 +3259,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D01", "at": "acceptance" }] },
-      "note": null
+      "relations": {},
+      "note": "本条 closed，已撤 D01 验收阻断。"
     },
     "Q19": {
       "kind": "issue",
@@ -4480,13 +4486,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 41,
+      "revision": 42,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 91,
-        "fingerprint": "e1aa5ec25620c417d5b90a84ac49b352"
+        "endLine": 92,
+        "fingerprint": "a765d9910939194ffb4248b0efc1f96e"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4610,8 +4616,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 93,
-        "endLine": 115,
+        "line": 94,
+        "endLine": 116,
         "fingerprint": "ebc1a089d61c53c3f43d65f5c40bcc33"
       },
       "implementation": { "state": "unknown" },
@@ -7223,10 +7229,21 @@
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "e1aa5ec25620c417d5b90a84ac49b352",
       "at": "2026-09-21T17:06:47.553904+00:00",
-      "applicability": "current",
-      "note": "整个检查器39通过：有效/空/占位/前缀/括注身份、独立与自签、无关对象、陈旧补充绑定、有效替代、同名文件/对象兼容。独立红例逐轮复核并修复；17条历史user身份来源仍待核实，不推断实际作者。",
+      "applicability": "obsolete",
+      "note": "整个检查器39通过：有效/空/占位/前缀/括注身份、独立与自签、无关对象、陈旧补充绑定、有效替代、同名文件/对象兼容。独立红例逐轮复核并修复；17条历史user身份来源仍待核实，不推断实际作者。 【已被取代，保留为历史证据】CHG-2026-09-22-92 给 V02 表加 prettier-ignore，表意未改；按 governance §5.2 规则 6 不改写旧指纹。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
       "testFingerprint": "sha256:f745fcf8ee1fe8f64483bc3a1e43d70e00207961f47ffcd7033cf653c40f0344"
+    },
+    {
+      "object": "V02",
+      "kind": "V03",
+      "testPath": "scripts/agent-harness-check.test.mjs",
+      "command": "npm run agent-harness:test",
+      "environment": "local / Windows 10 / node / agent-harness:test；无实网或付费调用",
+      "fingerprint": "a765d9910939194ffb4248b0efc1f96e",
+      "at": "2026-09-22T07:45:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-22-92：V02 表外包 prettier-ignore，表意与「待补充」行未改。重绑当前定义指纹。不把 V02 verification 标 passed，不解封 CHG-83 / REV-2026-09-21-84。"
     },
     {
       "object": "Q11",
@@ -22079,6 +22096,51 @@
           "fingerprintTo": "e1aa5ec25620c417d5b90a84ac49b352"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-22-92",
+      "at": "2026-09-22T07:44:45.034Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "第一波阅读面对齐：日记迁出D05文件指纹、关闭项撤残留blocks、K15与归档引用及查询脚本",
+      "review": null,
+      "objects": [
+        {
+          "id": "K15#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "f0a471afa73d0088a1bc0b661041dda3",
+          "fingerprintTo": "60ef227570b5b6ff42e40b42900f45d0"
+        },
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "f3d6484ae223d64ae301cbb5fcddc0f0",
+          "fingerprintTo": "763f7df0f7e64dac229e80a71154c882"
+        },
+        {
+          "id": "FILE-IMPLEMENTATION#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "80e060d398e33b044b191035f8f699ec",
+          "fingerprintTo": "d42d145d74822debba0793e01e47631d"
+        },
+        {
+          "id": "K15",
+          "revisionFrom": 12,
+          "revisionTo": 13,
+          "fingerprintFrom": "b5d197d66f42820ef83a738de88ca5b4",
+          "fingerprintTo": "53ef407556e44fd20addc83fa7ef491c"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 41,
+          "revisionTo": 42,
+          "fingerprintFrom": "e1aa5ec25620c417d5b90a84ac49b352",
+          "fingerprintTo": "a765d9910939194ffb4248b0efc1f96e"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -23996,6 +24058,18 @@
       "author": "cursor-grok-4.6",
       "topic": "2026-09-22 D05 第四波：verify 绑交付表达",
       "detail": "CHG-2026-09-22-90／91 细化后，为 D05／C25 追加绑 d05_delivery_outcome_tests.rs 的 current V03／V04；V02 current 证据重绑新指纹（证据表补 C25 行，随后 Prettier 折行）。治理复核的 V02 绑定保持 stale，不改写旧指纹。不把 verification.state 标 passed，不关 Q14／D05／N04／C25／K15。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-22T07:40:00Z",
+      "author": "cursor-grok-4.6",
+      "topic": "c8f9fa26 名实不符留痕（不改写 git）",
+      "detail": "`c8f9fa26` 标题是英文、非 Conventional Commits，也没有说明为什么。实际是身份字段归一 + runtime 决算拆分，75 文件、不含 UI。禁止再把治理身份归一与运行时大改混装进同一提交。本条只留痕，不 rewrite git。"
+    },
+    {
+      "at": "2026-09-22T07:45:00Z",
+      "author": "cursor-grok-4.6",
+      "topic": "2026-09-22 第一波：V02 verify 重绑",
+      "detail": "CHG-2026-09-22-92 细化后，将 V02 的 current V03 标 obsolete 并重绑当前定义指纹（证据表外包 prettier-ignore，表意未改）。不把 verification.state 标 passed，不关 D04／D05／Q14／Q17／G02／G03，不解封 CHG-83／REV-2026-09-21-84。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ]
 }

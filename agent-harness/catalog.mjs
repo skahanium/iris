@@ -82,6 +82,7 @@ export const files = {
   "implementation/D03-session-permission-context.md": "D03",
   "implementation/D04-dual-path-search.md": "D04",
   "implementation/D05-document-tasks-and-delivery.md": "D05",
+  "implementation/D05-wave-log.md": "FILE-D05-JOURNAL",
   "implementation/README.md": "FILE-IMPLEMENTATION",
   "modules/eval-system.md": "FILE-EVAL-SYSTEM",
   "modules/m01-session-and-run.md": "M01",
@@ -156,6 +157,7 @@ export const fileContainers = {
   "FILE-REGISTRY": "registry.json",
   "FILE-DECISIONS": "decisions/README.md",
   "FILE-IMPLEMENTATION": "implementation/README.md",
+  "FILE-D05-JOURNAL": "implementation/D05-wave-log.md",
   "FILE-EVAL-SYSTEM": "modules/eval-system.md",
   D01: "implementation/D01-trustworthy-baseline.md",
   D02: "implementation/D02-protocol-and-recovery.md",
@@ -163,7 +165,6 @@ export const fileContainers = {
   D04: "implementation/D04-dual-path-search.md",
   D05: "implementation/D05-document-tasks-and-delivery.md",
   D06: "tests/legacy-batch-plan.md",
-  "FILE-IMPLEMENTATION": "implementation/README.md",
   K01: "contracts/K01-request-identity.md",
   K02: "contracts/K02-run-lifecycle.md",
   K03: "contracts/K03-instruction-revision.md",
@@ -1420,8 +1421,7 @@ export const objects = {
     owner: "M09",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q01" },
-    blocks: blocks("acceptance", ["D01"]),
-    note: "调查结论：2026-09-14 那次无法唯一归因；同类现象的可定位性由 D01 交付。不阻断 D02。",
+    note: "调查结论：2026-09-14 那次无法唯一归因；同类现象的可定位性由 D01 交付。本条 closed，已撤 D01 验收阻断。",
   },
   Q02: {
     kind: "issue",
@@ -1429,8 +1429,7 @@ export const objects = {
     owner: "M06",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q02" },
-    blocks: blocks("acceptance", ["D03", "D04"]),
-    note: "D03 验收已 closed。F01 promote 切片不重开、不重关；V04 双路仍归 G02／D04。",
+    note: "本条 closed。F01 promote 切片不重开、不重关；V04 双路仍归 G02／D04，不再由本条 blocks。",
   },
   Q03: {
     kind: "issue",
@@ -1438,7 +1437,7 @@ export const objects = {
     owner: "E03",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q03" },
-    blocks: blocks("acceptance", ["D01", "D06"]),
+    note: "本条 closed，已撤 D01／D06 验收阻断。",
   },
   Q04: {
     kind: "issue",
@@ -1446,8 +1445,7 @@ export const objects = {
     owner: "M04",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q04" },
-    blocks: blocks("acceptance", ["D02"]),
-    note: "关闭门槛：Chat Completions 五类终止的现有 V03 机械记录（4 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04，不是本条关闭条件。Anthropic 五类只算 C11／K04，不扩大本条。",
+    note: "关闭门槛：Chat Completions 五类终止的现有 V03 机械记录（4 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04，不是本条关闭条件。Anthropic 五类只算 C11／K04，不扩大本条。本条 closed，已撤 D02 验收阻断。",
   },
   Q05: {
     kind: "issue",
@@ -1480,7 +1478,7 @@ export const objects = {
     owner: "M03",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q08" },
-    blocks: blocks("acceptance", ["D03"]),
+    note: "本条 closed，已撤 D03 验收阻断。覆盖终点与裁剪边界不同源仍是已知限制，不构成本条阻断。",
   },
   Q09: {
     kind: "issue",
@@ -1488,7 +1486,7 @@ export const objects = {
     owner: "M09",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q09" },
-    blocks: blocks("acceptance", ["D01"]),
+    note: "本条 closed，已撤 D01 验收阻断。",
   },
   Q10: {
     kind: "issue",
@@ -1496,8 +1494,7 @@ export const objects = {
     owner: "M04",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q10" },
-    blocks: blocks("acceptance", ["D02"]),
-    note: "关闭门槛：事实 1–3 的现有 V03 机械记录（5 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04。服务端搜索事件与引用不算本条（→ G03）。",
+    note: "关闭门槛：事实 1–3 的现有 V03 机械记录（5 条）即关闭证据；逐端点 V05 外移 G03／Q17／D04。服务端搜索事件与引用不算本条（→ G03）。本条 closed，已撤 D02 验收阻断。",
   },
   Q11: {
     kind: "issue",
@@ -1505,7 +1502,7 @@ export const objects = {
     owner: "E03",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q11" },
-    blocks: blocks("acceptance", ["D01", "D06"]),
+    note: "本条 closed，已撤 D01／D06 验收阻断。",
   },
   Q12: {
     kind: "issue",
@@ -1513,7 +1510,7 @@ export const objects = {
     owner: "M09",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q12" },
-    blocks: blocks("acceptance", ["D01"]),
+    note: "本条 closed，已撤 D01 验收阻断。",
   },
   Q13: {
     kind: "issue",
@@ -1563,7 +1560,7 @@ export const objects = {
     owner: "M09",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q18" },
-    blocks: blocks("acceptance", ["D01"]),
+    note: "本条 closed，已撤 D01 验收阻断。",
   },
   Q19: {
     kind: "issue",
@@ -1579,7 +1576,7 @@ export const objects = {
     owner: "M06",
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G01" },
-    blocks: blocks("acceptance", ["D03", "D05"]),
+    note: "本条 closed。第 3 项 spawn_subagent 参数归 Q06／D06，不随本条重开。已撤 D03／D05 验收阻断。",
   },
   G02: {
     kind: "issue",
@@ -1605,7 +1602,7 @@ export const objects = {
     owner: "M09",
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G04" },
-    blocks: blocks("acceptance", ["D01"]),
+    note: "本条 closed，已撤 D01 验收阻断。",
   },
   G05: {
     kind: "issue",
@@ -1613,7 +1610,7 @@ export const objects = {
     owner: "M03",
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G05" },
-    blocks: blocks("acceptance", ["D03"]),
+    note: "本条 closed，已撤 D03 验收阻断。",
   },
   G06: {
     kind: "issue",
@@ -1621,8 +1618,7 @@ export const objects = {
     owner: "M05",
     maturity: "draft",
     definition: { file: "requirements/open-items.md", anchor: "G06" },
-    blocks: blocks("acceptance", ["D02"]),
-    note: "关闭门槛：过早收束负例由 host_authority 的独立 verify 命令绑定（agent_tool_loop_host_authority_tests.rs），不写在 C14 备注里代替。字段级 mismatch（K16／C14）与 Anthropic 终止（C11／K04）不写入本条关闭条件。随 D02 验收关闭。",
+    note: "关闭门槛：过早收束负例由 host_authority 的独立 verify 命令绑定（agent_tool_loop_host_authority_tests.rs），不写在 C14 备注里代替。字段级 mismatch（K16／C14）与 Anthropic 终止（C11／K04）不写入本条关闭条件。随 D02 验收关闭。本条 closed，已撤 D02 验收阻断。",
   },
 
   // ── X01–X03 检查器与基础设施 ──────────────────────────────
@@ -1906,6 +1902,7 @@ const multiObjectContainers = {
   "modules/eval-system.md": "FILE-EVAL-SYSTEM",
   "decisions/README.md": "FILE-DECISIONS",
   "implementation/README.md": "FILE-IMPLEMENTATION",
+  "implementation/D05-wave-log.md": "FILE-D05-JOURNAL",
 };
 for (const [rel, containerId] of Object.entries(multiObjectContainers)) {
   objects[containerId] = {

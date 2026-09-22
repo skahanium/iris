@@ -4,8 +4,9 @@
 >
 > 本文件规定 Agent 门禁**怎么执行、怎么读**：证据层级、分栏评分、批准门、核心矩阵构成、
 > 压力阶梯、安全轨与运行命令。**可声称范围的唯一权威是
-> [Agent Harness 验收规范](../../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)**，
-> 阶段进度见 [Harness Recovery 实施路线](../../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)；
+> [Agent Harness 文档体系](../../agent-harness/README.md)**；
+> 阶段进度见该入口下的工作包与登记表。历史对照见
+> [归档清单](../../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)。
 > 本文件不复述它们的结论。文末[历史记录](#历史记录已被取代的评测口径与结果)只作对照，
 > 不代表当前架构状态。
 
@@ -139,8 +140,8 @@ Run-local 来源、引用绑定、安全、连续性与预算后才标记 `live_
 联网时效案例必须调用 `web_search`、写入本 Run 的 Web 证据关联并生成可解析引用；离线、
 搜索失败、来源冲突、旧证据复用或伪造引用时必须拒绝事实结论。场景覆盖无时间关键词的
 赛事提问、赛果、新闻、职位、价格、中英混合、长对话中的错误前提、历史摘要和提示注入干扰。
-最低实际观察与证据义务由 [Harness Recovery 实施路线](../../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)
-冻结，本节不重复其规则。
+最低实际观察与证据义务由现行 [Agent Harness 文档体系](../../agent-harness/README.md)
+冻结，本节不重复其规则。历史路线见 [归档清单](../../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)，只作对照。
 
 本轮另增加固定多轮 current-fact 复现场景：
 
