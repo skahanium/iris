@@ -187,17 +187,20 @@ fn final_response(content: &str) -> GatewayResponse {
     }
 }
 
-async fn run_rejected_proposal(spec: ToolSpec, call: ToolCall) -> (Vec<String>, u32) {
+async fn run_rejected_proposal(run_id: &str, spec: ToolSpec, call: ToolCall) -> (Vec<String>, u32) {
     let provider = TurnRecordingProvider::new(vec![tool_response(call), final_response("ok")]);
     let executor = CountingExecutor {
         calls: AtomicU32::new(0),
     };
     let mut observer = NoopObserver;
+    // Process-global model-turn ledger is keyed by run_id. These four tests
+    // execute in parallel; a shared id lets one BindGuard unbind while another
+    // is still claiming, which surfaces as ToolLoopLimit instead of feedback.
     AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
         .execute(
             &provider,
             &executor,
-            "run-schema-mismatch-feedback",
+            run_id,
             Vec::new(),
             vec![spec],
             &mut observer,
@@ -213,6 +216,7 @@ async fn run_rejected_proposal(spec: ToolSpec, call: ToolCall) -> (Vec<String>, 
 #[tokio::test]
 async fn schema_mismatch_feedback_includes_missing_required_field() {
     let (instructions, dispatched) = run_rejected_proposal(
+        "run-schema-mismatch-missing-query",
         web_search_spec(),
         tool_call("c1", "web_search", serde_json::json!({"limit": 3})),
     )
@@ -239,6 +243,7 @@ async fn schema_mismatch_feedback_includes_missing_required_field() {
 #[tokio::test]
 async fn schema_mismatch_feedback_includes_expected_type() {
     let (instructions, dispatched) = run_rejected_proposal(
+        "run-schema-mismatch-wrong-type",
         web_search_spec(),
         tool_call("c1", "web_search", serde_json::json!({"query": 7})),
     )
@@ -255,6 +260,7 @@ async fn schema_mismatch_feedback_includes_expected_type() {
 #[tokio::test]
 async fn schema_mismatch_feedback_lists_enum_values() {
     let (instructions, dispatched) = run_rejected_proposal(
+        "run-schema-mismatch-enum",
         enum_mode_spec(),
         tool_call("c1", "search_hybrid", serde_json::json!({"mode": "slow"})),
     )
@@ -271,6 +277,7 @@ async fn schema_mismatch_feedback_lists_enum_values() {
 #[tokio::test]
 async fn unknown_tool_feedback_does_not_invent_schema_field_errors() {
     let (instructions, dispatched) = run_rejected_proposal(
+        "run-schema-mismatch-unknown-tool",
         web_search_spec(),
         tool_call("c1", "not_exposed", serde_json::json!({})),
     )
