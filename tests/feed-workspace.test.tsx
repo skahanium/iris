@@ -601,9 +601,9 @@ describe("FeedWorkspace", () => {
     await waitFor(() =>
       expect(feedItemGet.mock.calls.length).toBeGreaterThan(detailCalls),
     );
-    expect(screen.getByTestId("feed-toggle-read").textContent).toContain(
-      "标为已读",
-    );
+    expect(
+      (await screen.findByTestId("feed-toggle-read")).textContent,
+    ).toContain("标为已读");
   });
 
   it("j/k 只移动 roving 焦点，Enter 打开；r 执行网络同步", async () => {

@@ -74,7 +74,7 @@ fn scheduler_test_guard() -> MutexGuard<'static, ()> {
     SCHEDULER_TEST_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("lock embedding scheduler contract tests")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn seed_chunk(conn: &Connection, content_hash: &str) {
@@ -114,10 +114,11 @@ fn seed_chunks(conn: &Connection, count: usize) {
 }
 
 fn wait_for_phase(scheduler: &EmbeddingScheduler, phase: &str) {
-    // Scheduler contract tests are serialized below, so a worker that cannot
-    // make its durable transition within this bound is genuinely stuck rather
-    // than merely competing with another scheduler test for CPU time.
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // These tests serialize against each other, but `cargo test` still runs
+    // other binaries in parallel. 15s was enough locally and still flakes on
+    // macos-15 under that load (phase stays `running` until the worker is
+    // scheduled). A poison then cascaded the rest of this file.
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let current = scheduler.status().unwrap().phase;
         if current == phase {
