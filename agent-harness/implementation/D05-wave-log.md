@@ -74,6 +74,14 @@
 - **跨波锁定**：不关 `Q14`／`N04`／`D05`／`D04`／`C24`／`C25`；不把任何对象标 `verification.passed`；不解封 CHG-83／CHG-84；不绑 V02／D05#file；不回头做 G02／G03／Q17；不做 D06。
 - **不能当作关闭证据**：关闭清单本身、`unknown` 可冻结、确认卡门闩、两条适配器 live、Key 缺失跳过。窄窗口 live 不是 V05 全矩阵，也不把 `npm run agent:eval:live` 当 V05。
 
+## N23 证据波（2026-09-23，不关闭）
+
+- **已落地**：`N23` 撤回≠重规划的机械钉三枚，撤回路径行为未改。仓储正例 `n23_retract_deletes_only_the_suffix_and_leaves_the_run_ledger_untouched`：对已完成 Run 的已发布助手消息撤回，只删 `session_messages` 后缀、清摘要、退休 evidence；`agent_runs` 行数、状态、信封与事件不变，无新 accepted／running Run。命令探测 `n23_assistant_session_retract_returns_the_delete_count_and_never_starts_a_run`：`assistant_session_retract` 走 IPC 返回删除计数，`agent_runs`／`agent_run_events`／`session_messages` 无 `RunIntake::start`／`spawn_normal_direct_run` 痕迹。薄前端钉（`tests/use-assistant-conversation.test.tsx`）：`handleRetract` 只 invoke `assistant_session_retract`，不 invoke `assistant_run_start`。负例复用 `session_lifecycle_rejects_delete_and_retract_until_all_runs_are_terminal`。evidence.md 补 `N23` 不变量行后，V02 current 证据按新指纹重绑；治理复核的 V02／D05#file 绑定保持 stale，不改写旧指纹。
+- **本波做**：范围仅 `N23` `V03` 证据绑定（`registry.json.verify`）；**明确不关 `D05`**。
+- **本波范围外**：`N23` 语义验收（`V05`／`V06`）；新撤回 UI；Host `approve_change` IPC 门闩；Markdown 显式保存改写 `.md`；把撤回改成走 `assistant_run_control`；扩 DiffView；改 SQLite schema。
+- **跨波锁定**：不关闭 Q14／N04／D05／D04／C24／C25；不把任何对象标 `verification.passed`；不解封 CHG-83／CHG-84，不绑 V02／D05 文件指纹；不做 D06、HR-7 live、V05 矩阵、`agent:eval:live`。
+- **不能当作关闭证据**：撤回≠重规划的机械钉不能推出 `N23`／`D05`／`N04`／`Q14` 已验收；`V03` 与薄前端钉不替代 `V05`／`V06`；不是取消 Run、拒绝确认、同 Run 纠偏续轮或 `C08` 摘要更正语义。
+
 <!-- iris:end FILE-D05-JOURNAL -->
 
 <!-- iris:object FILE-D05-JOURNAL kind=rules -->

@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 166,
+  "registryRevision": 168,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-23T15:13:10.779Z"
+    "recordedAt": "2026-09-23T16:21:05.671Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -206,7 +206,7 @@
     "implementation/D05-wave-log.md": {
       "container": "FILE-D05-JOURNAL",
       "registration": "FILE-D05-JOURNAL#file",
-      "fingerprint": "e517b376727583ed3263a8c4d88489dc"
+      "fingerprint": "b7c7baeccb516e5084cd23ce674bf591"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "98bfdb0a28fa55bf623f10d4403da055"
+      "fingerprint": "ff7ee18de2a80dfb7d52a02ed76a9687"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1334,8 +1334,8 @@
       "definition": {
         "file": "implementation/D05-wave-log.md",
         "anchor": "FILE-D05-JOURNAL",
-        "line": 79,
-        "endLine": 85,
+        "line": 87,
+        "endLine": 93,
         "fingerprint": "9311168c21dcbb777ce5e704b7a060f8"
       },
       "implementation": { "state": "unknown" },
@@ -4507,13 +4507,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 42,
+      "revision": 43,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 92,
-        "fingerprint": "a765d9910939194ffb4248b0efc1f96e"
+        "endLine": 93,
+        "fingerprint": "88761cf13e23705661eec5af50879dee"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4637,8 +4637,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 94,
-        "endLine": 118,
+        "line": 95,
+        "endLine": 119,
         "fingerprint": "de14538f1439db6162db1aafca887c43"
       },
       "implementation": { "state": "unknown" },
@@ -6076,17 +6076,6 @@
       "testFingerprint": "sha256:f745fcf8ee1fe8f64483bc3a1e43d70e00207961f47ffcd7033cf653c40f0344"
     },
     {
-      "object": "V02",
-      "kind": "V03",
-      "testPath": "scripts/agent-harness-check.test.mjs",
-      "command": "npm run agent-harness:test",
-      "environment": "local / Windows 10 / node / agent-harness:test；无实网或付费调用",
-      "fingerprint": "a765d9910939194ffb4248b0efc1f96e",
-      "at": "2026-09-22T07:45:00Z",
-      "applicability": "current",
-      "note": "CHG-2026-09-22-92：V02 表外包 prettier-ignore，表意与「待补充」行未改。重绑当前定义指纹。不把 V02 verification 标 passed，不解封 CHG-83 / REV-2026-09-21-84。"
-    },
-    {
       "object": "Q11",
       "kind": "V03",
       "testPath": "scripts/agent-eval.test.mjs",
@@ -6409,6 +6398,39 @@
       "note": "CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
       "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
       "testFingerprint": "sha256:c659d750242ae1f3648676be027b10577f3cd48f43ef1ed506a86b0b5db5fb13"
+    },
+    {
+      "object": "V02",
+      "kind": "V03",
+      "testPath": "scripts/agent-harness-check.test.mjs",
+      "command": "npm run agent-harness:test",
+      "environment": "local / macOS / node / agent-harness:test；无实网或付费调用",
+      "fingerprint": "88761cf13e23705661eec5af50879dee",
+      "at": "2026-09-23T16:19:28.290Z",
+      "applicability": "current",
+      "note": "N23 证据波：证据表补 N23 撤回≠重规划行后重绑当前定义指纹，本机 50 pass。不把 V02 verification 标 passed，不解封 CHG-83 / REV-2026-09-21-84。"
+    },
+    {
+      "object": "N23",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/normal_session_repository_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib n23_",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "ac6bd2e346f7db1cec0e968fc8399317",
+      "at": "2026-09-23T16:19:28.290Z",
+      "applicability": "current",
+      "note": "N23 证据波主钉：撤回已发布助手消息只删 session_messages 后缀、清摘要、退休 evidence，agent_runs 行数／状态／信封／事件不变、无新 accepted／running Run；命令探测 n23_assistant_session_retract_returns_the_delete_count_and_never_starts_a_run（assistant_commands_tests.rs）断言 IPC 返回删除计数且无 RunIntake::start 痕迹。本机 2 passed；负例复用 session_lifecycle_rejects_delete_and_retract_until_all_runs_are_terminal（5 passed）。证据波，不关 D05／Q14／N04；verification 仍 none。"
+    },
+    {
+      "object": "N23",
+      "kind": "V03",
+      "testPath": "tests/use-assistant-conversation.test.tsx",
+      "command": "npm run test -- tests/use-assistant-conversation.test.tsx",
+      "environment": "local / macOS / node / vitest",
+      "fingerprint": "ac6bd2e346f7db1cec0e968fc8399317",
+      "at": "2026-09-23T16:19:28.290Z",
+      "applicability": "current",
+      "note": "N23 薄前端钉：handleRetract 只 invoke assistant_session_retract、不 invoke assistant_run_start。本机 8 passed。不做 V07 截图；证据波，不关 D05／Q14／N04。"
     }
   ],
   "issues": {
@@ -6791,6 +6813,12 @@
       "author": "cursor-grok-4.6",
       "topic": "2026-09-23 D05 关条钉死：K16 verify 重绑",
       "detail": "CHG-2026-09-23-100 细化后，将 K16 四条 current 标 obsolete 并重绑当前定义指纹 b84f0c6d8668881f3831737e35973b73。不改写旧指纹。不把 verification.state 标 passed，不关 Q14/N04/D05/D04/C24/C25，不解封 CHG-83/CHG-84，不绑 V02/D05#file。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-23T16:19:28.290Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-23 N23 证据波：verify 绑撤回≠重规划",
+      "detail": "为 N23 追加绑 n23_ 仓储／命令测试与薄前端钉的 current V03；V02 current 证据标 obsolete 并重绑当前定义指纹 88761cf13e23705661eec5af50879dee（证据表补 N23 行，旧指纹 a765d9910939194ffb4248b0efc1f96e 不改写）。治理复核 REV-2026-09-21-84／REV-2026-09-22-CODEX-30 的 V02 绑定保持 stale，不改写旧指纹。不把 verification.state 标 passed，不关 D05／Q14／N04，不解封 CHG-83／CHG-84，不绑 V02／D05#file 复核。verify／notes 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ],
   "history": "registry-history.json"

@@ -14858,6 +14858,30 @@
           "fingerprintTo": "e517b376727583ed3263a8c4d88489dc"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-23-103",
+      "at": "2026-09-23T16:19:48.090Z",
+      "author": "zcode-agent",
+      "classification": "refinement",
+      "reason": "N23 证据波：evidence.md 补 N23 撤回≠重规划不变量行，D05-wave-log 增 N23 证据波小节。只绑 N23 V03 证据，不关 D05／Q14／N04，不解封 CHG-83／CHG-84，不绑 V02／D05#file 复核。",
+      "review": null,
+      "objects": [
+        {
+          "id": "FILE-D05-JOURNAL#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "e517b376727583ed3263a8c4d88489dc",
+          "fingerprintTo": "b7c7baeccb516e5084cd23ce674bf591"
+        },
+        {
+          "id": "V02",
+          "revisionFrom": 42,
+          "revisionTo": 43,
+          "fingerprintFrom": "a765d9910939194ffb4248b0efc1f96e",
+          "fingerprintTo": "88761cf13e23705661eec5af50879dee"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -17484,6 +17508,13 @@
       "fingerprint": "ee2341de1359084ba414ace18a7208bc",
       "applicability": "obsolete",
       "reason": "3个相关前端文件16通过；确认、取消、失败/部分进度沿现有投影，没有新增UI。"
+    },
+    {
+      "object": "V02",
+      "kind": "V03",
+      "fingerprint": "a765d9910939194ffb4248b0efc1f96e",
+      "applicability": "obsolete",
+      "reason": "N23 证据波证据表补行后 V02 定义指纹变化，本条不再声称适用。"
     }
   ]
 }

@@ -5,9 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{
-    assistant_run_control, dispatch_normal_run_service, evaluate_normal_run_policy,
-    execute_confirmed_change_with_sink, historical_source_summary_for_run,
-    historical_web_citations_for_run,
+    assistant_run_control, assistant_session_retract, dispatch_normal_run_service,
+    evaluate_normal_run_policy, execute_confirmed_change_with_sink,
+    historical_source_summary_for_run, historical_web_citations_for_run,
 };
 #[cfg(not(windows))]
 use crate::ai_runtime::agent_capacity_eval::{spawn_llm_protocol_double, HttpResponseScript};
@@ -1642,4 +1642,132 @@ async fn review_regression_c_hash_override_cannot_reuse_selection_offsets() {
         verification.unwrap_err().to_string(),
         "post_confirmation_verification_scope_unavailable"
     );
+}
+
+fn invoke_session_retract(
+    webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    session_key: &str,
+    from_seq: i64,
+) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+    tauri::test::get_ipc_response(
+        webview,
+        InvokeRequest {
+            cmd: "assistant_session_retract".into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            // Windows/Android 的 wry workaround 使用 http://tauri.localhost，
+            // 其余平台才是 tauri://localhost；用错 URL 会被判定为 remote origin 并触发 ACL 拒绝。
+            url: if cfg!(any(windows, target_os = "android")) {
+                "http://tauri.localhost"
+            } else {
+                "tauri://localhost"
+            }
+            .parse()
+            .expect("invoke URL"),
+            body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                "request": {
+                    "session": { "domain": "normal", "sessionKey": session_key },
+                    "fromSeq": from_seq,
+                }
+            })),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.into(),
+        },
+    )
+}
+
+// N23 evidence probe: the retract command reports a delete count and never
+// crosses into RunIntake::start / spawn_normal_direct_run. RunIntake::start
+// would insert an 'accepted' agent_runs row, an Accepted event and a user
+// message; all three staying untouched pins that the retract path cannot
+// jump onto the run-start path.
+#[test]
+fn n23_assistant_session_retract_returns_the_delete_count_and_never_starts_a_run() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let session =
+        crate::ai_runtime::normal_session_repository::NormalSessionRepository::create(&state.db)
+            .expect("session");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO agent_runs
+                 (run_id, client_request_id, session_id, turn_id, status, state_version,
+                  effect, effort, security_domain, risk, envelope_json, goal_summary,
+                  created_at, updated_at)
+                 VALUES (?1, ?1, ?2, ?1, 'completed', 0, 'answer', 'direct', 'normal', 'read_only',
+                         '{}', '', '2020-01-01', '2020-01-01')",
+                rusqlite::params![session.session_key, session.session_id],
+            )?;
+            conn.execute(
+                "INSERT INTO session_messages (session_id, seq, role, content, turn_id, created_at)
+                 VALUES (?1, 1, 'user', 'public fixture', ?2, '2020-01-01')",
+                rusqlite::params![session.session_id, session.session_key],
+            )?;
+            conn.execute(
+                "INSERT INTO session_messages (session_id, seq, role, content, turn_id, created_at)
+                 VALUES (?1, 2, 'assistant', 'published answer', ?2, '2020-01-01')",
+                rusqlite::params![session.session_id, session.session_key],
+            )?;
+            conn.execute(
+                "INSERT INTO agent_run_events
+                 (run_id, event_seq, state_version, event_type, payload_json, created_at)
+                 VALUES (?1, 1, 0, 'completed', '{}', '2020-01-01')",
+                rusqlite::params![session.session_key],
+            )?;
+            Ok(())
+        })
+        .expect("seed completed run with a published answer");
+
+    let app = tauri::test::mock_builder()
+        .manage(Arc::clone(&state))
+        .invoke_handler(tauri::generate_handler![assistant_session_retract])
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .expect("mock application");
+    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let response = invoke_session_retract(&webview, &session.session_key, 2)
+        .expect("assistant_session_retract invoke");
+    let deleted: u32 = response.deserialize().expect("delete-count payload");
+    assert_eq!(
+        deleted, 1,
+        "retract reports its delete count, never a run acceptance"
+    );
+
+    state
+        .db
+        .with_read_conn(|conn| {
+            let run_rows: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM agent_runs WHERE session_id = ?1",
+                [session.session_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(run_rows, 1, "retract must not accept or spawn a run");
+            let completed: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM agent_runs WHERE session_id = ?1 AND status = 'completed'",
+                [session.session_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(completed, 1, "the terminal run keeps its status");
+            let messages: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1",
+                [session.session_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                messages, 1,
+                "only the suffix disappears; RunIntake::start would append a user row"
+            );
+            let events: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM agent_run_events WHERE run_id = ?1",
+                rusqlite::params![session.session_key],
+                |row| row.get(0),
+            )?;
+            assert_eq!(events, 1, "no new run event is written");
+            Ok(())
+        })
+        .expect("post-retract ledger");
 }

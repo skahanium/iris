@@ -624,3 +624,122 @@ fn retract_clears_conversation_memory_when_remaining_history_fits_the_recent_win
         "retracted content must not remain in a summary"
     );
 }
+
+fn run_ledger_rows(db: &Database, session_id: i64) -> Vec<(String, String, i64, String, String)> {
+    db.with_read_conn(|conn| {
+        let mut statement = conn.prepare(
+            "SELECT run_id, status, state_version, envelope_json, updated_at
+             FROM agent_runs WHERE session_id = ?1 ORDER BY run_id",
+        )?;
+        let rows = statement.query_map([session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    })
+    .expect("run ledger")
+}
+
+fn run_event_count(db: &Database, run_id: &str) -> i64 {
+    db.with_read_conn(|conn| {
+        conn.query_row(
+            "SELECT COUNT(*) FROM agent_run_events WHERE run_id = ?1",
+            [run_id],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+    })
+    .expect("run events")
+}
+
+// N23 evidence pin: retracting a published answer is not Host re-planning. The
+// negative half (non-terminal runs must reject retract) is
+// `session_lifecycle_rejects_delete_and_retract_until_all_runs_are_terminal`.
+#[test]
+fn n23_retract_deletes_only_the_suffix_and_leaves_the_run_ledger_untouched() {
+    let db = Database::open_in_memory().expect("database");
+    let session = session_lifecycle_fixture(&db, "completed");
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO session_messages (session_id, seq, role, content, turn_id, created_at)
+             VALUES (?1, 2, 'assistant', 'published answer', ?2, '2020-01-01')",
+            rusqlite::params![session.session_id, session.session_key],
+        )?;
+        conn.execute(
+            "INSERT INTO conversation_summaries
+             (session_id, seq_start, seq_end, content_hash, goal_summary, created_at, updated_at)
+             VALUES (?1, 1, 2, 'public-hash', 'retracted tail summary', '2020-01-01', '2020-01-01')",
+            [session.session_id],
+        )?;
+        conn.execute(
+            "INSERT INTO session_evidence
+             (session_id, citation_index, citation_label, packet_key, message_seq_first, source_type, created_at)
+             VALUES (?1, 1, 'C1', 'public-packet', 2, 'web', '2020-01-01')",
+            [session.session_id],
+        )?;
+        conn.execute(
+            "INSERT INTO agent_run_events
+             (run_id, event_seq, state_version, event_type, payload_json, created_at)
+             VALUES (?1, 1, 0, 'completed', '{}', '2020-01-01')",
+            rusqlite::params![session.session_key],
+        )?;
+        Ok(())
+    })
+    .expect("seed published answer for a completed run");
+    let ledger_before = run_ledger_rows(&db, session.session_id);
+    let events_before = run_event_count(&db, &session.session_key);
+
+    assert_eq!(
+        NormalSessionRepository::retract(&db, &session.session_key, 2)
+            .expect("retract published answer"),
+        1
+    );
+
+    let remaining = NormalSessionRepository::load_messages(&db, &session.session_key, 10)
+        .expect("remaining history");
+    assert_eq!(remaining.len(), 1, "only the retracted suffix disappears");
+    assert_eq!(remaining[0].seq, 1);
+    db.with_read_conn(|conn| {
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM conversation_summaries WHERE session_id = ?1",
+                [session.session_id],
+                |row| row.get::<_, i64>(0)
+            )?,
+            0,
+            "summaries covering the suffix must be cleared"
+        );
+        let retired: Option<String> = conn.query_row(
+            "SELECT retired_at FROM session_evidence WHERE session_id = ?1",
+            [session.session_id],
+            |row| row.get(0),
+        )?;
+        assert!(
+            retired.is_some(),
+            "evidence of the retracted suffix must be retired"
+        );
+        let non_terminal: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_runs WHERE session_id = ?1
+             AND status NOT IN ('completed', 'failed', 'cancelled')",
+            [session.session_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            non_terminal, 0,
+            "retract must not accept or leave behind a non-terminal run"
+        );
+        Ok(())
+    })
+    .expect("retract metadata effects");
+
+    // The terminal run ledger keeps its rows, statuses and envelopes: retract
+    // never spawns a run loop, never injects a synthesis turn and never writes
+    // a planning envelope. The next Run rebuilds memory from retained history.
+    assert_eq!(run_ledger_rows(&db, session.session_id), ledger_before);
+    assert_eq!(run_event_count(&db, &session.session_key), events_before);
+}

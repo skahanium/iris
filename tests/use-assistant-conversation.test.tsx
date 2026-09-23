@@ -8,11 +8,15 @@ import type { ChatLine } from "@/components/ai/AiMessageList";
 const COPY_SELECTED_SUCCESS_TOAST =
   "\u5df2\u590d\u5236\u9009\u4e2d\u6d88\u606f";
 
-const { retract, toast } = vi.hoisted(() => ({
+const { retract, runStart, toast } = vi.hoisted(() => ({
   retract: vi.fn(),
+  runStart: vi.fn(),
   toast: vi.fn(),
 }));
-vi.mock("@/lib/ipc", () => ({ assistantSessionRetract: retract }));
+vi.mock("@/lib/ipc", () => ({
+  assistantSessionRetract: retract,
+  assistantRunStart: runStart,
+}));
 vi.mock("@/components/ui/use-toast", () => ({ useToast: () => toast }));
 
 let api: ReturnType<typeof useAssistantConversation> | null = null;
@@ -52,6 +56,7 @@ afterEach(() => {
   root = null;
   api = null;
   retract.mockReset();
+  runStart.mockReset();
 });
 
 function mountProbe() {
@@ -134,6 +139,24 @@ describe("useAssistantConversation", () => {
       fromSeq: 2,
     });
     expect(api?.messages).toHaveLength(1);
+  });
+
+  it("starts no run while retracting: only assistantSessionRetract is invoked", async () => {
+    retract.mockResolvedValue(1);
+    mountProbe();
+
+    act(() => {
+      api?.handleLoadSession({ domain: "normal", sessionKey: "session-n23" }, [
+        { role: "user", content: "第一句", seq: 1 },
+        { role: "assistant", content: "已发布回答", seq: 2 },
+      ]);
+    });
+    await act(async () => {
+      await api?.handleRetract(1);
+    });
+
+    expect(retract).toHaveBeenCalledTimes(1);
+    expect(runStart).not.toHaveBeenCalled();
   });
 
   it("shows readable copy-success toast when copying selected messages", async () => {
