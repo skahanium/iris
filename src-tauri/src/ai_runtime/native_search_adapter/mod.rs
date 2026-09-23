@@ -251,23 +251,26 @@ fn native_search_turn_budget(
     control: Option<&SearchExecutionControl<'_>>,
     is_child: bool,
 ) -> Option<crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget> {
-    let policy = if let Some(control) = control {
-        use crate::ai_runtime::agent_run_repository::AgentRunRepository;
-        let run = AgentRunRepository::get(control.db, &control.run_id).ok()??;
-        AgentRunRepository::budget_policy_for_session(
-            control.db,
-            &run.run.session.session_key,
-            &control.run_id,
-        )
-        .ok()??
-    } else {
-        #[cfg(test)]
-        {
-            crate::ai_runtime::run_contract::RunBudgetPolicy::standard()
+    let policy = match control {
+        Some(control) => {
+            use crate::ai_runtime::agent_run_repository::AgentRunRepository;
+            let run = AgentRunRepository::get(control.db, &control.run_id).ok()??;
+            AgentRunRepository::budget_policy_for_session(
+                control.db,
+                &run.run.session.session_key,
+                &control.run_id,
+            )
+            .ok()??
         }
-        #[cfg(not(test))]
-        {
-            return None;
+        None => {
+            #[cfg(test)]
+            {
+                crate::ai_runtime::run_contract::RunBudgetPolicy::standard()
+            }
+            #[cfg(not(test))]
+            {
+                return None;
+            }
         }
     };
     let prompt = if is_child {

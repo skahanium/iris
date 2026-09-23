@@ -973,7 +973,7 @@ function main() {
     rmSync(capacityOutput, { force: true });
   }
   const result = runCargoEntrypoint(
-    "ai_runtime::agent_capacity_eval_tests::deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested",
+    "ai_runtime::agent_capacity_eval_core_tests::deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested",
     { IRIS_AGENT_EVAL_MODE: mode },
     buildAgentEvalChildEnvironment,
   );

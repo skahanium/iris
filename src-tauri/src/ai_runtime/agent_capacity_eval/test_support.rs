@@ -11,8 +11,6 @@ use telemetry::*;
 
 use tool_class::*;
 
-pub(crate) use verdict::*;
-
 // ─── child modules (split of the former single-file evaluator) ───
 
 #[cfg(test)]
@@ -6291,7 +6289,9 @@ pub(crate) async fn execute_pressure_staircases(
 #[cfg(test)]
 pub(crate) async fn execute_smoke_continuity_and_tool_boundaries() -> Result<bool, EvalContractError>
 {
-    let continuity = repeat_pressure_level_async(20, probe_conversation_turn_level).await?;
+    // ConversationTurns 20+ is lower_bound_only; smoke only requires the
+    // first staircase level plus the 24/25 tool-count boundary.
+    let continuity = repeat_pressure_level_async(1, probe_conversation_turn_level).await?;
     let tool_current = probe_tool_call_limit(24, true).await?;
     let tool_next = probe_tool_call_limit(25, false).await?;
     Ok(continuity.pass_count() >= 4 && tool_current && !tool_next)
