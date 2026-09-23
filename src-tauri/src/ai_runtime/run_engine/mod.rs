@@ -1413,6 +1413,11 @@ impl RunEngine {
                     return Ok(());
                 }
                 let code = classify_provider_failure(&error);
+                if code == SafeRunErrorCode::OutputTooLong {
+                    if let Some(telemetry) = telemetry {
+                        telemetry.record_final_output_validation(false, true);
+                    }
+                }
                 let failed = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {

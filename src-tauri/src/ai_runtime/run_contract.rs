@@ -447,6 +447,13 @@ impl RunBudgetPolicy {
         Self::for_profile(RunBudgetProfile::Standard)
     }
 
+    /// Delegated ChildRun policy for isolated executor tests that spawn children
+    /// without going through intake envelope classification.
+    #[cfg(test)]
+    pub(crate) fn delegated() -> Self {
+        Self::for_profile(RunBudgetProfile::Delegated)
+    }
+
     fn for_profile(profile: RunBudgetProfile) -> Self {
         match profile {
             RunBudgetProfile::Direct => Self {

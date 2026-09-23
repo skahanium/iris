@@ -1,12 +1,24 @@
 use super::*;
 use serde_json::json;
-use sha2::{Digest, Sha256};
+
+fn enable_web_search(db: &Database) {
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('web_search_enabled','true')
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
 
 fn begin(
     state: &AppState,
     accepted: &crate::ai_runtime::run_contract::AssistantRunAccepted,
     sink: &RecordingSink,
 ) {
+    enable_web_search(&state.db);
     let version =
         RunEngine::mark_preparing_with_sink(&state.db, &accepted.session, &accepted.run_id, sink)
             .unwrap();
@@ -24,31 +36,17 @@ fn begin(
         },
     )
     .unwrap();
+    AgentRunRepository::persist_authorization_snapshot(
+        &state.db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+        &[CapabilityId::new("web.search")],
+    )
+    .unwrap();
 }
 
 fn seed_page(db: &Database, url: &str, body: &str) {
-    use crate::llm::fetch_web_page::{PageFetchCacheScope, PAGE_FETCH_CACHE_BROKER_VERSION};
-    let scope = PageFetchCacheScope::native(None, PAGE_FETCH_CACHE_BROKER_VERSION);
-    let mut hash = Sha256::new();
-    for part in [
-        "default",
-        &scope.provider_id,
-        &scope.provider_kind,
-        &scope.provider_config_hash,
-        &scope.broker_version,
-    ] {
-        hash.update(part.as_bytes());
-        hash.update(b"\0");
-    }
-    hash.update(url.as_bytes());
-    let key = hex::encode(hash.finalize());
-    db.with_conn(|conn| {
-        conn.execute("INSERT OR REPLACE INTO web_page_cache
-            (url_hash,title,body_text,fetched_at,expires_at,provider_id,provider_kind,provider_config_hash,broker_version)
-            VALUES (?1,'Fixture',?2,datetime('now'),datetime('now','+1 day'),?3,?4,?5,?6)",
-            rusqlite::params![key,body,scope.provider_id,scope.provider_kind,scope.provider_config_hash,scope.broker_version])?;
-        Ok(())
-    }).unwrap();
+    crate::llm::fetch_web_page::seed_native_page_cache(db, url, body);
 }
 
 #[tokio::test]
@@ -271,6 +269,7 @@ async fn plan_a_mcp_snapshot_continuation_preserves_unknown_completeness() {
 async fn plan_a_executor_reads_tail_without_refetch_and_binds_exact_excerpt() {
     let directory = tempfile::tempdir().unwrap();
     let state = AppState::new(directory.path().join("data")).unwrap();
+    enable_web_search(&state.db);
     let accepted = RunIntake::start(&state.db, request()).unwrap();
     let context = RunContextAssembler::assemble(
         &state.db,
@@ -280,23 +279,7 @@ async fn plan_a_executor_reads_tail_without_refetch_and_binds_exact_excerpt() {
     )
     .unwrap();
     let sink = RecordingSink::default();
-    let version =
-        RunEngine::mark_preparing_with_sink(&state.db, &accepted.session, &accepted.run_id, &sink)
-            .unwrap();
-    AgentRunRepository::append_event(
-        &state.db,
-        AppendRunEventInput {
-            run_id: accepted.run_id.clone(),
-            state_version: version,
-            event_type: RunEventType::StageChanged,
-            payload: RunEventPayload::StageChanged {
-                state: RunState::Running,
-                stage: "reading fixture".into(),
-                stage_code: None,
-            },
-        },
-    )
-    .unwrap();
+    begin(&state, &accepted, &sink);
     let executor = NormalRunToolExecutor::new(
         &state,
         None,

@@ -450,6 +450,10 @@ impl ToolLoopExecutor for UnusedToolLoopExecutor {
 }
 
 impl ToolLoopExecutor for SuccessfulToolLoopExecutor {
+    fn mapped_tool_name(&self, name: &str) -> bool {
+        name == "test_tool"
+    }
+
     fn execute<'a>(
         &'a self,
         _run_id: &'a str,
@@ -529,6 +533,12 @@ impl ToolLoopExecutor for StrictExternalEvidenceExecutor {
 }
 
 fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvider {
+    let known_usage = crate::ai_types::TokenUsage {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        total_tokens: 2,
+        ..Default::default()
+    };
     ScriptedToolLoopProvider {
         responses: std::sync::Mutex::new(VecDeque::from([
             crate::ai_runtime::model_gateway::GatewayResponse {
@@ -541,14 +551,14 @@ fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvide
                         arguments: "{}".to_string(),
                     },
                 }],
-                usage: Default::default(),
+                usage: known_usage.clone(),
                 finish_reason: "tool_calls".to_string(),
                 ..Default::default()
             },
             crate::ai_runtime::model_gateway::GatewayResponse {
                 content: Some(final_content),
                 tool_calls: vec![],
-                usage: Default::default(),
+                usage: known_usage,
                 finish_reason: "stop".to_string(),
                 ..Default::default()
             },
@@ -691,10 +701,14 @@ async fn direct_streaming_enforces_the_frozen_run_budget_when_usage_is_missing_a
                 .as_slice(),
             [crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
                 max_prompt_tokens: Some(frozen.max_prompt_tokens),
-                max_completion_tokens: Some(frozen.max_completion_tokens),
+                max_completion_tokens: Some(
+                    frozen
+                        .max_turn_output_tokens
+                        .min(frozen.max_completion_tokens)
+                ),
                 max_turn_output_tokens: Some(frozen.max_turn_output_tokens),
             }],
-            "each accepted Direct Run passes its persisted frozen budget to the provider"
+            "provider receives the first-attempt lease, not the raw frozen completion cap"
         );
     }
 }
@@ -735,10 +749,10 @@ async fn evaluation_direct_run_forwards_the_same_effective_budget_to_the_gateway
         provider.budgets.lock().expect("budget lock").as_slice(),
         [crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
             max_prompt_tokens: Some(effective.max_prompt_tokens),
-            max_completion_tokens: Some(64),
+            max_completion_tokens: Some(32),
             max_turn_output_tokens: Some(32),
         }],
-        "evaluation may tighten a Run, but the Gateway must receive that same effective policy"
+        "evaluation may tighten a Run, but the Gateway must receive the first-attempt lease (completion 64, turn output 32, reserve 32)"
     );
 }
 

@@ -6868,7 +6868,12 @@ pub(crate) fn boundary_gateway_response(
     crate::ai_runtime::model_gateway::GatewayResponse {
         content: final_content.map(str::to_string),
         tool_calls,
-        usage: Default::default(),
+        usage: crate::ai_types::TokenUsage {
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            total_tokens: 2,
+            ..Default::default()
+        },
         finish_reason: if final_content.is_some() {
             "stop".to_string()
         } else {

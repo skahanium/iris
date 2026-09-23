@@ -325,11 +325,11 @@ fn timeliness_observation_intake_does_not_confuse_runtime_or_supplied_text_with_
         ),
         (
             "翻译这句话：近期电影即将上映。",
-            WebDecisionReason::DefaultOnline,
+            WebDecisionReason::LocalTransformation,
         ),
         (
             "总结提供的材料：今天的新闻和股价。",
-            WebDecisionReason::DefaultOnline,
+            WebDecisionReason::LocalTransformation,
         ),
         ("今天几号？", WebDecisionReason::TrustedRuntimeFact),
     ] {
@@ -713,7 +713,7 @@ async fn timeliness_offline_content_tool_protocol_retries_without_external_dispa
         "iris-test-verified-tools-offline-protocol",
     );
     let mut request = direct_request();
-    request.turn.message = "近期有什么好看的电影正在热映或者即将上映吗?".into();
+    request.turn.message = "请调研近期有什么好看的电影正在热映或者即将上映吗?".into();
     let sink = RecordingSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
@@ -1371,6 +1371,13 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         "Investigate and compare multiple sources about synthetic evidence.".into();
     let accepted = RunIntake::start_with_sink(&state.db, research_request, &sink)
         .expect("accepted web tool-loop run");
+    AgentRunRepository::persist_authorization_snapshot(
+        &state.db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+        &[CapabilityId::new("web.search")],
+    )
+    .expect("persist web.search authorization for the frozen broker check");
     let context = RunContextAssembler::assemble(
         &state.db,
         None,

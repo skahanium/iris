@@ -2126,6 +2126,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 },
             ) {
                 Ok(plan) => plan,
+                Err(error) if error.to_string() == SafeRunErrorCode::InvalidChangePlan.as_str() => {
+                    return Err(error);
+                }
                 Err(_) => {
                     return Ok(reject_batch(
                         failed_tool_call(&calls[0].function.name, "change_candidate_invalid"),
@@ -4776,6 +4779,8 @@ mod tests {
             },
         )
         .expect("running");
+        let _parent_ledger =
+            crate::ai_runtime::model_turn_ledger::BindGuard::new(&accepted.run_id, 8);
         let provider = ScriptedChildProvider {
             responses: Mutex::new(VecDeque::from([
                 GatewayResponse {
@@ -4835,7 +4840,7 @@ mod tests {
                 CapabilityId::new("harness.child_run"),
                 CapabilityId::new("memory.write"),
             ],
-            RunBudgetPolicy::for_envelope(&context.envelope),
+            RunBudgetPolicy::delegated(),
             &sink,
             Vec::new(),
         )
@@ -5007,6 +5012,8 @@ mod tests {
             },
         )
         .expect("running");
+        let _parent_ledger =
+            crate::ai_runtime::model_turn_ledger::BindGuard::new(&accepted.run_id, 8);
         let provider = ConcurrentChildProvider {
             barrier: Barrier::new(3),
             active: AtomicUsize::new(0),
@@ -5022,7 +5029,7 @@ mod tests {
                 CapabilityId::new("runtime.read"),
                 CapabilityId::new("harness.child_run"),
             ],
-            RunBudgetPolicy::for_envelope(&context.envelope),
+            RunBudgetPolicy::delegated(),
             &sink,
             Vec::new(),
         )
@@ -5426,6 +5433,8 @@ mod tests {
             },
         )
         .expect("running");
+        let _parent_ledger =
+            crate::ai_runtime::model_turn_ledger::BindGuard::new(&accepted.run_id, 8);
         let provider = ScriptedChildProvider {
             responses: Mutex::new(VecDeque::new()),
             tool_surfaces: Mutex::new(Vec::new()),
@@ -5440,7 +5449,7 @@ mod tests {
                 CapabilityId::new("runtime.read"),
                 CapabilityId::new("harness.child_run"),
             ],
-            RunBudgetPolicy::for_envelope(&context.envelope),
+            RunBudgetPolicy::delegated(),
             &sink,
             Vec::new(),
         )

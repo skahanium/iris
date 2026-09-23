@@ -419,6 +419,14 @@ fn load_cache(
     })
 }
 
+/// Insert a native page-cache row with the production hash and scope.
+#[cfg(test)]
+pub(crate) fn seed_native_page_cache(db: &Database, url: &str, body: &str) {
+    let scope = PageFetchCacheScope::native(None, PAGE_FETCH_CACHE_BROKER_VERSION);
+    let hash = url_hash(url, &scope);
+    store_cache(db, &hash, Some("Fixture"), body, &scope).expect("seed native page cache");
+}
+
 fn store_cache(
     db: &Database,
     hash: &str,

@@ -332,39 +332,7 @@ fn dispatch_search_action(
 }
 
 fn seed_page(db: &Database, url: &str, body: &str) {
-    use crate::llm::fetch_web_page::{PageFetchCacheScope, PAGE_FETCH_CACHE_BROKER_VERSION};
-    use sha2::{Digest, Sha256};
-    let scope = PageFetchCacheScope::native(None, PAGE_FETCH_CACHE_BROKER_VERSION);
-    let mut hash = Sha256::new();
-    for part in [
-        "default",
-        &scope.provider_id,
-        &scope.provider_kind,
-        &scope.provider_config_hash,
-        &scope.broker_version,
-    ] {
-        hash.update(part.as_bytes());
-        hash.update(b"\0");
-    }
-    hash.update(url.as_bytes());
-    let key = hex::encode(hash.finalize());
-    db.with_conn(|conn| {
-        conn.execute(
-            "INSERT OR REPLACE INTO web_page_cache
-            (url_hash,title,body_text,fetched_at,expires_at,provider_id,provider_kind,provider_config_hash,broker_version)
-            VALUES (?1,'Fixture',?2,datetime('now'),datetime('now','+1 day'),?3,?4,?5,?6)",
-            rusqlite::params![
-                key,
-                body,
-                scope.provider_id,
-                scope.provider_kind,
-                scope.provider_config_hash,
-                scope.broker_version
-            ],
-        )?;
-        Ok(())
-    })
-    .unwrap();
+    crate::llm::fetch_web_page::seed_native_page_cache(db, url, body);
 }
 
 fn search_call(id: &str) -> ToolCall {

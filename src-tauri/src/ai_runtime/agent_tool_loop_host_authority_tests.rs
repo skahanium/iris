@@ -193,7 +193,12 @@ impl StreamEventObserver for NoopObserver {
 }
 
 fn standard_tool_loop() -> AgentToolLoop {
-    AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
+    let mut policy = RunBudgetPolicy::standard();
+    // Zero reported usage retains the full per-turn reservation. These Host-
+    // authority probes need several business turns before synthesis, so they
+    // use a test-only completion envelope. Production Standard stays 16_000.
+    policy.max_completion_tokens = 32_000;
+    AgentToolLoop::from_policy(&policy)
 }
 
 fn readonly_tool_spec(name: &str) -> ToolSpec {

@@ -1,7 +1,7 @@
 use crate::ai_runtime::agent_tool_loop::*;
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
 use crate::ai_runtime::{
-    LlmMessage, MessageRole, ToolAccessLevel, ToolCall, ToolCallResult, ToolSpec,
+    LlmMessage, MessageRole, TokenUsage, ToolAccessLevel, ToolCall, ToolCallResult, ToolSpec,
 };
 use crate::error::AppResult;
 use serde_json::json;
@@ -293,7 +293,12 @@ impl ToolLoopProvider for ChunkSearch {
                 } else {
                     Vec::new()
                 },
-                usage: Default::default(),
+                usage: TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    ..Default::default()
+                },
                 finish_reason: if turn < 4 { "tool_calls" } else { "stop" }.into(),
                 ..Default::default()
             })
