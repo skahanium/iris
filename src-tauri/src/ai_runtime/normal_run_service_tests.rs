@@ -325,11 +325,11 @@ fn timeliness_observation_intake_does_not_confuse_runtime_or_supplied_text_with_
         ),
         (
             "翻译这句话：近期电影即将上映。",
-            WebDecisionReason::DefaultOnline,
+            WebDecisionReason::LocalTransformation,
         ),
         (
             "总结提供的材料：今天的新闻和股价。",
-            WebDecisionReason::DefaultOnline,
+            WebDecisionReason::LocalTransformation,
         ),
         ("今天几号？", WebDecisionReason::TrustedRuntimeFact),
     ] {
@@ -351,9 +351,14 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp_with_mode(&state, "search-fetch");
+    // The model reads the question in its own first turn, exactly as in
+    // production. Whether further turns follow is Host control flow, not a
+    // script fact, so the double is collected with a bounded grace period.
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"根据公开资料整理影片范围。[W1]\"}}]}\n\ndata: [DONE]\n\n",
-    )]).await.expect("model boundary");
+        "data: {\"choices\":[{\"delta\":{\"content\":\"根据公开资料整理影片范围。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("model boundary");
     install_test_routing(
         &state,
         &llm.base_url,
@@ -365,7 +370,10 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
     request.turn.message = "近期有什么好看的电影正在热映或者即将上映吗?".into();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
-    let calls = llm.finish().await.expect("model completed");
+    let calls = llm
+        .finish_within(Duration::from_millis(300))
+        .await
+        .expect("model completed");
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("snapshot")
         .expect("run");
@@ -378,7 +386,11 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(executed, ["web_search", "web_fetch"], "the original question must cause real search and fetch even when the model only returns text");
+    assert_eq!(
+        executed,
+        ["web_search", "web_fetch"],
+        "the original question must cause real search and fetch even when the model only returns text"
+    );
     assert!(
         !AgentEvidenceRepository::list_current_run_registered(&state.db, &accepted.run_id)
             .expect("evidence")
@@ -395,6 +407,13 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
         search_health.success_count, 1,
         "the fetch must not hide another search"
     );
+    // The minimum observation now follows the model, so the first provider turn
+    // carries no Host observation while the Run still ends with one.
+    assert_eq!(
+        calls.len(),
+        1,
+        "the Host bootstrap must not add a model turn of its own"
+    );
     let first_messages = calls[0].body["messages"].as_array().expect("messages");
     assert!(
         first_messages.iter().any(|message| message["content"]
@@ -406,22 +425,34 @@ async fn timeliness_observation_original_movie_question_executes_before_a_model_
         .iter()
         .filter_map(|message| message["content"].as_str())
         .filter_map(|content| serde_json::from_str::<serde_json::Value>(content).ok())
-        .find(|value| value["kind"] == "host_web_bootstrap")
-        .expect("Host observation");
+        .find(|value| value["kind"] == "host_web_bootstrap");
+    if let Some(bootstrap) = bootstrap {
+        assert!(
+            bootstrap["query"]
+                .as_str()
+                .is_some_and(|query| query.contains("中国大陆")),
+            "the first actual search must carry the default scope, not only the prose prompt"
+        );
+    }
     assert!(
-        bootstrap["query"]
-            .as_str()
-            .is_some_and(|query| query.contains("中国大陆")),
-        "the first actual search must carry the default scope, not only the prose prompt"
-    );
-    assert!(first_messages.iter().any(|message| message["content"]
-        .as_str()
-        .is_some_and(|content| content.contains("host_web_bootstrap"))));
-    assert!(
-        !first_messages
+        first_messages
             .iter()
-            .any(|message| message["role"] == "tool"),
+            .all(|message| message["role"] != "tool"),
         "Host observations must not impersonate model calls"
+    );
+    let search_calls = response
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ToolStarted { capability, .. } if capability == "web_search"
+            )
+        })
+        .count();
+    assert_eq!(
+        search_calls, 1,
+        "the Host bootstrap dispatches exactly one search"
     );
 }
 
@@ -431,7 +462,7 @@ async fn timeliness_observation_explicit_url_fetches_without_an_unnecessary_sear
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"指定页面的正文说明了测试状态。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"指定页面的正文说明了测试状态。[W1]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )]).await.expect("model boundary");
     install_test_routing(
         &state,
@@ -476,8 +507,8 @@ async fn timeliness_fetches_a_public_https_url_without_prior_discovery() {
     let state = AppState::new(directory.path().join("data")).expect("state");
     install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"fetch-unseen\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"urls\\\":[\\\"https://unseen.invalid/page\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n"),
-        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"依据已经读取的资料，测试状态可以确认。\"}}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"fetch-unseen\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"urls\\\":[\\\"https://unseen.invalid/page\\\"]}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"依据已经读取的资料，测试状态可以确认。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"),
     ]).await.expect("model");
     install_test_routing(&state, &llm.base_url, "iris-test-verified-tools-url-repair");
     let sink = RecordingSink::default();
@@ -521,7 +552,7 @@ async fn timeliness_later_fetch_uses_run_labels_instead_of_restarting_at_w1() {
     install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(&tool_call_sse("web_fetch", serde_json::json!({"urls":["https://source.invalid/b"]}))),
-        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"第二份来源的正文支持测试状态。[W2]\"}}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"第二份来源的正文支持测试状态。[W2]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"),
     ]).await.expect("model");
     install_test_routing(
         &state,
@@ -555,8 +586,8 @@ async fn timeliness_follow_up_maps_run_citations_and_persists_only_selected_sour
     let state = AppState::new(directory.path().join("data")).expect("state");
     install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"上一条资料。[W1]\"}}]}\n\ndata: [DONE]\n\n"),
-        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"第二份当前资料支持这个答复。[W2]\"}}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"上一条资料。[W1]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"第二份当前资料支持这个答复。[W2]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"),
     ]).await.expect("model");
     install_test_routing(
         &state,
@@ -627,13 +658,13 @@ async fn timeliness_native_tool_argument_fragments_reach_one_real_dispatch() {
     install_headless_contract_mcp_with_mode(&state, "search-fetch");
     let chunks = [
         serde_json::json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"fragmented-search","type":"function","function":{"name":"web_search","arguments":"{\"query\":\""}}]}}]}),
-        serde_json::json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"different current source\"}"}}]}}]}),
+        serde_json::json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"different current source\"}"}}]},"finish_reason":"tool_calls"}]}),
     ];
     let stream = format!(
         "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
         chunks[0], chunks[1]
     );
-    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(&stream), HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"资料中的测试状态已经确认。[W1]\"}}]}\n\ndata: [DONE]\n\n")]).await.expect("model");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(&stream), HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"资料中的测试状态已经确认。[W1]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")]).await.expect("model");
     install_test_routing(
         &state,
         &llm.base_url,
@@ -671,10 +702,10 @@ fn web_tool_loop_request() -> AssistantRunStartRequest {
 async fn timeliness_offline_content_tool_protocol_retries_without_external_dispatch() {
     let directory = tempfile::tempdir().expect("temp");
     let state = AppState::new(directory.path().join("data")).expect("state");
-    let raw = serde_json::json!({"choices":[{"delta":{"content":"我来帮你查一下最近的电影资讯。]<]minimax[>[<tool_call>\n{\"name\":\"web_search\",\"parameters\":{\"query\":\"current movies\"}}\n</tool_call>"}}]});
+    let raw = serde_json::json!({"choices":[{"delta":{"content":"我来帮你查一下最近的电影资讯。]<]minimax[>[<tool_call>\n{\"name\":\"web_search\",\"parameters\":{\"query\":\"current movies\"}}\n</tool_call>"},"finish_reason":"stop"}]});
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(&format!("data: {raw}\n\ndata: [DONE]\n\n")),
-        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"联网已关闭，无法确认当前上映情况。\"}}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"联网已关闭，无法确认当前上映情况。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"),
     ]).await.expect("model");
     install_test_routing(
         &state,
@@ -682,7 +713,7 @@ async fn timeliness_offline_content_tool_protocol_retries_without_external_dispa
         "iris-test-verified-tools-offline-protocol",
     );
     let mut request = direct_request();
-    request.turn.message = "近期有什么好看的电影正在热映或者即将上映吗?".into();
+    request.turn.message = "请调研近期有什么好看的电影正在热映或者即将上映吗?".into();
     let sink = RecordingSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accept");
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
@@ -711,7 +742,7 @@ async fn timeliness_repair_rejected_proposals_are_not_searches_and_keep_safe_dia
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(&tool_call_sse_with_id("bad-args", "web_search", serde_json::json!({"query":42}))),
         HttpResponseScript::sse(&tool_call_sse_with_id("unknown", "private-sentinel-tool", serde_json::json!({}))),
-        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"已有资料说明了影片状态。[W1]\"}}]}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"已有资料说明了影片状态。[W1]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"),
     ]).await.expect("model");
     install_test_routing(&state, &llm.base_url, "iris-test-verified-tools-repair");
     let sink = RecordingSink::default();
@@ -767,7 +798,7 @@ async fn timeliness_failed_bootstrap_keeps_one_tool_enabled_research_opportunity
     let state = AppState::new(directory.path().join("data")).expect("state");
     // No configured Web service: an actual broker attempt must be distinct
     // from a rejected model proposal, and must not skip the repair turn.
-    let answer = "data: {\"choices\":[{\"delta\":{\"content\":\"暂时没有可用资料。\"}}]}\n\ndata: [DONE]\n\n";
+    let answer = "data: {\"choices\":[{\"delta\":{\"content\":\"暂时没有可用资料。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(answer),
         HttpResponseScript::sse(answer),
@@ -898,7 +929,8 @@ fn tool_call_sse_with_id(
                     "type": "function",
                     "function": { "name": tool_name, "arguments": arguments }
                 }]
-            }
+            },
+            "finish_reason": "tool_calls"
         }]
     });
     format!("data: {payload}\n\ndata: [DONE]\n\n")
@@ -976,7 +1008,7 @@ async fn direct_streaming_does_not_emit_answer_complete_before_durable_finalizat
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"普通直答\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"普通直答\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("local LLM boundary");
@@ -1040,7 +1072,7 @@ async fn normal_run_injects_cached_confirmed_skill_after_source_file_is_removed(
     std::fs::remove_file(skill_path).expect("remove source after caching");
 
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"已答复\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"已答复\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("local LLM boundary");
@@ -1339,6 +1371,13 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         "Investigate and compare multiple sources about synthetic evidence.".into();
     let accepted = RunIntake::start_with_sink(&state.db, research_request, &sink)
         .expect("accepted web tool-loop run");
+    AgentRunRepository::persist_authorization_snapshot(
+        &state.db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+        &[CapabilityId::new("web.search")],
+    )
+    .expect("persist web.search authorization for the frozen broker check");
     let context = RunContextAssembler::assemble(
         &state.db,
         None,
@@ -1352,19 +1391,20 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
             .expect("initial evidence registration");
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-fetch-call\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"urls\\\":[\\\"https://source.invalid/contract\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-fetch-call\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"urls\\\":[\\\"https://source.invalid/contract\\\"]}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。[W1]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
     .expect("local LLM boundary");
     let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
     let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        Some(&state.db),
         &gateway,
         ProviderConfig {
             name: "headless-contract-model".into(),
@@ -1486,16 +1526,17 @@ async fn production_runtime_time_uses_frozen_surface_and_recovers() {
         start_headless_tool_loop(&state, request);
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"runtime-time-call\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"runtime-time-call\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"当前时间是 2026-08-18 08:00:00。\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"当前时间是 2026-08-18 08:00:00。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
     .expect("local LLM boundary");
     let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
     let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        Some(&state.db),
         &gateway,
         ProviderConfig {
             name: "headless-runtime-model".into(),
@@ -1571,7 +1612,7 @@ async fn production_location_like_request_does_not_pause_a_new_run_for_structure
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"无法获取天气。\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"无法获取天气。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("local LLM boundary");
@@ -1602,7 +1643,7 @@ async fn ordinary_missing_context_does_not_reserve_a_structured_input_run() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"不应在补充信息前调用模型。\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"不应在补充信息前调用模型。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("local LLM boundary");
@@ -1637,7 +1678,7 @@ async fn ordinary_clarification_completes_and_next_run_receives_conversation_con
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"为了查询附近电影院今晚的场次，请告诉我所在的城市或地区？\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"为了查询附近电影院今晚的场次，请告诉我所在的城市或地区？\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("local LLM boundary");
@@ -1710,7 +1751,7 @@ async fn legacy_current_fact_run_is_terminalized_without_provider_replay() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"must not be requested\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"must not be requested\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("callable local Provider boundary");
@@ -1774,7 +1815,7 @@ async fn ordinary_research_reply_repairs_missing_run_local_citation_before_compl
             }),
         )),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期科技股走势受多项公开因素影响，建议结合持仓期限判断。[W1]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -1914,7 +1955,7 @@ async fn news_question_still_answers_when_web_is_disabled() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"以下是未核验的公开信息整理。\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"以下是未核验的公开信息整理。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("local LLM boundary");
@@ -1984,7 +2025,7 @@ async fn production_news_uses_run_local_citation_with_high_ledger_ids_and_recove
             }),
         )),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"最新 synthetic 新闻已按当前公开资料核实。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -2113,7 +2154,7 @@ async fn recent_movie_research_uses_generic_web_evidence_without_city_or_domain_
             }),
         )),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"近期上映影片已经按当前公开资料整理。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -2225,9 +2266,9 @@ async fn strict_current_fact_repairs_out_of_run_w8_then_completes_with_limitatio
             .collect::<Vec<_>>();
     assert_eq!(assistant_messages.len(), 1);
     assert!(
-        assistant_messages[0]
-            .content
-            .starts_with(super::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE_PREFIX),
+        assistant_messages[0].content.starts_with(
+            super::run_engine::legacy_terminal_records::EVIDENCE_LIMITED_RESPONSE_PREFIX
+        ),
         "strict current-fact limitation must stay Host-authored: {}",
         assistant_messages[0].content
     );
@@ -2256,7 +2297,7 @@ async fn strict_web_run_fails_closed_when_no_tool_capable_model_is_available() {
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"服务链路已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"服务链路已核实。[W1]\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("local LLM boundary");
@@ -2387,16 +2428,16 @@ async fn normal_service_executes_depth_one_child_run_on_the_real_provider_route(
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"parent-spawn\",\"type\":\"function\",\"function\":{\"name\":\"spawn_subagent\",\"arguments\":\"{\\\"task\\\":\\\"读取当前时间\\\",\\\"allowed_tools\\\":[\\\"system_time_now\\\",\\\"memory_write\\\",\\\"spawn_subagent\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"parent-spawn\",\"type\":\"function\",\"function\":{\"name\":\"spawn_subagent\",\"arguments\":\"{\\\"task\\\":\\\"读取当前时间\\\",\\\"allowed_tools\\\":[\\\"system_time_now\\\",\\\"memory_write\\\",\\\"spawn_subagent\\\"]}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"child-time\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"child-time\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"子任务已读取当前时间。\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"子任务已读取当前时间。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"父级已整合子任务结果。\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"父级已整合子任务结果。\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -2465,7 +2506,7 @@ async fn evaluation_headless_entry_observes_the_real_normal_service_direct_path(
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"真实无头链路答复\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"真实无头链路答复\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .expect("local LLM boundary");
@@ -2550,10 +2591,10 @@ async fn long_direct_conversation_uses_one_no_tool_compaction_then_answers_from_
 
     let llm = spawn_llm_protocol_double(vec![
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"goal_summary\\\":\\\"current-direct-goal\\\",\\\"preference_summary\\\":\\\"latest correction\\\",\\\"decision_summary\\\":\\\"confirmed\\\",\\\"open_threads_summary\\\":\\\"next\\\"}\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"goal_summary\\\":\\\"current-direct-goal\\\",\\\"preference_summary\\\":\\\"latest correction\\\",\\\"decision_summary\\\":\\\"confirmed\\\",\\\"open_threads_summary\\\":\\\"next\\\"}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"来自更新摘要的正常答复\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"来自更新摘要的正常答复\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await

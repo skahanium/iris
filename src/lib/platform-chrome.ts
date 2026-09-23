@@ -10,7 +10,7 @@ export function isWindowsDesktopChrome(): boolean {
   return isTauriRuntime() && /Windows/i.test(navigator.userAgent);
 }
 
-/** Iris Rail: Windows/Linux use right-side custom controls; macOS uses native traffic lights. */
+/** Iris Rail：Windows 使用右侧自绘窗口控件；macOS 使用系统原生红黄绿。 */
 export function showCustomWindowControls(): boolean {
   return isTauriRuntime() && !isMacOSDesktopChrome();
 }

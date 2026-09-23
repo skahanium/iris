@@ -129,20 +129,54 @@ impl RunEngine {
                     let Ok(plan) = plan else {
                         return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
                     };
-                    append_recovered_tool_completed_if_needed(db, &run_id, state_version, &plan)?;
-                    advance_recovered_checkpoint_to_completed(db, &run_id, state_version, &plan)?;
-                    AgentRunRepository::finalize(
-                        db,
-                        FinalizeRunInput {
-                            run_id: run_id.clone(),
+                    if recovered_disk_matches_plan_end(db, &plan).unwrap_or(false) {
+                        append_recovered_tool_completed_if_needed(
+                            db,
+                            &run_id,
                             state_version,
-                            content: "已执行你确认的变更。".into(),
-                            evidence_ids: Vec::new(),
-                            citation_map: serde_json::json!({}),
-                            source_summary: Vec::new(),
-                            publish_content_deltas: true,
-                        },
-                    )?;
+                            &plan,
+                        )?;
+                        advance_recovered_checkpoint_to_completed(
+                            db,
+                            &run_id,
+                            state_version,
+                            &plan,
+                        )?;
+                        AgentRunRepository::finalize(
+                            db,
+                            FinalizeRunInput {
+                                run_id: run_id.clone(),
+                                state_version,
+                                content: "已执行你确认的变更。".into(),
+                                evidence_ids: Vec::new(),
+                                citation_map: serde_json::json!({}),
+                                source_summary: Vec::new(),
+                                publish_content_deltas: true,
+                                task_outcome: Some(
+                                    crate::ai_runtime::delivery_outcome::classify_task_outcome(
+                                        &crate::ai_runtime::delivery_outcome::DeliveryFacts {
+                                            host_authored_limitation: false,
+                                            change_ops_complete: Some(true),
+                                        },
+                                    ),
+                                ),
+                            },
+                        )?;
+                    } else {
+                        AgentRunRepository::append_event(
+                            db,
+                            AppendRunEventInput {
+                                run_id: run_id.clone(),
+                                state_version,
+                                event_type: RunEventType::Paused,
+                                payload: RunEventPayload::Paused {
+                                    reason: "目标状态与已确认计划不一致，需要手动检查，未自动重放"
+                                        .into(),
+                                    recovery: Some(RunRecoveryKind::ManualReviewRequired),
+                                },
+                            },
+                        )?;
+                    }
                 }
                 DurableRecoveryClassification::ManualReview => {
                     AgentRunRepository::append_event(
@@ -253,27 +287,77 @@ fn classify_consumed_durable_apply(
     run_id: &str,
     plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
 ) -> AppResult<DurableRecoveryClassification> {
-    plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
+    let vault = load_recovery_vault_path(db)?
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointInvalidSchema))?;
+    let (boundary, _) = RunEngine::confirmed_apply_boundary(db, session_key, run_id, plan, &vault)?;
+    Ok(if boundary == plan.operations().len() {
+        DurableRecoveryClassification::AlreadyApplied
+    } else {
+        DurableRecoveryClassification::ResumeAvailable
+    })
+}
+
+impl RunEngine {
+    /// Revalidate the consumed plan and current checkpoint boundary before a
+    /// recovery reads context or dispatches a suffix. Unknown receipts fail closed.
+    pub(crate) fn confirmed_apply_boundary(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+        vault: &std::path::Path,
+    ) -> AppResult<(usize, Vec<(String, String)>)> {
+        let boundary =
+            resolve_consumed_durable_apply_boundary(db, session_key, run_id, plan, vault)?;
+        Ok((
+            boundary,
+            hashes_at_operation_boundary(plan, boundary)?
+                .into_iter()
+                .collect(),
+        ))
+    }
+}
+
+fn resolve_consumed_durable_apply_boundary(
+    db: &Database,
+    session_key: &str,
+    run_id: &str,
+    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+    vault: &std::path::Path,
+) -> AppResult<usize> {
+    let consumed = AgentRunRepository::consumed_frozen_confirmation_for_session(
+        db,
+        session_key,
+        run_id,
+        plan.confirmation_id(),
+    )?;
+    plan.validate_consumed_identity(plan.confirmation_id(), &consumed.plan_hash)?;
+    let stored = crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
+        &consumed.plan_json,
+    )?;
+    if stored.plan_hash() != plan.plan_hash() || plan.run_id() != run_id {
+        return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
+    }
     let request = AgentRunRepository::policy_request_for_session(db, session_key, run_id)?
         .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     if request.envelope.effect != Effect::Apply || request.envelope.effort != Effort::Durable {
-        return Ok(DurableRecoveryClassification::ManualReview);
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
     }
     let decision = crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?
         .evaluate_run(request);
     if decision.denial_code.is_some() {
-        return Ok(DurableRecoveryClassification::ManualReview);
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
     }
     for (index, operation) in plan.operations().iter().enumerate() {
         let Some(entry) = crate::ai_runtime::tool_catalog::catalog_find(operation.operation())
         else {
-            return Ok(DurableRecoveryClassification::ManualReview);
+            return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
         };
         if !(entry.requires_confirmation
             && entry.implementation
                 == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
         {
-            return Ok(DurableRecoveryClassification::ManualReview);
+            return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
         }
         let gate = crate::ai_runtime::tool_execution_pipeline::evaluate_tool_execution(
             db,
@@ -289,7 +373,7 @@ fn classify_consumed_durable_apply(
             },
         )?;
         if gate.tool_result.is_some() {
-            return Ok(DurableRecoveryClassification::ManualReview);
+            return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
         }
     }
     let write_target = recovered_write_target_path(db, session_key, run_id)?;
@@ -310,22 +394,27 @@ fn classify_consumed_durable_apply(
             change_paths.push(write_target.clone());
         }
     }
-    if change_paths != plan.relative_paths()
+    if change_paths
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        != plan
+            .relative_paths()
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
         || (plan.operations().len() == 1
             && write_target.as_deref() != plan.relative_paths().first().map(String::as_str))
     {
-        return Ok(DurableRecoveryClassification::ManualReview);
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
     }
-    let vault = load_recovery_vault_path(db)?
-        .ok_or_else(|| AppError::msg("agent_run_recovery_vault_unavailable"))?;
     if crate::cas::hash::content_hash_str(&vault.to_string_lossy()) != plan.vault_id() {
-        return Ok(DurableRecoveryClassification::ManualReview);
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
     }
     let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?;
     let Some(checkpoint) = checkpoint else {
-        return Ok(DurableRecoveryClassification::ManualReview);
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
     };
-    if checkpoint.confirmation_id() != plan.confirmation_id()
+    if checkpoint.operation_count() != plan.operations().len()
+        || checkpoint.confirmation_id() != plan.confirmation_id()
         || checkpoint.plan_hash() != plan.plan_hash()
         || checkpoint.base_content_hashes()
             != plan
@@ -340,26 +429,44 @@ fn classify_consumed_durable_apply(
                 .map(|(_, hash)| hash.clone())
                 .collect::<Vec<_>>()
     {
-        return Ok(DurableRecoveryClassification::ManualReview);
+        return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
     }
-    let boundary = checkpoint.next_operation_index();
-    let expected_at_boundary = hashes_at_operation_boundary(plan, boundary)?;
+    let mut boundary = if checkpoint.is_legacy_schema()
+        && matches!(
+            checkpoint.stage(),
+            DurableApplyCheckpointStage::Applied | DurableApplyCheckpointStage::Completed
+        ) {
+        1
+    } else {
+        checkpoint.next_operation_index()
+    };
     let expected_at_end = hashes_at_operation_boundary(plan, plan.operations().len())?;
     let mut current_hashes = std::collections::BTreeMap::new();
-    for path in expected_at_boundary.keys().chain(expected_at_end.keys()) {
+    for path in plan
+        .operations()
+        .iter()
+        .flat_map(|operation| {
+            operation
+                .base_content_hashes()
+                .iter()
+                .chain(operation.expected_post_content_hashes())
+                .map(|(path, _)| path)
+        })
+        .chain(expected_at_end.keys())
+    {
         if current_hashes.contains_key(path) {
             continue;
         }
         if path.starts_with("application://") {
-            return Ok(DurableRecoveryClassification::ManualReview);
+            return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
         }
-        let resolved = match crate::storage::paths::resolve_vault_path(&vault, path) {
+        let resolved = match crate::storage::paths::resolve_vault_path(vault, path) {
             Ok(resolved) => resolved,
-            Err(_) => return Ok(DurableRecoveryClassification::ManualReview),
+            Err(_) => return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema)),
         };
         let current = match std::fs::read_to_string(resolved) {
             Ok(current) => current,
-            Err(_) => return Ok(DurableRecoveryClassification::ManualReview),
+            Err(_) => return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema)),
         };
         current_hashes.insert(path.clone(), crate::cas::hash::content_hash_str(&current));
     }
@@ -368,21 +475,63 @@ fn classify_consumed_durable_apply(
             .iter()
             .all(|(path, hash)| current_hashes.get(path) == Some(hash))
     };
-    if matches(&expected_at_end) {
-        return Ok(DurableRecoveryClassification::AlreadyApplied);
-    }
-    if matches(&expected_at_boundary)
+    if checkpoint.stage() == DurableApplyCheckpointStage::Dispatching
         && boundary < plan.operations().len()
+    {
+        match crate::ai_runtime::frozen_change_plan::classify_frozen_operation_receipt(
+            &current_hashes,
+            &plan.operations()[boundary],
+        ) {
+            crate::ai_runtime::frozen_change_plan::FrozenWriteReceipt::AlreadyApplied => {
+                boundary = boundary.saturating_add(1);
+            }
+            crate::ai_runtime::frozen_change_plan::FrozenWriteReceipt::NotYetApplied => {}
+            crate::ai_runtime::frozen_change_plan::FrozenWriteReceipt::Unknown => {
+                return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
+            }
+        }
+    }
+    let expected_at_boundary = hashes_at_operation_boundary(plan, boundary)?;
+    if matches(&expected_at_boundary)
+        && boundary <= plan.operations().len()
         && matches!(
             checkpoint.stage(),
             DurableApplyCheckpointStage::Approved
                 | DurableApplyCheckpointStage::Dispatching
                 | DurableApplyCheckpointStage::Applied
+                | DurableApplyCheckpointStage::Completed
         )
     {
-        return Ok(DurableRecoveryClassification::ResumeAvailable);
+        return Ok(boundary);
     }
-    Ok(DurableRecoveryClassification::ManualReview)
+    Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema))
+}
+
+fn recovered_disk_matches_plan_end(
+    db: &Database,
+    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+) -> AppResult<bool> {
+    let Some(vault) = load_recovery_vault_path(db)? else {
+        return Ok(false);
+    };
+    let expected = hashes_at_operation_boundary(plan, plan.operations().len())?;
+    for (path, hash) in expected {
+        if path.starts_with("application://") {
+            return Ok(false);
+        }
+        let resolved = match crate::storage::paths::resolve_vault_path(&vault, &path) {
+            Ok(resolved) => resolved,
+            Err(_) => return Ok(false),
+        };
+        let current = match std::fs::read_to_string(resolved) {
+            Ok(current) => current,
+            Err(_) => return Ok(false),
+        };
+        if crate::cas::hash::content_hash_str(&current) != hash {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn hashes_at_operation_boundary(
@@ -577,6 +726,9 @@ fn advance_recovered_checkpoint_to_completed(
                 DurableApplyCheckpointStage::Dispatching
             }
             DurableApplyCheckpointStage::Dispatching => {
+                if !recovered_disk_matches_plan_end(db, plan)? {
+                    return Err(AppError::run(SafeRunErrorCode::CheckpointStageConflict));
+                }
                 next_operation_index = next_operation_index.saturating_add(1);
                 DurableApplyCheckpointStage::Applied
             }

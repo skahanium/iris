@@ -6,6 +6,9 @@
 //! when an authorized Web operation fails without usable evidence. Runs
 //! without `web.search` never enable either tool.
 
+mod confirmed_changes;
+mod web_reading;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
@@ -23,8 +26,11 @@ use crate::ai_runtime::agent_run_repository::{
     DurableApplyCheckpointStage,
 };
 use crate::ai_runtime::agent_tool_loop::{
-    AgentToolLoop, RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
-    MAX_WEB_TOOL_RESULT_CHARS,
+    AgentToolLoop, ChangeSetRequestOutcome, RequiredWebBootstrapObservation, ToolLoopExecutor,
+    ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
+};
+use crate::ai_runtime::frozen_change_plan::{
+    classify_operation_disk_receipt, recovered_write_receipt_result, FrozenWriteReceipt,
 };
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
@@ -42,7 +48,6 @@ use crate::ai_runtime::tool_execution_pipeline::{
 };
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::{FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult};
-use crate::ai_types::WebSourceRank;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -57,7 +62,19 @@ const MAX_WEB_CANDIDATES_PER_DISCOVERY: usize = 4;
 /// Required-run and diagnostic search limit. Keeping this shared prevents a one-row smoke probe
 /// from passing while the actual evidence request exceeds a provider's output budget.
 pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 8;
-const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
+pub(crate) const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
+/// Upper bound on the distinct domains surfaced with one Web observation.
+const MAX_SOURCE_DOMAINS: usize = 8;
+/// Per-domain character bound for the scope fact. A DNS name can technically
+/// reach 253 characters, but such hosts are pathological and the scope fact only
+/// needs the registrable name; bounding it keeps the scope block's contribution
+/// to the tool-result budget predictable.
+const MAX_SOURCE_DOMAIN_CHARS: usize = 80;
+/// Standing scope check attached to every Web observation. It states the fact
+/// and the required action without naming any market, so the model keeps
+/// ownership of the scope judgement.
+const WEB_SCOPE_CHECK_NOTE: &str =
+    "核对下列来源域名所属市场是否与本轮适用范围一致；不一致时继续换源，不要用其他市场的可得性代替本地事实。";
 /// One concrete Web dispatch has a bounded provider interaction window.
 const WEB_TOOL_CALL_DEADLINE: Duration = Duration::from_secs(20);
 /// Minimum remaining budget required before retrying a failed web search attempt.
@@ -111,10 +128,10 @@ const fn failure_reason_for_code(code: SafeRunErrorCode) -> WebEvidenceFailureRe
 
 #[derive(Debug)]
 struct RunWebEvidenceState {
+    snapshots: BTreeMap<String, web_reading::PageSnapshot>,
     evidence_ids: Vec<i64>,
     candidate_urls: BTreeSet<String>,
     domains: BTreeSet<String>,
-    has_official_source: bool,
     slots_in_use: usize,
     max_evidence: usize,
     unverified_leads: Vec<UnverifiedWebLead>,
@@ -130,10 +147,10 @@ struct UnverifiedWebLead {
 impl Default for RunWebEvidenceState {
     fn default() -> Self {
         Self {
+            snapshots: BTreeMap::new(),
             evidence_ids: Vec::new(),
             candidate_urls: BTreeSet::new(),
             domains: BTreeSet::new(),
-            has_official_source: false,
             slots_in_use: 0,
             max_evidence: MAX_WEB_EVIDENCE_PER_RUN,
             unverified_leads: Vec::new(),
@@ -215,11 +232,17 @@ impl WebEvidenceReservation {
             .shared
             .lock()
             .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
+        let previous = state.evidence_ids.len();
+        for id in evidence_ids {
+            if !state.evidence_ids.contains(id) {
+                state.evidence_ids.push(*id);
+            }
+        }
+        let added = state.evidence_ids.len().saturating_sub(previous);
         state.slots_in_use = state
             .slots_in_use
             .saturating_sub(self.capacity)
-            .saturating_add(evidence_ids.len());
-        state.evidence_ids.extend(evidence_ids.iter().copied());
+            .saturating_add(added);
         self.finalized = true;
         Ok(())
     }
@@ -284,6 +307,21 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     child_tool_events: Option<Arc<Mutex<Vec<BufferedChildToolLifecycle>>>>,
     /// Stable scope used only for durable child tool-call identifiers.
     child_event_scope: Option<String>,
+    /// Frozen C10 native-search endpoint for this Run. None means adapter_absent.
+    native_search_endpoint:
+        Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef>,
+}
+
+fn native_search_endpoint_from_run_context(
+    context: &RunContext,
+) -> Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef> {
+    let model = context.model_override()?;
+    crate::llm::model_catalog::find_model(&model.model_id).map(|entry| {
+        crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef::new(
+            model.model_id,
+            entry.endpoint_family,
+        )
+    })
 }
 
 impl<'a> NormalRunToolExecutor<'a> {
@@ -334,7 +372,23 @@ impl<'a> NormalRunToolExecutor<'a> {
             subagent_depth: 0,
             child_tool_events: None,
             child_event_scope: None,
+            native_search_endpoint: native_search_endpoint_from_run_context(context),
         }
+    }
+
+    /// Bind the frozen provider/model used by C10's native-search probe.
+    pub(crate) fn with_native_search_endpoint(
+        mut self,
+        endpoint: Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef>,
+    ) -> Self {
+        self.native_search_endpoint = endpoint;
+        self
+    }
+
+    fn web_search_call_deadline(&self) -> Duration {
+        crate::ai_runtime::native_search_adapter::web_search_call_deadline(
+            self.native_search_endpoint.as_ref(),
+        )
     }
 
     /// Enable real ChildRun execution with the same provider route selected for
@@ -441,6 +495,8 @@ impl<'a> NormalRunToolExecutor<'a> {
         args: &serde_json::Value,
         state_version: u64,
         user_authored_bootstrap: bool,
+        persisted_tool_call_id: &str,
+        step: u32,
     ) -> AppResult<ToolCallResult> {
         let discovery_only = tool_name == WEB_SEARCH_TOOL_NAME;
         let query = if discovery_only {
@@ -487,6 +543,17 @@ impl<'a> NormalRunToolExecutor<'a> {
                 ));
             }
         }
+        if !self.web_search_currently_enabled() {
+            let failure = WebFailure::new(SafeRunErrorCode::PermissionDenied, false);
+            self.set_web_failure(Some(failure))?;
+            return Ok(failed_web_tool_call(
+                tool_name,
+                failure,
+                1,
+                Duration::ZERO,
+                0,
+            ));
+        }
         let requested_urls = if discovery_only {
             Vec::new()
         } else {
@@ -509,44 +576,60 @@ impl<'a> NormalRunToolExecutor<'a> {
         if discovery_only && !urls.is_empty() {
             return Err(AppError::msg("tool_arguments_invalid"));
         }
-        let max_fetches = urls.len();
-        let evidence_reservation = if discovery_only {
-            None
+        let start_char = args
+            .get("startChar")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let start_char =
+            usize::try_from(start_char).map_err(|_| AppError::msg("tool_arguments_invalid"))?;
+        let fetch_urls = if discovery_only || start_char > 0 {
+            Vec::new()
         } else {
-            let Some(reservation) =
-                WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
-            else {
-                self.set_web_failure(Some(WebFailure::new(
-                    SafeRunErrorCode::WebEvidenceInvalid,
-                    false,
-                )))?;
-                return Ok(failed_tool_call(tool_name, "web_evidence_budget_exhausted"));
-            };
-            Some(reservation)
+            self.cached_fetch_urls(&urls)?
         };
-        let remaining = evidence_reservation
-            .as_ref()
-            .map(WebEvidenceReservation::capacity)
-            .unwrap_or(MAX_WEB_CANDIDATES_PER_DISCOVERY);
+        let max_fetches = fetch_urls.len().min(INITIAL_WEB_SEARCH_RESULTS);
+        let remaining = MAX_WEB_CANDIDATES_PER_DISCOVERY;
         // A single Web dispatch is bounded, while cross-call exploration is
         // governed exclusively by the generic network category budget.
         let provider_snapshots = self.ordered_web_provider_snapshots(tool_name);
+        let call_started = Instant::now();
+        let search_deadline = self.web_search_call_deadline();
+        let action_deadline = tokio::time::Instant::now() + search_deadline;
+        let web_revocation_epoch = crate::ai_runtime::model_gateway::web_revocation_epoch();
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.clone(),
-            urls: urls.clone(),
-            enabled: self.has_capability("web.search"),
+            urls: fetch_urls,
+            enabled: self.web_search_currently_enabled(),
             max_search_results: web_result_limit(discovery_only, remaining, 1),
             max_fetches,
             provider_snapshots: provider_snapshots.clone(),
             provider_selection_frozen: true,
+            search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
+                run_id: self.accepted.run_id.clone(),
+                input_revision: self.accepted.turn_id.clone(),
+                child_run_id: self.child_event_scope.clone(),
+                model_turn: crate::ai_runtime::model_turn_ledger::latest_model_attempt(
+                    &crate::ai_runtime::model_turn_ledger::current_scope(&self.accepted.run_id),
+                )
+                .unwrap_or(0),
+                tool_surface_version: crate::ai_runtime::boundary_events::tool_surface_version(
+                    self.allowed_tool_names.iter(),
+                ),
+                action_id: self
+                    .buffered_child_tool_call_id(persisted_tool_call_id, step)
+                    .unwrap_or_else(|| persisted_tool_call_id.to_owned()),
+                attempt: 1,
+            },
+            native_endpoint: self.native_search_endpoint.clone(),
+            search_deadline: Some(action_deadline),
+            web_revocation_epoch,
         };
-        let call_started = Instant::now();
         let mut attempts_for_search = 0_u32;
-        let output =
+        let output = if discovery_only || max_fetches > 0 {
             loop {
                 attempts_for_search = attempts_for_search.saturating_add(1);
                 let attempt_count = self.record_web_attempt()?;
-                let remaining_time = WEB_TOOL_CALL_DEADLINE.saturating_sub(call_started.elapsed());
+                let remaining_time = search_deadline.saturating_sub(call_started.elapsed());
                 if remaining_time.is_zero() {
                     let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
                     self.set_web_failure(Some(failure))?;
@@ -555,40 +638,38 @@ impl<'a> NormalRunToolExecutor<'a> {
                         failure,
                         attempt_count,
                         call_started.elapsed(),
-                        remaining_web_tool_budget_ms(call_started.elapsed()),
+                        remaining_web_tool_budget_until(call_started.elapsed(), search_deadline),
                     ));
                 }
                 let mut attempt_input = broker_input.clone();
+                attempt_input.enabled = self.web_search_currently_enabled();
                 attempt_input.max_search_results =
                     web_result_limit(discovery_only, remaining, attempts_for_search);
                 attempt_input.max_fetches = max_fetches;
-                let failure = match tokio::time::timeout(
-                remaining_time,
-                crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
+                attempt_input.search_identity.attempt = attempts_for_search;
+                // Each transport owns the same absolute action deadline. An outer
+                // timeout would drop already completed evidence from the other route.
+                let failure = match crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
                     &self.state.db,
                     attempt_input,
-                ),
-            )
-            .await
-            {
-                Ok(Ok(output)) => {
-                    if output.items.iter().any(|item| item.conflict_group.is_some()) {
-                        WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
-                    } else if web_output_has_usable_result(&output, discovery_only) {
-                        break output;
-                    } else {
-                        classify_web_evidence_output_failure(&output)
+                ).await {
+                    Ok(output) => {
+                        if output.items.iter().any(|item| item.conflict_group.is_some()) {
+                            WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+                        } else if web_output_has_usable_result(&output, discovery_only) {
+                            break output;
+                        } else {
+                            classify_web_evidence_output_failure(&output)
+                        }
                     }
-                }
-                Ok(Err(error)) => classify_web_failure(&error),
-                Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
-            };
+                    Err(error) => classify_web_failure(&error),
+                };
                 let adaptive_oversize_retry =
                     failure.reason == WebEvidenceFailureReason::ProviderOutputTooLarge;
                 let retry_is_eligible = attempts_for_search < 2
                     && (failure.retryable || adaptive_oversize_retry)
                     && call_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
-                        < WEB_TOOL_CALL_DEADLINE;
+                        < search_deadline;
                 if retry_is_eligible {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     continue;
@@ -599,9 +680,16 @@ impl<'a> NormalRunToolExecutor<'a> {
                     failure,
                     attempt_count,
                     call_started.elapsed(),
-                    remaining_web_tool_budget_ms(call_started.elapsed()),
+                    remaining_web_tool_budget_until(call_started.elapsed(), search_deadline),
                 ));
-            };
+            }
+        } else {
+            crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
+                items: Vec::new(),
+                usage: Default::default(),
+                dual_path: crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default(),
+            }
+        };
         self.remember_web_provider_winner(tool_name, &output.usage)?;
         if discovery_only {
             let previously_known_urls = self
@@ -630,7 +718,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     failure,
                     self.web_attempt_count(),
                     call_started.elapsed(),
-                    remaining_web_tool_budget_ms(call_started.elapsed()),
+                    remaining_web_tool_budget_until(call_started.elapsed(), search_deadline),
                 ));
             }
             let proposed_urls = candidates
@@ -660,9 +748,13 @@ impl<'a> NormalRunToolExecutor<'a> {
                     state.candidate_urls.clone(),
                 )
             };
-            let observations = candidates
+            let admitted = candidates
                 .iter()
                 .filter(|item| admitted_urls.contains(&item.canonical_url))
+                .collect::<Vec<_>>();
+            let source_domains = distinct_source_domains(admitted.iter().copied());
+            let observations = admitted
+                .iter()
                 .map(|item| {
                     serde_json::json!({
                         "title": item.title,
@@ -692,131 +784,27 @@ impl<'a> NormalRunToolExecutor<'a> {
             return Ok(ToolCallResult {
                 tool_name: tool_name.to_string(),
                 success: true,
-                output: serde_json::json!({
-                    "results": observations,
-                    "canonicalUrls": canonical_urls,
-                    "evidenceIds": [],
-                    "count": observations.len(),
-                    "newResourceCount": new_resource_count,
-                    "duplicateResourceCount": duplicate_resource_count,
-                    "observationDepth": "search_snippet",
-                    "requiresFetchForCitation": true,
-                    "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
-                    "webUsage": output.usage,
-                }),
+                output: web_search_discovery_tool_output(
+                    observations,
+                    source_domains,
+                    canonical_urls,
+                    new_resource_count,
+                    duplicate_resource_count,
+                    remaining_web_tool_budget_until(call_started.elapsed(), search_deadline) > 0,
+                    &output.dual_path,
+                ),
                 duration_ms: bounded_duration_ms(call_started.elapsed()),
                 tokens_used: None,
                 error: None,
             });
         }
-        let selected_urls = urls.iter().cloned().collect::<BTreeSet<_>>();
-        let selected_items = output
-            .items
-            .iter()
-            .filter(|item| selected_urls.contains(&normalize_fetch_url(&item.canonical_url)))
-            .filter(|item| {
-                item.fetched_excerpt
-                    .as_deref()
-                    .is_some_and(|excerpt| !excerpt.trim().is_empty())
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let packed_items =
-            match pack_web_evidence_for_model(&query, &selected_items, remaining, &output.usage) {
-                Ok(items) if !items.is_empty() => items,
-                Ok(_) | Err(_) => {
-                    let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
-                    self.set_web_failure(Some(failure))?;
-                    return Ok(failed_web_tool_call(
-                        tool_name,
-                        failure,
-                        self.web_attempt_count(),
-                        call_started.elapsed(),
-                        remaining_web_tool_budget_ms(call_started.elapsed()),
-                    ));
-                }
-            };
-        let evidence_ids = register_model_web_evidence(
-            &self.state.db,
-            self.accepted,
-            self.context,
-            (self.subagent_depth == 0).then_some(self.sink),
+        self.observe_web_pages(
+            &urls,
+            start_char,
+            output.items,
             state_version,
-            &packed_items,
-            remaining,
-        )?;
-        if evidence_ids.is_empty() {
-            let failure = classify_web_evidence_output_failure(&output);
-            self.set_web_failure(Some(failure))?;
-            return Ok(failed_web_tool_call(
-                tool_name,
-                failure,
-                self.web_attempt_count(),
-                call_started.elapsed(),
-                remaining_web_tool_budget_ms(call_started.elapsed()),
-            ));
-        }
-        self.set_web_failure(None)?;
-        self.local_evidence_ids
-            .lock()
-            .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
-            .extend(evidence_ids.iter().copied());
-        evidence_reservation
-            .expect("selected URL fetch reserves evidence capacity")
-            .commit(&evidence_ids)?;
-        self.record_web_evidence_quality(&packed_items)?;
-        let failed_urls = failed_fetch_urls(&urls, &packed_items);
-        let remaining_evidence_requirement = if self.has_web_evidence() {
-            serde_json::Value::Null
-        } else if self.requires_corroborated_web_evidence() {
-            serde_json::json!("official_source_or_second_independent_domain")
-        } else {
-            serde_json::json!("one_fetched_body")
-        };
-        let mut packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
-            &query,
-            &packed_items,
-            MAX_WEB_EXCERPT_CHARS,
-        );
-        // Broker packets are numbered within a single fetch batch. Only the
-        // Run ledger owns W labels across Host bootstrap and later model reads.
-        let citations = AgentEvidenceRepository::list_current_run_web_citation_links(
-            &self.state.db,
-            &self.accepted.run_id,
-        )?;
-        for packet in &mut packets {
-            let url = packet.source_path.as_deref().unwrap_or_default();
-            let citation = citations
-                .iter()
-                .find(|citation| normalize_fetch_url(&citation.url) == normalize_fetch_url(url))
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::UnverifiedWebCitation))?;
-            packet.citation_label = citation.label.clone();
-            packet.id = format!("run-web-{}", citation.index);
-        }
-        let resource_ids = packets
-            .iter()
-            .map(|packet| packet.id.clone())
-            .collect::<Vec<_>>();
-        Ok(ToolCallResult {
-            tool_name: tool_name.to_string(),
-            success: true,
-            output: serde_json::json!({
-                "results": packets,
-                "resourceIds": resource_ids,
-                "evidenceIds": evidence_ids,
-                "count": evidence_ids.len(),
-                "failedUrls": failed_urls,
-                "remainingEvidenceRequirement": remaining_evidence_requirement,
-                "observationDepth": "fetched_body",
-                "requiresFetchForCitation": false,
-                "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
-                "remainingBudgetMs": remaining_web_tool_budget_ms(call_started.elapsed()),
-                "webUsage": output.usage,
-            }),
-            duration_ms: bounded_duration_ms(call_started.elapsed()),
-            tokens_used: None,
-            error: None,
-        })
+            call_started.elapsed(),
+        )
     }
 
     fn request_change_confirmation(
@@ -829,11 +817,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         state_version: u64,
     ) -> AppResult<()> {
         let plan = self.freeze_change_plan(call, entry, args)?;
-        let summary = format!(
-            "等待确认：{} 将修改 {} 个目标",
-            entry.name,
-            plan.relative_paths().len()
-        );
+        let summary = self.confirmation_summary_for_plan(entry, args, &plan);
         let event = AgentRunRepository::request_frozen_confirmation(
             &self.state.db,
             &plan,
@@ -846,207 +830,22 @@ impl<'a> NormalRunToolExecutor<'a> {
         self.sink.emit(&event)
     }
 
-    fn freeze_change_plan(
-        &self,
-        call: &crate::ai_runtime::ToolCall,
-        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
-        args: &serde_json::Value,
-    ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangePlan> {
-        let operation = self.freeze_change_operation(call, entry, args, &mut BTreeMap::new())?;
-        let vault_id = self
-            .state
-            .vault_path()
-            .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
-            .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
-        crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
-            crate::ai_runtime::frozen_change_plan::FrozenChangeSetInput {
-                confirmation_id: uuid::Uuid::new_v4().to_string(),
-                run_id: self.accepted.run_id.clone(),
-                session_id: self.context.session_id,
-                request_id: self.accepted.run_id.clone(),
-                vault_id,
-                operations: vec![operation],
-                expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
-                    + CHANGE_CONFIRMATION_TTL_MS,
-            },
-        )
-    }
-
-    fn freeze_change_operation(
-        &self,
-        call: &crate::ai_runtime::ToolCall,
-        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
-        args: &serde_json::Value,
-        virtual_documents: &mut BTreeMap<String, String>,
-    ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput> {
-        let relative_paths = frozen_relative_paths(entry.name, args, self.context);
-        let mut base_content_hashes =
-            frozen_base_content_hashes(args, self.context, &relative_paths);
-        let expected_post_content_hashes = expected_post_content_hashes(
-            self.state.as_ref(),
-            entry.name,
-            args,
-            &relative_paths,
-            &mut base_content_hashes,
-            virtual_documents,
-        )?;
-        Ok(
-            crate::ai_runtime::frozen_change_plan::FrozenChangeOperationInput {
-                tool_call_id: call.id.clone(),
-                relative_paths,
-                operation: entry.name.to_string(),
-                base_content_hashes,
-                expected_post_content_hashes,
-                change: args.clone(),
-                rollback_summary: rollback_summary(entry.name),
-            },
-        )
-    }
-
-    /// Execute each operation from one consumed change set in its frozen order.
-    /// A failed or drifted operation stops the suffix; completed prefixes are
-    /// preserved and reported to the caller rather than being silently retried.
-    pub(crate) async fn execute_confirmed_frozen_change_set(
-        &self,
-        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
-    ) -> AppResult<Vec<ToolCallResult>> {
-        if plan.run_id() != self.accepted.run_id || plan.session_id() != self.context.session_id {
-            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
-        }
-        plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
-        AgentRunRepository::validate_durable_apply_checkpoint_binding(
-            &self.state.db,
-            &self.accepted.run_id,
-            plan,
-        )?;
-        let snapshot = AgentRunRepository::get_for_session(
-            &self.state.db,
-            &self.accepted.session.session_key,
-            &self.accepted.run_id,
-        )?
-        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
-        if snapshot.run.state != crate::ai_runtime::run_contract::RunState::Running {
-            return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
-        }
-        let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(
-            &self.state.db,
-            &self.accepted.run_id,
-        )?
-        .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
-        let start = checkpoint.next_operation_index();
-        let mut checkpoint_stage = checkpoint.stage();
-        let mut results = Vec::new();
-        for (index, operation) in plan.operations().iter().enumerate().skip(start) {
-            let entry = catalog_find(operation.operation())
-                .filter(|entry| entry.requires_confirmation
-                    && entry.implementation == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable)
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
-            if frozen_relative_paths(entry.name, operation.change(), self.context)
-                != operation.relative_paths()
-            {
-                return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
-            }
-            let gate = ToolExecutionGate {
-                run_id: &self.accepted.run_id,
-                session_id: Some(self.context.session_id),
-                run_step: u32::try_from(index + 1).unwrap_or(u32::MAX),
-                entry,
-                args: operation.change(),
-                authorized_capabilities: &self.authorized_capabilities,
-                skill_id: None,
-                subagent_depth: 0,
-            };
-            let gate_outcome = evaluate_tool_execution(&self.state.db, gate)?;
-            let result = if let Some(result) = gate_outcome.tool_result {
-                result
-            } else if revalidate_frozen_hash_pairs(
-                self.state.as_ref(),
-                operation.base_content_hashes(),
-            )
-            .is_err()
-            {
-                failed_tool_call(entry.name, "frozen_change_base_hash_drift")
-            } else {
-                if checkpoint_stage != DurableApplyCheckpointStage::Dispatching {
-                    AgentRunRepository::append_checkpoint_step(
-                        &self.state.db,
-                        AppendRunCheckpointInput {
-                            run_id: self.accepted.run_id.clone(),
-                            state_version: snapshot.run.state_version,
-                            checkpoint: durable_apply_checkpoint(
-                                plan,
-                                DurableApplyCheckpointStage::Dispatching,
-                                index,
-                            )?,
-                        },
-                    )?;
-                    checkpoint_stage = DurableApplyCheckpointStage::Dispatching;
-                }
-                let result = self
-                    .dispatch_non_web_tool(
-                        entry.name,
-                        operation.change(),
-                        Some(plan.relative_paths()),
-                    )
-                    .await;
-                if result.success {
-                    AgentRunRepository::append_checkpoint_step(
-                        &self.state.db,
-                        AppendRunCheckpointInput {
-                            run_id: self.accepted.run_id.clone(),
-                            state_version: snapshot.run.state_version,
-                            checkpoint: durable_apply_checkpoint(
-                                plan,
-                                DurableApplyCheckpointStage::Applied,
-                                index + 1,
-                            )?,
-                        },
-                    )?;
-                    checkpoint_stage = DurableApplyCheckpointStage::Applied;
-                }
-                result
-            };
-            audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
-            append_model_tool_completed(
-                &self.state.db,
-                self.accepted,
-                snapshot.run.state_version,
-                self.sink,
-                entry.name,
-                operation.tool_call_id(),
-                if result.success {
-                    "已执行已确认的变更"
-                } else {
-                    "已确认的变更未执行"
-                },
-                result.duration_ms,
-                result.success,
-            )?;
-            let succeeded = result.success;
-            results.push(result);
-            if !succeeded {
-                break;
-            }
-        }
-        Ok(results)
-    }
-
     async fn dispatch_non_web_tool(
         &self,
         tool_name: &str,
         args: &serde_json::Value,
         confirmed_write_targets: Option<&[String]>,
+        confirmed_vault_id: Option<&str>,
     ) -> ToolCallResult {
         let dispatch_context = ToolDispatchContext {
             db: Some(&self.state.db),
-
             selected_web_provider_id: None,
-
             note_path: None,
             file_id: None,
             run_id: Some(&self.accepted.run_id),
             write_target_path: self.context.write_target_path.as_deref(),
             confirmed_write_targets,
+            confirmed_vault_id,
             document_policy: Some(&self.context.document_policy),
             web_search_enabled: self.has_capability("web.search"),
             available_tool_names: &self.allowed_tool_names,
@@ -1057,6 +856,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             app_handle: self.app_handle.clone(),
             attachment_count: 0,
             skill_activation_plan: self.skill_activation_plan.as_ref(),
+            web_action: None,
         };
         dispatch_tool_with_retry(self.state.as_ref(), &dispatch_context, tool_name, args).await
     }
@@ -1245,7 +1045,7 @@ fn local_evidence_input_from_packet(value: &serde_json::Value) -> Option<LocalEv
 /// provider must never be asked for that many raw search bodies in one strict
 /// prefetch. A response that exceeds the host cap gets exactly one smaller
 /// retry; this preserves the cap rather than hiding an unbounded payload.
-fn validate_public_fetch_urls(urls: &[String]) -> AppResult<Vec<String>> {
+pub(crate) fn validate_public_fetch_urls(urls: &[String]) -> AppResult<Vec<String>> {
     urls.iter()
         .map(|url| {
             let normalized = normalize_fetch_url(url);
@@ -1270,21 +1070,6 @@ fn normalize_fetch_url(url: &str) -> String {
         let _ = normalized.set_port(None);
     }
     normalized.to_string()
-}
-
-fn failed_fetch_urls(
-    requested_urls: &[String],
-    fetched_items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
-) -> Vec<String> {
-    let fetched_urls = fetched_items
-        .iter()
-        .map(|item| normalize_fetch_url(&item.canonical_url))
-        .collect::<BTreeSet<_>>();
-    requested_urls
-        .iter()
-        .filter(|url| !fetched_urls.contains(*url))
-        .cloned()
-        .collect()
 }
 
 fn explicit_user_urls(message: &str) -> BTreeSet<String> {
@@ -1491,7 +1276,20 @@ impl NormalRunToolExecutor<'_> {
                                 Ok(output) => {
                                     let raw_result_hash =
                                         hex::encode(Sha256::digest(call_result.result.to_string()));
-                                    let excerpt = output
+                                    // Reserve the widest source reference before registering
+                                    // evidence, so the loop cannot later shorten its text.
+                                    let mut observation = ToolCallResult {
+                                        tool_name: call.function.name.clone(),
+                                        success: true,
+                                        output: serde_json::json!({"content":output,"sourceRef":format!("E{}", i64::MAX)}),
+                                        duration_ms: bounded_duration_ms(started.elapsed()),
+                                        tokens_used: None,
+                                        error: None,
+                                    };
+                                    crate::ai_runtime::agent_tool_loop::prepare_tool_result(
+                                        &mut observation,
+                                    )?;
+                                    let excerpt = observation.output["content"].as_str().unwrap_or_default()
                                         .chars()
                                         .take(
                                             crate::ai_runtime::mcp_external_tools::MAX_EXTERNAL_EVIDENCE_CHARS,
@@ -1540,17 +1338,9 @@ impl NormalRunToolExecutor<'_> {
                                                     )
                                                 })?
                                                 .push(evidence.evidence_id);
-                                            ToolCallResult {
-                                                tool_name: call.function.name.clone(),
-                                                success: true,
-                                                output: serde_json::json!({
-                                                    "content": output,
-                                                    "sourceRef": source_ref,
-                                                }),
-                                                duration_ms: bounded_duration_ms(started.elapsed()),
-                                                tokens_used: None,
-                                                error: None,
-                                            }
+                                            observation.output["sourceRef"] =
+                                                serde_json::json!(source_ref);
+                                            observation
                                         }
                                     }
                                 }
@@ -1623,7 +1413,74 @@ fn safe_external_tool_failure(error: &AppError) -> &'static str {
     }
 }
 
+fn live_web_search_enabled_setting(db: &Database) -> AppResult<Option<bool>> {
+    db.with_read_conn(|conn| {
+        let raw: Result<String, rusqlite::Error> = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'web_search_enabled'",
+            [],
+            |row| row.get(0),
+        );
+        match raw {
+            Ok(json) => {
+                let value: serde_json::Value = serde_json::from_str(&json)?;
+                Ok(value.as_bool())
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    })
+}
+
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
+    fn observation_replay_rejection(
+        &self,
+        run_id: &str,
+        call: &ToolCall,
+        step: u32,
+    ) -> AppResult<Option<&'static str>> {
+        if crate::ai_runtime::model_gateway::is_abort_requested(run_id) {
+            return Err(AppError::run(SafeRunErrorCode::Cancelled));
+        }
+        if run_id != self.accepted.run_id || !self.allowed_tool_names.contains(&call.function.name)
+        {
+            return Ok(Some("tool_not_in_run_surface"));
+        }
+        if let Some(reason) = self.proposal_rejection_reason(call)? {
+            return Ok(Some(reason));
+        }
+        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)?;
+        if let Some(snapshot) = self.external_snapshot(&call.function.name) {
+            return Ok((!self.has_capability("external.read")
+                || !crate::ai_runtime::mcp_external_tools::snapshot_contract_is_valid(snapshot)
+                || !crate::ai_runtime::mcp_external_tools::provider_is_current(
+                    &self.state.db,
+                    snapshot,
+                )?
+                || crate::ai_runtime::mcp_external_tools::validate_and_map_arguments(
+                    snapshot, &args,
+                )
+                .is_err())
+            .then_some("external_tool_replay_access_denied"));
+        }
+        let Some(entry) = catalog_find(&call.function.name) else {
+            return Ok(Some("tool_not_in_run_surface"));
+        };
+        let gate = ToolExecutionGate {
+            run_id,
+            session_id: Some(self.context.session_id),
+            run_step: step,
+            entry,
+            args: &args,
+            authorized_capabilities: &self.authorized_capabilities,
+            skill_id: None,
+            subagent_depth: self.subagent_depth,
+        };
+        let outcome = evaluate_tool_execution(&self.state.db, gate)?;
+        Ok(outcome
+            .tool_result
+            .is_some()
+            .then_some("observation_replay_access_denied"))
+    }
     fn proposal_rejection_reason(&self, call: &ToolCall) -> AppResult<Option<&'static str>> {
         if call.function.name != WEB_FETCH_TOOL_NAME {
             return Ok(None);
@@ -1641,7 +1498,51 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .map(|_| "web_url_not_public_https"))
     }
 
-    fn record_tool_loop_diagnostic(&self, event: serde_json::Value) {
+    fn mapped_tool_name(&self, parsed_name: &str) -> bool {
+        crate::ai_runtime::tool_catalog::catalog_find(parsed_name).is_none()
+            && self.external_snapshot(parsed_name).is_some()
+    }
+
+    fn record_tool_loop_diagnostic(&self, mut event: serde_json::Value) {
+        // Provider call IDs are opaque input. Preserve equality without persisting
+        // their raw text, including explicit recovery links carried by audit events.
+        for key in ["callId", "recoveryOfCallId"] {
+            if let Some(call_id) = event.get(key).and_then(serde_json::Value::as_str) {
+                let digest = crate::cas::hash::content_hash_str(call_id);
+                event[key] = serde_json::json!(format!("tool-call:{}", &digest[..24]));
+            }
+        }
+        let parent_run_id = crate::ai_runtime::agent_tool_loop::parent_run_id_for_provider_scope(
+            &self.accepted.run_id,
+        );
+        let child_run_id = self.child_event_scope.clone();
+        let correlation = crate::ai_runtime::boundary_events::BoundaryCorrelation {
+            run_id: parent_run_id.to_string(),
+            input_revision: self.accepted.turn_id.clone(),
+            parent_run_id: child_run_id.as_ref().map(|_| parent_run_id.to_string()),
+            child_run_id,
+            model_turn: event
+                .get("modelTurns")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or(0),
+            call_id: event
+                .get("callId")
+                .or_else(|| event.get("tool"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("loop")
+                .to_string(),
+            attempt_id: "loop".into(),
+            tool_surface_version: crate::ai_runtime::boundary_events::tool_surface_version(
+                self.allowed_tool_names.iter(),
+            ),
+            protocol_adapter: "tool_loop".into(),
+        };
+        let _ = crate::ai_runtime::boundary_events::record_loop_event(
+            &self.state.db,
+            &correlation,
+            &event,
+        );
         if self.subagent_depth != 0 {
             return;
         }
@@ -1792,7 +1693,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     ) -> bool {
         crate::ai_runtime::run_context::history_coverage_is_incomplete(
             Some(memory),
-            &self.context.recent_messages,
+            &self.context.omitted_history_sequences,
         )
     }
 
@@ -1886,7 +1787,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             Ok(Some(RequiredWebBootstrapObservation {
                 tool_calls,
                 network_tool_calls: tool_calls,
-                observation: truncate_web_field(&observation, MAX_WEB_TOOL_RESULT_CHARS),
+                observation,
             }))
         })
     }
@@ -2021,9 +1922,18 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             };
             self.record_tool_loop_diagnostic(
                 serde_json::json!({"event":"dispatch", "tool":entry.name,
+                "callId":persisted_tool_call_id,
                 "host":call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX)}),
             );
-            let result = if let Some(result) = gate_outcome.tool_result {
+            let mut result = if let Some(result) = gate_outcome
+                .tool_result
+                .clone()
+                .filter(|result| result.error.as_deref() != Some("tool_arguments_invalid"))
+            {
+                result
+            } else if let Some(blocked) = self.format_gate(entry.name, &args, &BTreeMap::new())? {
+                blocked
+            } else if let Some(result) = gate_outcome.tool_result {
                 result
             } else if entry.requires_confirmation {
                 self.request_change_confirmation(
@@ -2046,17 +1956,26 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     &args,
                     state_version,
                     call.id.starts_with(HOST_REQUIRED_WEB_BOOTSTRAP_PREFIX),
+                    &persisted_tool_call_id,
+                    step,
                 )
                 .await?
             } else {
-                self.dispatch_non_web_tool(&call.function.name, &args, None)
+                self.dispatch_non_web_tool(&call.function.name, &args, None, None)
                     .await
             };
             self.record_tool_loop_diagnostic(serde_json::json!({"event":"result", "tool":entry.name,
+                "callId":persisted_tool_call_id,
                 "success":result.success, "reason": self.web_failure().map(|failure| failure.code.as_str()),
                 "resultCount": result.output.get("count").and_then(serde_json::Value::as_u64).unwrap_or(0),
                 "brokerAttempts":self.web_attempt_count()}));
             audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+            if !matches!(
+                call.function.name.as_str(),
+                WEB_FETCH_TOOL_NAME | WEB_SEARCH_TOOL_NAME
+            ) {
+                crate::ai_runtime::agent_tool_loop::prepare_tool_result(&mut result)?;
+            }
             self.register_local_tool_evidence(run_id, &call.function.name, &args, &result)?;
             let summary = if result.success {
                 "工具调用完成"
@@ -2108,11 +2027,25 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         run_id: &'a str,
         calls: &'a [crate::ai_runtime::ToolCall],
         first_step: u32,
-    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = AppResult<ChangeSetRequestOutcome>> + Send + 'a>> {
         Box::pin(async move {
             if run_id != self.accepted.run_id || calls.is_empty() {
                 return Err(AppError::msg("mixed_confirmation_batch"));
             }
+            let reject_batch = |blocked: ToolCallResult, rejected_id: &str| {
+                ChangeSetRequestOutcome::Rejected(
+                    calls
+                        .iter()
+                        .map(|candidate| {
+                            let mut result = blocked.clone();
+                            result.tool_name = candidate.function.name.clone();
+                            result.output["rejectedCallId"] = serde_json::json!(rejected_id);
+                            result.output["batchNotDispatched"] = serde_json::json!(true);
+                            (candidate.id.clone(), result)
+                        })
+                        .collect(),
+                )
+            };
             let mut prepared = Vec::with_capacity(calls.len());
             let mut operations = Vec::with_capacity(calls.len());
             let mut virtual_documents = BTreeMap::new();
@@ -2145,17 +2078,34 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 };
                 let outcome = evaluate_tool_execution(&self.state.db, gate)
                     .map_err(|_| AppError::msg("tool_permission_check_failed"))?;
-                if outcome.tool_result.is_some()
-                    || (!entry.requires_confirmation && !outcome.decision.can_execute_now())
-                {
-                    return Err(AppError::msg("mixed_confirmation_batch"));
+                if let Some(blocked) = outcome.tool_result {
+                    return Ok(reject_batch(blocked, &call.id));
                 }
-                operations.push(self.freeze_change_operation(
+                match self.format_gate(entry.name, &args, &virtual_documents) {
+                    Ok(Some(blocked)) => return Ok(reject_batch(blocked, &call.id)),
+                    Ok(None) => {}
+                    Err(_) => {
+                        return Ok(reject_batch(
+                            failed_tool_call(entry.name, "change_candidate_invalid"),
+                            &call.id,
+                        ))
+                    }
+                }
+                let operation = match self.freeze_change_operation(
                     call,
                     entry,
                     &args,
                     &mut virtual_documents,
-                )?);
+                ) {
+                    Ok(operation) => operation,
+                    Err(_) => {
+                        return Ok(reject_batch(
+                            failed_tool_call(entry.name, "change_candidate_invalid"),
+                            &call.id,
+                        ))
+                    }
+                };
+                operations.push(operation);
                 prepared.push((call, entry, args, step));
             }
             let vault_id = self
@@ -2163,7 +2113,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 .vault_path()
                 .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
                 .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
-            let plan = crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
+            let plan = match crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze_set(
                 crate::ai_runtime::frozen_change_plan::FrozenChangeSetInput {
                     confirmation_id: uuid::Uuid::new_v4().to_string(),
                     run_id: self.accepted.run_id.clone(),
@@ -2174,7 +2124,18 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
                         + CHANGE_CONFIRMATION_TTL_MS,
                 },
-            )?;
+            ) {
+                Ok(plan) => plan,
+                Err(error) if error.to_string() == SafeRunErrorCode::InvalidChangePlan.as_str() => {
+                    return Err(error);
+                }
+                Err(_) => {
+                    return Ok(reject_batch(
+                        failed_tool_call(&calls[0].function.name, "change_candidate_invalid"),
+                        &calls[0].id,
+                    ))
+                }
+            };
             let mut state_version = None;
             let mut started_lifecycles = Vec::with_capacity(prepared.len());
             for (call, entry, args, step) in prepared {
@@ -2247,7 +2208,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     "Frozen confirmation was persisted but could not be delivered to the event sink"
                 );
             }
-            Ok(())
+            Ok(ChangeSetRequestOutcome::Frozen)
         })
     }
 
@@ -2297,12 +2258,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         if !self.requires_corroborated_web_evidence() {
             return true;
         }
-        let (has_official, independent_domains) = self
+        let independent_domains = self
             .run_web_evidence
             .lock()
-            .map(|state| (state.has_official_source, state.domains.len()))
-            .unwrap_or((false, 0));
-        corroborated_source_threshold_met(has_official, independent_domains)
+            .map(|state| state.domains.len())
+            .unwrap_or(0);
+        corroborated_source_threshold_met(independent_domains)
     }
 
     fn requires_web_evidence(&self) -> bool {
@@ -2374,7 +2335,13 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 
     fn evidence_limited_response(&self) -> String {
         if !self.evidence_ids().is_empty() {
-            return "本轮已取得可核验资料，但未能完成最终来源关联；已取得的正文不会被当作读取失败。请重试以完成答复。".to_string();
+            // Built from the shared legacy constant so a persisted record of
+            // this Host-authored limitation stays recognisable.
+            return format!(
+                "{}，但未能完成最终来源关联；已取得的正文不会被当作读取失败。请重试以完成答复。",
+                crate::ai_runtime::run_engine::legacy_terminal_records::
+                    EVIDENCE_LIMITED_WITH_EVIDENCE_PREFIX
+            );
         }
         let leads = self
             .run_web_evidence
@@ -2398,7 +2365,8 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             };
             return format!(
                 "{}。{reason}",
-                crate::ai_runtime::agent_tool_loop::EVIDENCE_LIMITED_RESPONSE_PREFIX
+                crate::ai_runtime::run_engine::legacy_terminal_records::
+                    EVIDENCE_LIMITED_RESPONSE_PREFIX
             );
         }
         let items = leads
@@ -2408,7 +2376,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "本轮未取得足够的可核验来源正文。搜索取得了以下未核实线索，但正文读取或核验未成功，无法据此确认当前情况：\n\n{items}"
+            "{}。搜索取得了以下未核实线索，但正文读取或核验未成功，无法据此确认当前情况：\n\n{items}",
+            crate::ai_runtime::run_engine::legacy_terminal_records::
+                EVIDENCE_LIMITED_RESPONSE_PREFIX
         )
     }
 
@@ -2496,11 +2466,9 @@ impl NormalRunToolExecutor<'_> {
                 && item.url.starts_with("https://")
                 && item.canonical_url.starts_with("https://")
                 && bounded_page_evidence(item).is_some()
+                && !item.domain.trim().is_empty()
             {
-                if !item.domain.trim().is_empty() {
-                    state.domains.insert(item.domain.to_ascii_lowercase());
-                }
-                state.has_official_source |= item.source_rank == WebSourceRank::Official;
+                state.domains.insert(item.domain.to_ascii_lowercase());
             }
         }
         Ok(())
@@ -2744,6 +2712,7 @@ impl NormalRunToolExecutor<'_> {
         )
         .with_allowed_tool_names(&child_tool_names)
         .with_skill_activation_plan(self.skill_activation_plan.clone())
+        .with_native_search_endpoint(self.native_search_endpoint.clone())
         .with_parent_run_web_state(self)
         .at_subagent_depth(1)
         .with_child_event_buffer(spec.id.clone(), Arc::clone(&child_tool_events));
@@ -2777,12 +2746,18 @@ impl NormalRunToolExecutor<'_> {
                     completion_tokens: outcome.completion_tokens,
                     total_tokens: outcome.total_tokens,
                 };
-                crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
-                    spec,
-                    outcome.content,
-                    evidence_ids,
-                    budget,
-                )
+                if outcome.model_turns == 0 || outcome.terminal.is_host_authored() {
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error_with_budget(
+                        spec, "agent_run_child_evidence_limited", budget, evidence_ids,
+                    )
+                } else {
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
+                        spec,
+                        outcome.content,
+                        evidence_ids,
+                        budget,
+                    )
+                }
             }
             Err(error) => {
                 let budget = crate::ai_runtime::subagent_coordinator::SubagentBudgetUsage {
@@ -2815,6 +2790,17 @@ impl NormalRunToolExecutor<'_> {
         self.authorized_capabilities
             .iter()
             .any(|capability| capability.as_str() == required)
+    }
+
+    fn web_search_currently_enabled(&self) -> bool {
+        if !self.has_capability("web.search") {
+            return false;
+        }
+        match live_web_search_enabled_setting(&self.state.db) {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => true,
+            Err(_) => false,
+        }
     }
 
     fn ordered_web_provider_snapshots(
@@ -3012,7 +2998,9 @@ fn frozen_base_content_hashes(
         }
     }
     for material in &context.materials {
-        if relative_paths.contains(&material.source_path) {
+        if relative_paths.contains(&material.source_path)
+            && !hashes.iter().any(|(path, _)| path == &material.source_path)
+        {
             hashes.insert((material.source_path.clone(), material.content_hash.clone()));
         }
     }
@@ -3223,7 +3211,6 @@ fn failed_web_tool_call(
             "retryable": failure.retryable,
             "attemptCount": attempt_count,
             "budgetExhausted": remaining_budget_ms == 0,
-            "remainingBudgetMs": remaining_budget_ms,
         }),
         duration_ms: bounded_duration_ms(duration),
         tokens_used: None,
@@ -3351,6 +3338,44 @@ fn register_model_web_evidence(
     items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
     limit: usize,
 ) -> AppResult<Vec<i64>> {
+    let evidence_ids = register_web_evidence_for_run(db, &accepted.run_id, items, limit)?;
+    debug_assert!(context.session_id > 0);
+    if let Some(sink) = event_sink {
+        for evidence_id in &evidence_ids {
+            let event = AgentRunRepository::append_event(
+                db,
+                AppendRunEventInput {
+                    run_id: accepted.run_id.clone(),
+                    state_version,
+                    event_type: RunEventType::EvidenceRegistered,
+                    payload: RunEventPayload::EvidenceRegistered {
+                        evidence_id: evidence_id.to_string(),
+                    },
+                },
+            )?;
+            sink.emit(&event)?;
+        }
+    }
+    Ok(evidence_ids)
+}
+
+/// Register bounded, fetched bodies against the persisted Run's own user turn.
+/// Both Web dispatch paths share this evidence boundary.
+pub(crate) fn register_web_evidence_for_run(
+    db: &Database,
+    run_id: &str,
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    limit: usize,
+) -> AppResult<Vec<i64>> {
+    let (session_id, message_seq_first): (i64, i64) = db.with_read_conn(|conn| {
+        Ok(conn.query_row(
+            "SELECT r.session_id, m.seq FROM agent_runs r
+             JOIN session_messages m ON m.session_id = r.session_id AND m.turn_id = r.turn_id
+             WHERE r.run_id = ?1 AND m.role = 'user'",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    })?;
     let mut evidence_ids = Vec::new();
     for item in items
         .iter()
@@ -3364,9 +3389,9 @@ fn register_model_web_evidence(
         let registered = AgentEvidenceRepository::register_web(
             db,
             WebEvidenceInput {
-                session_id: context.session_id,
-                run_id: accepted.run_id.clone(),
-                message_seq_first: context.message_seq_first,
+                session_id,
+                run_id: run_id.to_owned(),
+                message_seq_first,
                 material_role: MaterialRole::Lookup,
                 title: item.title,
                 url: item.url,
@@ -3385,20 +3410,6 @@ fn register_model_web_evidence(
                 failure_reason: None,
             },
         )?;
-        if let Some(sink) = event_sink {
-            let event = AgentRunRepository::append_event(
-                db,
-                AppendRunEventInput {
-                    run_id: accepted.run_id.clone(),
-                    state_version,
-                    event_type: RunEventType::EvidenceRegistered,
-                    payload: RunEventPayload::EvidenceRegistered {
-                        evidence_id: registered.evidence_id.to_string(),
-                    },
-                },
-            )?;
-            sink.emit(&event)?;
-        }
         evidence_ids.push(registered.evidence_id);
     }
     Ok(evidence_ids)
@@ -3413,7 +3424,11 @@ fn bounded_duration_ms(duration: Duration) -> u64 {
 }
 
 fn remaining_web_tool_budget_ms(elapsed: Duration) -> u64 {
-    bounded_duration_ms(WEB_TOOL_CALL_DEADLINE.saturating_sub(elapsed))
+    remaining_web_tool_budget_until(elapsed, WEB_TOOL_CALL_DEADLINE)
+}
+
+fn remaining_web_tool_budget_until(elapsed: Duration, deadline: Duration) -> u64 {
+    bounded_duration_ms(deadline.saturating_sub(elapsed))
 }
 
 fn web_duration_bucket(duration: Duration) -> &'static str {
@@ -3484,11 +3499,16 @@ fn append_capability_degraded(
                 code: failure.code,
                 retryable: failure.retryable,
                 attempt_count,
+                // The Host deliberately does not constrain or wrap the model
+                // body on this path (`apply_required_web_degradation_notice` is
+                // an intentional no-op seam), so the notice must not claim it
+                // did. It states what actually happened: the answer continues
+                // without Web verification.
                 message: if failure.code == SafeRunErrorCode::WebProviderAuthFailed {
-                    "联网 API Key 无效，请重新输入原始 Key；已继续生成不依赖联网证据的受约束答复。"
+                    "联网 API Key 无效，请重新输入原始 Key；已继续生成未经联网核实的答复。"
                         .to_string()
                 } else {
-                    "联网核实暂不可用，已继续生成受约束答复。".to_string()
+                    "联网核实暂不可用，已继续生成未经联网核实的答复。".to_string()
                 },
             },
         },
@@ -3510,76 +3530,49 @@ struct BoundedWebItem {
     conflict_group: Option<String>,
 }
 
-/// Select and normalize the exact Web evidence that may reach a model. The
-/// same normalized values are later written to the evidence ledger, which
-/// prevents a session record from claiming support that the model never saw.
-fn pack_web_evidence_for_model(
-    query: &str,
-    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
-    limit: usize,
-    usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
-) -> AppResult<Vec<crate::ai_runtime::web_evidence_broker::WebEvidenceItem>> {
-    let mut packed = items
-        .iter()
-        .filter(|item| item.failure_reason.is_none())
-        .filter(|item| {
-            item.url.starts_with("https://") && item.canonical_url.starts_with("https://")
-        })
-        .filter_map(|item| {
-            let bounded = bounded_page_evidence(item)?;
-            let mut item = item.clone();
-            item.title = truncate_web_field(&bounded.title, 256);
-            item.url = truncate_web_field(&bounded.url, 512);
-            item.canonical_url = truncate_web_field(&bounded.canonical_url, 512);
-            item.domain = truncate_web_field(&bounded.domain, 255);
-            item.provider_id = truncate_web_field(&bounded.provider_id, 128);
-            item.provider_kind = truncate_web_field(&bounded.provider_kind, 128);
-            item.raw_result_hash = truncate_web_field(&bounded.raw_result_hash, 128);
-            item.extraction_method = truncate_web_field(&bounded.extraction_method, 128);
-            item.snippet = bounded.excerpt.clone();
-            item.fetched_excerpt = Some(bounded.excerpt);
-            Some(item)
-        })
-        .take(limit)
-        .collect::<Vec<_>>();
-
-    // The final evidence ids are decimal SQLite identifiers. Reserve their
-    // worst-case serialized footprint before persistence, then compact the
-    // longest excerpts until the *actual JSON shape* fits. Never leave a
-    // later generic string truncation to corrupt the JSON packet.
-    let placeholder_ids = vec!["9223372036854775807"; packed.len()];
-    while !packed.is_empty()
-        && serialized_web_tool_payload_chars(query, &packed, &placeholder_ids, usage)
-            > MAX_WEB_TOOL_RESULT_CHARS
-    {
-        let Some((index, length)) = packed
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                item.fetched_excerpt
-                    .as_ref()
-                    .map(|excerpt| (index, excerpt.chars().count()))
-            })
-            .max_by_key(|(_, length)| *length)
-        else {
-            break;
-        };
-        if length <= 64 {
-            return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
+/// Distinct source domains for one bounded Web observation, lowercased and
+/// sorted so the value is stable across batches.
+///
+/// The Host surfaces the fact; judging whether a market matches the Run's
+/// applicable scope stays with the model and the `## GeographicScope`
+/// contract. This deliberately carries **no** domain-to-market mapping and no
+/// region dictionary, so it can never act as a second scope authority.
+fn distinct_source_domains<'a>(
+    items: impl IntoIterator<Item = &'a crate::ai_runtime::web_evidence_broker::WebEvidenceItem>,
+) -> Vec<String> {
+    let mut domains = BTreeSet::new();
+    for item in items {
+        let domain = item.domain.trim().to_ascii_lowercase();
+        if !domain.is_empty() {
+            domains.insert(truncate_web_field(&domain, MAX_SOURCE_DOMAIN_CHARS));
         }
-        let next_length = length.saturating_sub(256).max(64);
-        let excerpt = packed[index].fetched_excerpt.as_deref().unwrap_or_default();
-        let compact = truncate_web_field(excerpt, next_length);
-        packed[index].snippet = compact.clone();
-        packed[index].fetched_excerpt = Some(compact);
     }
-    if packed.is_empty()
-        || serialized_web_tool_payload_chars(query, &packed, &placeholder_ids, usage)
-            > MAX_WEB_TOOL_RESULT_CHARS
-    {
-        return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
-    }
-    Ok(packed)
+    domains.into_iter().take(MAX_SOURCE_DOMAINS).collect()
+}
+
+fn web_search_discovery_tool_output(
+    observations: Vec<serde_json::Value>,
+    source_domains: Vec<String>,
+    canonical_urls: Vec<String>,
+    new_resource_count: usize,
+    duplicate_resource_count: usize,
+    budget_remaining: bool,
+    dual_path: &crate::ai_runtime::dual_path_search::DualPathSearchOutcome,
+) -> serde_json::Value {
+    serde_json::json!({
+        "results": observations,
+        "sourceDomains": source_domains,
+        "scopeCheck": WEB_SCOPE_CHECK_NOTE,
+        "canonicalUrls": canonical_urls,
+        "evidenceIds": [],
+        "count": observations.len(),
+        "newResourceCount": new_resource_count,
+        "duplicateResourceCount": duplicate_resource_count,
+        "observationDepth": "search_snippet",
+        "requiresFetchForCitation": true,
+        "budgetRemaining": budget_remaining,
+        "dualPath": crate::ai_runtime::dual_path_search::dual_path_status_json(dual_path),
+    })
 }
 
 fn pack_web_candidates_for_model(
@@ -3616,36 +3609,6 @@ fn pack_web_candidates_for_model(
     packed
 }
 
-fn serialized_web_tool_payload_chars(
-    query: &str,
-    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
-    evidence_ids: &[&str],
-    usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
-) -> usize {
-    let packets =
-        crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
-            query,
-            items,
-            MAX_WEB_EXCERPT_CHARS,
-        );
-    serde_json::to_string(&serde_json::json!({
-        "success": true,
-        "output": {
-            "results": packets,
-            "evidenceIds": evidence_ids,
-            "count": evidence_ids.len(),
-            "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
-            // Reserve the largest possible decimal representation because the
-            // remaining budget is produced after the packer has run.
-            "remainingBudgetMs": u64::MAX,
-            "webUsage": usage,
-        },
-        "error": serde_json::Value::Null,
-    }))
-    .map(|value| value.chars().count())
-    .unwrap_or(usize::MAX)
-}
-
 fn truncate_web_field(value: &str, limit: usize) -> String {
     value.chars().take(limit).collect()
 }
@@ -3656,8 +3619,7 @@ fn bounded_page_evidence(
     let excerpt = item
         .fetched_excerpt
         .as_deref()
-        .filter(|excerpt| !excerpt.trim().is_empty())
-        .map(str::trim)?;
+        .filter(|excerpt| !excerpt.is_empty())?;
     if excerpt.is_empty() {
         return None;
     }
@@ -3670,7 +3632,7 @@ fn bounded_page_evidence(
         provider_kind: item.provider_kind.clone(),
         raw_result_hash: item.raw_result_hash.clone(),
         extraction_method: item.extraction_method.clone(),
-        excerpt: excerpt.chars().take(MAX_WEB_EXCERPT_CHARS).collect(),
+        excerpt: excerpt.to_string(),
         conflict_group: item.conflict_group.clone(),
     })
 }
@@ -3822,12 +3784,19 @@ fn web_output_has_usable_result(
     })
 }
 
-fn corroborated_source_threshold_met(has_official: bool, independent_domains: usize) -> bool {
-    has_official || independent_domains >= 2
+/// Cross-verification is satisfied by two independent domains.
+///
+/// The former `has_official` disjunct is gone: the domain-based source-rank
+/// classifier was retired with the pre-unification Web core, so every producer
+/// assigns `WebSourceRank::Unknown` and the disjunct was unreachable. The enum
+/// variants stay only so historical `WebEvidenceMeta` rows still deserialize.
+fn corroborated_source_threshold_met(independent_domains: usize) -> bool {
+    independent_domains >= 2
 }
 
 #[cfg(test)]
 mod tests {
+    mod reading_tests;
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::future::Future;
     use std::pin::Pin;
@@ -3838,11 +3807,12 @@ mod tests {
     use super::{
         append_model_tool_completed_with_report, append_model_tool_started, bounded_page_evidence,
         corroborated_source_threshold_met, corroborated_web_evidence_required,
-        emit_deferred_web_degradation, expected_post_content_hashes, failed_fetch_urls,
+        distinct_source_domains, emit_deferred_web_degradation, expected_post_content_hashes,
         normalize_fetch_url, pack_web_candidates_for_model, remember_candidate_urls,
         validate_public_fetch_urls, web_output_has_usable_result, web_result_limit,
-        web_search_result_limit, DeferredWebDegradationInput, NormalRunToolExecutor,
-        RunWebEvidenceState, CONFIRMATION_PENDING_ERROR,
+        web_search_discovery_tool_output, web_search_result_limit, DeferredWebDegradationInput,
+        NormalRunToolExecutor, RunWebEvidenceState, CONFIRMATION_PENDING_ERROR, MAX_SOURCE_DOMAINS,
+        WEB_SCOPE_CHECK_NOTE,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -3882,6 +3852,77 @@ mod tests {
     }
 
     struct FailToolStartedSink;
+
+    #[tokio::test]
+    async fn review_regression_ef_production_results_keep_distinct_call_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::new(directory.path().join("data")).unwrap();
+        let accepted = RunIntake::start(&state.db, request()).unwrap();
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .unwrap();
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .unwrap();
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "fixture".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .unwrap();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["system_time_now".into()]);
+        for (step, call_id) in [(1, "private-call-one"), (2, "private-call-two")] {
+            assert!(
+                executor
+                    .execute(
+                        &accepted.run_id,
+                        &ToolCall::new(call_id, "system_time_now", "{}"),
+                        step
+                    )
+                    .await
+                    .unwrap()
+                    .success
+            );
+        }
+        let events =
+            crate::ai_runtime::boundary_events::query_by_run(&state.db, &accepted.run_id).unwrap();
+        let results = events
+            .iter()
+            .filter(|event| event.payload["event"] == "result")
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 2);
+        assert_ne!(results[0].call_id, results[1].call_id);
+        assert!(results
+            .iter()
+            .all(|event| !event.call_id.contains("private-call")));
+    }
 
     impl RunEventSink for FailToolStartedSink {
         fn emit(&self, event: &AssistantRunEvent) -> AppResult<()> {
@@ -4075,6 +4116,7 @@ mod tests {
                         finish_reason: "tool_calls".to_string(),
                         reasoning_content: None,
                         continuation: None,
+                        retrieval_observation: None,
                     });
                 }
                 let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
@@ -4098,6 +4140,7 @@ mod tests {
                     finish_reason: "stop".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 })
             })
         }
@@ -4132,6 +4175,68 @@ mod tests {
 
     fn web_failure() -> super::WebFailure {
         super::WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
+    }
+
+    #[tokio::test]
+    async fn review_regression_a_zero_turn_or_host_limited_child_never_reports_success() {
+        for child_turns in [0, 1] {
+            let directory = tempfile::tempdir().unwrap();
+            let state = AppState::new(directory.path().join("data")).unwrap();
+            let accepted = RunIntake::start(&state.db, request()).unwrap();
+            let context = RunContextAssembler::assemble(
+                &state.db,
+                None,
+                &accepted.session.session_key,
+                &accepted.run_id,
+            )
+            .unwrap();
+            let sink = RecordingSink::default();
+            let mut policy = RunBudgetPolicy::standard();
+            policy.child_input_tokens_per_turn = 1000;
+            policy.child_output_tokens_per_turn = 100;
+            policy.child_max_model_turns = child_turns;
+            let executor = NormalRunToolExecutor::new(
+                &state,
+                None,
+                &accepted,
+                &context,
+                Vec::new(),
+                policy,
+                &sink,
+                Vec::new(),
+            );
+            let provider = ScriptedChildProvider {
+                responses: Mutex::new(VecDeque::from([GatewayResponse {
+                    content: None,
+                    tool_calls: vec![ToolCall::new("invalid-child-tool", "not_authorized", "{}")],
+                    finish_reason: "tool_calls".into(),
+                    usage: crate::ai_types::TokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 10,
+                        total_tokens: 20,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }])),
+                tool_surfaces: Mutex::new(Vec::new()),
+                budgets: Mutex::new(Vec::new()),
+            };
+            let spec = crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::from_tool_call(
+                &accepted.run_id,
+                &ToolCall::new("review-child", "spawn_subagent", r#"{"task":"review"}"#),
+                None,
+                Vec::new(),
+                None,
+            );
+            let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::new(&accepted.run_id, 8);
+            let (report, _, _) = executor
+                .execute_one_child_run(&accepted.run_id, &spec, &provider, &[])
+                .await;
+            assert_eq!(report.confidence, 0);
+            assert!(!report.errors.is_empty());
+            assert_eq!(report.budget.model_turns, child_turns);
+            assert_eq!(provider.budgets.lock().unwrap().len(), child_turns as usize);
+        }
     }
 
     #[test]
@@ -4674,6 +4779,8 @@ mod tests {
             },
         )
         .expect("running");
+        let _parent_ledger =
+            crate::ai_runtime::model_turn_ledger::BindGuard::new(&accepted.run_id, 8);
         let provider = ScriptedChildProvider {
             responses: Mutex::new(VecDeque::from([
                 GatewayResponse {
@@ -4690,6 +4797,7 @@ mod tests {
                     finish_reason: "tool_calls".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 },
                 GatewayResponse {
                     content: Some("子任务已读取当前时间。".to_string()),
@@ -4698,6 +4806,7 @@ mod tests {
                     finish_reason: "stop".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 },
                 GatewayResponse {
                     content: Some("第二个子任务完成。".to_string()),
@@ -4706,6 +4815,7 @@ mod tests {
                     finish_reason: "stop".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 },
                 GatewayResponse {
                     content: Some("第三个子任务完成。".to_string()),
@@ -4714,6 +4824,7 @@ mod tests {
                     finish_reason: "stop".to_string(),
                     reasoning_content: None,
                     continuation: None,
+                    retrieval_observation: None,
                 },
             ])),
             tool_surfaces: Mutex::new(Vec::new()),
@@ -4729,7 +4840,7 @@ mod tests {
                 CapabilityId::new("harness.child_run"),
                 CapabilityId::new("memory.write"),
             ],
-            RunBudgetPolicy::for_envelope(&context.envelope),
+            RunBudgetPolicy::delegated(),
             &sink,
             Vec::new(),
         )
@@ -4901,6 +5012,8 @@ mod tests {
             },
         )
         .expect("running");
+        let _parent_ledger =
+            crate::ai_runtime::model_turn_ledger::BindGuard::new(&accepted.run_id, 8);
         let provider = ConcurrentChildProvider {
             barrier: Barrier::new(3),
             active: AtomicUsize::new(0),
@@ -4916,7 +5029,7 @@ mod tests {
                 CapabilityId::new("runtime.read"),
                 CapabilityId::new("harness.child_run"),
             ],
-            RunBudgetPolicy::for_envelope(&context.envelope),
+            RunBudgetPolicy::delegated(),
             &sink,
             Vec::new(),
         )
@@ -5320,6 +5433,8 @@ mod tests {
             },
         )
         .expect("running");
+        let _parent_ledger =
+            crate::ai_runtime::model_turn_ledger::BindGuard::new(&accepted.run_id, 8);
         let provider = ScriptedChildProvider {
             responses: Mutex::new(VecDeque::new()),
             tool_surfaces: Mutex::new(Vec::new()),
@@ -5334,7 +5449,7 @@ mod tests {
                 CapabilityId::new("runtime.read"),
                 CapabilityId::new("harness.child_run"),
             ],
-            RunBudgetPolicy::for_envelope(&context.envelope),
+            RunBudgetPolicy::delegated(),
             &sink,
             Vec::new(),
         )
@@ -5372,6 +5487,7 @@ mod tests {
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
                 continuation: None,
+                retrieval_observation: None,
             });
         let partial = executor
             .execute(
@@ -5441,10 +5557,14 @@ mod tests {
     }
 
     #[test]
-    fn high_risk_web_facts_require_official_or_two_independent_domains() {
-        assert!(corroborated_source_threshold_met(true, 1));
-        assert!(corroborated_source_threshold_met(false, 2));
-        assert!(!corroborated_source_threshold_met(false, 1));
+    fn high_risk_web_facts_require_two_independent_domains() {
+        // The retired "official source" disjunct used to make a single domain
+        // sufficient. No producer can assign an official rank any more, so the
+        // threshold is exactly the independent-domain count.
+        assert!(corroborated_source_threshold_met(2));
+        assert!(corroborated_source_threshold_met(3));
+        assert!(!corroborated_source_threshold_met(1));
+        assert!(!corroborated_source_threshold_met(0));
     }
 
     #[test]
@@ -5619,6 +5739,7 @@ mod tests {
             .dispatch_non_web_tool(
                 "read_note",
                 &serde_json::json!({"path": "blocked.md"}),
+                None,
                 None,
             )
             .await;
@@ -5913,40 +6034,6 @@ mod tests {
     }
 
     #[test]
-    fn partial_fetch_observation_preserves_the_failed_url_for_model_recovery() {
-        let requested = vec![
-            "https://example.com/ok".to_string(),
-            "https://example.net/blocked".to_string(),
-        ];
-        let fetched = vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
-            url: requested[0].clone(),
-            canonical_url: requested[0].clone(),
-            title: "Fetched article".into(),
-            domain: "example.com".into(),
-            snippet: "candidate".into(),
-            fetched_excerpt: Some("usable fetched body".into()),
-            provider_id: "search-provider".into(),
-            provider_kind: "mcp".into(),
-            cost_class: "free".into(),
-            raw_result_hash: "body-hash".into(),
-            extraction_method: "mcp_fetch_raw_content".into(),
-            trust_level: "external_untrusted".into(),
-            retrieval_reason: "web.fetch".into(),
-            search_backend: crate::ai_types::WebSearchBackend::Provider,
-            source_rank: crate::ai_types::WebSourceRank::Unknown,
-            freshness_label: None,
-            failure_reason: None,
-            conflict_group: None,
-            conflict_note: None,
-        }];
-
-        assert_eq!(
-            failed_fetch_urls(&requested, &fetched),
-            [requested[1].clone()]
-        );
-    }
-
-    #[test]
     fn search_snippet_never_becomes_registered_page_evidence() {
         let item = crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
             url: "https://example.com/article".into(),
@@ -5955,6 +6042,7 @@ mod tests {
             domain: "example.com".into(),
             snippet: "search snippet only".into(),
             fetched_excerpt: None,
+            completeness: Default::default(),
             provider_id: "search-provider".into(),
             provider_kind: "mcp".into(),
             cost_class: "free".into(),
@@ -5972,11 +6060,38 @@ mod tests {
         let output = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
             items: vec![item.clone()],
             usage: Default::default(),
+            dual_path: crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default(),
         };
 
         assert!(bounded_page_evidence(&item).is_none());
         assert!(web_output_has_usable_result(&output, true));
         assert!(!web_output_has_usable_result(&output, false));
+    }
+
+    #[test]
+    fn execute_web_tool_discovery_payload_exposes_route_status_not_mcp_failover_as_dual_path() {
+        let mut dual_path = crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default();
+        dual_path.mcp.supported = true;
+        dual_path.mcp.attempted = true;
+        dual_path.mcp.succeeded = true;
+        dual_path.mcp_internal_provider_attempts = 2;
+        let payload = web_search_discovery_tool_output(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            true,
+            &dual_path,
+        );
+        assert_eq!(payload["dualPath"]["native"]["supported"], false);
+        assert_eq!(payload["dualPath"]["native"]["attempted"], false);
+        assert_eq!(payload["dualPath"]["mcp"]["succeeded"], true);
+        assert_eq!(payload["dualPath"]["mcpInternalProviderAttempts"], 2);
+        assert_eq!(payload["dualPath"]["bothAvailableRoutesAttempted"], false);
+        let encoded = payload.to_string();
+        assert!(!encoded.contains("能力降级"));
+        assert!(!encoded.contains("模型出错"));
     }
 
     #[test]
@@ -5996,6 +6111,7 @@ mod tests {
             domain: "example.com".into(),
             snippet: format!("snippet {url}"),
             fetched_excerpt: None,
+            completeness: Default::default(),
             provider_id: "test".into(),
             provider_kind: "test".into(),
             cost_class: "free".into(),
@@ -6045,6 +6161,7 @@ mod tests {
             domain: "example.com".into(),
             snippet: format!("snippet {url}"),
             fetched_excerpt: None,
+            completeness: Default::default(),
             provider_id: "test".into(),
             provider_kind: "test".into(),
             cost_class: "free".into(),
@@ -6597,5 +6714,66 @@ mod tests {
                 Ok(())
             })
             .expect("no note text persistence");
+    }
+
+    /// The scope fact the model needs, stated without naming any market.
+    ///
+    /// The documented requirement is that region-mismatched evidence must send
+    /// the model back to a different source. The Host's part is to surface the
+    /// domains it actually returned; judging the market stays with the model and
+    /// the `## GeographicScope` contract, so this carries no region dictionary.
+    #[test]
+    fn web_observations_surface_distinct_source_domains_without_naming_a_market() {
+        let item = |domain: &str| super::super::web_evidence_broker::WebEvidenceItem {
+            title: "Title".into(),
+            url: "https://example.invalid/page".into(),
+            canonical_url: "https://example.invalid/page".into(),
+            domain: domain.into(),
+            snippet: "Snippet".into(),
+            fetched_excerpt: None,
+            completeness: Default::default(),
+            provider_id: "mcp.test".into(),
+            provider_kind: "mcp".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_types::WebSearchBackend::Provider,
+            source_rank: crate::ai_types::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        };
+
+        let items = [
+            item("WWW.Example.COM"),
+            item("www.example.com"),
+            item("  "),
+            item("news.example.cn"),
+        ];
+        assert_eq!(
+            distinct_source_domains(items.iter()),
+            vec!["news.example.cn".to_string(), "www.example.com".to_string()]
+        );
+
+        // The note names the action, never a market: no scope authority is
+        // created outside the prompt contract.
+        assert!(WEB_SCOPE_CHECK_NOTE.contains("继续换源"));
+        for market in ["中国", "美国", "台湾", "香港", "大陆"] {
+            assert!(
+                !WEB_SCOPE_CHECK_NOTE.contains(market),
+                "the scope check must not name a market, found {market}"
+            );
+        }
+
+        let many = (0..(MAX_SOURCE_DOMAINS + 4))
+            .map(|index| item(&format!("host-{index:02}.example")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            distinct_source_domains(many.iter()).len(),
+            MAX_SOURCE_DOMAINS
+        );
     }
 }

@@ -4,7 +4,7 @@
 //! `web.search` / `web.fetch` calls. This module never starts external
 //! processes and never handles raw secrets.
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -365,57 +365,6 @@ fn ensure_search_mapping_result_limit(mapping_json: &str, max_results_arg: &str)
     serde_json::to_string(&mapping).ok()
 }
 
-fn heal_legacy_search_result_limit_mappings(conn: &rusqlite::Connection) -> AppResult<()> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, kind, enabled, transport_kind, transport_config_json,
-                credential_refs_json, web_search_mapping_json, web_fetch_mapping_json
-         FROM web_evidence_providers
-         WHERE kind = 'mcp' AND web_search_mapping_json IS NOT NULL",
-    )?;
-    let candidates = stmt
-        .query_map([], |row| {
-            Ok(WebEvidenceProviderInput {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                kind: row.get(2)?,
-                enabled: row.get::<_, i64>(3)? != 0,
-                transport_kind: row.get(4)?,
-                transport_config_json: row.get(5)?,
-                credential_refs_json: row.get(6)?,
-                web_search_mapping_json: row.get(7)?,
-                web_fetch_mapping_json: row.get(8)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(stmt);
-
-    for mut input in candidates {
-        let Some(max_results_arg) = crate::config_manifest::resolve_mcp_search_result_limit_arg(
-            &input.transport_config_json,
-            &input.name,
-        ) else {
-            continue;
-        };
-        let Some(current) = input.web_search_mapping_json.as_deref() else {
-            continue;
-        };
-        let Some(healed) = ensure_search_mapping_result_limit(current, &max_results_arg) else {
-            continue;
-        };
-        input.web_search_mapping_json = Some(healed.clone());
-        let config_hash = provider_config_hash(&input);
-        conn.execute(
-            "UPDATE web_evidence_providers
-             SET web_search_mapping_json = ?2,
-                 provider_config_hash = ?3,
-                 updated_at = datetime('now')
-             WHERE id = ?1",
-            params![input.id, healed, config_hash],
-        )?;
-    }
-    Ok(())
-}
-
 fn normalize_provider_input(
     input: &WebEvidenceProviderInput,
 ) -> AppResult<WebEvidenceProviderInput> {
@@ -656,8 +605,7 @@ pub fn web_evidence_provider_health(
 }
 
 pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidenceProviderSummary>> {
-    db.with_conn(|conn| {
-        heal_legacy_search_result_limit_mappings(conn)?;
+    db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT id, name, kind, enabled, transport_kind,
                     transport_config_json, credential_refs_json,
@@ -691,51 +639,59 @@ pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidencePr
 pub fn list_enabled_web_provider_mappings(
     db: &Database,
 ) -> AppResult<Vec<WebEvidenceProviderMappingSummary>> {
-    db.with_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, kind, transport_kind, provider_config_hash,
-                    web_search_mapping_json, web_fetch_mapping_json
-             FROM web_evidence_providers
-             WHERE enabled = 1
-             ORDER BY
-               CASE kind WHEN 'mcp' THEN 0 WHEN 'native' THEN 1 ELSE 2 END,
-               name,
-               id",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(WebEvidenceProviderMappingSummary {
-                id: row.get(0)?,
-                kind: row.get(1)?,
-                transport_kind: row.get(2)?,
-                provider_config_hash: row.get(3)?,
-                web_search_mapping_json: row.get(4)?,
-                web_fetch_mapping_json: row.get(5)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-    })
+    db.with_read_conn(list_enabled_web_provider_mappings_on_conn)
 }
 
 pub fn list_enabled_web_search_provider_mappings(
     db: &Database,
 ) -> AppResult<Vec<WebEvidenceProviderMappingSummary>> {
-    Ok(list_enabled_web_provider_mappings(db)?
+    db.with_read_conn(list_enabled_web_search_provider_mappings_on_conn)
+}
+
+fn list_enabled_web_provider_mappings_on_conn(
+    conn: &Connection,
+) -> AppResult<Vec<WebEvidenceProviderMappingSummary>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, kind, transport_kind, provider_config_hash,
+                web_search_mapping_json, web_fetch_mapping_json
+         FROM web_evidence_providers
+         WHERE enabled = 1
+         ORDER BY
+           CASE kind WHEN 'mcp' THEN 0 WHEN 'native' THEN 1 ELSE 2 END,
+           name,
+           id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(WebEvidenceProviderMappingSummary {
+            id: row.get(0)?,
+            kind: row.get(1)?,
+            transport_kind: row.get(2)?,
+            provider_config_hash: row.get(3)?,
+            web_search_mapping_json: row.get(4)?,
+            web_fetch_mapping_json: row.get(5)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn list_enabled_web_search_provider_mappings_on_conn(
+    conn: &Connection,
+) -> AppResult<Vec<WebEvidenceProviderMappingSummary>> {
+    Ok(list_enabled_web_provider_mappings_on_conn(conn)?
         .into_iter()
         .filter(|provider| provider.kind == "mcp" && provider.web_search_mapping_json.is_some())
         .collect())
 }
 
-fn read_selected_web_search_provider_id(db: &Database) -> AppResult<Option<String>> {
-    db.with_conn(|conn| {
-        let raw: Option<String> = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                [WEB_SEARCH_PROVIDER_ID_SETTING],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(raw.and_then(|value| normalize_settings_string_value(&value)))
-    })
+fn read_legacy_web_search_provider_id_on_conn(conn: &Connection) -> AppResult<Option<String>> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [WEB_SEARCH_PROVIDER_ID_SETTING],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(raw.and_then(|value| normalize_settings_string_value(&value)))
 }
 
 fn normalize_settings_string_value(raw: &str) -> Option<String> {
@@ -772,11 +728,10 @@ pub fn save_selected_web_search_provider_id(
     })
 }
 
-fn enabled_search_route_ids(
-    db: &Database,
+fn filter_enabled_search_route_ids(
+    enabled: &[WebEvidenceProviderMappingSummary],
     requested_ids: impl IntoIterator<Item = String>,
-) -> AppResult<Vec<String>> {
-    let enabled = list_enabled_web_search_provider_mappings(db)?;
+) -> Vec<String> {
     let mut route = Vec::new();
     for requested in requested_ids {
         let requested = requested.trim();
@@ -787,60 +742,133 @@ fn enabled_search_route_ids(
             route.push(requested.to_string());
         }
         if route.len() == 3 {
-            return Ok(route);
+            return route;
         }
     }
-    Ok(route)
+    route
 }
 
-/// Return the persisted route, migrating a legacy single-provider choice in
-/// memory when no ordered route has been saved yet.
-pub fn get_web_search_route_config(db: &Database) -> AppResult<WebSearchRouteConfig> {
-    let saved = db.with_read_conn(|conn| {
-        let raw: Option<String> = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                [WEB_SEARCH_ROUTE_SETTING],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(raw
-            .and_then(|value| serde_json::from_str::<WebSearchRouteConfig>(&value).ok())
-            .map(|route| route.candidate_provider_ids)
-            .unwrap_or_default())
-    })?;
-    let requested = if saved.is_empty() {
-        let mut legacy = read_selected_web_search_provider_id(db)?
-            .into_iter()
-            .collect::<Vec<_>>();
-        legacy.extend(
-            list_enabled_web_search_provider_mappings(db)?
+fn load_stored_web_search_route_ids(conn: &Connection) -> AppResult<Option<Vec<String>>> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [WEB_SEARCH_ROUTE_SETTING],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match raw {
+        None => Ok(None),
+        Some(value) => Ok(serde_json::from_str::<WebSearchRouteConfig>(&value)
+            .ok()
+            .map(|route| route.candidate_provider_ids)),
+    }
+}
+
+fn resolve_web_search_route_on_conn(conn: &Connection) -> AppResult<WebSearchRouteConfig> {
+    let saved = load_stored_web_search_route_ids(conn)?;
+    let requested = match saved {
+        Some(ids) => ids,
+        None => {
+            let mut legacy = read_legacy_web_search_provider_id_on_conn(conn)?
                 .into_iter()
-                .map(|provider| provider.id),
-        );
-        legacy
-    } else {
-        saved
+                .collect::<Vec<_>>();
+            legacy.extend(
+                list_enabled_web_search_provider_mappings_on_conn(conn)?
+                    .into_iter()
+                    .map(|provider| provider.id),
+            );
+            legacy
+        }
     };
+    let enabled = list_enabled_web_search_provider_mappings_on_conn(conn)?;
     Ok(WebSearchRouteConfig {
-        candidate_provider_ids: enabled_search_route_ids(db, requested)?,
+        candidate_provider_ids: filter_enabled_search_route_ids(&enabled, requested),
     })
+}
+
+fn persist_web_search_route_on_conn(
+    conn: &Connection,
+    route: &WebSearchRouteConfig,
+) -> AppResult<()> {
+    let enabled = list_enabled_web_search_provider_mappings_on_conn(conn)?;
+    let normalized = WebSearchRouteConfig {
+        candidate_provider_ids: filter_enabled_search_route_ids(
+            &enabled,
+            route.candidate_provider_ids.clone(),
+        ),
+    };
+    let json = serde_json::to_string(&normalized)?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![WEB_SEARCH_ROUTE_SETTING, json],
+    )?;
+    Ok(())
+}
+
+fn in_immediate_transaction<T>(
+    conn: &Connection,
+    operation: impl FnOnce(&Connection) -> AppResult<T>,
+) -> AppResult<T> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    match operation(conn) {
+        Ok(value) => match conn.execute_batch("COMMIT") {
+            Ok(()) => Ok(value),
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(error.into())
+            }
+        },
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+/// Return the persisted route.
+///
+/// Legacy single-provider migration runs only when the route key is missing or
+/// unparseable. An explicit empty array is a cleared route, not an uninitialized
+/// one.
+pub fn get_web_search_route_config(db: &Database) -> AppResult<WebSearchRouteConfig> {
+    db.with_read_conn(resolve_web_search_route_on_conn)
 }
 
 /// Persist a normalized, ordered route. Disabled, unknown, duplicate, and
 /// excess candidates are ignored so stored routing state remains safe.
 pub fn save_web_search_route_config(db: &Database, route: &WebSearchRouteConfig) -> AppResult<()> {
-    let normalized = WebSearchRouteConfig {
-        candidate_provider_ids: enabled_search_route_ids(db, route.candidate_provider_ids.clone())?,
-    };
-    let json = serde_json::to_string(&normalized)?;
+    db.with_conn(|conn| persist_web_search_route_on_conn(conn, route))
+}
+
+/// Move `provider_id` to the front of the persisted MCP route.
+///
+/// Read, reorder, and write share one write connection and `BEGIN IMMEDIATE`
+/// so a concurrent `set` cannot be overwritten by a stale promote snapshot.
+/// Empty ids are rejected; clearing the route remains `save` of an empty array.
+/// Unknown or disabled ids never enter the stored list; persist keeps only
+/// currently enabled MCP search mappings, at most three.
+pub fn promote_web_search_route_primary(
+    db: &Database,
+    provider_id: &str,
+) -> AppResult<WebSearchRouteConfig> {
+    let trimmed = provider_id.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::msg("web_search_route_primary_missing"));
+    }
     db.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![WEB_SEARCH_ROUTE_SETTING, json],
-        )?;
-        Ok(())
+        in_immediate_transaction(conn, |conn| {
+            let mut ids = resolve_web_search_route_on_conn(conn)?.candidate_provider_ids;
+            ids.retain(|id| id != trimmed);
+            ids.insert(0, trimmed.to_string());
+            persist_web_search_route_on_conn(
+                conn,
+                &WebSearchRouteConfig {
+                    candidate_provider_ids: ids,
+                },
+            )?;
+            resolve_web_search_route_on_conn(conn)
+        })
     })
 }
 
@@ -906,7 +934,7 @@ pub fn delete_web_evidence_provider(db: &Database, provider_id: &str) -> AppResu
 
 pub fn web_evidence_provider_exists(db: &Database, provider_id: &str) -> AppResult<bool> {
     let provider_id = validate_provider_identifier("provider id", provider_id)?;
-    db.with_conn(|conn| {
+    db.with_read_conn(|conn| {
         conn.query_row(
             "SELECT 1 FROM web_evidence_providers WHERE id = ?1",
             [provider_id],
@@ -922,6 +950,36 @@ pub fn web_evidence_provider_exists(db: &Database, provider_id: &str) -> AppResu
 mod tests {
     use super::*;
 
+    fn search_provider(id: &str) -> WebEvidenceProviderInput {
+        let mut input = provider();
+        input.id = id.into();
+        input.name = format!("{id} Search");
+        input.web_search_mapping_json = Some(format!(r#"{{"tool":"{id}_search"}}"#));
+        input
+    }
+
+    fn seed_enabled_search_providers(db: &Database, ids: &[&str]) {
+        for id in ids {
+            upsert_web_evidence_provider(db, &search_provider(id)).unwrap();
+        }
+    }
+
+    fn save_route(db: &Database, ids: &[&str]) {
+        save_web_search_route_config(
+            db,
+            &WebSearchRouteConfig {
+                candidate_provider_ids: ids.iter().map(|id| (*id).to_string()).collect(),
+            },
+        )
+        .unwrap();
+    }
+
+    fn open_wal_db() -> (tempfile::TempDir, Database) {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Database::open(&directory.path().join("web-search-route.db")).unwrap();
+        (directory, db)
+    }
+
     fn provider() -> WebEvidenceProviderInput {
         WebEvidenceProviderInput {
             id: "anysearch".into(),
@@ -934,6 +992,19 @@ mod tests {
             web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
             web_fetch_mapping_json: Some(r#"{"tool":"fetch"}"#.into()),
         }
+    }
+
+    fn stored_provider_row(db: &Database, id: &str) -> (String, String, String) {
+        db.with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT web_search_mapping_json, provider_config_hash, updated_at
+                 FROM web_evidence_providers WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(Into::into)
+        })
+        .unwrap()
     }
 
     #[test]
@@ -961,7 +1032,7 @@ mod tests {
     }
 
     #[test]
-    fn list_silently_heals_legacy_anysearch_mappings() {
+    fn list_does_not_persist_legacy_anysearch_result_limit() {
         let db = Database::open_in_memory().unwrap();
         db.with_conn(|conn| {
             conn.execute(
@@ -980,16 +1051,21 @@ mod tests {
             Ok(())
         })
         .unwrap();
-
-        let stored = list_web_evidence_providers(&db).unwrap();
-        let mapping = stored[0]
-            .web_search_mapping_json
-            .as_deref()
-            .expect("search mapping");
+        let before = stored_provider_row(&db, "anysearch-legacy");
+        let listed = list_web_evidence_providers(&db).unwrap();
+        let after = stored_provider_row(&db, "anysearch-legacy");
         assert!(
-            mapping.contains("maxResultsArg"),
-            "expected healed mapping, got {mapping}"
+            !listed[0]
+                .web_search_mapping_json
+                .as_deref()
+                .unwrap()
+                .contains("maxResultsArg"),
+            "list must not persist a healed mapping"
         );
+        assert_eq!(listed[0].provider_config_hash, "legacy");
+        assert_eq!(after.0, r#"{"tool":"search"}"#);
+        assert_eq!(after.1, "legacy");
+        assert_eq!(after.2, before.2);
     }
 
     #[test]
@@ -1025,7 +1101,7 @@ mod tests {
     }
 
     #[test]
-    fn list_silently_heals_legacy_firecrawl_mappings() {
+    fn list_does_not_persist_legacy_firecrawl_result_limit() {
         let db = Database::open_in_memory().unwrap();
         db.with_conn(|conn| {
             conn.execute(
@@ -1044,17 +1120,21 @@ mod tests {
             Ok(())
         })
         .unwrap();
-
-        let stored = list_web_evidence_providers(&db).unwrap();
-        let mapping = stored[0]
-            .web_search_mapping_json
-            .as_deref()
-            .expect("search mapping");
+        let before = stored_provider_row(&db, "firecrawl-legacy");
+        let listed = list_web_evidence_providers(&db).unwrap();
+        let after = stored_provider_row(&db, "firecrawl-legacy");
         assert!(
-            mapping.contains(r#""maxResultsArg":"limit""#)
-                || mapping.contains(r#""maxResultsArg": "limit""#),
-            "expected healed mapping, got {mapping}"
+            !listed[0]
+                .web_search_mapping_json
+                .as_deref()
+                .unwrap()
+                .contains("maxResultsArg"),
+            "list must not persist a healed mapping"
         );
+        assert_eq!(listed[0].provider_config_hash, "legacy");
+        assert_eq!(after.0, r#"{"tool":"firecrawl_search","queryArg":"query"}"#);
+        assert_eq!(after.1, "legacy");
+        assert_eq!(after.2, before.2);
     }
 
     #[test]
@@ -1304,6 +1384,183 @@ mod tests {
                 .map(|item| item.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["brave", "anysearch"]
+        );
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_keeps_failovers() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &["alpha", "beta", "gamma"]);
+
+        let route = promote_web_search_route_primary(&db, "beta").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["beta", "alpha", "gamma"]);
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_reads_server_state_not_client_memory() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &["gamma", "alpha"]);
+
+        let route = promote_web_search_route_primary(&db, "alpha").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["alpha", "gamma"]);
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_inserts_enabled_id_and_drops_fourth() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma", "delta"]);
+        save_route(&db, &["alpha", "beta", "gamma"]);
+
+        let route = promote_web_search_route_primary(&db, "delta").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["delta", "alpha", "beta"]);
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_rejects_empty_id_without_mutating() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta"]);
+        save_route(&db, &["alpha", "beta"]);
+
+        let err = promote_web_search_route_primary(&db, "  ").unwrap_err();
+        assert!(err.to_string().contains("web_search_route_primary_missing"));
+        assert_eq!(
+            get_web_search_route_config(&db)
+                .unwrap()
+                .candidate_provider_ids,
+            vec!["alpha", "beta"]
+        );
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_drops_unknown_id_without_mutating() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta"]);
+        save_route(&db, &["alpha", "beta"]);
+
+        let route = promote_web_search_route_primary(&db, "missing").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn promote_web_search_route_primary_drops_disabled_id_without_inserting() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta"]);
+        let mut disabled = search_provider("gamma");
+        disabled.enabled = false;
+        upsert_web_evidence_provider(&db, &disabled).unwrap();
+        save_route(&db, &["alpha", "beta"]);
+
+        let route = promote_web_search_route_primary(&db, "gamma").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn explicit_empty_route_is_not_legacy_migration() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+        save_selected_web_search_provider_id(&db, Some("beta")).unwrap();
+        save_route(&db, &[]);
+
+        assert_eq!(
+            get_web_search_route_config(&db)
+                .unwrap()
+                .candidate_provider_ids,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn promote_after_explicit_empty_inserts_only_primary() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &[]);
+
+        let route = promote_web_search_route_primary(&db, "alpha").unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["alpha"]);
+    }
+
+    #[test]
+    fn concurrent_promote_does_not_restore_failover_deleted_by_set() {
+        use std::sync::Barrier;
+
+        for _ in 0..20 {
+            let (_dir, db) = open_wal_db();
+            seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+            save_route(&db, &["alpha", "beta", "gamma"]);
+            let barrier = Barrier::new(2);
+
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    promote_web_search_route_primary(&db, "alpha").unwrap();
+                });
+                scope.spawn(|| {
+                    barrier.wait();
+                    save_route(&db, &["gamma", "alpha"]);
+                });
+            });
+
+            let ids = get_web_search_route_config(&db)
+                .unwrap()
+                .candidate_provider_ids;
+            assert!(
+                ids == ["gamma", "alpha"] || ids == ["alpha", "gamma"],
+                "promote/set lost-update restored a stale snapshot: {ids:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_promotes_serialize_so_neither_primary_is_dropped() {
+        use std::sync::Barrier;
+
+        for _ in 0..20 {
+            let (_dir, db) = open_wal_db();
+            seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+            save_route(&db, &["alpha", "beta", "gamma"]);
+            let barrier = Barrier::new(2);
+
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    promote_web_search_route_primary(&db, "beta").unwrap();
+                });
+                scope.spawn(|| {
+                    barrier.wait();
+                    promote_web_search_route_primary(&db, "gamma").unwrap();
+                });
+            });
+
+            let ids = get_web_search_route_config(&db)
+                .unwrap()
+                .candidate_provider_ids;
+            assert!(
+                ids == ["gamma", "beta", "alpha"] || ids == ["beta", "gamma", "alpha"],
+                "one promote was lost to a stale snapshot: {ids:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn save_web_search_route_config_still_replaces_with_single_id() {
+        let db = Database::open_in_memory().unwrap();
+        seed_enabled_search_providers(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &["alpha", "beta", "gamma"]);
+        save_route(&db, &["beta"]);
+
+        assert_eq!(
+            get_web_search_route_config(&db)
+                .unwrap()
+                .candidate_provider_ids,
+            vec!["beta"]
         );
     }
 

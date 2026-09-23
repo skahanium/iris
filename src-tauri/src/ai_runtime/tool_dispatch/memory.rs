@@ -203,6 +203,7 @@ mod tests {
             run_id: None,
             write_target_path: None,
             confirmed_write_targets: None,
+            confirmed_vault_id: None,
             document_policy: None,
             web_search_enabled: false,
             available_tool_names: &[],
@@ -213,6 +214,7 @@ mod tests {
             app_handle: None,
             attachment_count: 0,
             skill_activation_plan: None,
+            web_action: None,
         }
     }
 
@@ -301,5 +303,49 @@ mod tests {
             })
             .expect("scope counts");
         assert_eq!(counts, (1, 0));
+    }
+
+    /// `scope = "vault"` names a real vault. Without an active one there is no
+    /// scope to write into, so the call must be refused by name rather than
+    /// silently falling back to the global scope (`Q15`: the determined semantics
+    /// are confirm-then-write with an explicit scope; scope must not be guessed).
+    #[tokio::test]
+    async fn vault_scope_without_an_active_vault_is_refused_by_name() {
+        // A state with no active vault: the real case of a vault scoped write
+        // arriving while no vault is open.
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(directory.path().join("data")).expect("state");
+        let retrieval_scope = RetrievalScope::default();
+        let ctx = context(&retrieval_scope);
+
+        let error = memory_write_tool(
+            &state,
+            &serde_json::json!({"operation": "upsert", "key": "k", "content": "v", "scope": "vault"}),
+            &ctx,
+        )
+        .await
+        .expect_err("a vault scoped write without an active vault must be refused");
+        assert_eq!(error.to_string(), "memory_vault_scope_unavailable");
+
+        let stored: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row("SELECT COUNT(*) FROM ai_memories", [], |row| row.get(0))?)
+            })
+            .expect("memory count");
+        assert_eq!(
+            stored, 0,
+            "a refused vault scoped write must not fall back to the global scope"
+        );
+
+        // The same call must also refuse an unknown scope name outright.
+        let error = memory_write_tool(
+            &state,
+            &serde_json::json!({"operation": "upsert", "key": "k", "content": "v", "scope": "elsewhere"}),
+            &ctx,
+        )
+        .await
+        .expect_err("an unknown scope must be refused");
+        assert_eq!(error.to_string(), "memory_scope_invalid");
     }
 }

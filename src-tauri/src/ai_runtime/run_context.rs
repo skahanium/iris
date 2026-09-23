@@ -6,7 +6,7 @@
 //! scans a vault unless Request Intake has resolved the Run to the
 //! `ImplicitVault` boundary.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::OptionalExtension;
@@ -41,7 +41,7 @@ const MAX_RECENT_CONVERSATION_TOKENS: u32 = 8_000;
 /// A memory summary can cover only a verified prefix of an oversized history.
 /// Keep the corresponding Provider warning in one shared rendering contract so
 /// a successful in-Run compaction can replace the whole memory block safely.
-pub(crate) const CONVERSATION_HISTORY_COVERAGE_WARNING: &str = "\n\n历史覆盖边界：持久记忆与最近对话之间仍有一段历史未能在一次压缩中完整纳入。不要推断该区间中的事实、承诺或结论；若当前问题依赖它，请提出聚焦澄清。";
+pub(crate) const CONVERSATION_HISTORY_COVERAGE_WARNING: &str = "\n\n历史覆盖边界：部分合资格历史已被裁剪，且尚未被有效持久记忆覆盖。不要推断缺失内容中的事实、承诺或结论；若当前问题依赖它，请提出聚焦澄清。";
 
 /// Read-only RunSituation projection consumed by the production executor.
 ///
@@ -83,6 +83,8 @@ pub(crate) struct RunContext {
     pub(crate) local_retrieval_packets: Vec<ContextPacket>,
     /// Bounded user/assistant history strictly before this Run's current message.
     pub(crate) recent_messages: Vec<NormalSessionMessage>,
+    /// Eligible messages omitted or projected by the actual bounded history window.
+    pub(crate) omitted_history_sequences: Vec<i64>,
     /// Existing durable memory summary, when one has already been built.
     pub(crate) conversation_memory: Option<ConversationMemory>,
     /// True when the bounded recent window leaves an uncompressed historical
@@ -211,12 +213,19 @@ impl RunContext {
     }
 
     fn compile_prompt(&self, plan: &ContextMaterialPlan, activated_skills: &str) -> CompiledPrompt {
-        let conversation_memory = self.conversation_memory.as_ref().map(|memory| {
-            conversation_memory_prompt_fragment(
-                memory,
-                self.conversation_history_coverage_incomplete,
-            )
-        });
+        let conversation_memory = self
+            .conversation_memory
+            .as_ref()
+            .map(|memory| {
+                conversation_memory_prompt_fragment(
+                    memory,
+                    self.conversation_history_coverage_incomplete,
+                )
+            })
+            .or_else(|| {
+                self.conversation_history_coverage_incomplete
+                    .then(|| CONVERSATION_HISTORY_COVERAGE_WARNING.trim().to_string())
+            });
         PromptContractV3::compile(
             &self.system_prompt(),
             &self.prompt_profile,
@@ -376,19 +385,15 @@ fn is_unqualified_regional_question(message: &str) -> bool {
         .any(|topic| lower.contains(topic))
 }
 
-/// The selected recent history is already the exact post-token-budget view,
-/// so its first sequence number is the only safe boundary to compare.
+/// Only actual eligible omissions count; numeric gaps may be unpublished turns.
+/// The caller supplies a validated memory snapshot, never an unchecked stored row.
 pub(crate) fn history_coverage_is_incomplete(
     memory: Option<&ConversationMemory>,
-    recent_messages: &[NormalSessionMessage],
+    omitted_sequences: &[i64],
 ) -> bool {
-    let Some(memory) = memory else {
-        return false;
-    };
-    let Some(first_recent) = recent_messages.first() else {
-        return false;
-    };
-    memory.seq_end.saturating_add(1) < first_recent.seq
+    omitted_sequences
+        .iter()
+        .any(|seq| !memory.is_some_and(|memory| memory.seq_start <= *seq && *seq <= memory.seq_end))
 }
 
 /// Render the complete durable-memory block seen by the Provider for one
@@ -522,284 +527,7 @@ fn history_pair_tokens(user: &NormalSessionMessage, assistant: &NormalSessionMes
 }
 
 #[cfg(test)]
-mod history_selection_tests {
-    use super::*;
-
-    fn message(seq: i64, role: &str, content: String, turn_id: &str) -> NormalSessionMessage {
-        NormalSessionMessage {
-            seq,
-            role: role.to_string(),
-            content,
-            content_parts: None,
-            tool_calls: None,
-            turn_id: Some(turn_id.to_string()),
-            run_id: None,
-            turn_state: None,
-            retryable: false,
-            context_scope: serde_json::json!([]),
-            display_mentions: Vec::new(),
-            web_citations: Vec::new(),
-            citation_binding: None,
-            source_summary: Vec::new(),
-            evidence_refs: None,
-            created_at: "2026-08-07T00:00:00Z".to_string(),
-        }
-    }
-
-    fn pair(start_seq: i64, turn_id: &str, tokens_per_message: usize) -> Vec<NormalSessionMessage> {
-        vec![
-            message(start_seq, "user", "问".repeat(tokens_per_message), turn_id),
-            message(
-                start_seq + 1,
-                "assistant",
-                "答".repeat(tokens_per_message),
-                turn_id,
-            ),
-        ]
-    }
-
-    pub(super) fn context_with_history(recent_messages: Vec<NormalSessionMessage>) -> RunContext {
-        RunContext {
-            session_id: 1,
-            message_seq_first: 3,
-            user_message: "继续这个对话".to_string(),
-            content_parts: None,
-            envelope: ExecutionEnvelope {
-                effect: crate::ai_runtime::run_contract::Effect::Answer,
-                context: ContextMode::Conversation,
-                freshness: crate::ai_runtime::run_contract::Freshness::Offline,
-                web_reason: crate::ai_runtime::run_contract::WebDecisionReason::LegacyUnknown,
-                verification_requirement:
-                    crate::ai_runtime::run_contract::VerificationRequirement::None,
-                effort: crate::ai_runtime::run_contract::Effort::Direct,
-                security_domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
-                risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,
-                modalities: vec![crate::ai_runtime::run_contract::Modality::Text],
-                material_needs: Vec::new(),
-                required_capabilities: Vec::new(),
-                explicit_constraints: Vec::new(),
-                fresh_fact: Default::default(),
-            },
-            write_target_path: None,
-            document_policy: crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine::new(
-                crate::ai_runtime::policy_decision_engine::DocumentPolicy::allow_all(),
-            ),
-            materials: Vec::new(),
-            retrieval_scope: RetrievalScope::default(),
-            local_retrieval_packets: Vec::new(),
-            recent_messages,
-            conversation_memory: None,
-            conversation_history_coverage_incomplete: false,
-            prompt_profile: PromptProfile::default(),
-            previous_run_summary: None,
-            interrupted_assistant_continue: false,
-        }
-    }
-
-    #[test]
-    fn geographic_default_enters_only_unqualified_first_searches() {
-        let mut context = context_with_history(Vec::new());
-        for question in [
-            "近期有什么好看的电影正在热映或者即将上映吗?",
-            "最近有什么新歌？",
-            "最近的新电影有哪些？",
-            "最近有什么新闻？",
-            "What are the latest movies?",
-        ] {
-            context.user_message = question.into();
-            assert_eq!(
-                context.bootstrap_web_query("2026-09-08"),
-                format!("{question} 中国大陆 2026-09-08")
-            );
-        }
-        for question in [
-            "美国近期有什么新闻？",
-            "法国最近有什么新歌？",
-            "台湾近期上映的电影？",
-            "上海今晚有什么电影？",
-            "全球最近有什么新闻？",
-            "Rust 最新版本是什么？",
-            "最近天文学有什么新发现？",
-            "阿根廷最近有什么电影？",
-            "翻译：最近有什么电影？",
-            "请读 https://source.invalid/page",
-            "近期有什么好看的电影，别只看大陆？",
-        ] {
-            context.user_message = question.into();
-            assert_eq!(
-                context.bootstrap_web_query("2026-09-08"),
-                format!("{question} 2026-09-08")
-            );
-        }
-    }
-
-    #[test]
-    fn geographic_bootstrap_never_exports_history_or_overrides_topic_constraints() {
-        let mut context =
-            context_with_history(vec![message(1, "user", "只看法国".into(), "prior")]);
-        context.user_message = "最近有什么新歌？".into();
-        assert_eq!(
-            context.bootstrap_web_query("2026-09-08"),
-            "最近有什么新歌？ 2026-09-08"
-        );
-        let messages =
-            context.messages_with_context_material_plan(&context.context_material_plan());
-        let serialized = serde_json::to_string(&messages).expect("messages");
-        assert!(serialized.contains("user-confirmed scope"));
-        assert!(serialized.contains("只看法国"));
-        context.recent_messages.clear();
-        context.conversation_history_coverage_incomplete = true;
-        assert!(!context
-            .bootstrap_web_query("2026-09-08")
-            .contains("中国大陆"));
-    }
-
-    #[test]
-    fn newest_oversized_pair_is_projected_as_a_pair_inside_the_history_budget() {
-        let selected = select_bounded_recent_history(pair(1, "latest", 4_001));
-
-        assert_eq!(
-            selected.len(),
-            2,
-            "newest complete pair must remain available"
-        );
-        assert!(is_coherent_conversation_pair(&selected[0], &selected[1]));
-        assert!(selected.iter().all(|message| !message.content.is_empty()));
-        assert!(history_pair_tokens(&selected[0], &selected[1]) <= MAX_RECENT_CONVERSATION_TOKENS);
-    }
-
-    #[test]
-    fn history_selection_stops_at_the_first_nonfitting_older_pair() {
-        let mut candidates = pair(1, "older", 500);
-        candidates.extend(pair(3, "middle", 3_500));
-        candidates.extend(pair(5, "newest", 1_000));
-
-        let selected = select_bounded_recent_history(candidates);
-
-        assert_eq!(selected.len(), 2, "history may not skip an older gap");
-        assert_eq!(selected[0].turn_id.as_deref(), Some("newest"));
-        assert!(is_coherent_conversation_pair(&selected[0], &selected[1]));
-    }
-
-    #[test]
-    fn oversized_history_projection_keeps_the_latest_correction_visible() {
-        let content = format!(
-            "{}最新更正：只回答已核实的当前信息。",
-            "早期背景。".repeat(20_000)
-        );
-        let projected = truncate_history_content_to_token_budget(&content, 128);
-
-        assert!(projected.contains("[历史内容已省略]"));
-        assert!(projected.contains("最新更正：只回答已核实的当前信息。"));
-        assert!(
-            crate::ai_runtime::text_support::estimate_tokens(&projected) <= 128,
-            "the visible projection must remain inside its frozen token budget"
-        );
-    }
-
-    #[test]
-    fn oversized_history_projection_never_exceeds_a_tiny_budget() {
-        let projected = truncate_history_content_to_token_budget(&"早期背景。".repeat(200), 2);
-
-        assert!(
-            crate::ai_runtime::text_support::estimate_tokens(&projected) <= 2,
-            "an omission marker must not silently overrun the frozen budget"
-        );
-    }
-
-    #[test]
-    fn provider_history_budget_counts_citation_sanitization_before_projection() {
-        let mut latest_pair = pair(1, "latest", 0);
-        latest_pair[0].content = "问".repeat(4_000);
-        latest_pair[1].content = "[W1]".repeat(3_900);
-        latest_pair[1].web_citations = vec![crate::ai_types::WebCitationEntry {
-            index: 1,
-            title: String::new(),
-            url: String::new(),
-        }];
-
-        let context = context_with_history(select_bounded_recent_history(latest_pair));
-        let messages =
-            context.messages_with_context_material_plan(&context.context_material_plan());
-        let provider_history = &messages[1..messages.len() - 1];
-        let provider_history_tokens = provider_history
-            .iter()
-            .map(|message| {
-                let content = message.content.text_content();
-                crate::ai_runtime::text_support::estimate_tokens(&content)
-            })
-            .sum::<usize>();
-
-        assert_eq!(
-            provider_history.len(),
-            2,
-            "the latest complete pair remains available"
-        );
-        assert!(matches!(
-            provider_history[0].role,
-            crate::ai_runtime::MessageRole::User
-        ));
-        assert!(matches!(
-            provider_history[1].role,
-            crate::ai_runtime::MessageRole::Assistant
-        ));
-        assert!(provider_history[1]
-            .content
-            .text_content()
-            .contains("[历史来源 1]"));
-        assert!(
-            provider_history_tokens <= MAX_RECENT_CONVERSATION_TOKENS as usize,
-            "provider-facing history must stay inside the frozen 8k token budget"
-        );
-    }
-
-    #[test]
-    fn partial_memory_marks_an_omitted_middle_range_for_the_model() {
-        let memory = ConversationMemory {
-            id: 1,
-            session_id: 1,
-            seq_start: 1,
-            seq_end: 4,
-            content_hash: "covered".into(),
-            goal_summary: "早期目标".into(),
-            preference_summary: String::new(),
-            decision_summary: String::new(),
-            open_threads_summary: String::new(),
-            created_at: "2026-09-05T00:00:00Z".into(),
-            updated_at: "2026-09-05T00:00:00Z".into(),
-        };
-        let recent = pair(11, "recent", 10);
-        assert!(history_coverage_is_incomplete(Some(&memory), &recent));
-
-        let mut context = context_with_history(recent);
-        context.conversation_memory = Some(memory);
-        context.conversation_history_coverage_incomplete = true;
-        let messages =
-            context.messages_with_context_material_plan(&context.context_material_plan());
-        assert!(messages[0].content.text_content().contains("历史覆盖边界"));
-    }
-
-    #[test]
-    fn contiguous_memory_and_recent_history_do_not_claim_a_gap() {
-        let memory = ConversationMemory {
-            id: 1,
-            session_id: 1,
-            seq_start: 1,
-            seq_end: 4,
-            content_hash: "covered".into(),
-            goal_summary: String::new(),
-            preference_summary: String::new(),
-            decision_summary: String::new(),
-            open_threads_summary: String::new(),
-            created_at: "2026-09-05T00:00:00Z".into(),
-            updated_at: "2026-09-05T00:00:00Z".into(),
-        };
-        assert!(!history_coverage_is_incomplete(
-            Some(&memory),
-            &pair(5, "recent", 10)
-        ));
-    }
-}
+mod history_selection_tests;
 
 impl RunContextAssembler {
     /// Read only explicit references persisted with the Run, then validate every source.
@@ -809,6 +537,39 @@ impl RunContextAssembler {
         session_key: &str,
         run_id: &str,
     ) -> AppResult<RunSituation> {
+        Self::assemble_with_expected_hashes(db, vault, session_key, run_id, &[])
+    }
+
+    /// Assemble after a confirmed write using the frozen expected post hashes.
+    pub(crate) fn assemble_with_expected_hashes(
+        db: &crate::storage::db::Database,
+        vault: Option<&Path>,
+        session_key: &str,
+        run_id: &str,
+        expected_post_hashes: &[(String, String)],
+    ) -> AppResult<RunSituation> {
+        Self::assemble_at_confirmed_boundary(
+            db,
+            vault,
+            session_key,
+            run_id,
+            expected_post_hashes,
+            &[],
+        )
+    }
+
+    /// Resolve current checkpoint hashes and exactly mapped authorized ranges.
+    /// A changed hash alone never authorizes reusing a selection's old offsets.
+    pub(crate) fn assemble_at_confirmed_boundary(
+        db: &crate::storage::db::Database,
+        vault: Option<&Path>,
+        session_key: &str,
+        run_id: &str,
+        expected_post_hashes: &[(String, String)],
+        applied_operations: &[crate::ai_runtime::frozen_change_plan::FrozenChangeOperation],
+    ) -> AppResult<RunSituation> {
+        let expected_post_hashes: HashMap<String, String> =
+            expected_post_hashes.iter().cloned().collect();
         let input = AgentRunRepository::prompt_input_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if input.explicit_references.len() > MAX_EXPLICIT_MATERIALS {
@@ -826,17 +587,33 @@ impl RunContextAssembler {
             .map(crate::knowledge::corpora::load_corpora)
             .transpose()?
             .unwrap_or_default();
-        let recent_message_candidates =
-            crate::ai_runtime::normal_session_repository::NormalSessionRepository::recent_messages_before(
+        let (recent_message_candidates, eligible_sequences) =
+            crate::ai_runtime::normal_session_repository::NormalSessionRepository::history_window_before(
                 db,
                 input.session_id,
                 input.message_seq_first,
                 RECENT_CONVERSATION_CANDIDATE_LIMIT,
             )?;
-        let recent_messages = select_bounded_recent_history(recent_message_candidates);
+        let recent_messages = select_bounded_recent_history(recent_message_candidates.clone());
+        let fully_retained_sequences = recent_message_candidates
+            .iter()
+            .filter(|candidate| {
+                recent_messages.iter().any(|selected| {
+                    selected.seq == candidate.seq
+                        && selected.content == provider_history_content(candidate)
+                })
+            })
+            .map(|message| message.seq)
+            .collect::<HashSet<_>>();
+        let omitted_history_sequences = eligible_sequences
+            .into_iter()
+            .filter(|seq| !fully_retained_sequences.contains(seq))
+            .collect::<Vec<_>>();
         let conversation_memory = ConversationMemory::validated_for_session(db, input.session_id)?;
-        let conversation_history_coverage_incomplete =
-            history_coverage_is_incomplete(conversation_memory.as_ref(), &recent_messages);
+        let conversation_history_coverage_incomplete = history_coverage_is_incomplete(
+            conversation_memory.as_ref(),
+            &omitted_history_sequences,
+        );
         // v2 Runs must retain the identity configuration accepted with their
         // user turn. Legacy rows have no snapshot and remain read-compatible.
         let prompt_profile = input
@@ -868,7 +645,9 @@ impl RunContextAssembler {
             }) {
                 return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
             }
-            match resolve_explicit_reference(vault, reference)? {
+            let reference =
+                remap_confirmed_reference(reference, &expected_post_hashes, applied_operations)?;
+            match resolve_explicit_reference(vault, &reference, &expected_post_hashes)? {
                 ResolvedExplicitReference::Material(material) => {
                     let material_key = (
                         material.source_path.clone(),
@@ -1015,6 +794,7 @@ impl RunContextAssembler {
             retrieval_scope,
             local_retrieval_packets,
             recent_messages,
+            omitted_history_sequences,
             conversation_memory,
             conversation_history_coverage_incomplete,
             prompt_profile,
@@ -1339,9 +1119,103 @@ struct ExactScopeFallback {
     full_content_hash: String,
 }
 
+fn remap_confirmed_reference(
+    reference: &StoredExplicitReference,
+    expected_hashes: &HashMap<String, String>,
+    applied: &[crate::ai_runtime::frozen_change_plan::FrozenChangeOperation],
+) -> AppResult<StoredExplicitReference> {
+    let mut mapped = reference.clone();
+    let Some(path) = reference.file_path.as_deref() else {
+        return Ok(mapped);
+    };
+    let path = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
+    let Some(expected) = expected_hashes.get(&path) else {
+        return Ok(mapped);
+    };
+    // A Note authorizes its entire body; bounded references require a proof of
+    // every byte-offset change through the executed frozen prefix.
+    if reference.kind == ContextReferenceKind::Note {
+        mapped.content_hash = Some(expected.clone());
+        return Ok(mapped);
+    }
+    let invalid = || AppError::run(SafeRunErrorCode::InvalidExplicitReference);
+    let mut hash = reference.content_hash.clone().ok_or_else(invalid)?;
+    for operation in applied {
+        let Some((_, base)) = operation
+            .base_content_hashes()
+            .iter()
+            .find(|(target, _)| target == &path)
+        else {
+            continue;
+        };
+        if &hash != base {
+            return Err(invalid());
+        }
+        let next = operation
+            .expected_post_content_hashes()
+            .iter()
+            .find(|(target, _)| target == &path)
+            .ok_or_else(invalid)?;
+        let args = operation.change();
+        let (start, end, replacement_len) = match operation.operation() {
+            "replace_selection" => {
+                let range = args.get("range").ok_or_else(invalid)?;
+                (
+                    range["start"].as_u64(),
+                    range["end"].as_u64(),
+                    args["replacement"].as_str().map(str::len),
+                )
+            }
+            "insert_text_at_cursor" => {
+                let range = args.get("range").ok_or_else(invalid)?;
+                (
+                    range["start"].as_u64(),
+                    range["end"].as_u64(),
+                    args["text"].as_str().map(str::len),
+                )
+            }
+            _ => return Err(invalid()),
+        };
+        let start = start
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(invalid)?;
+        let end = end
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(invalid)?;
+        let replacement_len = replacement_len.ok_or_else(invalid)?;
+        if start > end {
+            return Err(invalid());
+        }
+        let delta = isize::try_from(replacement_len).map_err(|_| invalid())?
+            - isize::try_from(end - start).map_err(|_| invalid())?;
+        let range = mapped.utf8_range.as_mut().ok_or_else(invalid)?;
+        if start == end && (start == range.start || start == range.end) {
+            return Err(invalid()); // ownership of an insertion at a boundary is ambiguous
+        }
+        if end <= range.start {
+            range.start = range.start.checked_add_signed(delta).ok_or_else(invalid)?;
+            range.end = range.end.checked_add_signed(delta).ok_or_else(invalid)?;
+        } else if start >= range.end {
+            // The edit is wholly after the authorized source.
+        } else if start >= range.start && end <= range.end {
+            range.end = range.end.checked_add_signed(delta).ok_or_else(invalid)?;
+        } else {
+            return Err(invalid()); // never widen a partially overlapped selection
+        }
+        hash = next.1.clone();
+    }
+    if &hash != expected {
+        return Err(invalid());
+    }
+    mapped.content_hash = Some(hash);
+    Ok(mapped)
+}
+
 fn resolve_explicit_reference(
     vault: Option<&Path>,
     reference: &StoredExplicitReference,
+    expected_post_hashes: &HashMap<String, String>,
 ) -> AppResult<ResolvedExplicitReference> {
     if reference.stale || reference.invalid_reason.is_some() {
         return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
@@ -1359,10 +1233,15 @@ fn resolve_explicit_reference(
     let full_content = std::fs::read_to_string(&resolved)
         .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     let actual_hash = crate::cas::hash::content_hash_str(&full_content);
-    let expected_hash = reference
-        .content_hash
-        .as_deref()
-        .filter(|hash| !hash.trim().is_empty())
+    let expected_hash = expected_post_hashes
+        .get(&path)
+        .map(String::as_str)
+        .or_else(|| {
+            reference
+                .content_hash
+                .as_deref()
+                .filter(|hash| !hash.trim().is_empty())
+        })
         .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     if expected_hash != actual_hash {
         return Err(AppError::run(SafeRunErrorCode::ExplicitReferenceChanged));
@@ -1757,7 +1636,7 @@ mod fallback_version_tests {
             stale: false,
             invalid_reason: None,
         };
-        let fallback = match resolve_explicit_reference(Some(&vault), &reference)
+        let fallback = match resolve_explicit_reference(Some(&vault), &reference, &HashMap::new())
             .expect("first read validates version A")
         {
             ResolvedExplicitReference::ExactScopeFallback(fallback) => fallback,
@@ -1798,6 +1677,38 @@ mod fallback_version_tests {
             .expect_err("fallback must remain bound to initially validated version A");
 
         assert_eq!(error.to_string(), "agent_run_explicit_reference_changed");
+    }
+
+    #[test]
+    fn expected_post_hash_accepts_the_file_written_by_confirmation() {
+        let dir = tempfile::tempdir().expect("vault");
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+        let before = "before confirmation";
+        let after = "after confirmation";
+        std::fs::write(vault.join("notes/target.md"), after).expect("written file");
+        let reference = StoredExplicitReference {
+            id: "target".into(),
+            kind: ContextReferenceKind::Note,
+            file_path: Some("notes/target.md".into()),
+            content_hash: Some(crate::cas::hash::content_hash_str(before)),
+            utf8_range: None,
+            stale: false,
+            invalid_reason: None,
+        };
+        assert!(
+            resolve_explicit_reference(Some(&vault), &reference, &HashMap::new()).is_err(),
+            "pre-write hash must still fail"
+        );
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "notes/target.md".into(),
+            crate::cas::hash::content_hash_str(after),
+        );
+        assert!(
+            resolve_explicit_reference(Some(&vault), &reference, &overrides).is_ok(),
+            "post-write hash must assemble the confirmed file"
+        );
     }
 }
 

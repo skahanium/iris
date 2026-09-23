@@ -1,14 +1,15 @@
 //! Minimal scene-free direct-answer Run Engine.
 
 mod finalization;
+pub(crate) mod legacy_terminal_records;
 mod observer;
 mod providers;
 #[cfg(test)]
 mod publication_tests;
 mod recovery;
 
-pub(crate) use finalization::classify_tool_loop_failure;
 use finalization::*;
+pub(crate) use finalization::{classify_tool_loop_failure, finalize_host_authored_limitation};
 #[cfg(test)]
 use observer::NoopRunEventSink;
 pub(crate) use observer::*;
@@ -31,13 +32,14 @@ use crate::ai_runtime::agent_run_repository::{
     DurableApplyCheckpointStage, FinalizeRunInput,
 };
 use crate::ai_runtime::agent_tool_loop::{
-    is_evidence_limited_response, resolved_turn_usage, AgentModelTurnBudget, AgentToolLoop,
-    ToolLoopExecutor, ToolLoopProvider,
+    resolved_turn_usage, AgentModelTurnBudget, AgentTerminalType, AgentToolLoop, ToolLoopExecutor,
+    ToolLoopProvider,
 };
 use crate::ai_runtime::citation_linkify::{
     bind_strict_current_run_citations, linkify_web_citations,
 };
 use crate::ai_runtime::conversation_memory::ConversationMemory;
+use crate::ai_runtime::delivery_outcome::{classify_task_outcome, DeliveryFacts};
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
@@ -281,6 +283,10 @@ impl RunEngine {
                 citation_map: serde_json::json!({}),
                 source_summary: Vec::new(),
                 publish_content_deltas: false,
+                task_outcome: Some(classify_task_outcome(&DeliveryFacts {
+                    host_authored_limitation: false,
+                    change_ops_complete: Some(completed_all_operations),
+                })),
             },
         )?;
         for event in &events {
@@ -391,6 +397,10 @@ impl RunEngine {
             None,
             None,
             None,
+            classify_task_outcome(&DeliveryFacts {
+                host_authored_limitation: false,
+                change_ops_complete: None,
+            }),
             sink,
         )
     }
@@ -735,6 +745,18 @@ impl RunEngine {
                     .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
             }
         };
+        let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+            db,
+            run_id,
+            if resume_running {
+                crate::ai_runtime::model_turn_ledger::BudgetPhase::PostConfirmation
+            } else {
+                crate::ai_runtime::model_turn_ledger::BudgetPhase::Main
+            },
+            &budget_policy,
+        )?;
+        let budget_provider = RunBudgetProvider { provider, db };
+        let provider = &budget_provider;
         let preparing_version = match snapshot.run.state {
             RunState::Running if resume_running => snapshot.run.state_version,
             RunState::Preparing => snapshot.run.state_version,
@@ -896,33 +918,83 @@ impl RunEngine {
                 return Err(error);
             }
         }
-        // `EVIDENCE_LIMITED_RESPONSE` is created by the Host after it has
-        // withheld an unsupported model draft. It is a complete, safe normal
-        // answer, not provider output that should be subjected to the model
-        // finish-reason/integrity recovery path a second time.
-        let evidence_limited = is_evidence_limited_response(&outcome.content);
-        let mut content = if evidence_limited {
-            outcome.content.clone()
-        } else {
-            match validated_final_model_answer_with_telemetry(
-                &outcome.content,
-                outcome
-                    .final_submission
-                    .is_none()
-                    .then_some(outcome.finish_reason.as_str()),
-                executor.requires_web_evidence() || executor.requires_external_evidence(),
-                telemetry,
+        // The loop's own terminal type says who wrote this body. Validation,
+        // citation binding and the evidence commit all read the same value;
+        // none of them re-derives it from the visible text.
+        let host_authored_limitation = outcome.terminal.is_host_authored();
+        if host_authored_limitation {
+            // A Host-authored bounded limitation is a complete, safe answer. It
+            // is not Provider output, so it does not go through model
+            // finish-reason/integrity recovery, source binding or citation
+            // linking, and it never carries citations.
+            let mut content = outcome.content.clone();
+            if let Err(error) = apply_required_web_degradation_notice(
+                db,
+                session,
+                run_id,
+                &mut content,
+                web_degraded,
             ) {
-                Ok(content) => content,
-                Err(failure) => {
-                    return fail_finalization_with_sink(
-                        db,
-                        run_id,
-                        running_state_version,
-                        sink,
-                        failure,
-                    );
-                }
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::WebDegradation,
+                        SafeRunErrorCode::PersistenceFailed,
+                        error.to_string(),
+                    ),
+                );
+            }
+            if settle_cancelled_run_with_partial(
+                db,
+                session,
+                run_id,
+                &observer,
+                sink,
+                Some(content.as_str()),
+            )? {
+                return Ok(());
+            }
+            return finalize_host_authored_limitation(
+                db,
+                session,
+                run_id,
+                running_state_version,
+                content,
+                sink,
+            );
+        }
+        if outcome.terminal == AgentTerminalType::RepairedModelAnswer {
+            // The Host withheld at least one draft before this publishable
+            // answer. The body is still Provider prose and is validated as
+            // such; the classification is recorded so a repaired terminal is
+            // distinguishable from a first-try answer in the Run trace.
+            tracing::info!(
+                run_id = %run_id,
+                terminal = outcome.terminal.as_str(),
+                "Agent Run published a Host-repaired model answer"
+            );
+        }
+        let mut content = match validated_final_model_answer_with_telemetry(
+            &outcome.content,
+            outcome
+                .final_submission
+                .is_none()
+                .then_some(outcome.finish_reason.as_str()),
+            executor.requires_web_evidence() || executor.requires_external_evidence(),
+            telemetry,
+        ) {
+            Ok(content) => content,
+            Err(failure) => {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    failure,
+                );
             }
         };
         if let Err(error) =
@@ -944,7 +1016,7 @@ impl RunEngine {
         final_evidence_ids.extend(executor.evidence_ids());
         final_evidence_ids.sort_unstable();
         final_evidence_ids.dedup();
-        if !natural_clarification && !is_evidence_limited_response(&content) {
+        if !natural_clarification {
             validate_final_evidence_or_fail(
                 db,
                 run_id,
@@ -954,7 +1026,6 @@ impl RunEngine {
             )?;
         }
         if !natural_clarification
-            && !is_evidence_limited_response(&content)
             && executor.requires_external_evidence()
             && !AgentEvidenceRepository::has_current_run_external_evidence(
                 db,
@@ -974,14 +1045,34 @@ impl RunEngine {
                 ),
             );
         }
-        if !is_evidence_limited_response(&content) {
-            content = match validated_final_model_answer_with_telemetry(
-                &content,
-                None,
+        content = match validated_final_model_answer_with_telemetry(
+            &content,
+            None,
+            executor.requires_web_evidence() || executor.requires_external_evidence(),
+            telemetry,
+        ) {
+            Ok(content) => content,
+            Err(failure) => {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    failure,
+                );
+            }
+        };
+        let mut citation_binding = None;
+        let mut source_summary = None;
+        let mut attribution = None;
+        let structured_evidence_ids = if let Some(submission) = outcome.final_submission.as_ref() {
+            let provenance = match validated_current_run_final_submission(
+                db,
+                run_id,
+                submission,
                 executor.requires_web_evidence() || executor.requires_external_evidence(),
-                telemetry,
             ) {
-                Ok(content) => content,
+                Ok(provenance) => provenance,
                 Err(failure) => {
                     return fail_finalization_with_sink(
                         db,
@@ -992,68 +1083,42 @@ impl RunEngine {
                     );
                 }
             };
-        }
-        let mut citation_binding = None;
-        let mut source_summary = None;
-        let mut attribution = None;
-        let structured_evidence_ids = if !is_evidence_limited_response(&content) {
-            if let Some(submission) = outcome.final_submission.as_ref() {
-                let provenance = match validated_current_run_final_submission(
-                    db,
-                    run_id,
-                    submission,
-                    executor.requires_web_evidence() || executor.requires_external_evidence(),
-                ) {
-                    Ok(provenance) => provenance,
-                    Err(failure) => {
-                        return fail_finalization_with_sink(
-                            db,
-                            run_id,
-                            running_state_version,
-                            sink,
-                            failure,
-                        );
-                    }
-                };
-                let selected = match AgentEvidenceRepository::evidence_ids_for_validated_references(
-                    db,
-                    run_id,
-                    &provenance.accepted_references,
-                ) {
-                    Ok(selected) => selected,
-                    Err(error) => {
-                        return fail_finalization_with_sink(
-                            db,
-                            run_id,
-                            running_state_version,
-                            sink,
-                            RunFinalizationFailure::new(
-                                RunFinalizationStage::EvidenceValidation,
-                                SafeRunErrorCode::EvidenceInvalid,
-                                error.to_string(),
-                            ),
-                        );
-                    }
-                };
-                content = provenance.visible_content;
-                source_summary = Some(provenance.source_summary);
-                attribution = Some(provenance.attribution);
-                Some(selected)
-            } else if finalization_required {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    RunFinalizationFailure::new(
-                        RunFinalizationStage::EvidenceValidation,
-                        SafeRunErrorCode::GroundedFinalizationUnavailable,
-                        "current-evidence run required a grounded final submission",
-                    ),
-                );
-            } else {
-                None
-            }
+            let selected = match AgentEvidenceRepository::evidence_ids_for_validated_references(
+                db,
+                run_id,
+                &provenance.accepted_references,
+            ) {
+                Ok(selected) => selected,
+                Err(error) => {
+                    return fail_finalization_with_sink(
+                        db,
+                        run_id,
+                        running_state_version,
+                        sink,
+                        RunFinalizationFailure::new(
+                            RunFinalizationStage::EvidenceValidation,
+                            SafeRunErrorCode::EvidenceInvalid,
+                            error.to_string(),
+                        ),
+                    );
+                }
+            };
+            content = provenance.visible_content;
+            source_summary = Some(provenance.source_summary);
+            attribution = Some(provenance.attribution);
+            Some(selected)
+        } else if finalization_required {
+            return fail_finalization_with_sink(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::EvidenceValidation,
+                    SafeRunErrorCode::GroundedFinalizationUnavailable,
+                    "current-evidence run required a grounded final submission",
+                ),
+            );
         } else {
             None
         };
@@ -1064,10 +1129,7 @@ impl RunEngine {
                 final_evidence_ids.clone()
             }
         });
-        if executor.requires_web_evidence()
-            && !natural_clarification
-            && !is_evidence_limited_response(&content)
-        {
+        if executor.requires_web_evidence() && !natural_clarification {
             if !AgentEvidenceRepository::has_current_run_web_evidence(
                 db,
                 run_id,
@@ -1119,12 +1181,6 @@ impl RunEngine {
                         );
                     }
                 }
-            } else if is_evidence_limited_response(&content) {
-                // The ToolLoop used its single repair slot and deliberately
-                // withheld an unsupported draft.  This is a normal assistant
-                // limitation, not a red internal failure and it must not
-                // invent a source-group binding.
-                None
             } else {
                 // Ordinary factual answers may use natural prose. The Host
                 // has already established the current-Run evidence gate; add
@@ -1156,11 +1212,25 @@ impl RunEngine {
             }
         } else {
             content = linkify_final_web_citations(db, run_id, &citation_evidence_ids, content);
+            if executor.web_observation_performed() == Some(true) && !natural_clarification {
+                // This Run answered without the strict current-evidence
+                // contract, so an unregistered model-authored link cannot be
+                // rejected without trading a fabricated pointer for no answer
+                // at all. It is defused instead. Runs that never touched the
+                // Web are left alone, so a link the user supplied in their own
+                // question is never stripped.
+                //
+                // A clarification makes no factual claim, so it is excluded for
+                // the same reason the strict branch excludes it.
+                let allowed_urls =
+                    AgentEvidenceRepository::list_web_citation_links(db, &citation_evidence_ids)?
+                        .into_iter()
+                        .map(|citation| citation.url)
+                        .collect::<HashSet<_>>();
+                content = strip_unverified_web_urls(&content, &allowed_urls);
+            }
         }
-        if executor.requires_web_evidence()
-            && !natural_clarification
-            && !is_evidence_limited_response(&content)
-        {
+        if executor.requires_web_evidence() && !natural_clarification {
             if let Err(error) =
                 validate_current_run_citation_links(db, &citation_evidence_ids, &content)
             {
@@ -1187,9 +1257,7 @@ impl RunEngine {
         )? {
             return Ok(());
         }
-        let terminal_evidence_ids = if is_evidence_limited_response(&content) {
-            Vec::new()
-        } else if let Some(structured_evidence_ids) = structured_evidence_ids {
+        let terminal_evidence_ids = if let Some(structured_evidence_ids) = structured_evidence_ids {
             structured_evidence_ids
         } else if executor.requires_web_evidence() && !structured_final_submission {
             match citation_binding.as_ref() {
@@ -1213,6 +1281,10 @@ impl RunEngine {
             citation_binding,
             source_summary.as_ref(),
             attribution.as_deref(),
+            classify_task_outcome(&DeliveryFacts {
+                host_authored_limitation: false,
+                change_ops_complete: None,
+            }),
             sink,
         )
     }
@@ -1250,6 +1322,14 @@ impl RunEngine {
             max_completion_tokens: Some(budget_policy.max_completion_tokens),
             max_turn_output_tokens: Some(budget_policy.max_turn_output_tokens),
         };
+        let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+            db,
+            run_id,
+            crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+            &budget_policy,
+        )?;
+        let budget_provider = RunBudgetProvider { provider, db };
+        let provider = &budget_provider;
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
@@ -1316,9 +1396,16 @@ impl RunEngine {
             )
         };
         let model_started_at = Instant::now();
-        let response = provider
-            .answer_turn(run_id, messages, &[], turn_budget, &mut observer)
-            .await;
+        let response = crate::ai_runtime::agent_tool_loop::answer_budgeted_turn(
+            provider,
+            run_id,
+            messages,
+            &[],
+            turn_budget,
+            &mut observer,
+            crate::ai_runtime::model_turn_ledger::AttemptPurpose::FinalSynthesis,
+        )
+        .await;
         let response = match response {
             Ok(response) => response,
             Err(error) => {
@@ -1326,6 +1413,11 @@ impl RunEngine {
                     return Ok(());
                 }
                 let code = classify_provider_failure(&error);
+                if code == SafeRunErrorCode::OutputTooLong {
+                    if let Some(telemetry) = telemetry {
+                        telemetry.record_final_output_validation(false, true);
+                    }
+                }
                 let failed = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {
@@ -1490,6 +1582,10 @@ impl RunEngine {
             citation_binding,
             None,
             None,
+            classify_task_outcome(&DeliveryFacts {
+                host_authored_limitation: false,
+                change_ops_complete: None,
+            }),
             sink,
         )
     }

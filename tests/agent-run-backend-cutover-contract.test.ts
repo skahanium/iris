@@ -14,6 +14,7 @@ describe("Agent Run backend cutover contract", () => {
       "commands::assistant_commands::assistant_run_start",
       "commands::assistant_commands::assistant_run_control",
       "commands::assistant_commands::assistant_run_get",
+      "commands::assistant_commands::assistant_run_diagnose",
       "commands::assistant_commands::assistant_session_list",
       "commands::assistant_commands::assistant_session_load",
       "commands::assistant_commands::assistant_session_rename",

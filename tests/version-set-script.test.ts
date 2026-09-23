@@ -118,6 +118,21 @@ function createVersionFixture(version = "1.2.1") {
     "src-tauri/src/llm/fetch_web_page.rs",
     `const USER_AGENT: &str = "Iris/${version} (+https://github.com/skahanium/iris)";\nconst API_VERSION: &str = "2025-06-18";\n`,
   );
+  writeFixtureFile(
+    root,
+    "docs/eval/fixtures/rag-v2-vault/fixture-metadata.json",
+    `${JSON.stringify(
+      {
+        schemaVersion: "iris-rag-fixture-metadata-v1",
+        fixtureVersion: "v1.1.0",
+        fixtureStatus: "historical_frozen",
+        currentEvaluationVersion: `v${version}`,
+        labelsSha256: "0".repeat(64),
+      },
+      null,
+      2,
+    )}\n`,
+  );
 
   return root;
 }
@@ -216,6 +231,12 @@ describe("set-version release fact synchronizer", () => {
     expect(
       readFixtureFile(root, "src-tauri/src/llm/fetch_web_page.rs"),
     ).toContain('"2025-06-18"');
+    expect(
+      readFixtureFile(
+        root,
+        "docs/eval/fixtures/rag-v2-vault/fixture-metadata.json",
+      ),
+    ).toContain('"currentEvaluationVersion": "v1.2.2"');
 
     const check = runVersionScript(root, ["--check"]);
     expect(check.stderr).toBe("");

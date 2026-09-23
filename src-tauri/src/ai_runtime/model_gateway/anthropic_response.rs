@@ -5,6 +5,7 @@ use super::GatewayResponse;
 pub(super) fn parse_anthropic_response(json: &serde_json::Value) -> GatewayResponse {
     let mut text = String::new();
     let mut tool_calls = Vec::new();
+    let mut thinking_blocks = Vec::new();
 
     if let Some(parts) = json["content"].as_array() {
         for part in parts {
@@ -13,6 +14,19 @@ pub(super) fn parse_anthropic_response(json: &serde_json::Value) -> GatewayRespo
                     if let Some(part_text) = part["text"].as_str() {
                         text.push_str(part_text);
                     }
+                }
+                Some("thinking") => {
+                    thinking_blocks.push(serde_json::json!({
+                        "type": "thinking",
+                        "thinking": part["thinking"].as_str().unwrap_or(""),
+                        "signature": part["signature"].as_str().unwrap_or(""),
+                    }));
+                }
+                Some("redacted_thinking") => {
+                    thinking_blocks.push(serde_json::json!({
+                        "type": "redacted_thinking",
+                        "data": part["data"].as_str().unwrap_or(""),
+                    }));
                 }
                 Some("tool_use") => {
                     if let (Some(id), Some(name)) = (part["id"].as_str(), part["name"].as_str()) {
@@ -53,8 +67,13 @@ pub(super) fn parse_anthropic_response(json: &serde_json::Value) -> GatewayRespo
             .as_str()
             .unwrap_or("unknown")
             .to_string(),
-        reasoning_content: None,
+        reasoning_content: if thinking_blocks.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&thinking_blocks).ok()
+        },
         continuation: None,
+        retrieval_observation: None,
     }
 }
 
@@ -89,5 +108,28 @@ mod tests {
             r#"{"limit":5,"query":"阶段 1"}"#
         );
         assert_eq!(parsed.finish_reason, "tool_use");
+    }
+
+    #[test]
+    fn parse_anthropic_response_keeps_thinking_blocks_for_replay() {
+        let parsed = parse_anthropic_response(&serde_json::json!({
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "核对条款。",
+                    "signature": "sig_1"
+                },
+                {"type": "text", "text": "见第六条。"},
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 3},
+            "stop_reason": "end_turn"
+        }));
+        let reasoning = parsed
+            .reasoning_content
+            .expect("thinking blocks must be kept");
+        let blocks: serde_json::Value = serde_json::from_str(&reasoning).expect("json");
+        assert_eq!(blocks[0]["thinking"], "核对条款。");
+        assert_eq!(blocks[0]["signature"], "sig_1");
+        assert_eq!(parsed.content.as_deref(), Some("见第六条。"));
     }
 }

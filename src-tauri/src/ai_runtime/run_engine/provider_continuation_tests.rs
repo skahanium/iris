@@ -119,13 +119,20 @@ async fn tool_bound_turn_retries_same_model_once_without_replaying_tools() {
     let server = spawn_llm_protocol_double(vec![
         HttpResponseScript::raw(500, r#"{"error":{"message":"synthetic transient"}}"#),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let provider = FailoverStreamingProvider::new(
         route(&server.base_url, "custom-continuation-retry-same-model"),
         requirements(),
@@ -176,6 +183,13 @@ async fn request_rejection_records_status_without_provider_body_or_retry() {
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let provider = FailoverStreamingProvider::new(
         route(&server.base_url, "custom-continuation-request-rejected"),
         requirements(),
@@ -212,6 +226,13 @@ async fn tool_bound_retry_exhaustion_stops_after_two_requests() {
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let provider = FailoverStreamingProvider::new(
         route(&server.base_url, "custom-continuation-retry-exhaustion"),
         requirements(),
@@ -253,6 +274,13 @@ async fn tool_bound_visible_output_is_not_retried() {
         .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let provider = FailoverStreamingProvider::new(
         route(&server.base_url, "custom-continuation-visible-output"),
         requirements(),
@@ -445,6 +473,7 @@ async fn live_follow_up_continuation_probe() {
             reasoning: dispatch.reasoning,
             continuation: None,
             skip_stub_ids: vec![],
+            boundary: None,
         };
         let mut iris_body =
             crate::ai_runtime::model_gateway::build_chat_completions_body(&gateway_request);
@@ -627,4 +656,129 @@ async fn live_follow_up_continuation_probe() {
         diagnostics(&state.db, &accepted.run_id)
     );
     assert_eq!(snapshot.run.state, crate::ai_runtime::run_contract::RunState::Completed, "production continuation did not complete; completion alone still requires separate answer quality review");
+}
+
+#[tokio::test]
+async fn review_regression_a_direct_one_attempt_budget_blocks_same_route_retry() {
+    let server = spawn_llm_protocol_double(vec![
+        HttpResponseScript::raw(500, "{}"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"must not dispatch\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"),
+    ]).await.unwrap();
+    let db = Database::open_in_memory().unwrap();
+    let accepted = RunIntake::start(&db, request()).unwrap();
+    let provider = FailoverStreamingProvider::new(
+        route(&server.base_url, "review-direct-one"),
+        requirements(),
+        &db,
+        &accepted.session,
+        &super::super::NoopRunEventSink,
+    )
+    .with_test_streaming_client(reqwest::Client::new());
+    let mut policy = crate::ai_runtime::run_contract::RunBudgetPolicy::standard();
+    policy.max_model_turns = 1;
+    let result = super::super::RunEngine::execute_direct_streaming_with_eval_telemetry_and_policy(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &super::super::NoopRunEventSink,
+        &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap::default(),
+        policy,
+    )
+    .await;
+    assert!(result.is_err());
+    assert_eq!(
+        server.request_count(),
+        1,
+        "Direct retry must acquire another real attempt"
+    );
+    let (stored, _) = AgentRunRepository::model_budget_snapshot(&db, &accepted.run_id).unwrap();
+    assert_eq!(stored.unwrap()["root_used"], 1);
+}
+
+#[tokio::test]
+async fn review_regression_a_retry_usage_accumulates_without_becoming_single_attempt_usage() {
+    let server = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":6,\"total_tokens\":16}}\n\ndata: [DONE]\n\n"),
+        HttpResponseScript::sse("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":6,\"total_tokens\":16}}\n\ndata: [DONE]\n\n"),
+    ]).await.unwrap();
+    let db = Database::open_in_memory().unwrap();
+    let accepted = RunIntake::start(&db, request()).unwrap();
+    let provider = FailoverStreamingProvider::new(
+        route(&server.base_url, "review-attempt-vs-total"),
+        requirements(),
+        &db,
+        &accepted.session,
+        &super::super::NoopRunEventSink,
+    )
+    .with_test_streaming_client(reqwest::Client::new());
+    let mut policy = crate::ai_runtime::run_contract::RunBudgetPolicy::standard();
+    policy.max_model_turns = 3;
+    policy.max_turn_output_tokens = 8;
+    policy.max_completion_tokens = 100;
+    let result = super::super::RunEngine::execute_direct_streaming_with_eval_telemetry_and_policy(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &super::super::NoopRunEventSink,
+        &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap::default(),
+        policy,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "6-token attempt remains below 8 even when two attempts consumed 12: {result:?}"
+    );
+    assert_eq!(server.request_count(), 2);
+    let (stored, _) = AgentRunRepository::model_budget_snapshot(&db, &accepted.run_id).unwrap();
+    let stored = stored.unwrap();
+    assert_eq!(stored["root_used"], 2);
+    assert_eq!(stored["phases"]["Main"]["completion_charged"], 12);
+}
+
+#[tokio::test]
+async fn review_regression_a_gateway_abort_before_transport_does_not_record_dispatch() {
+    let db = Database::open_in_memory().unwrap();
+    let accepted = RunIntake::start(&db, request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
+    let gateway =
+        crate::ai_runtime::model_gateway::ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+        Some(&db),
+        &gateway,
+        crate::ai_types::ProviderConfig {
+            name: "review-aborted".into(),
+            base_url: "https://example.invalid".into(),
+            api_key: None,
+            model: "fixture".into(),
+            endpoint_family: crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        128,
+    )
+    .unwrap();
+    crate::ai_runtime::model_gateway::request_abort(&accepted.run_id);
+    let result = provider
+        .answer_turn(
+            &accepted.run_id,
+            &messages(),
+            &[],
+            AgentModelTurnBudget::default(),
+            &mut Observer,
+        )
+        .await;
+    crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
+    assert!(result.is_err());
+    let (stored, _) = AgentRunRepository::model_budget_snapshot(&db, &accepted.run_id).unwrap();
+    assert_eq!(
+        stored.unwrap()["attempts"][0]["dispatched"],
+        false,
+        "gateway's preflight abort is not an HTTP dispatch"
+    );
 }

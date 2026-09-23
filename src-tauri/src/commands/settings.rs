@@ -37,6 +37,9 @@ pub fn settings_set(state: State<'_, Arc<AppState>>, key: String, value: Value) 
         )?;
         Ok(())
     })?;
+    if key == "web_search_enabled" && value.as_bool() != Some(true) {
+        crate::ai_runtime::model_gateway::notify_web_revoked();
+    }
     if key == "follow_system_proxy" {
         let follow = crate::network::parse_follow_system_proxy_setting(Some(&value));
         crate::network::set_follow_system_proxy(follow);

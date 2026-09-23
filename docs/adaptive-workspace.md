@@ -1,6 +1,6 @@
 # Iris 自适应工作区规范
 
-> 状态：v1.2.19 规划契约。版本排期以 [ROADMAP.md](../ROADMAP.md) 为准，通用视觉规则以 [design-system.md](./design-system.md) 为准。本文不描述已经交付的架构事实；实现完成后再同步 `ARCHITECTURE.md`。
+> 状态：v1.2.19 已交付，本文件是该版本的交互契约与状态语义；版本排期以 [ROADMAP.md](../ROADMAP.md) 为准，通用视觉规则以 [design-system.md](./design-system.md) 为准，模块与数据流事实以 [ARCHITECTURE.md](../ARCHITECTURE.md) 为准。
 
 ## 1. 决策摘要
 
@@ -246,6 +246,5 @@ AppShell 中只存在一个 Agent React 子树。切换 `sidecar ↔ focus` 只�
 
 ## 10. 验收入口
 
-- 自动化与施工顺序：[v1.2.19 实施计划](./superpowers/plans/2026-07-31-v1.2.19-adaptive-workspace.md)
-- 人工矩阵：[v1.2.19 自适应工作区清单](./testing/v1.2.19-adaptive-workspace-manual-checklist.md)
-- 通用 UI 门禁：[Iris Rail Refresh Manual Checklist](./testing/iris-rail-refresh-manual-checklist.md)
+- 自动化与当前实现事实：[ARCHITECTURE.md](../ARCHITECTURE.md)；施工顺序与历史计划见 [文档索引](./README.md#施工计划)
+- 人工矩阵：[Iris 界面人工验收清单](./testing/iris-ui-manual-checklist.md)

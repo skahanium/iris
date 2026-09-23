@@ -5,11 +5,25 @@
 
 pub use crate::ai_types::*;
 
-#[allow(
-    dead_code,
-    reason = "Task 2 stages the evaluator contract for the Task 3 command-line runner"
+// The evaluator contract (case tables, observation types, report columns and
+// entry points) is consumed by the sibling `agent_capacity_eval_tests` harness
+// and by the deterministic/live command entrypoints the tests drive. A lib-only
+// compilation therefore sees those items as unused, while the test compilation
+// sees the real usage. Scoping the allow to `not(test)` keeps that noise out of
+// the production build and still lets `clippy --all-targets` fail on items that
+// nothing uses, including the tests.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "evaluator contract consumed by the sibling test harness, exercised through the command entrypoints"
+    )
 )]
 pub(crate) mod agent_capacity_eval;
+#[cfg(test)]
+mod agent_capacity_eval_core_tests;
+#[cfg(test)]
+mod agent_capacity_eval_test_support;
 #[cfg(test)]
 mod agent_capacity_eval_tests;
 pub(crate) mod agent_evidence_repository;
@@ -23,20 +37,63 @@ pub(crate) mod agent_run_repository;
 mod agent_run_repository_tests;
 pub(crate) mod agent_tool_loop;
 #[cfg(test)]
+mod agent_tool_loop_anthropic_finish_reason_tests;
+#[cfg(test)]
+mod agent_tool_loop_finish_reason_tests;
+#[cfg(test)]
+mod agent_tool_loop_host_authority_tests;
+#[cfg(test)]
+mod agent_tool_loop_payload_tests;
+#[cfg(test)]
+mod agent_tool_loop_recovery_cases_tests;
+#[cfg(test)]
+mod agent_tool_loop_schema_feedback_tests;
+#[cfg(test)]
 mod agent_tool_loop_tests;
+#[cfg(test)]
+mod agent_verification_tests;
+pub(crate) mod boundary_events;
 pub mod capability_resolver;
 pub mod circuit_breaker;
 pub(crate) mod citation_linkify;
 pub(crate) mod classified_document_policy_repository;
 pub(crate) mod classified_ephemeral;
 pub mod classified_retrieval;
+pub(crate) mod diagnostic_query;
+pub(crate) mod dual_path_search;
+#[cfg(test)]
+mod dual_path_v04_tests;
+pub(crate) mod native_search_adapter;
+#[cfg(test)]
+mod native_search_adapter_tests;
+pub(crate) mod native_search_subrequest;
+#[cfg(test)]
+mod streaming_anthropic_finish_reason_sse_tests;
+#[cfg(test)]
+mod streaming_finish_reason_sse_tests;
 // Legacy CEF history is retained only so users' pre-existing encrypted files
 // remain untouched. New classified Runs use `classified_ephemeral` exclusively.
 pub mod classified_session;
+pub(crate) mod confirmation_diff;
+pub(crate) mod content_preservation;
 pub(crate) mod context_materials;
 pub mod conversation_memory;
+#[cfg(test)]
+mod d05_content_preservation_tests;
+#[cfg(test)]
+mod d05_delivery_outcome_tests;
+#[cfg(test)]
+mod d05_diff_preview_tests;
+#[cfg(test)]
+mod d05_document_task_tests;
+#[cfg(test)]
+mod d05_edit_candidate_tests;
+#[cfg(test)]
+mod d05_ten_task_campaign_tests;
+pub(crate) mod delivery_outcome;
 pub(crate) mod direct_provider_route;
 pub(crate) mod document_policy_repository;
+pub(crate) mod edit_candidate;
 pub(crate) mod final_answer_integrity;
 pub(crate) mod final_answer_submission;
 pub(crate) mod frozen_change_plan;
@@ -44,11 +101,14 @@ pub(crate) mod frozen_change_plan;
 mod frozen_change_plan_tests;
 pub mod guardrails;
 pub mod mcp_external_tools;
+#[cfg(test)]
+mod mcp_external_tools_tests;
 pub mod mcp_host_runtime;
 pub mod mcp_runtime_registry;
 #[cfg(test)]
 pub(crate) mod mcp_stdio_test_support;
 pub mod model_gateway;
+pub(crate) mod model_turn_ledger;
 pub(crate) mod normal_run_service;
 #[cfg(test)]
 mod normal_run_service_tests;
@@ -79,6 +139,8 @@ pub(crate) mod run_intake;
 #[cfg(test)]
 mod run_intake_tests;
 pub(crate) mod run_tool_loop;
+#[cfg(test)]
+mod run_tool_loop_payload_tests;
 pub mod runtime_context;
 pub mod sandbox_profile;
 pub mod skills;
@@ -89,6 +151,9 @@ pub mod tool_catalog;
 pub mod tool_dispatch;
 pub mod tool_execution_pipeline;
 pub mod tool_executor;
+pub(crate) mod tool_name_origin;
 pub(crate) mod tool_surface;
 pub mod trace;
 pub mod web_evidence_broker;
+#[cfg(test)]
+mod web_evidence_broker_tests;

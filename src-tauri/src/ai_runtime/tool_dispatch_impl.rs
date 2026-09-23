@@ -25,6 +25,8 @@ mod vault_impl;
 #[path = "tool_dispatch/web.rs"]
 mod web_impl;
 
+#[cfg(test)]
+pub(crate) use boundary_impl::normalize_markdown;
 pub use context_impl::ToolDispatchContext;
 
 #[rustfmt::skip]
@@ -88,7 +90,13 @@ pub async fn dispatch_tool_with_retry(
     let mut result = dispatch_tool(state, ctx, tool_name, args).await;
     if is_retryable_tool_error(tool_name, &result) {
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-        result = dispatch_tool(state, ctx, tool_name, args).await;
+        let mut retry_action = ctx.web_action.cloned();
+        if let Some(action) = &mut retry_action {
+            action.search_identity.attempt = action.search_identity.attempt.saturating_add(1);
+        }
+        let mut retry_ctx = ctx.clone();
+        retry_ctx.web_action = retry_action.as_ref();
+        result = dispatch_tool(state, &retry_ctx, tool_name, args).await;
     }
     if !result.success && tool_name == "search_hybrid" {
         return dispatch_tool(state, ctx, "search_keyword", args).await;
@@ -103,12 +111,17 @@ pub async fn dispatch_tool(
 ) -> ToolCallResult {
     let start = Instant::now();
     let timeout = tool_dispatch_timeout();
-    let result =
+    let result = if matches!(tool_name, "web_search" | "web_fetch") {
+        // The broker preserves partial results while each transport obeys the
+        // frozen action deadline; a generic outer timeout discards those results.
+        dispatch_tool_inner(state, ctx, tool_name, args).await
+    } else {
         match tokio::time::timeout(timeout, dispatch_tool_inner(state, ctx, tool_name, args)).await
         {
             Ok(result) => result,
             Err(_) => return timeout_tool_result(tool_name, start, timeout),
-        };
+        }
+    };
     let duration_ms = start.elapsed().as_millis() as u64;
     match result {
         Ok(output) => ToolCallResult {
@@ -148,7 +161,7 @@ async fn dispatch_tool_inner(
         })),
         "system_time_now" => runtime_impl::system_time_now_tool(),
         "app_context_read" => runtime_impl::app_context_read_tool(state, ctx),
-        "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx),
+        "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx, args),
         "web_search" => web_impl::web_search_tool(state, args, ctx).await,
         "web_fetch" => web_impl::web_fetch_tool(state, args, ctx).await,
         "read_note" => note_impl::read_note(state, ctx, args).await,

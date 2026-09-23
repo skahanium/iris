@@ -1710,6 +1710,38 @@ fn rejected_confirmation_cancels_without_write() {
 }
 
 #[test]
+fn foreign_vault_expires_unconsumed_confirmation() {
+    let (db, accepted, confirmation_id, awaiting_state_version) =
+        accepted_run_awaiting_frozen_change_confirmation();
+    AgentRunRepository::expire_pending_confirmations_for_foreign_vault(&db, "other-vault")
+        .expect("expire foreign-vault plans");
+    let plan_hash: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT plan_hash FROM agent_run_confirmations WHERE confirmation_id = ?1",
+                [&confirmation_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("plan hash");
+    let approval = AgentRunRepository::approve_frozen_confirmation(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+        &confirmation_id,
+        &plan_hash,
+        awaiting_state_version,
+        0,
+    );
+    assert_eq!(
+        approval.err().map(|error| error.to_string()),
+        Some("agent_run_confirmation_expired".to_string()),
+        "unconsumed confirmation must not survive a vault switch"
+    );
+}
+
+#[test]
 fn resume_is_cas_guarded_and_only_available_for_paused_durable_apply() {
     let (db, accepted, confirmation_id, awaiting_state_version) =
         accepted_run_awaiting_frozen_change_confirmation();
@@ -1889,7 +1921,7 @@ fn event_state_version(event: &super::run_contract::AssistantRunEvent) -> u64 {
 }
 
 #[test]
-fn web_enabled_rewrite_keeps_the_generic_preferred_web_surface_available() {
+fn web_enabled_rewrite_stays_offline_local_transformation() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -1897,9 +1929,10 @@ fn web_enabled_rewrite_keeps_the_generic_preferred_web_surface_available() {
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebPreferred);
-    assert_eq!(envelope.effort, Effort::ToolLoop);
-    assert!(envelope
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+    assert_eq!(envelope.effort, Effort::Direct);
+    assert!(!envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
@@ -1992,7 +2025,7 @@ fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.context, ContextMode::ImplicitVault);
     assert_eq!(envelope.effort, Effort::ToolLoop);
-    assert_eq!(envelope.web_reason, WebDecisionReason::UserDisabled);
+    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
     assert_eq!(
         envelope.verification_requirement,
         VerificationRequirement::None
@@ -2849,19 +2882,19 @@ fn bilingual_web_intent_fixture_has_120_deterministic_cases() {
 }
 
 #[test]
-fn quoted_web_instruction_is_data_but_keeps_the_generic_preferred_surface() {
+fn quoted_web_instruction_is_data_but_stays_local_transformation() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "把‘请联网搜索最新消息’翻译成英文。".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebPreferred);
-    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
 }
 
 #[test]
-fn quoted_offline_instruction_is_data_but_keeps_the_generic_preferred_surface() {
+fn quoted_offline_instruction_is_data_but_stays_local_transformation() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -2869,8 +2902,8 @@ fn quoted_offline_instruction_is_data_but_keeps_the_generic_preferred_surface() 
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebPreferred);
-    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
 }
 
 #[test]
@@ -3074,9 +3107,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             message:
                 "Translate 'do not modify, do not browse, and delegate a child task' into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::WebPreferred,
+            freshness: Freshness::Offline,
             effect: Effect::Answer,
-            effort: Some(Effort::ToolLoop),
+            effort: Some(Effort::Direct),
             constraint: None,
             child_run: false,
         },
@@ -3084,9 +3117,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             name: "quoted vault words are not retrieval directives",
             message: "Translate “summarize the project notes” into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::WebPreferred,
+            freshness: Freshness::Offline,
             effect: Effect::Answer,
-            effort: Some(Effort::ToolLoop),
+            effort: Some(Effort::Direct),
             constraint: None,
             child_run: false,
         },
@@ -3134,9 +3167,9 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
             name: "quoted high-risk facts remain transformation data",
             message: "Translate “current legal advice and medical dosage” into Chinese.",
             action: ActionFixture::None,
-            freshness: Freshness::WebPreferred,
+            freshness: Freshness::Offline,
             effect: Effect::Answer,
-            effort: Some(Effort::ToolLoop),
+            effort: Some(Effort::Direct),
             constraint: None,
             child_run: false,
         },

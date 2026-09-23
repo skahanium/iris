@@ -8,30 +8,22 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
 const activeHarnessRoot = path.join(root, "agent-harness");
 const harnessArchiveRoot = path.join(activeHarnessRoot, "archive");
-const activeHarnessRelativeFiles = [
-  "README.md",
-  "01-authority-and-invariants.md",
-  "02-current-state-and-debt.md",
-  "03-target-architecture.md",
-  "04-adaptive-agent-loop-and-tool-contracts.md",
-  "05-implementation-roadmap.md",
-  "06-evaluation-performance-and-acceptance.md",
-  "appendices/A-status-and-test-traceability.md",
-  "appendices/B-task-capability-and-risk-matrix.md",
-  "appendices/C-decisions-and-deferred.md",
-];
-const activeHarnessFiles = activeHarnessRelativeFiles.map((relativePath) =>
-  path.join(activeHarnessRoot, relativePath),
+// The pre-reform Harness construction set was archived on 2026-09-15. Its
+// assertions — the active file list, the status header, the bidirectional
+// README/ROADMAP links and the withdrawn-claim sweep — were stood down together
+// with the set. The replacement documentation system is not yet defined, so no
+// new active-tree assertion is introduced here. What stays enforced is that the
+// archive remains registered and complete, and that no parallel active Harness
+// tree reappears at the repository root.
+const preUnificationArchive = path.join(
+  harnessArchiveRoot,
+  "2026-08-pre-unification",
 );
-const retiredHarnessFiles = [
-  "04-research-and-tool-contracts.md",
-  "appendices/B-current-fact-contract-matrix.md",
-].map((relativePath) => path.join(activeHarnessRoot, relativePath));
-const harnessStatusHeader = [
-  "**文档状态**：现行",
-  "**文档类型**：",
-  "**事实基线**：2026-09-05，审计起点 `70c929ac`",
-];
+const harnessArchiveManifest = path.join(
+  harnessArchiveRoot,
+  "2026-09-15-pre-reform",
+  "MANIFEST.md",
+);
 
 // ── CLI ────────────────────────────────────────────────────
 
@@ -301,9 +293,46 @@ function validateMarkdownLinks(filePath) {
   }
 }
 
+// Material whose links are allowed to dangle: the controlled pre-unification
+// archive describes a structure that no longer exists, the plan archive keeps
+// landed/retracted plans whose targets were deleted on purpose, and the rag-v2
+// fixtures are hashed test data rather than documentation.
+const docsArchiveRoot = path.join(root, "docs", "archive");
+const linkValidationExcludedPrefixes = [
+  harnessArchiveRoot,
+  docsArchiveRoot,
+  path.join(root, "docs", "eval", "fixtures"),
+];
+
 function checkDocLinks() {
   validateMarkdownLinks(path.join(root, "docs", "README.md"));
-  for (const filePath of activeHarnessFiles.filter(existsSync)) {
+  // Corpus-wide sweep. The scoped checks above only ever looked at the docs
+  // index and the active Harness files, so three dangling links lived in
+  // files they could not see: a CHANGELOG entry pointing at a deleted design
+  // document, a repo-root path written from inside docs/, and a module that had
+  // become a directory. Every other document is normative enough that a link to
+  // a missing path is a defect.
+  const excluded = (filePath) =>
+    linkValidationExcludedPrefixes.some((prefix) =>
+      filePath.startsWith(prefix),
+    );
+  const documents = [
+    ...readdirSync(root)
+      .filter((entry) => entry.endsWith(".md"))
+      .map((entry) => path.join(root, entry)),
+    ...walk(
+      path.join(root, "docs"),
+      (filePath) => filePath.endsWith(".md"),
+      (directory) => !excluded(directory),
+    ),
+    ...walk(
+      activeHarnessRoot,
+      (filePath) => filePath.endsWith(".md"),
+      (directory) => !excluded(directory),
+    ),
+  ];
+  for (const filePath of new Set(documents)) {
+    if (excluded(filePath)) continue;
     validateMarkdownLinks(filePath);
   }
 }
@@ -311,58 +340,12 @@ function checkDocLinks() {
 function checkAgentHarnessDocumentation() {
   const docsIndexPath = path.join(root, "docs", "README.md");
   const docsIndex = readFileSync(docsIndexPath, "utf8");
-  if (!docsIndex.includes("../agent-harness/README.md")) {
-    fail("docs/README.md must link the active Agent Harness entry");
-  }
-
-  for (const required of activeHarnessFiles) {
-    if (!existsSync(required)) {
-      fail(
-        `active Agent Harness document is missing: ${path.relative(root, required)}`,
-      );
-    }
-  }
-
-  for (const retired of retiredHarnessFiles) {
-    if (existsSync(retired)) {
-      fail(
-        `retired active Agent Harness document still exists: ${path.relative(root, retired)}`,
-      );
-    }
-  }
-
-  for (const filePath of activeHarnessFiles.filter(existsSync)) {
-    const content = readFileSync(filePath, "utf8");
-    const header = content.split("\n").slice(0, 8).join("\n");
-    for (const required of harnessStatusHeader) {
-      if (!header.includes(required)) {
-        fail(
-          `${path.relative(root, filePath)} is missing Harness status header: ${required}`,
-        );
-      }
-    }
-  }
-
-  const expectedActiveFiles = new Set(activeHarnessFiles);
-  const discoveredActiveFiles = [
-    activeHarnessRoot,
-    path.join(activeHarnessRoot, "appendices"),
-  ]
-    .filter(existsSync)
-    .flatMap((directory) =>
-      readdirSync(directory)
-        .map((entry) => path.join(directory, entry))
-        .filter(
-          (entryPath) =>
-            statSync(entryPath).isFile() && entryPath.endsWith(".md"),
-        ),
-    );
-  for (const filePath of discoveredActiveFiles) {
-    if (!expectedActiveFiles.has(filePath)) {
-      fail(
-        `unregistered active Agent Harness document exists: ${path.relative(root, filePath)}`,
-      );
-    }
+  if (
+    !docsIndex.includes(
+      "agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md",
+    )
+  ) {
+    fail("docs/README.md must register the pre-reform Agent Harness archive");
   }
 
   for (const retired of ["refactor", "structured-tools", "REFACTOR.md"]) {
@@ -377,14 +360,11 @@ function checkAgentHarnessDocumentation() {
   }
 
   for (const archived of [
-    path.join(harnessArchiveRoot, "2026-08-pre-unification", "MANIFEST.md"),
-    path.join(harnessArchiveRoot, "2026-08-pre-unification", "refactor"),
-    path.join(
-      harnessArchiveRoot,
-      "2026-08-pre-unification",
-      "structured-tools",
-    ),
-    path.join(harnessArchiveRoot, "2026-08-pre-unification", "REFACTOR.md"),
+    path.join(preUnificationArchive, "MANIFEST.md"),
+    path.join(preUnificationArchive, "refactor"),
+    path.join(preUnificationArchive, "structured-tools"),
+    path.join(preUnificationArchive, "REFACTOR.md"),
+    harnessArchiveManifest,
   ]) {
     if (!existsSync(archived)) {
       fail(
@@ -393,58 +373,37 @@ function checkAgentHarnessDocumentation() {
     }
   }
 
-  const historyLink = "archive/2026-08-pre-unification/MANIFEST.md";
-  for (const filePath of activeHarnessFiles.filter(existsSync)) {
-    const content = readFileSync(filePath, "utf8");
-    if (/\]\((?:\.\.\/)*(?:refactor|structured-tools)\//.test(content)) {
-      fail(`${path.relative(root, filePath)} links a retired root document`);
-    }
-    if (
-      filePath !== activeHarnessFiles[0] &&
-      /\]\([^)]*archive\//.test(content)
-    ) {
+  // The replacement documentation system is now defined (agent-harness/README.md,
+  // catalog.mjs, registry.json, rules/). Its structure gate is
+  // `npm run agent-harness:check`; here we only require the entry points to exist
+  // and the archive to stay registered and reachable from the index.
+  for (const required of [
+    path.join(activeHarnessRoot, "README.md"),
+    path.join(activeHarnessRoot, "catalog.mjs"),
+    path.join(activeHarnessRoot, "registry.json"),
+    path.join(activeHarnessRoot, "registry-history.json"),
+    path.join(activeHarnessRoot, "rules", "governance.md"),
+    path.join(activeHarnessRoot, "rules", "objects.md"),
+    path.join(activeHarnessRoot, "requirements", "current-baseline.md"),
+  ]) {
+    if (!existsSync(required)) {
       fail(
-        `${path.relative(root, filePath)} treats the archive as an active reference`,
+        `Agent Harness documentation system is incomplete: ${path.relative(root, required)} is missing`,
       );
     }
   }
-  const harnessReadme = readFileSync(activeHarnessFiles[0], "utf8");
-  const historyLinkCount = harnessReadme.split(historyLink).length - 1;
-  if (historyLinkCount !== 1) {
-    fail(
-      `agent-harness/README.md must contain exactly one archive history entry, found ${historyLinkCount}`,
-    );
-  }
-  if (!harnessReadme.includes("../ROADMAP.md")) {
-    fail("agent-harness/README.md must link the ROADMAP authority");
-  }
-  const roadmap = readFileSync(path.join(root, "ROADMAP.md"), "utf8");
-  if (!roadmap.includes("./agent-harness/README.md")) {
-    fail("ROADMAP.md must link the active Agent Harness direction");
-  }
 
-  const withdrawnClaimPatterns = [
-    /AH-2[^\n]{0,48}(?:已验证|已完成)/,
-    /AH-3[^\n]{0,48}(?:已验证|已完成)/,
-    /EvidenceGap[^\n]{0,48}(?:闭集|驱动|核心|必需|必须|统一事实源)/,
-    /(?:11 个 operation|11 个领域 operation|六类领域能力)[^\n]{0,48}(?:作为|成为|保留为|目标为|已验证为|已完成)[^\n]{0,24}(?:核心|主路径|默认工具面)/,
-    /普通(?:事实|回答)[^\n]{0,32}(?:必须|一律|统一强制|默认强制)[^\n]{0,32}(?:终局|最终提交)/,
-    /(?:已验证|已完成|目标)[^\n]{0,48}普通(?:事实|回答)[^\n]{0,48}(?:严格|结构化)[^\n]{0,24}(?:终局|最终提交)/,
-  ];
-  const withdrawalContext =
-    /(?:旧|历史|此前|撤回|取代|不再|退出|错误|曾经|删除|移除|禁止|不实现|重构)/;
-  for (const filePath of activeHarnessFiles.filter(existsSync)) {
-    const lines = readFileSync(filePath, "utf8").split("\n");
-    for (let index = 0; index < lines.length; index += 1) {
-      for (const pattern of withdrawnClaimPatterns) {
-        if (
-          pattern.test(lines[index]) &&
-          !withdrawalContext.test(lines[index])
-        ) {
-          fail(
-            `${path.relative(root, filePath)}:${index + 1} states a withdrawn Harness direction as current`,
-          );
-        }
+  const harnessIndex = path.join(activeHarnessRoot, "README.md");
+  if (existsSync(harnessIndex)) {
+    const content = readFileSync(harnessIndex, "utf8");
+    for (const archived of [
+      "archive/2026-08-pre-unification/MANIFEST.md",
+      "archive/2026-09-15-pre-reform/MANIFEST.md",
+    ]) {
+      if (!content.includes(archived)) {
+        fail(
+          `agent-harness/README.md must register the archive entry ${archived}`,
+        );
       }
     }
   }
@@ -488,6 +447,52 @@ function isNegationContext(line) {
 
 function lineContainsPhrase(line, phrase) {
   return line.includes(phrase) && !isNegationContext(line);
+}
+
+function checkStaleNativeSearchExecutionFacts() {
+  const stalePhrases = [
+    "生产无适配器",
+    "生产注册表为空",
+    "production_native_search_adapter_count() == 0",
+    "生产原生按能力",
+    "生产原生 unsupported",
+    "生产原生 `unsupported`",
+  ];
+  const authorityFiles = [
+    ...walk(path.join(activeHarnessRoot, "contracts"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "modules"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "requirements"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "tools"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "implementation"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    ...walk(path.join(activeHarnessRoot, "flows"), (filePath) =>
+      filePath.endsWith(".md"),
+    ),
+    path.join(activeHarnessRoot, "catalog.mjs"),
+    path.join(root, "docs", "agent-architecture.md"),
+  ];
+  for (const filePath of authorityFiles) {
+    if (!existsSync(filePath)) continue;
+    const lines = readFileSync(filePath, "utf8").split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      for (const phrase of stalePhrases) {
+        if (lines[i].includes(phrase)) {
+          fail(
+            `${path.relative(root, filePath)}:${i + 1} — stale native-search execution fact: ${phrase}`,
+          );
+        }
+      }
+    }
+  }
 }
 
 function checkForbiddenPhrases() {
@@ -589,6 +594,70 @@ function checkIpcIndex() {
   }
 }
 
+// The plan archive is a controlled set, exactly like the Harness archive: every
+// archived plan must be registered in its MANIFEST, every MANIFEST row must
+// exist, and no current document except the docs index may treat the archive as
+// a reference. Otherwise an archived plan silently becomes a second source of
+// truth for capabilities that no longer exist.
+function checkDocsArchive() {
+  const plansRoot = path.join(docsArchiveRoot, "plans");
+  const manifestPath = path.join(plansRoot, "MANIFEST.md");
+  if (!existsSync(manifestPath)) {
+    fail("docs/archive/plans/MANIFEST.md is missing");
+    return;
+  }
+  const manifest = readFileSync(manifestPath, "utf8");
+  const archivedPlans = readdirSync(plansRoot).filter(
+    (entry) => entry.endsWith(".md") && entry !== "MANIFEST.md",
+  );
+  for (const entry of archivedPlans) {
+    if (!manifest.includes(`](./${entry})`)) {
+      fail(
+        `unregistered archived plan exists: ${path.relative(root, path.join(plansRoot, entry))}`,
+      );
+    }
+  }
+  for (const match of manifest.matchAll(/\]\(\.\/([^)]+\.md)\)/g)) {
+    if (!existsSync(path.join(plansRoot, match[1]))) {
+      fail(`docs/archive/plans/MANIFEST.md lists a missing plan: ${match[1]}`);
+    }
+  }
+
+  const docsIndexPath = path.join(root, "docs", "README.md");
+  const sweep = [
+    ...readdirSync(root)
+      .filter((entry) => entry.endsWith(".md"))
+      .map((entry) => path.join(root, entry)),
+    ...walk(
+      path.join(root, "docs"),
+      (filePath) => filePath.endsWith(".md"),
+      (directory) => !directory.startsWith(docsArchiveRoot),
+    ),
+    ...walk(
+      activeHarnessRoot,
+      (filePath) => filePath.endsWith(".md"),
+      (directory) => !directory.startsWith(harnessArchiveRoot),
+    ),
+  ];
+  for (const filePath of new Set(sweep)) {
+    if (filePath === docsIndexPath || !existsSync(filePath)) continue;
+    const content = readFileSync(filePath, "utf8");
+    for (const match of content.matchAll(/\]\(([^)]+)\)/g)) {
+      const rawTarget = match[1].trim().replace(/^<|>$/g, "").split("#", 1)[0];
+      if (!rawTarget || /^(?:https?:|mailto:|app:)/i.test(rawTarget)) continue;
+      const target = path.resolve(path.dirname(filePath), rawTarget);
+      if (
+        target === docsArchiveRoot ||
+        target.startsWith(`${docsArchiveRoot}/`)
+      ) {
+        fail(
+          `${path.relative(root, filePath)} treats docs/archive as an active reference`,
+        );
+      }
+    }
+  }
+}
+
 // ── Run ─────────────────────────────────────────────────────
 
 checkVersionConsistency();
@@ -596,9 +665,11 @@ checkReleaseDocumentationFacts();
 checkRagFixtureContract();
 checkMigrationCount();
 checkDocLinks();
+checkDocsArchive();
 checkAgentHarnessDocumentation();
 checkRetiredArchitectureReferences();
 checkForbiddenPhrases();
+checkStaleNativeSearchExecutionFacts();
 checkIpcIndex();
 
 if (failures.length > 0) {

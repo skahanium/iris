@@ -37,6 +37,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                         "items": {"type": "string", "format": "uri"},
                         "minItems": 1,
                         "description": "本次 Run 候选或用户消息中明确给出的公开 HTTPS URL"
+                    },
+                    "startChar": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "可选：从正文第几个字符开始返回（字符数）。载荷中的 excerptWindow.nextStartChar 可直接回填到这里，继续读取同一页面的后半段。"
                     }
                 },
                 "additionalProperties": false,

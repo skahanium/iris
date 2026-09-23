@@ -312,16 +312,11 @@ export function useAssistantConversationProjection({
     if (run.state === "failed" && !frozen) {
       setStreaming(false);
       setActivityHint(null);
-      setMessages((previous) =>
-        previous.filter(
-          (message) =>
-            !(
-              message.role === "assistant" &&
-              message.runId === run.runId &&
-              !message.content.trim()
-            ),
-        ),
-      );
+      // The transcript previously lost every trace of the failure: the empty
+      // assistant slot was dropped and nothing carried the marker the footer
+      // renders from. Marking the user line is what makes the failed turn
+      // visible in the conversation itself.
+      setMessages((previous) => markFailedTurn(previous, run.runId));
       const event = run.events.at(-1);
       if (event) setError(userVisibleRunFailure(run, event));
       return;
@@ -373,6 +368,43 @@ function upsertRunMessage(
   const next = messages.slice();
   next.splice(userIndex + 1, 0, assistant);
   return next;
+}
+
+/**
+ * Mark a failed Run's turn in the transcript.
+ *
+ * `AiMessageList` draws its "本次请求未完成" footer under the **user** line that
+ * carries `turnState: "failed"`, so that is the line this must mark. The empty
+ * assistant slot is still dropped: a stopped Run never publishes an unsubmitted
+ * candidate body, and the assistant branch renders unconditionally, so keeping
+ * it would only add an empty bubble with actions.
+ */
+function markFailedTurn(messages: ChatLine[], runId: string): ChatLine[] {
+  let changed = false;
+  const next: ChatLine[] = [];
+  for (const message of messages) {
+    if (message.runId !== runId) {
+      next.push(message);
+      continue;
+    }
+    // A line whose body lives in `contentRef` is not empty: it holds already
+    // published content that a stopped Run must still show.
+    if (
+      message.role === "assistant" &&
+      !message.content.trim() &&
+      message.contentRef === undefined
+    ) {
+      changed = true;
+      continue;
+    }
+    if (message.role === "user" && message.turnState !== "failed") {
+      next.push({ ...message, turnState: "failed" });
+      changed = true;
+      continue;
+    }
+    next.push(message);
+  }
+  return changed ? next : messages;
 }
 
 function appendCancellationNotice(

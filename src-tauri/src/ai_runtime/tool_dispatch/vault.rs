@@ -8,6 +8,7 @@ use crate::storage::note_operations::{create_note, trash_note};
 use crate::storage::paths::validate_user_note_relative_path;
 
 fn authorize(state: &AppState, ctx: &ToolDispatchContext<'_>, path: &str) -> AppResult<()> {
+    ctx.ensure_confirmed_vault(&state.vault_path()?)?;
     ctx.ensure_note_write_allowed(&state.db, path)
 }
 fn argument<'a>(args: &'a serde_json::Value, key: &str) -> AppResult<&'a str> {

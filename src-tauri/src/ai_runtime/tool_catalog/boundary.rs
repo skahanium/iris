@@ -153,8 +153,12 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         dispatchable(
             "doc_normalize_markdown",
             "规范化 Markdown 内容",
-            Access::WriteMarkdown,
-            true,
+            // Returns the normalized text; it never persists anything. Declaring a
+            // write-class level made the catalog's own classification contradict the
+            // handler (`G01`). Authorization is decided by the exact tool-name
+            // capability contract, never by this presentation-level field.
+            Access::ReadProfile,
+            false,
             serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -172,8 +176,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         dispatchable(
             "doc_extract_citations",
             "从文档中抽取引用元数据",
-            Access::WriteCache,
-            true,
+            // Same shape as `doc_normalize_markdown`: extraction returns citations
+            // and writes no cache row of its own, so a confirmation prompt here
+            // asked the user to approve a side effect that does not exist (`G01`).
+            Access::ReadProfile,
+            false,
             serde_json::json!({
                 "type": "object",
                 "properties": {

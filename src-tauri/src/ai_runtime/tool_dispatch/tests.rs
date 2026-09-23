@@ -89,6 +89,7 @@ fn dispatch_context_with_plan<'a>(
         run_id: None,
         write_target_path: None,
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: None,
         web_search_enabled: false,
         available_tool_names: &[],
@@ -99,6 +100,7 @@ fn dispatch_context_with_plan<'a>(
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: plan,
+        web_action: None,
     }
 }
 
@@ -115,6 +117,7 @@ fn dispatch_context_with_retrieval_scope<'a>(
         run_id: None,
         write_target_path: None,
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: None,
         web_search_enabled: false,
         available_tool_names: &[],
@@ -125,6 +128,7 @@ fn dispatch_context_with_retrieval_scope<'a>(
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        web_action: None,
     }
 }
 
@@ -324,6 +328,7 @@ async fn read_note_rejects_document_policy_before_opening_the_file() {
         run_id: Some("policy-read-run"),
         write_target_path: None,
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: Some(&policy),
         web_search_enabled: false,
         available_tool_names: &[],
@@ -334,6 +339,7 @@ async fn read_note_rejects_document_policy_before_opening_the_file() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        web_action: None,
     };
 
     let error = note_impl::read_note(
@@ -563,6 +569,7 @@ fn write_tool_approval_applies_patch_with_cas() {
         run_id: None,
         write_target_path: None,
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: None,
         web_search_enabled: false,
         available_tool_names: &[],
@@ -573,6 +580,7 @@ fn write_tool_approval_applies_patch_with_cas() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        web_action: None,
     };
     let result = markdown_impl::markdown_write_patch_apply(
         &state,
@@ -643,6 +651,7 @@ fn write_tool_rejects_a_target_other_than_the_explicit_run_target() {
         run_id: Some("bound-target-run"),
         write_target_path: Some("notes/test.md"),
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: None,
         web_search_enabled: false,
         available_tool_names: &[],
@@ -653,6 +662,7 @@ fn write_tool_rejects_a_target_other_than_the_explicit_run_target() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        web_action: None,
     };
 
     let result = markdown_impl::markdown_write_patch_apply(
@@ -689,6 +699,7 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
         run_id: None,
         write_target_path: None,
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: None,
         web_search_enabled: false,
         available_tool_names: &[],
@@ -699,6 +710,7 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        web_action: None,
     };
     let result = markdown_impl::markdown_write_patch_apply(
         &state,
@@ -739,6 +751,7 @@ async fn cancelled_run_never_commits_a_markdown_patch() {
         run_id: Some("cancelled-markdown-write"),
         write_target_path: None,
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: None,
         web_search_enabled: false,
         available_tool_names: &[],
@@ -749,6 +762,7 @@ async fn cancelled_run_never_commits_a_markdown_patch() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        web_action: None,
     };
     crate::ai_runtime::model_gateway::request_abort("cancelled-markdown-write");
 

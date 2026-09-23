@@ -49,6 +49,11 @@
 CI、桌面打包和官方 Release 仅面向 macOS ARM64 与 Windows x64。macOS 使用
 `macos-15`，Windows 使用 `windows-2022`；两个正式桌面包都默认启用 sqlite-vec。
 
+Iris 桌面应用**不支持 Linux**：仓库不提供 Linux 构建、打包或运行路径。
+格式检查、Lint、类型检查、文档门与前端测试等与桌面运行时无关的任务跑在
+平台中立的 `ubuntu-24.04` 运行器上，那只是执行 Node 检查的宿主，不代表
+Iris 支持 Linux 平台。
+
 ### 启动开发
 
 ```bash

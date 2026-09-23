@@ -202,8 +202,7 @@ impl ToolLoopProvider for MockStreamingProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -249,8 +248,7 @@ impl ToolLoopProvider for FixedContentStreamingProvider {
                     prompt_cache_miss_tokens: 7,
                 },
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -281,8 +279,7 @@ impl ToolLoopProvider for MissingUsageStreamingProvider {
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -340,8 +337,7 @@ impl ToolLoopProvider for MetaAnalysisStreamingProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -382,8 +378,7 @@ impl ToolLoopProvider for NormalAnswerStreamingProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -412,8 +407,7 @@ impl ToolLoopProvider for MetaAnalysisToolLoopProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -456,6 +450,10 @@ impl ToolLoopExecutor for UnusedToolLoopExecutor {
 }
 
 impl ToolLoopExecutor for SuccessfulToolLoopExecutor {
+    fn mapped_tool_name(&self, name: &str) -> bool {
+        name == "test_tool"
+    }
+
     fn execute<'a>(
         &'a self,
         _run_id: &'a str,
@@ -535,6 +533,12 @@ impl ToolLoopExecutor for StrictExternalEvidenceExecutor {
 }
 
 fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvider {
+    let known_usage = crate::ai_types::TokenUsage {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        total_tokens: 2,
+        ..Default::default()
+    };
     ScriptedToolLoopProvider {
         responses: std::sync::Mutex::new(VecDeque::from([
             crate::ai_runtime::model_gateway::GatewayResponse {
@@ -547,18 +551,16 @@ fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvide
                         arguments: "{}".to_string(),
                     },
                 }],
-                usage: Default::default(),
+                usage: known_usage.clone(),
                 finish_reason: "tool_calls".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             crate::ai_runtime::model_gateway::GatewayResponse {
                 content: Some(final_content),
                 tool_calls: vec![],
-                usage: Default::default(),
+                usage: known_usage,
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     }
@@ -699,10 +701,14 @@ async fn direct_streaming_enforces_the_frozen_run_budget_when_usage_is_missing_a
                 .as_slice(),
             [crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
                 max_prompt_tokens: Some(frozen.max_prompt_tokens),
-                max_completion_tokens: Some(frozen.max_completion_tokens),
+                max_completion_tokens: Some(
+                    frozen
+                        .max_turn_output_tokens
+                        .min(frozen.max_completion_tokens)
+                ),
                 max_turn_output_tokens: Some(frozen.max_turn_output_tokens),
             }],
-            "each accepted Direct Run passes its persisted frozen budget to the provider"
+            "provider receives the first-attempt lease, not the raw frozen completion cap"
         );
     }
 }
@@ -743,10 +749,10 @@ async fn evaluation_direct_run_forwards_the_same_effective_budget_to_the_gateway
         provider.budgets.lock().expect("budget lock").as_slice(),
         [crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
             max_prompt_tokens: Some(effective.max_prompt_tokens),
-            max_completion_tokens: Some(64),
+            max_completion_tokens: Some(32),
             max_turn_output_tokens: Some(32),
         }],
-        "evaluation may tighten a Run, but the Gateway must receive that same effective policy"
+        "evaluation may tighten a Run, but the Gateway must receive the first-attempt lease (completion 64, turn output 32, reserve 32)"
     );
 }
 
@@ -1050,8 +1056,7 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_precise_citations_withou
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             }];
             let provider = ScriptedToolLoopProvider {
                 responses: std::sync::Mutex::new(VecDeque::from(responses)),
@@ -1844,116 +1849,8 @@ fn startup_recovery_does_not_recheck_ttl_after_confirmation_was_consumed() {
     std::fs::remove_dir_all(vault).expect("remove recovery vault");
 }
 
-#[test]
-fn startup_recovery_completes_an_already_written_consumed_plan_without_replaying_it() {
-    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
-    std::fs::write(vault.join("notes/a.md"), "after").expect("simulate committed write");
-
-    assert_eq!(
-        RunEngine::recover_interrupted_runs(&db).expect("recover written durable apply"),
-        1
-    );
-    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
-        .expect("replay")
-        .expect("run");
-    assert_eq!(replay.run.state, RunState::Completed);
-    assert_eq!(
-        AgentRunRepository::latest_durable_apply_checkpoint(&db, &accepted.run_id)
-            .expect("checkpoint")
-            .expect("completed checkpoint")
-            .stage(),
-        super::agent_run_repository::DurableApplyCheckpointStage::Completed
-    );
-    assert_eq!(
-        std::fs::read_to_string(vault.join("notes/a.md")).expect("read recovered note"),
-        "after"
-    );
-    let lifecycle = replay
-        .events
-        .iter()
-        .filter_map(|event| {
-            let event = serde_json::to_value(event).expect("serialize recovery event");
-            matches!(
-                event["type"].as_str(),
-                Some("tool_started" | "confirmation_required" | "tool_completed" | "completed")
-            )
-            .then_some(event)
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        lifecycle
-            .iter()
-            .map(|event| event["type"].as_str().unwrap_or_default())
-            .collect::<Vec<_>>(),
-        vec![
-            "tool_started",
-            "confirmation_required",
-            "tool_completed",
-            "completed"
-        ]
-    );
-    let recovered_tool = &lifecycle[2]["payload"];
-    assert_eq!(recovered_tool["capability"], "replace_selection");
-    assert_eq!(
-        recovered_tool["toolCallId"],
-        format!("tool-{}", accepted.run_id)
-    );
-    assert_eq!(recovered_tool["summary"], "已恢复已确认的变更执行状态");
-    assert_eq!(recovered_tool["success"], true);
-    assert!(recovered_tool.get("arguments").is_none());
-    assert!(recovered_tool.get("rawOutput").is_none());
-
-    std::fs::remove_dir_all(vault).expect("remove recovery vault");
-}
-
-#[test]
-fn startup_recovery_does_not_duplicate_an_already_recovered_tool_completion() {
-    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
-    let state_version = RunIntake::get(&db, &accepted.session, &accepted.run_id)
-        .expect("replay before recovered completion")
-        .expect("run")
-        .run
-        .state_version;
-    AgentRunRepository::append_event(
-        &db,
-        AppendRunEventInput {
-            run_id: accepted.run_id.clone(),
-            state_version,
-            event_type: RunEventType::ToolCompleted,
-            payload: RunEventPayload::ToolCompleted {
-                capability: "replace_selection".into(),
-                tool_call_id: format!("tool-{}", accepted.run_id),
-                summary: "已恢复已确认的变更执行状态".into(),
-                duration_ms: None,
-                success: Some(true),
-                subagent_batch_report: None,
-            },
-        },
-    )
-    .expect("persist recovered completion before simulated crash");
-    std::fs::write(vault.join("notes/a.md"), "after").expect("simulate committed write");
-
-    assert_eq!(
-        RunEngine::recover_interrupted_runs(&db).expect("resume interrupted recovery"),
-        1
-    );
-    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
-        .expect("replay")
-        .expect("run");
-    assert_eq!(replay.run.state, RunState::Completed);
-    assert_eq!(
-        replay
-            .events
-            .iter()
-            .filter(|event| {
-                serde_json::to_value(event).expect("serialize event")["type"] == "tool_completed"
-            })
-            .count(),
-        1
-    );
-
-    std::fs::remove_dir_all(vault).expect("remove recovery vault");
-}
+#[path = "run_engine_recovery_tests.rs"]
+mod checkpoint_recovery;
 
 #[test]
 fn startup_recovery_requires_manual_review_when_consumed_target_diverged() {
@@ -3534,16 +3431,14 @@ async fn tool_loop_appends_one_recovery_turn_after_a_title_only_answer() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             crate::ai_runtime::model_gateway::GatewayResponse {
                 content: Some("近期报道主要聚焦其国内政策与外交活动。[W1]".to_string()),
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -3637,8 +3532,7 @@ async fn strict_external_submission_persists_only_the_referenced_evidence() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -3831,8 +3725,7 @@ async fn strict_web_answer_without_current_run_marker_withholds_unsupported_draf
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -3933,8 +3826,7 @@ async fn natural_web_answer_keeps_only_the_current_run_precise_marker() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4021,8 +3913,7 @@ async fn strict_web_missing_marker_withholds_unsupported_draft() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4105,8 +3996,7 @@ async fn web_follow_up_keeps_current_run_citations_separate_from_history() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4170,8 +4060,7 @@ async fn web_follow_up_keeps_current_run_citations_separate_from_history() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4264,8 +4153,7 @@ async fn source_group_strict_web_turn_does_not_block_the_next_turn_in_the_same_s
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
     };
@@ -4514,8 +4402,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
                     tool_calls: Vec::new(),
                     usage: Default::default(),
                     finish_reason: "stop".into(),
-                    reasoning_content: None,
-                    continuation: None,
+                    ..Default::default()
                 })
             })
         }

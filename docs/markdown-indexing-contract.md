@@ -14,9 +14,7 @@
 
 ## LLM Run 采样参数
 
-- Assistant Run / Model Gateway 请求当前**固定不传** `temperature`（`None`）。
-- 网关 body 层已支持 `Option<f64>`；设置页与 `LlmRoutingConfig` **未**暴露该控件。
-- 产品若需要可调采样，应经 routing 配置透传，而不是在网关硬编码默认值。
+见 [llm-routing.md](./llm-routing.md) 的「采样参数」小节；采样与温度不属于编辑器/索引器契约。
 
 ## 编辑器有、索引器无（或不同）
 

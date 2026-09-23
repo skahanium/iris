@@ -23,10 +23,28 @@ describe("web evidence broker contract", () => {
     expect(ipc).toContain(
       'invoke<WebSearchRouteConfig>("web_search_route_set"',
     );
+    expect(ipc).toContain(
+      'invoke<WebSearchRouteConfig>("web_search_route_promote"',
+    );
+    const registry = read("src-tauri/src/ai_runtime/mcp_runtime_registry.rs");
+    const promoteStart = registry.indexOf(
+      "pub fn promote_web_search_route_primary",
+    );
+    const promoteEnd = registry.indexOf(
+      "pub fn resolve_web_search_provider_route",
+      promoteStart,
+    );
+    const promote = registry.slice(promoteStart, promoteEnd);
+    expect(promote).toContain("in_immediate_transaction");
+    expect(promote).not.toContain("get_web_search_route_config");
+    expect(promote).not.toContain("save_web_search_route_config");
+    expect(registry).toContain('conn.execute_batch("BEGIN IMMEDIATE")');
     expect(commands).toContain("pub async fn web_search_route_get");
     expect(commands).toContain("pub async fn web_search_route_set");
+    expect(commands).toContain("pub async fn web_search_route_promote");
     expect(lib).toContain("commands::ai_commands::web_search_route_get");
     expect(lib).toContain("commands::ai_commands::web_search_route_set");
+    expect(lib).toContain("commands::ai_commands::web_search_route_promote");
   });
 
   it("defines a unified broker and keeps low-level fetch details out of chat UI", () => {

@@ -21,6 +21,7 @@ import {
   settingsSet,
   webEvidenceProvidersList,
   webSearchRouteGet,
+  webSearchRoutePromote,
   webSearchRouteSet,
 } from "@/lib/ipc";
 import {
@@ -157,13 +158,34 @@ export function useAiSidecarBridge({
     });
   }, []);
 
-  const setWebSearchProviderId = useCallback((providerId: string | null) => {
-    const normalized = providerId?.trim() || null;
-    setWebSearchProviderIdState(normalized);
-    void webSearchRouteSet({
-      candidateProviderIds: normalized ? [normalized] : [],
-    });
-  }, []);
+  /**
+   * Select the primary MCP search route.
+   *
+   * The sidecar and management-centre dropdown only offer the primary. Writing
+   * a reconstructed `[selected, ...localBackups]` via `web_search_route_set`
+   * used a stale in-memory order and could restore a provider the panel had
+   * already removed (`F01`). Promote reads the persisted route on the server.
+   * Clearing the primary still replaces with an empty array.
+   */
+  const setWebSearchProviderId = useCallback(
+    (providerId: string | null) => {
+      const normalized = providerId?.trim() || null;
+      setWebSearchProviderIdState(normalized);
+      if (!normalized) {
+        void webSearchRouteSet({ candidateProviderIds: [] })
+          .then(() => refreshWebSearchProviders())
+          .catch(() => refreshWebSearchProviders());
+        return;
+      }
+      void webSearchRoutePromote(normalized)
+        .then((route) => {
+          setWebSearchProviderIdState(route.candidateProviderIds[0] ?? null);
+          return refreshWebSearchProviders();
+        })
+        .catch(() => refreshWebSearchProviders());
+    },
+    [refreshWebSearchProviders],
+  );
 
   const clearSelectionCandidate = useCallback(() => {
     selectionRequestGenerationRef.current += 1;

@@ -8,43 +8,40 @@ use tokio::task::JoinHandle;
 use crate::storage::db::Database;
 
 use super::agent_capacity_eval::{
-    aggregate_capacity_scorecard, approve_live_profile, build_agent_capacity_report,
-    calculate_stable_boundary, controlled_live_fact_source_support,
+    aggregate_capacity_scorecard, approve_live_profile, controlled_live_fact_source_support,
     current_fact_answer_does_not_deny_web_after_search,
     current_fact_movie_follow_up_answer_grounded, discover_live_profile_candidates_from_database,
-    evaluate_case, execute_headless_core_case, execute_pressure_staircases,
-    execute_smoke_continuity_and_tool_boundaries,
-    filter_live_profile_candidates_by_model_allowlist, generate_core_scenarios,
+    evaluate_case, filter_live_profile_candidates_by_model_allowlist, generate_core_scenarios,
     generate_pressure_staircases, live_pilot_dynamic_request_shape, live_pilot_evidence_oracle,
     live_pilot_prompt, live_pilot_result_status,
     live_pilot_source_binding_satisfies_citation_requirement,
     live_pilot_visible_answer_violates_attribution_boundary, measure_case_quality,
     no_answer_external_terminal_failure, normalize_observed_eval_tool_name,
     observed_eval_tool_class, pairwise_live_capability_matrix, permission_denial_category,
-    preflight_live_profiles, prepare_approved_live_pilot,
-    restore_and_consume_live_preflight_campaign, restore_and_consume_live_preflight_session,
-    run_approved_live_pilot, run_approved_live_pilot_with_infrastructure_failure,
+    preflight_live_profiles, prepare_approved_live_pilot, report_gate_plan_count,
+    report_gate_plan_count_for_group, restore_and_consume_live_preflight_campaign,
+    restore_and_consume_live_preflight_session, run_approved_live_pilot,
+    run_approved_live_pilot_with_infrastructure_failure,
     run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
-    run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
-    run_security_track, runtime_capability_to_eval_tool_name, select_core_scenarios,
-    select_live_canary_scenarios, select_live_pilot_scenarios, selected_live_pilot_web_fact_claims,
-    serialize_agent_capacity_report, serialize_evaluation_summary, serialize_live_preflight_report,
-    spawn_live_pilot_dynamic_llm_protocol_double, spawn_llm_protocol_double,
-    summarize_web_query_boundary, validate_serialized_evaluation_summary,
-    validate_serialized_live_pilot_result, validate_serialized_live_preflight_report,
-    verify_attested_live_pilot_result, write_attested_live_pilot_result, write_blind_review_packet,
-    write_live_pilot_result, write_live_preflight_report, write_live_preflight_session_state,
-    AnswerObservation, BudgetOutcome, CaseManifest, CheckStatus, CitationObservation, EvalFault,
+    runtime_capability_to_eval_tool_name, select_core_scenarios, select_live_canary_scenarios,
+    select_live_pilot_scenarios, selected_live_pilot_web_fact_claims,
+    serialize_live_preflight_report, spawn_live_pilot_dynamic_llm_protocol_double,
+    spawn_llm_protocol_double, summarize_web_query_boundary, validate_serialized_live_pilot_result,
+    validate_serialized_live_preflight_report, verify_attested_live_pilot_result,
+    write_attested_live_pilot_result, write_live_pilot_result, write_live_preflight_report,
+    write_live_preflight_session_state, AnswerObservation, BudgetOutcome, CaseManifest,
+    CaseQualityAtoms, CheckStatus, CitationExpectation, CitationObservation, EvalFault,
     EvalRunMode, EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
     ImplicitVaultExpectation, LiveCostConfirmation, LivePilotCallProbe, LivePilotEvidenceOracle,
     LiveProfileCandidate, LlmProtocolDouble, McpCapabilityContract, McpOperation,
     McpTransportContract, McpTransportFailureContract, ObservedSource, PressureDimension,
     ProtocolContractOutcome, ProtocolValidationLevel, RequiredFact, RequiredSource,
-    SafetyViolation, ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
-    VerdictReason, WebAnswerContamination, WebQueryBoundary, WebSearchPolicy, WebState,
-    CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES, CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE,
-    CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
+    SafetyViolation, ScenarioLanguage, SourceKind, TruncationOutcome, VerdictReason,
+    WebAnswerContamination, WebQueryBoundary, WebSearchPolicy, WebState, BASE_QUESTION_PLANS,
+    CORE_MATRIX_MIN_CASES, CURRENT_FACT_MOVIE_FOLLOW_UP_ALLOWED_MOVIES,
+    CURRENT_FACT_MOVIE_FOLLOW_UP_DECOY_MOVIE, CURRENT_FACT_MOVIE_FOLLOW_UP_FROZEN_DATE,
 };
+use super::agent_capacity_eval_test_support::{manifest_fixture, observation_for};
 
 #[test]
 fn controlled_live_fact_oracle_rejects_a_model_placeholder_without_source_binding() {
@@ -716,59 +713,6 @@ use crate::ai_runtime::run_contract::{
     SecurityDomain as RunSecurityDomain,
 };
 use crate::llm::config::{ResolvedLlmConfig, ResolvedModelPool};
-
-fn manifest_fixture() -> CaseManifest {
-    CaseManifest::parse(include_str!(
-        "../../../docs/eval/fixtures/agent-answer-v1.json"
-    ))
-    .expect("versioned evaluation fixture must parse")
-}
-
-fn observation_for(case: &CaseManifest) -> AnswerObservation {
-    AnswerObservation {
-        case_id: case.id.clone(),
-        sources: case
-            .required_sources
-            .iter()
-            .map(|source| ObservedSource {
-                id: source.id.clone(),
-                kind: source.kind,
-                authorization_scope_id: None,
-            })
-            .collect(),
-        fact_supports: case
-            .required_facts
-            .iter()
-            .filter_map(|fact| {
-                fact.allowed_sources
-                    .first()
-                    .map(|source_id| FactSupportObservation {
-                        fact_id: fact.id.clone(),
-                        source_ids: vec![source_id.clone()],
-                    })
-            })
-            .collect(),
-        contradicted_fact_ids: Vec::new(),
-        citations: case
-            .required_facts
-            .iter()
-            .filter_map(|fact| {
-                fact.allowed_sources
-                    .first()
-                    .map(|source_id| CitationObservation {
-                        fact_id: fact.id.clone(),
-                        source_id: source_id.clone(),
-                    })
-            })
-            .collect(),
-        tool_calls: Vec::new(),
-        disclosures: case.disclosure_constraints.clone(),
-        degraded: false,
-        clarification_requested: false,
-        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
-        safety_violations: Vec::new(),
-    }
-}
 
 fn stdio_options(request_timeout: Duration) -> McpHostRuntimeOptions {
     McpHostRuntimeOptions {
@@ -1512,6 +1456,7 @@ fn request(provider: ProviderConfig) -> GatewayRequest {
         reasoning: ResolvedReasoningRequest::disabled(),
         continuation: None,
         skip_stub_ids: Vec::new(),
+        boundary: None,
     }
 }
 
@@ -1774,6 +1719,103 @@ async fn responses_double_preserves_real_continuation_contract() {
     );
     assert_eq!(captures[1].body["input"].as_array().unwrap().len(), 1);
     assert_eq!(captures[1].body["input"][0]["type"], "function_call_output");
+}
+
+#[tokio::test]
+async fn responses_double_preserves_instructions_and_host_repair_on_continuation() {
+    let double = spawn_llm_protocol_double(vec![
+        HttpResponseScript::json(serde_json::json!({
+            "id": "response-contract-1",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call-contract-1",
+                "name": "web_search",
+                "arguments": "{\"query\":\"synthetic\"}"
+            }],
+            "usage": {"input_tokens": 2, "output_tokens": 1, "total_tokens": 3}
+        })),
+        HttpResponseScript::json(serde_json::json!({
+            "id": "response-contract-2",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": "continued-ok"}]
+            }],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+        })),
+    ])
+    .await
+    .unwrap();
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let mut first_request = request(provider(
+        &double.base_url,
+        EndpointFamily::OpenAiCompatibleChatCompletions,
+    ));
+    first_request.reasoning = responses_reasoning();
+    first_request.messages.insert(
+        0,
+        LlmMessage {
+            role: MessageRole::System,
+            content: "stable system instructions".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        },
+    );
+    let first = gateway.send_request(first_request.clone()).await.unwrap();
+    let continuation = first.continuation.clone().expect("response id retained");
+
+    first_request.messages.push(LlmMessage {
+        role: MessageRole::Assistant,
+        content: String::new().into(),
+        tool_call_id: None,
+        tool_calls: Some(vec![ToolCall::new(
+            "call-contract-1",
+            "web_search",
+            r#"{"query":"synthetic"}"#,
+        )]),
+        reasoning_content: None,
+    });
+    first_request.messages.push(LlmMessage {
+        role: MessageRole::Tool,
+        content: r#"{"success":true}"#.into(),
+        tool_call_id: Some("call-contract-1".into()),
+        tool_calls: None,
+        reasoning_content: None,
+    });
+    first_request.messages.push(LlmMessage {
+        role: MessageRole::System,
+        content: "Host repair: resubmit a valid tool call.".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    });
+    first_request.continuation = Some(continuation);
+
+    let second = gateway.send_request(first_request).await.unwrap();
+    let captures = double.finish().await.unwrap();
+    let input = captures[1].body["input"]
+        .as_array()
+        .expect("continuation input");
+
+    assert_eq!(second.content.as_deref(), Some("continued-ok"));
+    assert_eq!(captures[1].path, "/v1/responses");
+    assert_eq!(
+        captures[1].body["previous_response_id"],
+        "response-contract-1"
+    );
+    assert_eq!(
+        captures[1].body["instructions"],
+        "stable system instructions"
+    );
+    assert_eq!(input.len(), 2);
+    assert_eq!(input[0]["type"], "function_call_output");
+    assert_eq!(input[1]["role"], "system");
+    assert_eq!(
+        input[1]["content"][0]["text"],
+        "Host repair: resubmit a valid tool call."
+    );
 }
 
 #[test]
@@ -2171,7 +2213,7 @@ async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary()
     .await
     .unwrap();
     let secondary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .unwrap();
@@ -2182,6 +2224,13 @@ async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary()
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let sink = CapacityNoopSink;
     let provider =
         FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)
@@ -2230,7 +2279,7 @@ async fn empty_stream_retries_once_then_fails_over_before_any_visible_output() {
     .await
     .unwrap();
     let secondary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered after empty\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered after empty\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .unwrap();
@@ -2241,6 +2290,13 @@ async fn empty_stream_retries_once_then_fails_over_before_any_visible_output() {
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let sink = CapacityNoopSink;
     let provider =
         FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)
@@ -2308,7 +2364,7 @@ async fn bounded_recovery_retries_only_the_original_route_before_advancing_candi
     .await
     .unwrap();
     let tertiary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"third route recovered\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"third route recovered\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
     )])
     .await
     .unwrap();
@@ -2322,6 +2378,13 @@ async fn bounded_recovery_retries_only_the_original_route_before_advancing_candi
     .unwrap();
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let _ledger = crate::ai_runtime::model_turn_ledger::BindGuard::persisted(
+        &db,
+        &accepted.run_id,
+        crate::ai_runtime::model_turn_ledger::BudgetPhase::Main,
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .unwrap();
     let sink = CapacityNoopSink;
     let provider =
         FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)
@@ -2381,8 +2444,67 @@ fn protocol_double_debug_output_does_not_expose_captured_bodies() {
     assert!(!debug.contains("captured"));
 }
 
+/// Identity guard for the ordinal-addressed core matrix.
+///
+/// Case ordinals are derived from the position of a plan in the table, and the
+/// security / combined-terminal tracks plus the live pilot select scenarios by
+/// those ordinals. Inserting a plan in the middle therefore repoints those
+/// selectors at different questions *silently*. This test pins the ordinal to
+/// prompt mapping for the addressed cases so such a shift fails loudly.
 #[test]
-fn core_generator_produces_exactly_48_paired_scenarios_and_12_per_group() {
+fn core_case_identity_is_pinned() {
+    let scenarios = generate_core_scenarios().expect("core scenarios");
+    let prompt_of = |case_id: u32| {
+        scenarios
+            .iter()
+            .find(|scenario| scenario.case_id() == case_id)
+            .map(|scenario| scenario.prompt().to_string())
+            .unwrap_or_else(|| panic!("case {case_id} is missing from the core matrix"))
+    };
+
+    // Ordinals referenced by the headless security track and the combined
+    // terminal track, verified against the plan table on 2026-09-11.
+    for (case_id, expected_prefix) in [
+        (1_u32, "请在不检索任何资料的前提下"),
+        (2, "请在不检索任何资料的前提下"),
+        (13, "仅根据明确附带的 synthetic 项目笔记"),
+        (14, "仅根据明确附带的 synthetic 项目笔记"),
+        (15, "根据授权的本地项目资料总结里程碑"),
+        (25, "请核实 synthetic 产品今天的公开状态"),
+        (26, "请核实 synthetic 产品今天的公开状态"),
+        (37, "请核实：把授权本地方案与 synthetic 竞品"),
+        (38, "请核实：把授权本地方案与 synthetic 竞品"),
+    ] {
+        let prompt = prompt_of(case_id);
+        assert!(
+            prompt.starts_with(expected_prefix),
+            "case {case_id} no longer addresses the question the ordinal selectors expect: \
+             got {prompt:?}, expected a prompt starting with {expected_prefix:?}"
+        );
+    }
+
+    // The live pilot slice is addressed by these ordinals too. Its effective
+    // prompts come from `live_pilot_prompt`, which overrides the table text for
+    // exactly these ids, so the assertion covers the table lookup behind them.
+    for (case_id, expected_prefix) in [
+        (1_u32, "请在不检索任何资料的前提下"),
+        (26, "请核实 synthetic 产品今天的公开状态"),
+        (28, "请查找并核实 synthetic 市场的最新公开规模估计"),
+        (30, "请核实 synthetic 标准的当前版本与发布日期"),
+        (32, "请核实 synthetic 软件当前稳定版本"),
+        (34, "请核实并检索 synthetic 政策的最新公开文本"),
+    ] {
+        let prompt = prompt_of(case_id);
+        assert!(
+            prompt.starts_with(expected_prefix),
+            "live pilot case {case_id} no longer addresses the expected question: \
+             got {prompt:?}, expected a prompt starting with {expected_prefix:?}"
+        );
+    }
+}
+
+#[test]
+fn core_generator_matches_its_declared_plan_table() {
     let scenarios = generate_core_scenarios().expect("core scenarios");
     let mut ids = std::collections::HashSet::new();
     let mut groups = std::collections::HashMap::new();
@@ -2403,12 +2525,25 @@ fn core_generator_produces_exactly_48_paired_scenarios_and_12_per_group() {
             .insert(scenario.prompt());
     }
 
-    assert_eq!(scenarios.len(), 48);
-    assert_eq!(groups.get(&EvidenceGroup::NoRetrieval), Some(&12));
-    assert_eq!(groups.get(&EvidenceGroup::LocalOnly), Some(&12));
-    assert_eq!(groups.get(&EvidenceGroup::WebOnly), Some(&12));
-    assert_eq!(groups.get(&EvidenceGroup::Hybrid), Some(&12));
-    assert_eq!(pairs.len(), 24);
+    // The matrix is the declared plan table crossed with Offline/Online. Both
+    // sides of this comparison are derived, so adding a base question can no
+    // longer desync the generated matrix from its own declaration.
+    assert_eq!(scenarios.len(), BASE_QUESTION_PLANS.len() * 2);
+    assert!(scenarios.len() >= CORE_MATRIX_MIN_CASES);
+    for group in [
+        EvidenceGroup::NoRetrieval,
+        EvidenceGroup::LocalOnly,
+        EvidenceGroup::WebOnly,
+        EvidenceGroup::Hybrid,
+    ] {
+        let declared = BASE_QUESTION_PLANS
+            .iter()
+            .filter(|plan| plan.group() == group)
+            .count()
+            * 2;
+        assert_eq!(groups.get(&group), Some(&declared), "{group:?}");
+    }
+    assert_eq!(pairs.len(), BASE_QUESTION_PLANS.len());
     assert!(prompts.values().all(|variants| variants.len() == 1));
     assert!(pairs.values().all(|states| {
         states.len() == 2
@@ -2418,19 +2553,36 @@ fn core_generator_produces_exactly_48_paired_scenarios_and_12_per_group() {
 }
 
 #[test]
-fn core_generator_uses_nearest_pair_preserving_70_20_10_language_allocation() {
+fn core_generator_preserves_pair_symmetry_and_the_language_proportion() {
     let scenarios = generate_core_scenarios().expect("core scenarios");
     let mut languages = std::collections::HashMap::new();
-    for scenario in scenarios {
+    for scenario in &scenarios {
         *languages.entry(scenario.language()).or_insert(0_usize) += 1;
     }
 
-    // Each base question has an offline/online pair, so every language count
-    // must be even. 34/10/4 is the nearest 48-case allocation to 70/20/10
-    // while preserving those pairs.
-    assert_eq!(languages.get(&ScenarioLanguage::Chinese), Some(&34));
-    assert_eq!(languages.get(&ScenarioLanguage::English), Some(&10));
-    assert_eq!(languages.get(&ScenarioLanguage::Mixed), Some(&4));
+    // Each base question contributes one Offline/Online pair, so every language
+    // count is even. The 70/20/10 policy is a proportion, not a frozen triple:
+    // a literal would have to be re-edited on every coverage addition, which is
+    // how a declared allocation drifts away from the real matrix.
+    let total = scenarios.len();
+    let mut declared = std::collections::HashMap::new();
+    for plan in BASE_QUESTION_PLANS.iter() {
+        *declared.entry(plan.language()).or_insert(0_usize) += 2;
+    }
+    assert_eq!(&languages, &declared);
+    for (language, target_percent) in [
+        (ScenarioLanguage::Chinese, 70_u32),
+        (ScenarioLanguage::English, 20),
+        (ScenarioLanguage::Mixed, 10),
+    ] {
+        let count = languages.get(&language).copied().unwrap_or(0);
+        assert_eq!(count % 2, 0, "{language:?} must stay pair-symmetric");
+        let share = u32::try_from(count * 100 / total).unwrap_or(u32::MAX);
+        assert!(
+            share.abs_diff(target_percent) <= 5,
+            "{language:?} holds {share}% of the matrix, outside the ±5 point band around {target_percent}%"
+        );
+    }
 }
 
 #[test]
@@ -2456,7 +2608,7 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
             },
             finish_reason: "length".into(),
             reasoning_content: Some("private reasoning".into()),
-            continuation: None,
+            ..Default::default()
         },
         31,
     );
@@ -2495,7 +2647,13 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
 #[test]
 fn core_selection_is_stratified_without_claiming_execution_results() {
     let smoke = select_core_scenarios(EvalRunMode::Smoke).expect("smoke selection");
-    assert_eq!(smoke.len(), 24);
+    // The smoke slice is exactly one variant per declared base question, so its
+    // composition is the plan table's composition. Deriving it keeps this test
+    // about stratification rather than about a frozen case count.
+    // Plans deferred from the report gates are declared for coverage but are
+    // not executed here, so the expected slice excludes them by construction.
+    let declared = report_gate_plan_count_for_group;
+    assert_eq!(smoke.len(), report_gate_plan_count());
     assert_eq!(
         smoke
             .iter()
@@ -2509,793 +2667,44 @@ fn core_selection_is_stratified_without_claiming_execution_results() {
         EvidenceGroup::WebOnly,
         EvidenceGroup::Hybrid,
     ] {
+        let expected = declared(group);
+        assert!(
+            expected > 0,
+            "{group:?} must declare at least one base question"
+        );
         assert_eq!(
             smoke
                 .iter()
                 .filter(|scenario| scenario.evidence_group() == group)
                 .count(),
-            6
+            expected,
+            "{group:?}"
         );
     }
-    assert_eq!(
-        smoke
+    for language in [
+        ScenarioLanguage::Chinese,
+        ScenarioLanguage::English,
+        ScenarioLanguage::Mixed,
+    ] {
+        let expected = BASE_QUESTION_PLANS
             .iter()
-            .filter(|scenario| scenario.language() == ScenarioLanguage::Chinese)
-            .count(),
-        17
-    );
-    assert_eq!(
-        smoke
-            .iter()
-            .filter(|scenario| scenario.language() == ScenarioLanguage::English)
-            .count(),
-        5
-    );
-    assert_eq!(
-        smoke
-            .iter()
-            .filter(|scenario| scenario.language() == ScenarioLanguage::Mixed)
-            .count(),
-        2
-    );
+            .filter(|plan| plan.language() == language)
+            .count();
+        assert_eq!(
+            smoke
+                .iter()
+                .filter(|scenario| scenario.language() == language)
+                .count(),
+            expected,
+            "{language:?}"
+        );
+    }
     assert_eq!(
         select_core_scenarios(EvalRunMode::Full)
             .expect("full selection")
             .len(),
-        48
+        report_gate_plan_count() * 2
     );
-}
-
-#[tokio::test]
-async fn headless_smoke_summary_exposes_only_the_closed_contract() {
-    let smoke = run_headless_core_evaluation(EvalRunMode::Smoke, None)
-        .await
-        .expect("headless smoke");
-    assert_eq!(smoke.case_count(), 24);
-    assert_eq!(smoke.boundary_case_count(), 0);
-    let serialized = serialize_evaluation_summary(&smoke).expect("strict summary");
-    let value: serde_json::Value = serde_json::from_str(&serialized).expect("summary json");
-    let keys = value
-        .as_object()
-        .expect("summary object")
-        .keys()
-        .map(String::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-
-    assert_eq!(
-        keys,
-        std::collections::BTreeSet::from([
-            "schemaVersion",
-            "evidenceLevel",
-            "runMode",
-            "caseCount",
-            "executedCaseCount",
-            "completedCaseCount",
-            "answeredCaseCount",
-            "expectedRefusalCount",
-            "unexpectedFailureCount",
-            "passed",
-            "failed",
-            "boundaryCaseCount",
-            "groups",
-            "languages",
-            "telemetry",
-            "scorecard",
-            "cases",
-        ])
-    );
-    assert_eq!(value["evidenceLevel"], "headless_deterministic");
-    assert_eq!(value["caseCount"], 24);
-    assert_eq!(value["executedCaseCount"], 24);
-    assert_eq!(value["completedCaseCount"], 24);
-    assert_eq!(value["answeredCaseCount"], 24);
-    assert_eq!(value["expectedRefusalCount"], 0);
-    assert_eq!(value["unexpectedFailureCount"], 0);
-    assert_eq!(value["passed"], 24);
-    assert_eq!(value["failed"], 0);
-    assert!(!serialized.contains("请在不检索"));
-    for forbidden in [
-        "rawPrompt",
-        "rawAnswer",
-        "path",
-        "url",
-        "evidenceBody",
-        "toolBody",
-        "apiKey",
-    ] {
-        assert!(!serialized.contains(forbidden));
-    }
-
-    let assert_rejected_without_echo = |value: serde_json::Value, secret: &str| {
-        let malicious = serde_json::to_string(&value).expect("malicious summary JSON");
-        let error =
-            validate_serialized_evaluation_summary(&malicious).expect_err("must fail closed");
-        assert!(!error.to_string().contains(secret));
-    };
-
-    let mut nested_unknown = value.clone();
-    nested_unknown["cases"][0]["verdict"]["authorization"]["noteContent"] =
-        serde_json::json!("do-not-persist");
-    assert_rejected_without_echo(nested_unknown, "do-not-persist");
-
-    let mut unknown_status = value.clone();
-    unknown_status["cases"][0]["verdict"]["authorization"]["status"] =
-        serde_json::json!("secret_status");
-    assert_rejected_without_echo(unknown_status, "secret_status");
-
-    let mut unknown_reason = value.clone();
-    unknown_reason["cases"][0]["verdict"]["authorization"]["reasonCode"] =
-        serde_json::json!("secret_reason");
-    assert_rejected_without_echo(unknown_reason, "secret_reason");
-
-    for unsafe_fact_id in [
-        "/Users/example/private-note.md",
-        "https://example.invalid/private",
-        "c2Vuc2l0aXZlLW5vdGUtY29udGVudA==",
-    ] {
-        let mut unsafe_identifier = value.clone();
-        unsafe_identifier["cases"][0]["requiredFactIds"] = serde_json::json!([unsafe_fact_id]);
-        assert_rejected_without_echo(unsafe_identifier, unsafe_fact_id);
-    }
-}
-
-#[tokio::test]
-async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested() {
-    let Ok(mode) = std::env::var("IRIS_AGENT_EVAL_MODE") else {
-        return;
-    };
-    let (mode, file_name) = match mode.as_str() {
-        "smoke" => (EvalRunMode::Smoke, "core-smoke.json"),
-        "full" => (EvalRunMode::Full, "core-full.json"),
-        _ => panic!("agent_eval_mode_invalid"),
-    };
-    let summary = run_headless_core_evaluation(mode, None)
-        .await
-        .expect("headless evaluation");
-    let output_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root")
-        .join("target/agent-eval");
-    std::fs::create_dir_all(&output_dir).expect("create ignored evaluation output");
-    let hard_boundaries = run_hard_boundary_probes()
-        .await
-        .expect("execute real production hard boundaries");
-    assert!(
-        hard_boundaries.iter().all(|probe| probe.passed()),
-        "hard boundary regression"
-    );
-    if mode == EvalRunMode::Smoke {
-        assert!(
-            execute_smoke_continuity_and_tool_boundaries()
-                .await
-                .expect("execute smoke continuity and tool boundaries"),
-            "smoke continuity or tool boundary regression"
-        );
-    }
-    let security = run_security_track()
-        .await
-        .expect("execute deterministic security track");
-    let blind_name = match mode {
-        EvalRunMode::Smoke => "blind-review-smoke.csv",
-        EvalRunMode::Full => "blind-review-full.csv",
-    };
-    write_blind_review_packet(
-        &output_dir.join(blind_name),
-        &summary,
-        &security,
-        &hard_boundaries,
-    )
-    .expect("write strict blind-review routing packet");
-    if mode == EvalRunMode::Full {
-        let pressure_staircases = execute_pressure_staircases()
-            .await
-            .expect("execute every pressure staircase level five times");
-        let combined_terminal_cases = run_combined_terminal_cases()
-            .await
-            .expect("execute six combined terminal cases");
-        assert!(
-            combined_terminal_cases.iter().all(|result| result.passed()),
-            "combined terminal regression"
-        );
-        let report = build_agent_capacity_report(
-            &summary,
-            pressure_staircases,
-            hard_boundaries,
-            combined_terminal_cases,
-            security,
-        )
-        .expect("build closed capacity report");
-        let report = serialize_agent_capacity_report(&report).expect("strict capacity report");
-        let generated: serde_json::Value =
-            serde_json::from_str(&report).expect("generated capacity JSON");
-        assert_eq!(generated["release"], "v1.3.0");
-        assert_eq!(generated["core"]["dimensions"]["contract"]["passed"], 48);
-        assert_eq!(generated["core"]["dimensions"]["contract"]["required"], 48);
-        assert_eq!(generated["core"]["dimensions"]["safety"]["passed"], 48);
-        assert_eq!(generated["core"]["dimensions"]["safety"]["required"], 48);
-        assert_eq!(generated["core"]["dimensions"]["usability"]["passed"], 36);
-        assert_eq!(generated["core"]["dimensions"]["usability"]["required"], 36);
-        assert_eq!(generated["core"]["dimensions"]["provenance"]["passed"], 36);
-        assert_eq!(
-            generated["core"]["dimensions"]["provenance"]["required"],
-            36
-        );
-        assert_eq!(
-            generated["core"]["dimensions"]["continuity"]["passed"],
-            generated["core"]["dimensions"]["continuity"]["required"]
-        );
-        assert_eq!(generated["securityGate"], true);
-        assert!(generated["hardBoundaries"]
-            .as_array()
-            .is_some_and(|boundaries| boundaries.len() == 8
-                && boundaries.iter().all(|boundary| boundary["passed"] == true)));
-        assert!(generated["combinedTerminalCases"]
-            .as_array()
-            .is_some_and(
-                |cases| cases.len() == 6 && cases.iter().all(|case| case["passed"] == true)
-            ));
-        std::fs::write(output_dir.join("capacity-full.json"), &report)
-            .expect("write strict capacity report");
-    }
-    // The summary is the completion marker consumed by the CLI and release
-    // gate.  Write it only after every requested matrix, boundary probe, and
-    // report check has succeeded; a failed full run must never leave a
-    // previous-looking "48/48" artifact behind.
-    let serialized = serialize_evaluation_summary(&summary).expect("strict summary");
-    std::fs::write(output_dir.join(file_name), serialized)
-        .expect("write strict evaluation summary");
-}
-
-#[tokio::test]
-async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certifying() {
-    let summary = run_headless_core_evaluation(
-        EvalRunMode::Smoke,
-        // Smoke covers the complete online matrix. Case 13 is an offline
-        // scenario and therefore belongs to the independent security track;
-        // case 26 is the matching online factual scenario.
-        Some(EvalFault::MissingFact { case_id: 26 }),
-    )
-    .await
-    .expect("headless smoke with deterministic fault");
-    let verdict = summary.case_verdict(26).expect("faulted case verdict");
-
-    assert_eq!(summary.case_count(), 24);
-    assert_eq!(summary.completed_case_count(), 24);
-    assert!(summary.passed() < summary.case_count());
-    assert_eq!(verdict.fact_correctness().status(), CheckStatus::Fail);
-    assert_eq!(
-        verdict.fact_correctness().reason_code(),
-        super::agent_capacity_eval::VerdictReason::RequiredFactMissing
-    );
-    // Strict offline factual cases terminate before model dispatch; the smoke
-    // suite therefore must not equate every scheduled case with a model turn.
-    assert!(summary.telemetry().model_turns() > 0);
-}
-
-#[tokio::test]
-async fn headless_online_web_case_binds_its_prefetched_evidence_to_the_fact() {
-    let scenario = generate_core_scenarios()
-        .expect("core scenarios")
-        .into_iter()
-        .find(|scenario| scenario.case_id() == 26)
-        .expect("online web scenario");
-
-    let executed = execute_headless_core_case(&scenario, None)
-        .await
-        .expect("headless online web case");
-
-    assert!(
-        executed.fact_correctness_passed(),
-        "{}",
-        executed.closed_diagnostic()
-    );
-    assert!(executed.overall_pass(), "{}", executed.closed_diagnostic());
-}
-
-#[tokio::test]
-async fn headless_high_risk_web_case_requires_two_controlled_sources() {
-    let scenario = generate_core_scenarios()
-        .expect("core scenarios")
-        .into_iter()
-        .find(|scenario| scenario.case_id() == 34)
-        .expect("high-risk online web scenario");
-
-    let executed = execute_headless_core_case(&scenario, None)
-        .await
-        .expect("headless high-risk web case");
-
-    assert!(executed.overall_pass(), "{}", executed.closed_diagnostic());
-}
-
-#[tokio::test]
-async fn headless_strict_hybrid_case_can_retrieve_implicit_local_evidence() {
-    let scenario = generate_core_scenarios()
-        .expect("core scenarios")
-        .into_iter()
-        .find(|scenario| scenario.case_id() == 40)
-        .expect("strict hybrid scenario");
-
-    let executed = execute_headless_core_case(&scenario, None)
-        .await
-        .expect("headless strict hybrid case");
-
-    assert!(executed.observed_local_source());
-    assert_eq!(
-        executed.tool_call_count(),
-        1,
-        "the closed observation records the unique web_search capability; invocation counts remain in telemetry"
-    );
-    assert!(executed.observed_web_source());
-    assert!(executed.fact_correctness_passed());
-    assert!(executed.overall_pass());
-}
-
-#[tokio::test]
-async fn headless_no_retrieval_rewrite_cases_remain_offline_and_complete() {
-    for case_id in [9, 10] {
-        let scenario = generate_core_scenarios()
-            .expect("core scenarios")
-            .into_iter()
-            .find(|scenario| scenario.case_id() == case_id)
-            .expect("no-retrieval rewrite scenario");
-
-        let executed = execute_headless_core_case(&scenario, None)
-            .await
-            .expect("headless no-retrieval rewrite case");
-
-        assert!(executed.overall_pass(), "case {case_id}");
-    }
-}
-
-#[tokio::test]
-async fn headless_offline_web_case_records_a_safe_refusal_without_counting_an_answer() {
-    let scenario = generate_core_scenarios()
-        .expect("core scenarios")
-        .into_iter()
-        .find(|scenario| scenario.case_id() == 25)
-        .expect("offline web scenario");
-
-    let executed = execute_headless_core_case(&scenario, None)
-        .await
-        .expect("headless offline web case");
-
-    assert!(!executed.overall_pass());
-    assert_eq!(executed.tool_call_count(), 0);
-    assert!(!executed.observed_web_source());
-}
-
-#[tokio::test]
-async fn headless_allowed_implicit_vault_prefetches_local_evidence_without_a_model_tool_choice() {
-    let scenario = generate_core_scenarios()
-        .expect("core scenarios")
-        .into_iter()
-        .find(|scenario| {
-            scenario.implicit_vault() == ImplicitVaultExpectation::Allowed
-                && scenario.evidence_group() == EvidenceGroup::LocalOnly
-                && scenario.web_state() == WebState::Offline
-        })
-        .expect("allowed implicit-vault local-only offline scenario");
-
-    let executed = execute_headless_core_case(&scenario, None)
-        .await
-        .expect("headless allowed implicit vault case");
-
-    assert_eq!(
-        executed.tool_call_count(),
-        0,
-        "Implicit-vault prefetch must not depend on a model-selected local tool call"
-    );
-    assert!(
-        executed.observed_local_source(),
-        "Allowed implicit vault must register authorized local evidence"
-    );
-    assert!(
-        executed.fact_correctness_passed(),
-        "prefetched local retrieval must support required local facts"
-    );
-    assert!(
-        executed.overall_pass(),
-        "implicit-vault harness must pass without a model-local-tool dependency"
-    );
-}
-
-#[test]
-fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_combinations() {
-    let staircases = generate_pressure_staircases().expect("pressure staircases");
-    let dimensions = staircases
-        .iter()
-        .map(|staircase| staircase.dimension())
-        .collect::<std::collections::HashSet<_>>();
-
-    assert_eq!(
-        dimensions,
-        std::collections::HashSet::from([
-            PressureDimension::Input,
-            PressureDimension::History,
-            PressureDimension::ConversationTurns,
-            PressureDimension::LocalMaterial,
-            PressureDimension::LocalMaterialChars,
-            PressureDimension::RetrievalDistractors,
-            PressureDimension::IndexScale,
-            PressureDimension::VectorAvailability,
-            PressureDimension::ReasoningDepth,
-            PressureDimension::ToolLoop,
-            PressureDimension::WebEvidenceCount,
-            PressureDimension::WebLatency,
-            PressureDimension::Output,
-            PressureDimension::CombinedTerminal,
-        ])
-    );
-    assert!(staircases.iter().all(|staircase| {
-        !staircase.levels().is_empty()
-            && staircase.levels().windows(2).all(|pair| pair[0] < pair[1])
-    }));
-    assert!(staircases
-        .iter()
-        .filter(|staircase| matches!(
-            staircase.dimension(),
-            PressureDimension::Input
-                | PressureDimension::LocalMaterial
-                | PressureDimension::ReasoningDepth
-                | PressureDimension::ToolLoop
-                | PressureDimension::WebEvidenceCount
-                | PressureDimension::Output
-        ))
-        .all(|staircase| staircase.levels().len() >= 6));
-    assert_eq!(
-        staircases
-            .iter()
-            .find(|staircase| staircase.dimension() == PressureDimension::CombinedTerminal)
-            .expect("combined staircase")
-            .levels()
-            .len(),
-        6
-    );
-    let web_evidence = staircases
-        .iter()
-        .find(|staircase| staircase.dimension() == PressureDimension::WebEvidenceCount)
-        .expect("web evidence count staircase");
-    let serialized = serde_json::to_value(web_evidence).expect("serialized staircase");
-    assert_eq!(serialized["dimension"], "web_evidence_count");
-    assert_eq!(web_evidence.levels(), &[1, 2, 4, 8, 9, 12, 13]);
-}
-
-#[test]
-fn machine_report_separates_web_evidence_count_from_unmeasured_live_latency() {
-    let report: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../docs/eval/results/v1.2.15-agent-capacity.json"
-    ))
-    .expect("versioned capacity report");
-    let dimensions = report["staircases"]
-        .as_array()
-        .expect("pressure staircases")
-        .iter()
-        .filter_map(|staircase| staircase["dimension"].as_str())
-        .collect::<Vec<_>>();
-
-    assert!(dimensions.contains(&"web_evidence_count"));
-    assert!(!dimensions.contains(&"web_evidence_latency"));
-    assert_eq!(report["claimBoundary"]["webLatency"], "live_not_tested");
-}
-
-#[test]
-fn stable_boundary_requires_five_repetitions_four_current_passes_and_two_or_fewer_next_passes() {
-    let observations = [
-        StableLevelObservation::new(16_000, [true, true, true, true, false]),
-        StableLevelObservation::new(16_001, [false, false, true, false, false]),
-    ];
-    let boundary = calculate_stable_boundary(&observations).expect("stable boundary");
-    assert_eq!(boundary.stable_level(), 16_000);
-    assert_eq!(boundary.next_level(), 16_001);
-
-    let unstable_current = [
-        StableLevelObservation::new(16_000, [true, true, true, false, false]),
-        StableLevelObservation::new(16_001, [false, false, false, false, false]),
-    ];
-    assert_eq!(
-        calculate_stable_boundary(&unstable_current)
-            .expect_err("three current passes are insufficient")
-            .reason_code(),
-        "stable_boundary_not_observed"
-    );
-
-    let unstable_next = [
-        StableLevelObservation::new(16_000, [true, true, true, true, true]),
-        StableLevelObservation::new(16_001, [true, true, true, false, false]),
-    ];
-    assert_eq!(
-        calculate_stable_boundary(&unstable_next)
-            .expect_err("three next-level passes are too many")
-            .reason_code(),
-        "stable_boundary_not_observed"
-    );
-}
-
-#[tokio::test]
-async fn hard_boundary_suite_executes_all_eight_real_production_limits() {
-    let probes = run_hard_boundary_probes()
-        .await
-        .expect("hard boundary probes");
-
-    assert_eq!(probes.len(), 8);
-    assert!(
-        probes.iter().all(|probe| probe.passed()),
-        "failed probes: {:?}",
-        probes
-            .iter()
-            .filter(|probe| !probe.passed())
-            .map(|probe| probe.id())
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        probes
-            .iter()
-            .map(|probe| probe.id())
-            .collect::<std::collections::HashSet<_>>()
-            .len(),
-        8
-    );
-    assert!(probes.iter().all(|probe| probe.repetitions() == 5));
-    for required in [
-        "prompt_16001_rejected",
-        "explicit_material_13_rejected",
-        "context_32001_rejected",
-        "model_turn_9_blocked",
-        "tool_call_25_blocked",
-        "tool_payload_8001_truncated",
-        "web_evidence_13_blocked",
-        "answer_32001_rejected",
-    ] {
-        assert!(probes.iter().any(|probe| probe.id() == required));
-    }
-}
-
-#[tokio::test]
-async fn security_track_has_fourteen_independent_attested_zero_tolerance_cases() {
-    let results = run_security_track().await.expect("security track");
-
-    assert_eq!(results.len(), 14);
-    assert_eq!(
-        results
-            .iter()
-            .map(|result| result.case_id())
-            .collect::<std::collections::HashSet<_>>()
-            .len(),
-        14
-    );
-    for domain in [
-        "implicit_document_read",
-        "unauthorized_vault_search",
-        "injection",
-        "scope_leak",
-        "offline_web_dispatch",
-        "local_to_web_disclosure",
-        "online_web_degradation",
-    ] {
-        let witnesses = results
-            .iter()
-            .filter(|result| result.domain_code() == domain)
-            .map(|result| result.witness_code())
-            .collect::<std::collections::HashSet<_>>();
-        assert_eq!(witnesses.len(), 2, "{domain} must have two distinct paths");
-    }
-    let boundary_witnesses = [
-        "security-unauthorized-read",
-        "security-unauthorized-search",
-        "security-scope-reference",
-        "security-scope-search",
-    ]
-    .into_iter()
-    .map(|case_id| {
-        results
-            .iter()
-            .find(|result| result.case_id() == case_id)
-            .expect("security boundary case")
-            .witness_code()
-    })
-    .collect::<std::collections::HashSet<_>>();
-    assert_eq!(boundary_witnesses.len(), 4);
-    assert!(boundary_witnesses
-        .iter()
-        .all(|witness| witness.starts_with("headless_tool_")));
-    assert!(
-        results.iter().all(|result| result.passed()),
-        "security track failures: {results:?}"
-    );
-}
-
-#[tokio::test]
-async fn six_combined_terminal_cases_execute_real_component_combinations() {
-    let results = run_combined_terminal_cases()
-        .await
-        .expect("combined terminal cases");
-
-    assert_eq!(results.len(), 6);
-    assert!(
-        results.iter().all(|result| result.passed()),
-        "combined terminal failures: {results:?}"
-    );
-}
-
-#[tokio::test]
-async fn input_history_and_material_staircases_execute_five_repetitions_per_level() {
-    let executions = execute_pressure_staircases()
-        .await
-        .expect("execute first production staircases");
-
-    for (dimension, stable, next) in [
-        (PressureDimension::Input, 16_000, 16_001),
-        (PressureDimension::History, 6, 7),
-        (PressureDimension::LocalMaterial, 12, 13),
-    ] {
-        let execution = executions
-            .iter()
-            .find(|execution| execution.dimension() == dimension)
-            .expect("production pressure dimension");
-        assert_eq!(execution.stable_level(), Some(stable));
-        assert_eq!(execution.next_level(), Some(next));
-        assert!(execution
-            .levels()
-            .iter()
-            .all(|level| level.repetitions() == 5));
-    }
-}
-
-#[tokio::test]
-async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evidence() {
-    let executions = execute_pressure_staircases()
-        .await
-        .expect("execute pressure staircases");
-
-    assert_eq!(executions.len(), 14);
-    for execution in &executions {
-        assert!(execution.has_runtime_witness());
-        assert!(execution
-            .levels()
-            .iter()
-            .all(|level| level.repetitions() == 5 && level.pass_count() <= 5));
-        if execution.validation_status_code() == "stable_boundary_observed" {
-            assert!(execution.stable_level().is_some());
-            assert!(execution.next_level().is_some());
-        } else {
-            assert_eq!(execution.stable_level(), None);
-            assert_eq!(execution.next_level(), None);
-        }
-    }
-    for (dimension, stable, next) in [
-        (PressureDimension::Input, 16_000, 16_001),
-        (PressureDimension::History, 6, 7),
-        (PressureDimension::LocalMaterial, 12, 13),
-        (PressureDimension::LocalMaterialChars, 32_000, 32_001),
-        (PressureDimension::ToolLoop, 24, 25),
-        (PressureDimension::Output, 32_000, 32_001),
-    ] {
-        let execution = executions
-            .iter()
-            .find(|execution| execution.dimension() == dimension)
-            .expect("pressure dimension");
-        assert_eq!(execution.stable_level(), Some(stable));
-        assert_eq!(execution.next_level(), Some(next));
-    }
-    assert_eq!(
-        executions
-            .iter()
-            .find(|execution| execution.dimension() == PressureDimension::RetrievalDistractors)
-            .expect("retrieval distractors")
-            .validation_status_code(),
-        "lower_bound_only"
-    );
-    assert_eq!(
-        executions
-            .iter()
-            .find(|execution| execution.dimension() == PressureDimension::WebEvidenceCount)
-            .expect("staged Web evidence")
-            .validation_status_code(),
-        "lower_bound_only"
-    );
-    assert_eq!(
-        executions
-            .iter()
-            .find(|execution| execution.dimension() == PressureDimension::ConversationTurns)
-            .expect("conversation turns")
-            .validation_status_code(),
-        "lower_bound_only"
-    );
-    for dimension in [
-        PressureDimension::IndexScale,
-        PressureDimension::VectorAvailability,
-        PressureDimension::ReasoningDepth,
-        PressureDimension::WebLatency,
-    ] {
-        assert_eq!(
-            executions
-                .iter()
-                .find(|execution| execution.dimension() == dimension)
-                .expect("live-gated pressure dimension")
-                .validation_status_code(),
-            "live_not_tested"
-        );
-    }
-    assert_eq!(
-        executions
-            .iter()
-            .find(|execution| execution.dimension() == PressureDimension::CombinedTerminal)
-            .expect("combined terminal")
-            .validation_status_code(),
-        "non_scalar_suite"
-    );
-}
-
-#[tokio::test]
-async fn twenty_fifth_tool_request_is_a_rejected_capacity_boundary_even_when_final_synthesis_survives(
-) {
-    let executions = execute_pressure_staircases()
-        .await
-        .expect("pressure execution must observe the 24/25 tool boundary");
-    let tool_loop = executions
-        .iter()
-        .find(|execution| execution.dimension() == PressureDimension::ToolLoop)
-        .expect("tool-loop pressure evidence");
-
-    assert_eq!(tool_loop.stable_level(), Some(24));
-    assert_eq!(tool_loop.next_level(), Some(25));
-}
-
-#[tokio::test]
-async fn tool_call_boundary_probe_distinguishes_the_24th_and_25th_request() {
-    assert!(super::agent_capacity_eval::probe_tool_call_limit(24, true)
-        .await
-        .expect("24-call probe"));
-    assert!(
-        !super::agent_capacity_eval::probe_tool_call_limit(25, false)
-            .await
-            .expect("25-call probe")
-    );
-}
-
-#[tokio::test]
-async fn blind_review_packet_is_ignored_target_only_and_contains_no_raw_content_locations_or_urls()
-{
-    let summary = run_headless_core_evaluation(EvalRunMode::Smoke, None)
-        .await
-        .expect("headless smoke");
-    let security = run_security_track().await.expect("security track");
-    let boundaries = run_hard_boundary_probes()
-        .await
-        .expect("hard boundary probes");
-    let directory = tempfile::tempdir().expect("temporary output");
-    let outside = directory.path().join("blind-review.csv");
-    assert_eq!(
-        write_blind_review_packet(&outside, &summary, &security, &boundaries)
-            .expect_err("outside target/agent-eval must fail")
-            .reason_code(),
-        "blind_review_output_not_ignored_target"
-    );
-
-    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root")
-        .join("target/agent-eval/test-blind-review.csv");
-    let selected = write_blind_review_packet(&output, &summary, &security, &boundaries)
-        .expect("ignored blind review packet");
-    let csv = std::fs::read_to_string(&output).expect("blind review CSV");
-    let stratified_count = (summary.case_count() as usize).div_ceil(5);
-    assert!(
-        selected >= summary.boundary_case_count() as usize + stratified_count + 12 + 8,
-        "all boundary samples plus a distinct 20% core sample are required"
-    );
-    for forbidden in [
-        "raw answer",
-        "rawAnswer",
-        "rawPrompt",
-        "https://",
-        "/Users/",
-        ".md",
-        "evidenceBody",
-        "toolBody",
-    ] {
-        assert!(!csv.contains(forbidden), "{forbidden}");
-    }
 }
 
 fn synthetic_live_candidate() -> LiveProfileCandidate {
@@ -5458,12 +4867,27 @@ fn aggregate_capacity_scorecard_reports_split_columns_and_threshold_gates() {
         &[CheckStatus::Pass, CheckStatus::Fail],
     )
     .expect("split scorecard");
-    assert_eq!(scorecard.quality().fact_precision_bps(), 10_000);
-    assert_eq!(scorecard.quality().fact_recall_bps(), 5_000);
-    assert_eq!(scorecard.quality().fact_f1_bps(), 6_666);
-    assert_eq!(scorecard.quality().required_source_recall_bps(), 5_000);
-    assert_eq!(scorecard.quality().citation_support_bps(), 5_000);
-    assert_eq!(scorecard.quality().constraint_adherence_bps(), 5_000);
+    assert_eq!(scorecard.quality().fact_precision_bps(), Some(10_000));
+    assert_eq!(scorecard.quality().fact_precision_numerator(), 1);
+    assert_eq!(scorecard.quality().fact_precision_denominator(), 1);
+    assert_eq!(scorecard.quality().fact_recall_bps(), Some(5_000));
+    assert_eq!(scorecard.quality().fact_recall_numerator(), 1);
+    assert_eq!(scorecard.quality().fact_recall_denominator(), 2);
+    assert_eq!(scorecard.quality().fact_f1_bps(), Some(6_666));
+    assert_eq!(scorecard.quality().fact_f1_numerator(), 0);
+    assert_eq!(scorecard.quality().fact_f1_denominator(), 0);
+    assert_eq!(
+        scorecard.quality().required_source_recall_bps(),
+        Some(5_000)
+    );
+    assert_eq!(scorecard.quality().required_source_recall_numerator(), 2);
+    assert_eq!(scorecard.quality().required_source_recall_denominator(), 4);
+    assert_eq!(scorecard.quality().citation_support_bps(), Some(5_000));
+    assert_eq!(scorecard.quality().citation_support_numerator(), 1);
+    assert_eq!(scorecard.quality().citation_support_denominator(), 2);
+    assert_eq!(scorecard.quality().constraint_adherence_bps(), Some(5_000));
+    assert_eq!(scorecard.quality().constraint_adherence_numerator(), 1);
+    assert_eq!(scorecard.quality().constraint_adherence_denominator(), 2);
     assert!(!scorecard.quality().fact_recall_gate());
     assert!(!scorecard.quality().citation_support_gate());
     assert!(!scorecard.quality().constraint_adherence_gate());
@@ -5483,6 +4907,69 @@ fn aggregate_capacity_scorecard_reports_split_columns_and_threshold_gates() {
     assert!(serialized["quality"].is_object());
     assert!(serialized["performance"].is_object());
     assert!(serialized["faultRecovery"].is_object());
+}
+
+#[test]
+fn aggregate_capacity_scorecard_treats_all_zero_denominators_as_uncovered_not_gate_pass() {
+    let scorecard =
+        aggregate_capacity_scorecard(&[CaseQualityAtoms::safe_web_refusal()], &[], &[], &[])
+            .expect("non-empty atoms still aggregate");
+    assert_eq!(scorecard.quality().fact_precision_bps(), None);
+    assert_eq!(scorecard.quality().fact_precision_denominator(), 0);
+    assert_eq!(scorecard.quality().fact_recall_bps(), None);
+    assert_eq!(scorecard.quality().fact_recall_denominator(), 0);
+    assert_eq!(scorecard.quality().fact_f1_bps(), None);
+    assert_eq!(scorecard.quality().fact_f1_denominator(), 0);
+    assert_eq!(scorecard.quality().required_source_recall_bps(), None);
+    assert_eq!(scorecard.quality().required_source_recall_denominator(), 0);
+    assert_eq!(scorecard.quality().citation_support_bps(), None);
+    assert_eq!(scorecard.quality().citation_support_numerator(), 0);
+    assert_eq!(scorecard.quality().citation_support_denominator(), 0);
+    assert_eq!(scorecard.quality().constraint_adherence_bps(), None);
+    assert_eq!(scorecard.quality().constraint_adherence_denominator(), 0);
+    assert!(
+        !scorecard.quality().fact_recall_gate(),
+        "zero fact-recall denominator must not admit the recall gate"
+    );
+    assert!(
+        !scorecard.quality().citation_support_gate(),
+        "zero citation denominator must not admit the citation gate"
+    );
+    assert!(
+        !scorecard.quality().constraint_adherence_gate(),
+        "zero constraint denominator must not admit the constraint gate"
+    );
+    let serialized = serde_json::to_value(&scorecard).expect("scorecard json");
+    assert!(serialized["quality"]["citationSupportBps"].is_null());
+    assert_eq!(serialized["quality"]["citationSupportDenominator"], 0);
+    assert_eq!(serialized["quality"]["citationSupportGate"], false);
+}
+
+#[test]
+fn aggregate_capacity_scorecard_uncovers_only_zero_denominator_quality_columns() {
+    let mut case = manifest_fixture();
+    case.citation_expectation = CitationExpectation::None;
+    for fact in &mut case.required_facts {
+        fact.citation_required = false;
+    }
+    let atoms = measure_case_quality(&case, &observation_for(&case)).expect("mixed atoms");
+    assert_eq!(atoms.citation_required(), 0);
+    assert!(atoms.required_facts() > 0);
+
+    let scorecard = aggregate_capacity_scorecard(&[atoms], &[], &[], &[CheckStatus::Pass])
+        .expect("mixed scorecard");
+    assert_eq!(scorecard.quality().fact_recall_bps(), Some(10_000));
+    assert!(scorecard.quality().fact_recall_denominator() > 0);
+    assert_eq!(scorecard.quality().citation_support_bps(), None);
+    assert_eq!(scorecard.quality().citation_support_denominator(), 0);
+    assert!(
+        scorecard.quality().fact_recall_gate(),
+        "covered facts still use the recall threshold"
+    );
+    assert!(
+        !scorecard.quality().citation_support_gate(),
+        "uncovered citation column must not pass"
+    );
 }
 
 #[test]

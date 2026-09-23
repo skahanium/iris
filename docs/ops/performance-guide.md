@@ -19,9 +19,9 @@
 
 ### 可选环境变量
 
-| 变量                     | 作用                                                          |
-| ------------------------ | ------------------------------------------------------------- |
-| `VITE_SKIP_AUTO_INDEX=1` | 开发时跳过启动自动 `index_rescan`（需手动在命令面板重建索引） |
+| 变量                     | 作用                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `VITE_SKIP_AUTO_INDEX=1` | 开发时跳过启动自动 `index_rescan`（需手动在应用内执行 `search_reindex` 重建索引） |
 
 ### 与生产差异
 
@@ -84,7 +84,7 @@ When investigating regressions, check runtime traces by source (`welcome`, `quic
 
 ## Iris Performance Optimization Baselines
 
-本节用于执行 `2026-06-28-iris-perf-optimization-design.md` 的改前 / 改后量测。没有改前和改后记录，不得声称性能优化完成。
+本节用于执行前端性能优化的改前 / 改后量测。**没有改前和改后记录，不得声称性能优化完成。**
 
 ### 记录模板
 
@@ -127,7 +127,7 @@ If a regression is observed, prefer a small adjustment inside `AppEditorWorkspac
 
 ## Frontend Audit Optimization Pass
 
-本节用于记录 `FRONTEND-AUDIT.md` 派生的前端优化批次。执行时必须记录改前 / 改后数据；没有数据不得声称性能优化完成。
+本节用于记录前端优化批次。执行时必须记录改前 / 改后数据；**没有数据不得声称性能优化完成。**
 
 | 场景                 | 记录项                                                                              |
 | -------------------- | ----------------------------------------------------------------------------------- |

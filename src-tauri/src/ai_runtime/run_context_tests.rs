@@ -1510,6 +1510,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
         run_id: None,
         write_target_path: None,
         confirmed_write_targets: None,
+        confirmed_vault_id: None,
         document_policy: None,
         web_search_enabled: false,
         available_tool_names: &[],
@@ -1520,6 +1521,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
         app_handle: None,
         attachment_count: context.materials.len(),
         skill_activation_plan: None,
+        web_action: None,
     };
     let tool_arguments = serde_json::json!({});
     let tool_entry = crate::ai_runtime::tool_catalog::catalog_find("get_context_packets")
@@ -1581,6 +1583,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
             citation_map: serde_json::json!({}),
             source_summary: Vec::new(),
             publish_content_deltas: true,
+            task_outcome: None,
         },
     )
     .expect("completed run");
@@ -1706,6 +1709,7 @@ fn prompt_keeps_explicit_context_without_expanding_the_authorized_surface() {
         retrieval_scope: Default::default(),
         local_retrieval_packets: vec![],
         recent_messages: vec![],
+        omitted_history_sequences: vec![],
         conversation_memory: None,
         conversation_history_coverage_incomplete: false,
         prompt_profile: Default::default(),
@@ -1796,6 +1800,7 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
             citation_map: serde_json::json!({}),
             source_summary: Vec::new(),
             publish_content_deltas: true,
+            task_outcome: None,
         },
     )
     .expect("first run finalized");
@@ -2139,6 +2144,7 @@ fn previous_run_safety_does_not_treat_local_evidence_as_web_success() {
             citation_map: serde_json::json!({}),
             source_summary: Vec::new(),
             publish_content_deltas: true,
+            task_outcome: None,
         },
     )
     .expect("first run finalized");

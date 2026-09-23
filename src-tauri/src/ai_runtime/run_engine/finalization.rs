@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai_runtime::delivery_outcome::{classify_task_outcome, DeliveryFacts, TaskOutcome};
 use crate::ai_types::CitationBinding;
 
 const MAX_FINAL_OUTPUT_CHARS: usize = 32_000;
@@ -34,6 +35,39 @@ pub(super) fn apply_required_web_degradation_notice(
     _web_degraded: bool,
 ) -> AppResult<()> {
     Ok(())
+}
+
+/// Commit a terminal body the Host wrote itself.
+///
+/// The tool loop declares this terminal through
+/// `AgentTerminalType::HostEvidenceLimited`; nothing here inspects the text to
+/// decide it. Because the body is not Provider output it is not run through
+/// model finish-reason/integrity recovery, and because it makes no attributed
+/// claim it carries no citations, no source summary and no evidence binding.
+pub(crate) fn finalize_host_authored_limitation(
+    db: &Database,
+    session: &AssistantSessionRef,
+    run_id: &str,
+    state_version: u64,
+    content: String,
+    sink: &impl RunEventSink,
+) -> AppResult<()> {
+    finalize_and_emit_with_sink(
+        db,
+        session,
+        run_id,
+        state_version,
+        content,
+        Vec::new(),
+        None,
+        None,
+        None,
+        classify_task_outcome(&DeliveryFacts {
+            host_authored_limitation: true,
+            change_ops_complete: None,
+        }),
+        sink,
+    )
 }
 
 pub(super) fn linkify_final_web_citations(
@@ -101,6 +135,114 @@ pub(super) fn validate_web_urls_against_allowed(
         remainder = &candidate[end..];
     }
     Ok(())
+}
+
+/// Remove model-authored Web links that this Run never registered.
+///
+/// Runs without the strict current-evidence contract may answer without
+/// citations, so rejecting the whole answer is not available here: that would
+/// trade a fabricated pointer for no answer at all, which this codebase
+/// explicitly refuses to do. The prose keeps its meaning and loses only the
+/// unverifiable pointer. Registered Run-local citation links survive untouched.
+pub(super) fn strip_unverified_web_urls(content: &str, allowed_urls: &HashSet<String>) -> String {
+    let mut output = String::with_capacity(content.len());
+    let mut remainder = content;
+    loop {
+        let next = match (remainder.find("http://"), remainder.find("https://")) {
+            (Some(http), Some(https)) => Some(http.min(https)),
+            (Some(http), None) => Some(http),
+            (None, Some(https)) => Some(https),
+            (None, None) => None,
+        };
+        let Some(offset) = next else {
+            output.push_str(remainder);
+            break;
+        };
+        let candidate = &remainder[offset..];
+        let end = candidate
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, ')' | ']' | '>' | '"')
+            })
+            .unwrap_or(candidate.len());
+        let raw = &candidate[..end];
+        // Sentence punctuation can look like part of the URL; it belongs to the
+        // prose and must survive either way.
+        let url = raw.trim_end_matches(['.', ',', ';', ':', '*', '。', '，', '、']);
+        let trailing = &raw[url.len()..];
+        output.push_str(&remainder[..offset]);
+        if allowed_urls.contains(url) {
+            output.push_str(raw);
+            remainder = &candidate[end..];
+        } else {
+            // `[label](url)` becomes `label`; a bare URL simply disappears.
+            let unwrapped = unwrap_markdown_link_prefix(&mut output);
+            let mut consumed = end;
+            if unwrapped {
+                // A Markdown link title belongs to the target being dropped.
+                consumed += markdown_link_title_len(&candidate[end..]);
+                if candidate[consumed..].starts_with(')') {
+                    consumed += 1;
+                }
+            } else if output.ends_with('<') && candidate[end..].starts_with('>') {
+                // An autolink `<url>` is dropped whole, brackets included.
+                output.pop();
+                consumed += 1;
+            }
+            output.push_str(trailing);
+            remainder = &candidate[consumed..];
+        }
+    }
+    output
+}
+
+/// Length of a Markdown link title that follows a link target, if any.
+///
+/// Covers the three title forms CommonMark allows: `"..."`, `'...'` and
+/// `(...)`. Returns `0` when the following text is not a title, so ordinary
+/// prose after a dropped URL is never eaten.
+fn markdown_link_title_len(rest: &str) -> usize {
+    let trimmed = rest.trim_start();
+    let leading = rest.len() - trimmed.len();
+    let Some(opening) = trimmed.chars().next() else {
+        return 0;
+    };
+    let closing = match opening {
+        '"' => '"',
+        '\'' => '\'',
+        '(' => ')',
+        _ => return 0,
+    };
+    let Some(close_offset) = trimmed[opening.len_utf8()..].find(closing) else {
+        return 0;
+    };
+    leading + opening.len_utf8() + close_offset + closing.len_utf8()
+}
+
+/// Turn an already-written `[label](` prefix into just `label`.
+///
+/// An `![alt](` image prefix keeps only `alt`: the marker belongs to the
+/// dropped target. Returns `false` when the preceding text is not a simple
+/// Markdown label, in which case the output is left alone.
+fn unwrap_markdown_link_prefix(output: &mut String) -> bool {
+    if !output.ends_with("](") {
+        return false;
+    }
+    let closing = output.len() - 2;
+    let Some(open) = output[..closing].rfind('[') else {
+        return false;
+    };
+    let label = output[open + 1..closing].to_string();
+    if label.is_empty() || label.contains('[') {
+        return false;
+    }
+    let keep = if output[..open].ends_with('!') {
+        open - 1
+    } else {
+        open
+    };
+    output.truncate(keep);
+    output.push_str(&label);
+    true
 }
 
 #[cfg(test)]
@@ -312,6 +454,7 @@ pub(super) fn emit_run_terminal(
     citation_binding: Option<CitationBinding>,
     source_summary: Option<&crate::ai_runtime::provenance::SourceSummary>,
     attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
+    task_outcome: TaskOutcome,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     // All modern final answers use the same Run-local numbering as tool
@@ -382,6 +525,7 @@ pub(super) fn emit_run_terminal(
                 .map(crate::ai_runtime::provenance::SourceSummary::entries)
                 .unwrap_or_default(),
             publish_content_deltas: true,
+            task_outcome: Some(task_outcome),
         },
     ) {
         Ok(events) => events,
@@ -448,6 +592,7 @@ pub(super) fn finalize_and_emit_with_sink(
     citation_binding: Option<CitationBinding>,
     source_summary: Option<&crate::ai_runtime::provenance::SourceSummary>,
     attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
+    task_outcome: TaskOutcome,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     emit_run_terminal(
@@ -460,6 +605,7 @@ pub(super) fn finalize_and_emit_with_sink(
         citation_binding,
         source_summary,
         attribution,
+        task_outcome,
         sink,
     )
 }
@@ -534,6 +680,8 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::InvalidFinalOutput
         | SafeRunErrorCode::ConfirmationPending
         | SafeRunErrorCode::ConfirmationMissing
+        | SafeRunErrorCode::ConfirmationPlanHashMismatch
+        | SafeRunErrorCode::ConfirmationDiffUnavailable
         | SafeRunErrorCode::InvalidSubagentLifecycle
         | SafeRunErrorCode::InvalidSubagentBatchReport
         | SafeRunErrorCode::RetryNotAvailable
@@ -647,8 +795,8 @@ mod apply_notice_tests {
     use super::{
         apply_required_web_degradation_notice, classify_provider_failure,
         classify_tool_loop_failure, emit_run_terminal, safe_failure_message,
-        validate_web_urls_against_allowed, validated_final_model_answer,
-        validated_final_model_answer_with_telemetry,
+        strip_unverified_web_urls, validate_web_urls_against_allowed, validated_final_model_answer,
+        validated_final_model_answer_with_telemetry, TaskOutcome,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::run_contract::{
@@ -730,6 +878,7 @@ mod apply_notice_tests {
             None,
             None,
             None,
+            TaskOutcome::Blocked,
             &NoopRunEventSink,
         )
         .expect("limitation completes");
@@ -795,6 +944,71 @@ mod apply_notice_tests {
         )
         .expect_err("invented source must fail finalization");
         assert_eq!(error.to_string(), "agent_run_unverified_web_citation");
+    }
+
+    /// A Run that answered without the strict evidence contract must not
+    /// publish a pointer it never verified, and must not lose its answer either.
+    #[test]
+    fn non_strict_answer_keeps_its_prose_and_loses_only_unregistered_links() {
+        let allowed = HashSet::from(["https://official.example/result".to_string()]);
+
+        assert_eq!(
+            strip_unverified_web_urls(
+                "结论见 [官方来源](https://official.example/result) 与 [自造来源](https://invented.example/x)。",
+                &allowed,
+            ),
+            "结论见 [官方来源](https://official.example/result) 与 自造来源。"
+        );
+        assert_eq!(
+            strip_unverified_web_urls("裸链接 https://invented.example/x 已移除。", &allowed),
+            "裸链接  已移除。"
+        );
+        assert_eq!(
+            strip_unverified_web_urls("明文 http://invented.example/x 也应移除。", &allowed),
+            "明文  也应移除。"
+        );
+        assert_eq!(
+            strip_unverified_web_urls("没有任何链接的正文保持不变。", &allowed),
+            "没有任何链接的正文保持不变。"
+        );
+    }
+
+    /// Markdown shapes that carry a dropped target must not leave debris.
+    #[test]
+    fn dropping_a_target_leaves_no_markdown_debris() {
+        let allowed = HashSet::new();
+        for (input, expected) in [
+            // A link title belongs to the dropped target.
+            (
+                "见 [来源](https://invented.example/x \"标题\") 的说明。",
+                "见 来源 的说明。",
+            ),
+            // An image keeps nothing but is not left as a stray `!`.
+            (
+                "图 ![图注](https://invented.example/x) 结束。",
+                "图 图注 结束。",
+            ),
+            // An autolink is dropped whole, including its angle brackets. The
+            // removal is faithful: surrounding whitespace is never normalized,
+            // so the two spaces that remain are the original separators.
+            ("见 <https://invented.example/x> 结束。", "见  结束。"),
+        ] {
+            assert_eq!(
+                strip_unverified_web_urls(input, &allowed),
+                expected,
+                "input: {input}"
+            );
+        }
+    }
+
+    /// No evidence at all means no pointer survives, but the prose does.
+    #[test]
+    fn answer_without_registered_sources_keeps_its_prose_verbatim() {
+        let allowed = HashSet::new();
+        assert_eq!(
+            strip_unverified_web_urls("参考 [别处](https://invented.example/x) 的说法。", &allowed),
+            "参考 别处 的说法。"
+        );
     }
 
     #[test]

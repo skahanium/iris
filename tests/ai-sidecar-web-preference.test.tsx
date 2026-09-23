@@ -25,6 +25,9 @@ vi.mock("@/lib/ipc", () => ({
   webEvidenceProvidersList: vi.fn(),
   webSearchRouteGet: vi.fn(),
   webSearchRouteSet: vi.fn(async () => undefined),
+  webSearchRoutePromote: vi.fn(async (providerId: string) => ({
+    candidateProviderIds: [providerId],
+  })),
 }));
 
 const provider: WebEvidenceProviderSummary = {

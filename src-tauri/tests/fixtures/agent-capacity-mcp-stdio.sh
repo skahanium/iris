@@ -2,6 +2,12 @@
 # Deterministic MCP stdio peer used only by the Rust contract tests. It relies
 # on POSIX shell built-ins plus an absolute date command because Iris launches
 # stdio MCP peers with a cleared environment.
+#
+# The synthetic claim range must exceed the highest case ordinal the core matrix
+# can produce: a case whose `fact-web-<ordinal>` falls outside the range can
+# never satisfy its required fact, which then reads as a content failure rather
+# than as the fixture gap it is. Keep the bound above
+# `BASE_QUESTION_PLANS.len() * 2` in every platform fixture (.sh, .mjs, .ps1).
 
 mode="$1"
 result_count="${2:-1}"
@@ -52,7 +58,7 @@ while IFS= read -r line; do
           requested_url=${line#*\"url\":\"}
           requested_url=${requested_url%%\"*}
           ordinal=1
-          while [ "$ordinal" -le 48 ]; do
+          while [ "$ordinal" -le 128 ]; do
             claims="$claims fact-web-$ordinal=value-$ordinal"
             ordinal=$((ordinal + 1))
           done
@@ -67,7 +73,7 @@ while IFS= read -r line; do
           else
             claims=''
             ordinal=1
-            while [ "$ordinal" -le 48 ]; do
+            while [ "$ordinal" -le 128 ]; do
               claims="$claims fact-web-$ordinal=value-$ordinal"
               ordinal=$((ordinal + 1))
             done

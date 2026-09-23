@@ -10,6 +10,7 @@ use std::pin::Pin;
 
 use crate::ai_runtime::final_answer_submission::{FinalAnswerSubmission, FINAL_ANSWER_TOOL_NAME};
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
+use crate::ai_runtime::model_turn_ledger;
 use crate::ai_runtime::run_context::{
     conversation_memory_prompt_fragment, CONVERSATION_HISTORY_COVERAGE_WARNING,
 };
@@ -21,11 +22,38 @@ use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolS
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+#[path = "agent_tool_loop/observations.rs"]
+mod observations;
+pub(crate) use observations::safe_progress_identities;
+use observations::ExecutionRecord;
+
+#[path = "agent_tool_loop/loop_projection.rs"]
+mod loop_projection;
+pub(crate) use loop_projection::{
+    observation_failure_type, project_loop, LoopProjection, NEXT_ACTION_CONTINUE,
+    NEXT_ACTION_SYNTHESIZE,
+};
+
+#[path = "agent_tool_loop/payload_fit.rs"]
+mod payload_fit;
+pub(crate) use payload_fit::{prepare_tool_result, tool_result_message};
+
+#[path = "agent_tool_loop/prompt_budget.rs"]
+mod prompt_budget;
+#[cfg(test)]
+pub(crate) use payload_fit::fit_tool_payload;
+#[cfg(test)]
+pub(crate) use prompt_budget::compact_tool_observations;
+
 const MAX_REPEAT_CALLS: u32 = 2;
 const MAX_DISCOVERY_CALLS_PER_MODEL_TURN: u32 = 2;
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
 /// Internal control-flow signal: a complete immutable change set was persisted
 /// and the Run must wait for its single user confirmation.
+#[path = "agent_tool_loop/prompt_assembly.rs"]
+pub(crate) mod prompt_assembly;
+pub(crate) use prompt_assembly::*;
+
 pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
 const CHILD_PROVIDER_SCOPE_SEPARATOR: &str = "::child-provider-scope::";
 /// Web evidence is deliberately allowed a larger envelope than generic tool
@@ -106,27 +134,14 @@ pub(crate) fn is_natural_clarification(content: &str) -> bool {
             .any(|character| matches!(character, '.' | '。' | '!' | '！'))
 }
 
-/// Result of a fully bounded model/tool exchange.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentToolLoopOutcome {
-    /// Final assistant content emitted only after the model has stopped calling tools.
-    pub(crate) content: String,
-    /// Provider stop reason associated with the final assistant content.
-    pub(crate) finish_reason: String,
-    /// Internal structured submission when the model used the reserved final
-    /// answer tool. It never enters the model transcript or tool audit.
-    pub(crate) final_submission: Option<FinalAnswerSubmission>,
-    /// Number of model turns used by this Run.
-    pub(crate) model_turns: u32,
-    /// Number of concrete tool dispatch attempts made by this Run.
-    pub(crate) tool_calls: u32,
-    /// Provider-reported input tokens consumed across all model turns.
-    pub(crate) prompt_tokens: u32,
-    /// Provider-reported output tokens consumed across all model turns.
-    pub(crate) completion_tokens: u32,
-    /// Provider-reported total tokens consumed across all model turns.
-    pub(crate) total_tokens: u32,
-}
+/// Which producer owns the terminal assistant body of one bounded Run, plus the
+/// outcome envelope that carries it.
+#[path = "agent_tool_loop/terminal.rs"]
+mod terminal;
+#[cfg(test)]
+pub(crate) use terminal::evidence_limited_outcome as evidence_limited_outcome_for_test;
+use terminal::{evidence_limited_outcome, model_terminal_type};
+pub(crate) use terminal::{AgentTerminalType, AgentToolLoopOutcome, EVIDENCE_LIMITED_RESPONSE};
 
 /// Budget consumed so far, including execution paths that end in an error.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -146,6 +161,23 @@ pub(crate) struct RequiredWebBootstrapObservation {
     pub(crate) tool_calls: u32,
     pub(crate) network_tool_calls: u32,
     pub(crate) observation: String,
+}
+
+/// What one Host bootstrap added to the Run's own accounting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HostWebBootstrapAccounting {
+    tool_calls: u32,
+    network_tool_calls: u32,
+}
+
+/// Result of the single Host bootstrap handshake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HostWebBootstrapOutcome {
+    /// The executor's own observation state after the handshake.
+    observation_performed: bool,
+    /// Present only when a dispatch really happened; the single bootstrap is
+    /// consumed exactly then.
+    applied: Option<HostWebBootstrapAccounting>,
 }
 
 /// Per-model-turn limits that the provider must forward into `GatewayRequest`.
@@ -178,6 +210,17 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>>;
 
+    /// Production transports account for each actual retry/failover attempt.
+    fn manages_attempt_budget(&self) -> bool {
+        false
+    }
+
+    /// Durable root adapters expose their existing repository to the common
+    /// attempt wrapper; standalone fixtures retain the same in-memory ledger.
+    fn budget_database(&self) -> Option<&Database> {
+        None
+    }
+
     /// Record the first concrete tool dispatch for this provider continuation.
     /// A model merely proposing a call does not make a cross-provider retry
     /// unsafe: the Host may still reject or defer that proposal before any
@@ -194,10 +237,48 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
     }
 }
 
+#[path = "agent_tool_loop/budget.rs"]
+mod budget;
+pub(crate) use budget::answer_budgeted_turn;
+use budget::plan_tool_proposals;
+
+/// Confirmation preflight either persists one frozen batch or supplies one
+/// rejection observation for every original call. Operational failures stay Err.
+#[derive(Debug)]
+pub(crate) enum ChangeSetRequestOutcome {
+    Frozen,
+    Rejected(Vec<(String, ToolCallResult)>),
+}
+
 /// Run-bound side of a tool loop.
 pub(crate) trait ToolLoopExecutor: Send + Sync {
+    /// Recheck access before replaying a bounded historical observation. This
+    /// performs no tool action; executors without this gate fail closed.
+    fn observation_replay_rejection(
+        &self,
+        _run_id: &str,
+        _call: &ToolCall,
+        _step: u32,
+    ) -> AppResult<Option<&'static str>> {
+        Ok(Some("observation_replay_unavailable"))
+    }
     /// Accept only Host-created, content-free counters and enum codes.
     fn record_tool_loop_diagnostic(&self, _event: serde_json::Value) {}
+
+    /// True when this parsed name is a Run-surface mapping, not a catalog tool.
+    fn mapped_tool_name(&self, _parsed_name: &str) -> bool {
+        false
+    }
+
+    /// One classification shared by projection, reservation, and dispatch.
+    /// Dynamic tools only acquire ExternalRead after the executor proves their
+    /// frozen Run mapping; unknown names never receive an implicit allowance.
+    fn tool_budget_class(&self, name: &str) -> Option<ToolBudgetClass> {
+        catalog_tool_budget_class(name).or_else(|| {
+            self.mapped_tool_name(name)
+                .then_some(ToolBudgetClass::ExternalRead)
+        })
+    }
 
     /// Read-only, Run-specific validation after JSON/schema validation and
     /// before provider binding, execution counters or tool lifecycle events.
@@ -274,7 +355,7 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         _run_id: &'a str,
         _calls: &'a [ToolCall],
         _first_step: u32,
-    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = AppResult<ChangeSetRequestOutcome>> + Send + 'a>> {
         Box::pin(async { Err(AppError::msg("confirmation_batch_not_supported")) })
     }
 
@@ -358,10 +439,6 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     }
 }
 
-pub(crate) const EVIDENCE_LIMITED_RESPONSE_PREFIX: &str = "本轮未取得足够的可核验来源正文";
-pub(crate) const EVIDENCE_LIMITED_RESPONSE: &str =
-    "本轮未取得足够的可核验来源正文，无法确认问题涉及的当前情况。未核实的线索不能作为当前事实的依据。";
-
 /// Executes the only permitted shape of an Agent tool loop.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AgentToolLoop {
@@ -436,16 +513,6 @@ impl AgentToolLoop {
         }
     }
 
-    fn tool_call_limit(&self, class: ToolBudgetClass) -> u32 {
-        match class {
-            ToolBudgetClass::Local => self.max_local_tool_calls,
-            ToolBudgetClass::Network => self.max_network_tool_calls,
-            ToolBudgetClass::ExternalRead => self.max_external_read_tool_calls,
-            ToolBudgetClass::Runtime => self.max_runtime_tool_calls,
-            ToolBudgetClass::ConfirmedChange => self.max_confirmed_change_calls,
-        }
-    }
-
     /// Run model turns until a non-empty final answer is received or a bound is reached.
     pub(crate) async fn execute(
         &self,
@@ -516,6 +583,77 @@ impl AgentToolLoop {
         .await
     }
 
+    /// Dispatch the Host's one bounded Web observation, if the frozen
+    /// contract still owes one.
+    ///
+    /// Returns the executor's observation state plus, when a dispatch really
+    /// happened, the counters the caller must add to its own Host accounting. A
+    /// model that answers without observing and a model that proposes tools
+    /// before observing reach the same handshake, so neither can publish an
+    /// unsupported answer and neither can trigger a second bootstrap.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_host_web_bootstrap(
+        &self,
+        executor: &impl ToolLoopExecutor,
+        run_id: &str,
+        tool_calls: u32,
+        tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
+        telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+        observer: &mut dyn StreamEventObserver,
+        messages: &mut Vec<LlmMessage>,
+        observation_position: usize,
+    ) -> AppResult<HostWebBootstrapOutcome> {
+        let remaining = self.max_tool_calls.saturating_sub(tool_calls);
+        observer.on_tools_starting()?;
+        let dispatched = executor
+            .bootstrap_required_web_observation(run_id, remaining)
+            .await?;
+        let Some(bootstrap) = dispatched else {
+            // An executor that owns no bootstrap returns nothing at all. The
+            // model keeps its own tool-enabled repair instead.
+            observer.on_tools_finished()?;
+            return Ok(HostWebBootstrapOutcome {
+                observation_performed: executor.web_observation_performed().unwrap_or(false),
+                applied: None,
+            });
+        };
+        let network_used = tool_calls_by_class
+            .get(&ToolBudgetClass::Network)
+            .copied()
+            .unwrap_or_default();
+        if bootstrap.tool_calls > remaining
+            || bootstrap.network_tool_calls > bootstrap.tool_calls
+            || network_used.saturating_add(bootstrap.network_tool_calls)
+                > self.tool_call_limit(ToolBudgetClass::Network)
+        {
+            return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+        }
+        if let Some(telemetry) = telemetry {
+            telemetry.record_bootstrap_web_tool_calls(bootstrap.tool_calls);
+        }
+        let observation_performed = executor
+            .web_observation_performed()
+            .unwrap_or(bootstrap.tool_calls > 0);
+        messages.insert(
+            observation_position,
+            LlmMessage {
+                role: MessageRole::System,
+                content: bootstrap.observation.into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        );
+        observer.on_tools_finished()?;
+        Ok(HostWebBootstrapOutcome {
+            observation_performed,
+            applied: Some(HostWebBootstrapAccounting {
+                tool_calls: tool_calls.saturating_add(bootstrap.tool_calls),
+                network_tool_calls: network_used.saturating_add(bootstrap.network_tool_calls),
+            }),
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn execute_internal(
         &self,
@@ -529,6 +667,12 @@ impl AgentToolLoop {
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
         mut usage: Option<&mut AgentToolLoopUsage>,
     ) -> AppResult<AgentToolLoopOutcome> {
+        let _ledger = model_turn_ledger::BindGuard::new(provider_run_id, self.max_model_turns);
+        model_turn_ledger::configure_scope(
+            provider_run_id,
+            self.turn_budget,
+            run_id == provider_run_id,
+        )?;
         let allowed_tools = tools
             .iter()
             .map(|tool| tool.name.as_str())
@@ -537,24 +681,14 @@ impl AgentToolLoop {
             .iter()
             .rposition(|message| matches!(message.role, MessageRole::User))
             .unwrap_or(messages.len());
-        messages.insert(
-            loop_state_position,
-            initial_loop_budget_instruction(
-                self.max_model_turns,
-                self.max_tool_calls,
-                self.max_local_tool_calls,
-                self.max_network_tool_calls,
-                self.max_external_read_tool_calls,
-                self.max_runtime_tool_calls,
-            ),
-        );
+        messages.insert(loop_state_position, initial_loop_budget_instruction());
         let mut model_turns = 0_u32;
         let mut tool_calls = 0;
         let mut prompt_tokens = 0_u32;
         let mut completion_tokens = 0_u32;
         let mut total_tokens = 0_u32;
         let mut fingerprints = HashMap::<String, u32>::new();
-        let mut successful_fingerprints = HashSet::<String>::new();
+        let mut executions = HashMap::<String, ExecutionRecord>::new();
         let mut tool_calls_by_class = HashMap::<ToolBudgetClass, u32>::new();
         let mut observed_progress = HashSet::<String>::new();
         let mut final_submission_repair_used = false;
@@ -563,6 +697,10 @@ impl AgentToolLoop {
         let mut source_binding_repair_required = false;
         let mut incomplete_final_answer_repair_used = false;
         let mut incomplete_final_draft = None::<String>;
+        // The Host can withhold a model draft and request one bounded repair or
+        // a forced synthesis turn. A publishable answer reached that way is
+        // still Provider prose, so it records only how the turn was reached.
+        let mut model_answer_repaired = false;
         // Distinguish an answer that skipped a required Web lookup from one
         // produced after an attempted lookup yielded no usable evidence. The
         // former receives one tool-enabled repair; asking the model to repair
@@ -571,10 +709,15 @@ impl AgentToolLoop {
         let mut web_observation_performed = executor
             .web_observation_performed()
             .unwrap_or_else(|| executor.has_web_evidence());
+        // The Host bootstrap is a single bounded action: it is dispatched at
+        // most once per Run, from the first boundary that lacks the observation
+        // the frozen contract requires.
+        let mut host_web_bootstrap_dispatched = false;
         let mut no_progress_rounds = 0_u8;
         let mut rejected_rounds = 0_u8;
         let mut failed_service_rounds = 0_u8;
         let mut synthesis_required = false;
+        let mut rejected_confirmation_summary = None;
         let synthesis_tools = tools
             .iter()
             .filter(|tool| tool.name == FINAL_ANSWER_TOOL_NAME)
@@ -583,7 +726,7 @@ impl AgentToolLoop {
         let requires_factual_completion =
             executor.requires_web_evidence() || executor.requires_external_evidence();
 
-        let outcome = async {
+        let outcome = model_turn_ledger::with_scope(provider_run_id, async {
         ensure_run_not_cancelled(run_id)?;
         if model_turns.saturating_add(1) < self.max_model_turns {
             if let Some(compaction) = executor.conversation_memory_compaction_request()? {
@@ -621,13 +764,14 @@ impl AgentToolLoop {
                     usage.model_turns = model_turns;
                 }
                 let started = std::time::Instant::now();
-                let result = provider
-                    .answer_turn(
+                let result = answer_budgeted_turn(
+                        provider,
                         provider_run_id,
                         &compaction_messages,
                         &[],
                         compaction_budget,
                         &mut silent_observer,
+                        model_turn_ledger::AttemptPurpose::Compaction,
                     )
                     .await;
                 let output = result
@@ -676,67 +820,40 @@ impl AgentToolLoop {
         }
 
         ensure_run_not_cancelled(run_id)?;
+        // A required-Web Run has a deterministic minimum observation: one
+        // search and one bounded fetch batch. The frozen contract must be able
+        // to afford it before the Run starts any model or network side effect.
+        // The dispatch itself happens later, at the first boundary that lacks
+        // the observation, so the model reads the question and chooses its own
+        // queries first.
         if executor.requires_web_observation() {
             let bootstrap_actions = executor.required_web_bootstrap_action_count();
             let remaining = self.max_tool_calls.saturating_sub(tool_calls);
-            let network_used = tool_calls_by_class
-                .get(&ToolBudgetClass::Network)
-                .copied()
-                .unwrap_or_default();
             let remaining_network = self
                 .tool_call_limit(ToolBudgetClass::Network)
-                .saturating_sub(network_used);
-            // A required-Web Run has a deterministic minimum observation:
-            // one search and one bounded fetch batch. Reject before invoking
-            // the executor when the frozen contract cannot afford both; doing
-            // so after a network side effect used to leave an unauditable
-            // half-bootstrap behind.
+                .saturating_sub(
+                    tool_calls_by_class
+                        .get(&ToolBudgetClass::Network)
+                        .copied()
+                        .unwrap_or_default(),
+                );
             if remaining < bootstrap_actions || remaining_network < bootstrap_actions {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
-            if let Some(bootstrap) = executor
-                .bootstrap_required_web_observation(run_id, remaining)
-                .await?
-            {
-                if bootstrap.tool_calls > remaining
-                    || bootstrap.network_tool_calls > bootstrap.tool_calls
-                    || network_used.saturating_add(bootstrap.network_tool_calls)
-                        > self.tool_call_limit(ToolBudgetClass::Network)
-                {
-                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
-                }
-                tool_calls = tool_calls.saturating_add(bootstrap.tool_calls);
-                *tool_calls_by_class
-                    .entry(ToolBudgetClass::Network)
-                    .or_default() = network_used.saturating_add(bootstrap.network_tool_calls);
-                if let Some(usage) = usage.as_deref_mut() {
-                    usage.tool_calls = tool_calls;
-                }
-                if let Some(telemetry) = telemetry {
-                    telemetry.record_bootstrap_web_tool_calls(bootstrap.tool_calls);
-                }
-                web_observation_performed = executor.web_observation_performed().unwrap_or(bootstrap.tool_calls > 0);
-                let position = messages
-                    .iter()
-                    .rposition(|message| matches!(message.role, MessageRole::User))
-                    .unwrap_or(messages.len());
-                messages.insert(
-                    position,
-                    LlmMessage {
-                        role: MessageRole::System,
-                        content: bootstrap.observation.into(),
-                        tool_call_id: None,
-                        tool_calls: None,
-                        reasoning_content: None,
-                    },
-                );
-                if web_observation_performed { observer.on_tools_finished()?; }
-            }
         }
 
-        while model_turns < self.max_model_turns {
+        // Where a Host observation belongs in the transcript: directly before
+        // the current user message, so it is context for the turn about to run
+        // rather than a new instruction.
+        let observation_position = messages
+            .iter()
+            .rposition(|message| matches!(message.role, MessageRole::User))
+            .unwrap_or(messages.len());
+        while model_turns < self.max_model_turns
+            && model_turn_ledger::remaining(provider_run_id) > 0 {
             ensure_run_not_cancelled(run_id)?;
-            let is_final_model_turn = model_turns.saturating_add(1) >= self.max_model_turns;
+            let is_final_model_turn = model_turn_ledger::remaining(provider_run_id) <= 1;
+            completion_tokens = model_turn_ledger::accounting(provider_run_id).2;
             let remaining_completion_tokens = self
                 .turn_budget
                 .max_completion_tokens
@@ -748,10 +865,10 @@ impl AgentToolLoop {
                 (Some(completion_limit), Some(turn_limit)) => completion_limit.min(turn_limit),
                 _ => 0,
             };
-            // Do not let exploratory turns consume the final synthesis
-            // envelope. Once only that reserve remains, close business tools
-            // before building the Gateway request so the provider receives a
-            // real, enforceable output cap rather than a post-hoc rejection.
+            // R12: remaining at or below the completion reserve is an
+            // output-cap envelope. Withhold business tools and give the
+            // remaining tokens to the expression turn; do not inject a
+            // recipe closure instruction.
             if !synthesis_required
                 && !source_binding_repair_required
                 && incomplete_final_draft.is_none()
@@ -760,11 +877,11 @@ impl AgentToolLoop {
                     .is_some_and(|remaining| remaining <= synthesis_output_reserve)
             {
                 synthesis_required = true;
-                messages.push(tool_surface_closed_instruction());
             }
             let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some()
                 || synthesis_required
                 || source_binding_repair_required
+                || is_final_model_turn
             {
                 &synthesis_tools
             } else {
@@ -778,7 +895,8 @@ impl AgentToolLoop {
                 let is_synthesis_turn = synthesis_required
                     || source_binding_repair_required
                     || incomplete_final_draft.is_some()
-                    || is_final_model_turn;
+                    || is_final_model_turn
+                    || remaining <= synthesis_output_reserve;
                 let allowed_output = if is_synthesis_turn {
                     remaining
                 } else {
@@ -794,28 +912,46 @@ impl AgentToolLoop {
                         .map_or(allowed_output, |limit| limit.min(allowed_output)),
                 );
             }
-            enforce_prompt_budget(&messages, active_tools, model_turn_budget)?;
+            let compacted = prompt_budget::compact_tool_observations(&mut messages, active_tools, model_turn_budget);
+            for record in executions.values_mut() {
+                if compacted.contains(&record.call_id) { record.compacted = true; }
+            }
+            if enforce_prompt_budget(&messages, active_tools, model_turn_budget).is_err() {
+                if tool_calls == 0 { return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit)); }
+                executor.record_tool_loop_diagnostic(serde_json::json!({"event":"projection_limit","reason":"prompt_budget"}));
+                return Ok(evidence_limited_outcome(executor.evidence_limited_response(),model_turns,tool_calls,prompt_tokens,completion_tokens,total_tokens));
+            }
             if model_turn_budget.max_completion_tokens == Some(0) {
                 return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
             model_turns += 1;
-            executor.record_tool_loop_diagnostic(serde_json::json!({"event":"model", "modelTurns":model_turns}));
             if let Some(usage) = usage.as_deref_mut() {
-                usage.model_turns = model_turns;
+                usage.model_turns = model_turn_ledger::used(provider_run_id).max(model_turns);
             }
+            executor.record_tool_loop_diagnostic(serde_json::json!({"event":"model", "modelTurns":model_turns}));
             let model_started_at = std::time::Instant::now();
             if executor.requires_web_observation() && !web_observation_performed {
                 observer.on_tools_starting()?;
             }
-            let provider_turn = provider.answer_turn(
+            let provider_turn = answer_budgeted_turn(
+                provider,
                 provider_run_id,
                 &messages,
                 active_tools,
                 model_turn_budget,
                 observer,
+                if is_final_model_turn || synthesis_required || source_binding_repair_required || incomplete_final_draft.is_some() {
+                    model_turn_ledger::AttemptPurpose::FinalSynthesis
+                } else { model_turn_ledger::AttemptPurpose::Model },
             );
-            let response = match provider_turn.await {
-                Ok(response) => response,
+            let mut response = match provider_turn.await {
+                Ok(response) => {
+                    if let Some(usage) = usage.as_deref_mut() {
+                        usage.model_turns = model_turn_ledger::used(provider_run_id)
+                            .max(model_turns);
+                    }
+                    response
+                }
                 Err(error) => {
                     let visible_draft = observer.visible_content_snapshot();
                     if !can_recover_visible_stream_error(&error, visible_draft.as_deref())
@@ -889,18 +1025,52 @@ impl AgentToolLoop {
             if let Some(telemetry) = telemetry {
                 telemetry.record_model_turn(&response, model_started_at);
             }
+            if !crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity::may_execute_tool_calls(
+                &response.finish_reason,
+            ) {
+                response.tool_calls.clear();
+            }
 
             if incomplete_final_draft.is_some() && !response.tool_calls.is_empty() {
-                return Err(AppError::run(SafeRunErrorCode::IncompleteOutput));
+                // The continuation contract was broken. Publish the Host-authored
+                // bounded limitation instead of failing the Run: a terminal error
+                // reaches the user as nothing at all.
+                return Ok(evidence_limited_outcome(
+                    executor.evidence_limited_response(),
+                    model_turns,
+                    tool_calls,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                ));
             }
 
             if response.tool_calls.is_empty() {
                 let response_content = response.content.unwrap_or_default();
                 let content = match incomplete_final_draft.take() {
-                    Some(draft) => append_final_answer_continuation(draft, response_content)?,
+                    Some(draft) => match append_final_answer_continuation(draft, response_content) {
+                        Ok(content) => content,
+                        // A continuation that repeats or omits the draft cannot be
+                        // published as a finished answer. Fall back to the bounded
+                        // limitation rather than a terminal error.
+                        Err(_) => {
+                            return Ok(evidence_limited_outcome(
+                                executor.evidence_limited_response(),
+                                model_turns,
+                                tool_calls,
+                                prompt_tokens,
+                                completion_tokens,
+                                total_tokens,
+                            ))
+                        }
+                    },
                     None => response_content,
                 };
-                if content.trim().is_empty() {
+                if content.trim().is_empty()
+                    && crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity::has_normal_finish_reason(
+                        &response.finish_reason,
+                    )
+                {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
                 }
                 // A necessary clarification remains a normal completion even
@@ -909,8 +1079,42 @@ impl AgentToolLoop {
                 // constraint was available, and must not turn a question into
                 // a misleading evidence-limited refusal.
                 let natural_clarification = is_natural_clarification(&content);
+                // The model reached a publishable body without the observation
+                // the frozen contract requires, and no Web attempt has happened
+                // yet to blame. That is where the single Host bootstrap runs:
+                // the draft stays unpublished, the Host dispatches the minimum
+                // observation, and the same loop continues with it in context.
+                if executor.requires_web_observation()
+                    && !web_observation_performed
+                    && !host_web_bootstrap_dispatched
+                {
+                    let bootstrap = self
+                        .dispatch_host_web_bootstrap(
+                            executor,
+                            run_id,
+                            tool_calls,
+                            &tool_calls_by_class,
+                            telemetry,
+                            observer,
+                            &mut messages,
+                            observation_position,
+                        )
+                        .await?;
+                    web_observation_performed = bootstrap.observation_performed;
+                    if let Some(applied) = bootstrap.applied {
+                        host_web_bootstrap_dispatched = true;
+                        tool_calls = applied.tool_calls;
+                        tool_calls_by_class
+                            .insert(ToolBudgetClass::Network, applied.network_tool_calls);
+                        if let Some(usage) = usage.as_deref_mut() {
+                            usage.tool_calls = tool_calls;
+                        }
+                    }
+                }
                 if (executor.requires_web_evidence() && !executor.has_web_evidence()
-                    || executor.requires_web_observation() && !web_observation_performed && !executor.web_capability_blocked())
+                    || executor.requires_web_observation()
+                        && !web_observation_performed
+                        && !executor.web_capability_blocked())
                     && !natural_clarification
                 {
                     if synthesis_required
@@ -927,6 +1131,7 @@ impl AgentToolLoop {
                         ));
                     }
                     missing_evidence_repair_used = true;
+                    model_answer_repaired = true;
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
                         content: content.into(),
@@ -952,6 +1157,7 @@ impl AgentToolLoop {
                         ));
                     }
                     missing_evidence_repair_used = true;
+                    model_answer_repaired = true;
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
                         content: content.into(),
@@ -964,9 +1170,22 @@ impl AgentToolLoop {
                 }
                 if allowed_tools.contains(FINAL_ANSWER_TOOL_NAME) {
                     if final_submission_repair_used {
-                        return Err(AppError::msg("agent_run_final_submission_required"));
+                        // The strict submission protocol was offered twice and the
+                        // model answered in prose both times. A Run with a strict
+                        // current-evidence contract must not publish unsourced
+                        // prose, so close with the Host-authored limitation
+                        // instead of a terminal error that shows nothing.
+                        return Ok(evidence_limited_outcome(
+                            executor.evidence_limited_response(),
+                            model_turns,
+                            tool_calls,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        ));
                     }
                     final_submission_repair_used = true;
+                    model_answer_repaired = true;
                     synthesis_required = true;
                     // The withheld draft is continuation context only. It is
                     // never persisted or emitted, and the correction surface
@@ -994,9 +1213,19 @@ impl AgentToolLoop {
                     requires_factual_completion,
                 ) {
                     if incomplete_final_answer_repair_used || model_turns >= self.max_model_turns {
-                        return Err(AppError::run(SafeRunErrorCode::IncompleteOutput));
+                        // An incomplete answer is not publishable as an answer, but
+                        // the Run must still end with something the user can read.
+                        return Ok(evidence_limited_outcome(
+                            executor.evidence_limited_response(),
+                            model_turns,
+                            tool_calls,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        ));
                     }
                     incomplete_final_answer_repair_used = true;
+                    model_answer_repaired = true;
                     incomplete_final_draft = Some(content.clone());
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
@@ -1008,9 +1237,11 @@ impl AgentToolLoop {
                     messages.push(incomplete_answer_continuation_instruction());
                     continue;
                 }
-                if executor.requires_natural_source_binding()
+                let needs_binding = executor.requires_natural_source_binding();
+                let binding_valid = !needs_binding || executor.natural_source_binding_is_valid(&content);
+                if needs_binding
                     && !natural_clarification
-                    && !executor.natural_source_binding_is_valid(&content)
+                    && !binding_valid
                 {
                     if source_binding_repair_used || model_turns >= self.max_model_turns {
                         return Ok(evidence_limited_outcome(
@@ -1023,6 +1254,7 @@ impl AgentToolLoop {
                         ));
                     }
                     source_binding_repair_used = true;
+                    model_answer_repaired = true;
                     source_binding_repair_required = true;
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
@@ -1036,6 +1268,7 @@ impl AgentToolLoop {
                 }
                 return Ok(AgentToolLoopOutcome {
                     content,
+                    terminal: model_terminal_type(model_answer_repaired),
                     finish_reason: response.finish_reason,
                     final_submission: None,
                     model_turns,
@@ -1055,6 +1288,7 @@ impl AgentToolLoop {
                 if executor.final_submission_is_valid(submission) {
                     return Ok(AgentToolLoopOutcome {
                         content: submission.visible_content(),
+                        terminal: model_terminal_type(model_answer_repaired),
                         finish_reason: response.finish_reason,
                         final_submission: Some(submission.clone()),
                         model_turns,
@@ -1086,10 +1320,8 @@ impl AgentToolLoop {
                 let (message, _) = tool_result_message(
                     call,
                     &result,
-                    self.max_model_turns.saturating_sub(model_turns),
-                    self.max_tool_calls.saturating_sub(tool_calls),
-                    self.tool_call_limit(ToolBudgetClass::ExternalRead),
-                );
+                    self.loop_projection(model_turn_ledger::remaining(provider_run_id), tool_calls, &tool_calls_by_class, active_tools, executor),
+                )?;
                 messages.push(message);
                 continue;
             }
@@ -1117,20 +1349,75 @@ impl AgentToolLoop {
                     .get(&ToolBudgetClass::ConfirmedChange)
                     .copied()
                     .unwrap_or_default();
-                if !all_confirmation_calls || !all_valid {
-                    return Err(AppError::msg("mixed_confirmation_batch"));
-                }
                 if tool_calls.saturating_add(requested) > self.max_tool_calls
                     || class_used.saturating_add(requested)
                         > self.tool_call_limit(ToolBudgetClass::ConfirmedChange)
                 {
-                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+                    return Ok(evidence_limited_outcome(executor.evidence_limited_response(), model_turns, tool_calls, prompt_tokens, completion_tokens, total_tokens));
                 }
                 observer.on_tools_starting()?;
-                executor
-                    .request_change_set(run_id, &response.tool_calls, tool_calls.saturating_add(1))
+                let request_outcome = if !all_confirmation_calls || !all_valid {
+                    ChangeSetRequestOutcome::Rejected(response.tool_calls.iter().map(|call|
+                        (call.id.clone(), rejected_result(call, "mixed_confirmation_batch"))).collect())
+                } else {
+                    executor.request_change_set(run_id, &response.tool_calls, tool_calls.saturating_add(1)).await?
+                };
+                match request_outcome {
+                    ChangeSetRequestOutcome::Frozen => return Err(AppError::msg(CONFIRMATION_PENDING_ERROR)),
+                    ChangeSetRequestOutcome::Rejected(results) => {
+                        // Preserve a complete provider-neutral call/result pair
+                        // for the entire rejected batch. No side effect ran.
+                        if results.len() != response.tool_calls.len()
+                            || response.tool_calls.iter().zip(&results).any(|(call, (id, result))|
+                                call.id != *id || call.function.name != result.tool_name || result.success)
+                        {
+                            return Err(AppError::msg("confirmation_feedback_identity_invalid"));
+                        }
+                        rejected_confirmation_summary = Some(budget::confirmation_rejection_summary(&results));
+                        provider.on_tool_proposals_not_dispatched(provider_run_id)?;
+                        messages.push(assistant_tool_message(&response));
+                        for (call, (_, result)) in response.tool_calls.iter().zip(&results) {
+                            let projection = self.loop_projection(model_turn_ledger::remaining(provider_run_id), tool_calls, &tool_calls_by_class, active_tools, executor);
+                            messages.push(tool_result_message(call, result, projection)?.0);
+                        }
+                        observer.on_tools_finished()?;
+                        rejected_rounds = rejected_rounds.saturating_add(1);
+                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair", "round":rejected_rounds, "reason":"confirmation_preflight"}));
+                        continue;
+                    }
+                }
+            }
+
+            // A model that proposes tools instead of answering still owes the
+            // Run its minimum observation. The same single bootstrap runs
+            // before the first dispatch round, so the model chooses its queries
+            // with the Host's preliminary result already in context.
+            if executor.requires_web_observation()
+                && !web_observation_performed
+                && !host_web_bootstrap_dispatched
+            {
+                let bootstrap = self
+                    .dispatch_host_web_bootstrap(
+                        executor,
+                        run_id,
+                        tool_calls,
+                        &tool_calls_by_class,
+                        telemetry,
+                        observer,
+                        &mut messages,
+                        observation_position,
+                    )
                     .await?;
-                return Err(AppError::msg(CONFIRMATION_PENDING_ERROR));
+                web_observation_performed = bootstrap.observation_performed;
+                if let Some(applied) = bootstrap.applied {
+                    host_web_bootstrap_dispatched = true;
+                    tool_calls = applied.tool_calls;
+                    tool_calls_by_class
+                        .insert(ToolBudgetClass::Network, applied.network_tool_calls);
+                    if let Some(usage) = usage.as_deref_mut() {
+                        usage.tool_calls = tool_calls;
+                    }
+                }
             }
 
             let mut discovery_calls_this_turn = 0_u32;
@@ -1141,9 +1428,10 @@ impl AgentToolLoop {
                 discovery_calls_this_turn,
                 tool_calls,
                 &tool_calls_by_class,
-                &successful_fingerprints,
+                &executions,
                 &fingerprints,
                 self,
+                executor,
             );
             for (call, disposition) in &mut proposal_dispositions {
                 if *disposition == ToolCallDisposition::Dispatched {
@@ -1158,22 +1446,41 @@ impl AgentToolLoop {
                     ToolCallDisposition::Deferred => "deferred_for_feedback",
                     ToolCallDisposition::Dispatched => "accepted",
                 };
-                let name = crate::ai_runtime::tool_catalog::catalog_find(&call.function.name)
-                    .map_or("unknown", |entry| entry.name);
-                executor.record_tool_loop_diagnostic(serde_json::json!({"event":"proposal", "tool":name, "reason":reason, "modelTurn":model_turns}));
+                let surface: Vec<&str> = active_allowed_tools.iter().copied().collect();
+                let declared: Vec<&str> =
+                    active_tools.iter().map(|tool| tool.name.as_str()).collect();
+                executor.record_tool_loop_diagnostic(
+                    crate::ai_runtime::tool_name_origin::proposal_payload(
+                        &call.function.name,
+                        &surface,
+                        &declared,
+                        executor.mapped_tool_name(&call.function.name),
+                        reason,
+                        model_turns,
+                    ),
+                );
             }
             if proposal_dispositions
                 .iter()
                 .all(|(_, disposition)| *disposition != ToolCallDisposition::Dispatched)
             {
                 provider.on_tool_proposals_not_dispatched(provider_run_id)?;
-                messages.push(tool_proposal_feedback_instruction(&proposal_dispositions, active_tools, self.max_model_turns.saturating_sub(model_turns), self.max_tool_calls.saturating_sub(tool_calls), self.max_network_tool_calls.saturating_sub(*tool_calls_by_class.get(&ToolBudgetClass::Network).unwrap_or(&0))));
+                let envelope_last_turn = model_turns.saturating_add(1) >= self.max_model_turns
+                    || tool_calls >= self.max_tool_calls;
+                let target_action = if envelope_last_turn {
+                    NEXT_ACTION_SYNTHESIZE
+                } else {
+                    NEXT_ACTION_CONTINUE
+                };
+                messages.push(tool_proposal_feedback_instruction(
+                    &proposal_dispositions,
+                    active_tools,
+                    target_action,
+                ));
                 rejected_rounds = rejected_rounds.saturating_add(1);
                 executor.record_tool_loop_diagnostic(serde_json::json!({"event":"repair", "round":rejected_rounds}));
-                if rejected_rounds >= 2 || model_turns.saturating_add(1) >= self.max_model_turns
-                {
+                if envelope_last_turn {
                     synthesis_required = true;
-                    messages.push(LlmMessage { role: MessageRole::System, content: "Tool proposal repair is exhausted. No rejected action ran. Synthesize supported information from actual observations and state what remains unresolved.".into(), tool_call_id: None, tool_calls: None, reasoning_content: None });
                 }
                 continue;
             }
@@ -1196,6 +1503,8 @@ impl AgentToolLoop {
             let mut round_made_progress = false;
             let mut round_had_success = false;
             for call in &dispatched_response.tool_calls {
+                let mut recorded_execution = false;
+                let mut replayed = false;
                 ensure_run_not_cancelled(run_id)?;
                 let valid_arguments = valid_call_arguments(call);
                 let executor_owns_invalid_arguments =
@@ -1210,12 +1519,12 @@ impl AgentToolLoop {
                     deferred_result(call)
                 } else {
                     let fingerprint = tool_fingerprint(call);
-                    if successful_fingerprints.contains(&fingerprint) {
+                    if executions.get(&fingerprint).is_some_and(ExecutionRecord::blocks_execution) {
                         rejected_result(call, "tool_call_already_succeeded")
                     } else {
                         let count = fingerprints.entry(fingerprint.clone()).or_insert(0);
                         *count += 1;
-                        if *count > MAX_REPEAT_CALLS {
+                        if *count > MAX_REPEAT_CALLS && !executions.get(&tool_fingerprint(call)).is_some_and(|record|record.compacted) {
                             rejected_result(call, "tool_call_repeated")
                         } else if tool_calls >= self.max_tool_calls {
                             if let Some(telemetry) = telemetry {
@@ -1225,8 +1534,8 @@ impl AgentToolLoop {
                             }
                             rejected_result(call, "tool_call_budget_exhausted")
                         } else {
-                            let class = catalog_tool_budget_class(&call.function.name)
-                                .unwrap_or(ToolBudgetClass::ExternalRead);
+                            let class = executor.tool_budget_class(&call.function.name)
+                                .ok_or_else(|| AppError::run(SafeRunErrorCode::ToolLoopLimit))?;
                             let used = tool_calls_by_class.entry(class).or_insert(0);
                             if *used >= self.tool_call_limit(class) {
                                 rejected_result(call, "tool_category_budget_exhausted")
@@ -1244,10 +1553,27 @@ impl AgentToolLoop {
                                     telemetry.record_executed_tool_call(&call.function.name);
                                 }
                                 provider.on_tool_call_dispatched(provider_run_id)?;
-                                let result = match executor.execute(run_id, call, tool_calls).await {
+                                let replay = executions.get(&fingerprint).filter(|record|record.compacted);
+                                let execution = if let Some(record) = replay {
+                                    if let Some(reason) = executor.observation_replay_rejection(run_id,call,tool_calls)? {
+                                        Ok(rejected_result(call,reason))
+                                    } else {
+                                        replayed = true;
+                                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"observation_replay","tool":crate::ai_runtime::tool_catalog::catalog_find(&call.function.name).map_or("external", |entry| entry.name),"providerAttempts":0}));
+                                        Ok(record.result.clone())
+                                    }
+                                } else {
+                                    recorded_execution = true;
+                                    executor.execute(run_id,call,tool_calls).await
+                                };
+                                let result = match execution {
                                     Ok(result) => result,
                                     Err(error) => {
-                                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"tool_error", "tool":crate::ai_runtime::tool_catalog::catalog_find(&call.function.name).map_or("unknown", |entry| entry.name), "reason":SafeRunErrorCode::from_app_error(&error).as_str()}));
+                                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"tool_error", "callId":call.id, "tool":crate::ai_runtime::tool_catalog::catalog_find(&call.function.name).map_or("unknown", |entry| entry.name), "reason":SafeRunErrorCode::from_app_error(&error).as_str()}));
+                                        if SafeRunErrorCode::from_app_error(&error) == SafeRunErrorCode::ToolLoopLimit {
+                                            observer.on_tools_finished()?;
+                                            return Ok(evidence_limited_outcome(executor.evidence_limited_response(),model_turns,tool_calls,prompt_tokens,completion_tokens,total_tokens));
+                                        }
                                         return Err(error);
                                     }
                                 };
@@ -1258,26 +1584,30 @@ impl AgentToolLoop {
                                     web_observation_performed |= executor.web_observation_performed().unwrap_or(true);
                                 }
                                 round_had_success |= result.success;
-                                if result.success {
-                                    successful_fingerprints.insert(fingerprint);
-                                }
-                                round_made_progress |=
-                                    register_safe_progress(&mut observed_progress, &result);
                                 result
                             }
                         }
                     }
                 };
-                let class = catalog_tool_budget_class(&call.function.name)
-                    .unwrap_or(ToolBudgetClass::ExternalRead);
-                let class_used = tool_calls_by_class.get(&class).copied().unwrap_or_default();
-                let (message, truncated) = tool_result_message(
-                    call,
-                    &result,
-                    self.max_model_turns.saturating_sub(model_turns),
-                    self.max_tool_calls.saturating_sub(tool_calls),
-                    self.tool_call_limit(class).saturating_sub(class_used),
-                );
+                let projection = self
+                    .loop_projection(
+                        model_turn_ledger::remaining(provider_run_id),
+                        tool_calls,
+                        &tool_calls_by_class,
+                        active_tools,
+                        executor,
+                    )
+                    .with_failure_type(observation_failure_type(&result));
+                let projected = tool_result_message(call, &result, projection);
+                let (mut message, truncated) = match projected {
+                    Ok(projected) => projected,
+                    Err(error) if SafeRunErrorCode::from_app_error(&error) == SafeRunErrorCode::ToolLoopLimit => {
+                        executor.record_tool_loop_diagnostic(serde_json::json!({"event":"projection_limit","reason":"tool_payload"}));
+                        observer.on_tools_finished()?;
+                        return Ok(evidence_limited_outcome(executor.evidence_limited_response(),model_turns,tool_calls,prompt_tokens,completion_tokens,total_tokens));
+                    }
+                    Err(error) => return Err(error),
+                };
                 if truncated {
                     if let Some(telemetry) = telemetry {
                         telemetry.record_truncation(
@@ -1285,12 +1615,28 @@ impl AgentToolLoop {
                         );
                     }
                 }
+                if recorded_execution || replayed {
+                    let mut payload:serde_json::Value = serde_json::from_str(&message.content.text_content())?;
+                    if replayed { payload["loopObservation"]["historicalObservation"] = serde_json::json!(true); }
+                    let mut bounded = result.clone();
+                    bounded.output = payload["output"].clone();
+                    if !replayed { round_made_progress |= register_safe_progress(&mut observed_progress,&bounded); }
+                    executions.insert(tool_fingerprint(call),ExecutionRecord {result:bounded,call_id:call.id.clone(),compacted:false});
+                    message.content = serde_json::to_string(&payload)?.into();
+                }
                 messages.push(message);
             }
             if !non_dispatched.is_empty() {
-                messages.push(tool_proposal_feedback_instruction(&non_dispatched, active_tools, self.max_model_turns.saturating_sub(model_turns), self.max_tool_calls.saturating_sub(tool_calls), self.max_network_tool_calls.saturating_sub(*tool_calls_by_class.get(&ToolBudgetClass::Network).unwrap_or(&0))));
+                messages.push(tool_proposal_feedback_instruction(
+                    &non_dispatched,
+                    active_tools,
+                    NEXT_ACTION_CONTINUE,
+                ));
             }
             observer.on_tools_finished()?;
+            if let Some(usage) = usage.as_deref_mut() {
+                usage.model_turns = model_turn_ledger::used(provider_run_id).max(model_turns);
+            }
             if round_had_success {
                 failed_service_rounds = 0;
                 no_progress_rounds = if round_made_progress { 0 } else { no_progress_rounds.saturating_add(1) };
@@ -1298,17 +1644,12 @@ impl AgentToolLoop {
                 failed_service_rounds = failed_service_rounds.saturating_add(1);
             }
             executor.record_tool_loop_diagnostic(serde_json::json!({"event":"progress", "noProgressRounds":no_progress_rounds, "failedServiceRounds":failed_service_rounds}));
-            // Never spend the final model turn on another exploratory tool
-            // request. Once this round has left only one turn, close the
-            // business surface and reserve that final opportunity for
-            // synthesis (or the terminal structured submission tool).
-            let final_turn_must_be_reserved = model_turns.saturating_add(1) >= self.max_model_turns;
-            if no_progress_rounds >= 2 || failed_service_rounds >= 2
-                || tool_calls >= self.max_tool_calls
-                || final_turn_must_be_reserved
-            {
+            // Envelope only: last model turn or exhausted tool-call ledger.
+            // Recipe counters (`no_progress_rounds`, `failed_service_rounds`)
+            // do not close the surface (R11, R12).
+            let final_turn_must_be_reserved = model_turn_ledger::remaining(provider_run_id) <= 1;
+            if tool_calls >= self.max_tool_calls || final_turn_must_be_reserved {
                 synthesis_required = true;
-                messages.push(tool_surface_closed_instruction());
             }
         }
 
@@ -1317,20 +1658,77 @@ impl AgentToolLoop {
                 crate::ai_runtime::agent_capacity_eval::BudgetOutcome::ModelTurnsExhausted,
             );
         }
-        Err(AppError::msg(if incomplete_final_draft.is_some() {
-            "agent_run_incomplete_output"
-        } else {
-            "agent_run_tool_loop_limit"
-        }))
-        }.await;
+        // The Run exhausted its model turns without a publishable answer.
+        // Previously this was a terminal error and the user saw nothing at all.
+        // It now closes with the same Host-authored bounded limitation, while
+        // the real cause stays in the bounded diagnostics so an operator can
+        // still tell turn exhaustion from an ordinary answer.
+        executor.record_tool_loop_diagnostic(serde_json::json!({
+            "event": "exhausted",
+            "cause": if incomplete_final_draft.is_some() {
+                "agent_run_incomplete_output"
+            } else {
+                "agent_run_tool_loop_limit"
+            },
+            "modelTurns": model_turns,
+            "toolCalls": tool_calls,
+            "rejectedRounds": rejected_rounds,
+        }));
+        Ok(evidence_limited_outcome(
+            executor.evidence_limited_response(),
+            model_turns,
+            tool_calls,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        ))
+        }).await;
+        // An unfrozen candidate is a different user-visible limitation from
+        // missing research evidence. Preserve that fact even when the next
+        // provider attempt itself fails to acquire its budget lease.
+        let outcome = match (outcome, rejected_confirmation_summary) {
+            (Err(error), Some(summary))
+                if SafeRunErrorCode::from_app_error(&error) == SafeRunErrorCode::ToolLoopLimit =>
+            {
+                Ok(evidence_limited_outcome(
+                    summary,
+                    model_turns,
+                    tool_calls,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                ))
+            }
+            (Ok(mut result), Some(summary)) if result.terminal.is_host_authored() => {
+                result.content = summary;
+                Ok(result)
+            }
+            (result, _) => result,
+        };
+        let (used_turns, used_prompt, used_completion) =
+            model_turn_ledger::accounting(provider_run_id);
+        if let Some(usage) = usage {
+            usage.model_turns = used_turns;
+            usage.prompt_tokens = used_prompt;
+            usage.completion_tokens = used_completion;
+            usage.total_tokens = used_prompt.saturating_add(used_completion);
+        }
+        let outcome = outcome.map(|mut result| {
+            result.model_turns = used_turns;
+            result.prompt_tokens = used_prompt;
+            result.completion_tokens = used_completion;
+            result.total_tokens = used_prompt.saturating_add(used_completion);
+            result
+        });
         let exit_reason = match &outcome {
-            Ok(result) if result.finish_reason == "evidence_limited" => "evidence_limited",
+            // The typed terminal decides this, not the body text and not a
+            // synthetic Provider finish reason.
+            Ok(result) if result.terminal.is_host_authored() => "evidence_limited",
             Ok(result) if is_natural_clarification(&result.content) => "clarification",
-            Ok(_) if rejected_rounds >= 2 => "recovery_exhausted",
             Ok(_) if !web_observation_performed && executor.web_capability_blocked() => {
                 "tool_unavailable"
             }
-            Ok(_) => "model_answer",
+            Ok(result) => result.terminal.as_str(),
             Err(error) => SafeRunErrorCode::from_app_error(error).as_str(),
         };
         executor.record_tool_loop_diagnostic(serde_json::json!({"event":"exit", "reason":exit_reason, "modelTurns":model_turns, "toolCalls":tool_calls, "observationPerformed":web_observation_performed, "capabilityBlocked":executor.web_capability_blocked()}));
@@ -1360,100 +1758,10 @@ impl StreamEventObserver for SilentStreamObserver {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn plan_tool_proposals<'a>(
-    calls: &'a [ToolCall],
-    active_allowed_tools: &HashSet<&str>,
-    active_tools: &[ToolSpec],
-    discovery_calls_this_turn: u32,
-    tool_calls: u32,
-    tool_calls_by_class: &HashMap<ToolBudgetClass, u32>,
-    successful_fingerprints: &HashSet<String>,
-    fingerprints: &HashMap<String, u32>,
-    loop_policy: &AgentToolLoop,
-) -> Vec<(&'a ToolCall, ToolCallDisposition)> {
-    let mut planned_discovery = discovery_calls_this_turn;
-    let mut planned_total = tool_calls;
-    let mut planned_by_class = tool_calls_by_class.clone();
-    let mut planned_fingerprints = fingerprints.clone();
-    calls
-        .iter()
-        .map(|call| {
-            let executor_owns_invalid_arguments =
-                call.function.name == "spawn_subagent" && valid_call_identity(call);
-            let rejection = if !active_allowed_tools.contains(call.function.name.as_str()) {
-                Some("tool_not_in_run_surface")
-            } else if call.id.trim().is_empty() {
-                Some("missing_call_id")
-            } else if !valid_call_arguments(call) && !executor_owns_invalid_arguments {
-                Some("invalid_arguments_json")
-            } else if !executor_owns_invalid_arguments
-                && active_tools
-                    .iter()
-                    .find(|tool| tool.name == call.function.name)
-                    .is_some_and(|tool| {
-                        let args =
-                            serde_json::from_str::<serde_json::Value>(&call.function.arguments)
-                                .unwrap_or_default();
-                        matches!(
-                            crate::ai_runtime::guardrails::verify_tool_args(
-                                &call.function.name,
-                                &args,
-                                &tool.input_schema
-                            ),
-                            crate::ai_runtime::guardrails::GuardResult::Block { .. }
-                        )
-                    })
-            {
-                Some("arguments_schema_mismatch")
-            } else if planned_total >= loop_policy.max_tool_calls {
-                Some("tool_call_budget_exhausted")
-            } else {
-                None
-            };
-            if let Some(reason) = rejection {
-                return (call, ToolCallDisposition::Rejected(reason));
-            }
-            let fingerprint = tool_fingerprint(call);
-            if successful_fingerprints.contains(&fingerprint) {
-                return (
-                    call,
-                    ToolCallDisposition::Rejected("tool_call_already_succeeded"),
-                );
-            }
-            if is_discovery_call(call) && planned_discovery >= MAX_DISCOVERY_CALLS_PER_MODEL_TURN {
-                return (call, ToolCallDisposition::Deferred);
-            }
-            let count = planned_fingerprints.entry(fingerprint).or_insert(0);
-            *count = count.saturating_add(1);
-            if *count > MAX_REPEAT_CALLS {
-                return (call, ToolCallDisposition::Rejected("tool_call_repeated"));
-            }
-            let class = catalog_tool_budget_class(&call.function.name)
-                .unwrap_or(ToolBudgetClass::ExternalRead);
-            let used = planned_by_class.entry(class).or_default();
-            if *used >= loop_policy.tool_call_limit(class) {
-                return (
-                    call,
-                    ToolCallDisposition::Rejected("tool_category_budget_exhausted"),
-                );
-            }
-            if is_discovery_call(call) {
-                planned_discovery = planned_discovery.saturating_add(1);
-            }
-            planned_total = planned_total.saturating_add(1);
-            *used = used.saturating_add(1);
-            (call, ToolCallDisposition::Dispatched)
-        })
-        .collect()
-}
-
 fn tool_proposal_feedback_instruction(
     proposals: &[(&ToolCall, ToolCallDisposition)],
     tools: &[ToolSpec],
-    remaining_models: u32,
-    remaining_tools: u32,
-    remaining_network: u32,
+    target_action: &str,
 ) -> LlmMessage {
     let surface = tools
         .iter()
@@ -1468,12 +1776,19 @@ fn tool_proposal_feedback_instruction(
         .iter()
         .map(|(call, disposition)| {
             let reason = match disposition {
-                ToolCallDisposition::Rejected(reason) => reason,
+                ToolCallDisposition::Rejected(reason) => *reason,
                 ToolCallDisposition::Deferred => "deferred_for_feedback",
                 ToolCallDisposition::Dispatched => "dispatched",
             };
             if matches!(disposition, ToolCallDisposition::Rejected(_)) {
-                format!("{}:rejected_before_dispatch({reason})", call.function.name)
+                let mut line = format!("{}:rejected_before_dispatch({reason})", call.function.name);
+                if reason == "arguments_schema_mismatch" {
+                    if let Some(field_reason) = schema_mismatch_block_reason(call, tools) {
+                        line.push_str(": ");
+                        line.push_str(&field_reason);
+                    }
+                }
+                line
             } else {
                 format!("{}:{reason}", call.function.name)
             }
@@ -1483,12 +1798,24 @@ fn tool_proposal_feedback_instruction(
     LlmMessage {
         role: MessageRole::System,
         content: format!(
-            "The previous tool proposal was not dispatched by the Host ({feedback}). It created no tool result and no external action. Correct the request using the exposed surface; this is not a failed search and consumed no execution budget. Remaining model turns={remaining_models}, tools={remaining_tools}, network={remaining_network}. Allowed tool names and parameter schemas: {surface}. Supply a nonempty call id and JSON object matching the schema. Do not claim the rejected action ran."
+            "The previous tool proposal was not dispatched by the Host ({feedback}). It created no tool result and no external action. Correct the request using the exposed surface; this is not a failed search and it consumed no execution allowance. Next action: {target_action}. Allowed tool names and parameter schemas: {surface}. Supply a nonempty call id and JSON object matching the schema. Do not claim the rejected action ran."
         )
         .into(),
         tool_call_id: None,
         tool_calls: None,
         reasoning_content: None,
+    }
+}
+
+fn schema_mismatch_block_reason(call: &ToolCall, tools: &[ToolSpec]) -> Option<String> {
+    let schema = &tools
+        .iter()
+        .find(|tool| tool.name == call.function.name)?
+        .input_schema;
+    let args = serde_json::from_str::<serde_json::Value>(&call.function.arguments).ok()?;
+    match crate::ai_runtime::guardrails::verify_tool_args(&call.function.name, &args, schema) {
+        crate::ai_runtime::guardrails::GuardResult::Block { reason } => Some(reason),
+        _ => None,
     }
 }
 
@@ -1500,253 +1827,6 @@ fn register_safe_progress(progress: &mut HashSet<String>, result: &ToolCallResul
         }
     }
     added
-}
-
-fn initial_loop_budget_instruction(
-    max_model_turns: u32,
-    max_tool_calls: u32,
-    max_local_tool_calls: u32,
-    max_network_tool_calls: u32,
-    max_external_read_tool_calls: u32,
-    max_runtime_tool_calls: u32,
-) -> LlmMessage {
-    LlmMessage {
-        role: MessageRole::System,
-        content: format!(
-            "This Run uses one bounded observation-action loop. Budgets are maxima, not targets: modelTurns={max_model_turns}, totalTools={max_tool_calls}, localReads={max_local_tool_calls}, network={max_network_tool_calls}, externalReads={max_external_read_tool_calls}, runtime={max_runtime_tool_calls}. Choose only actions that can add information, inspect each returned observation before dependent actions, and finish as soon as the user goal is adequately supported. Do not reveal private reasoning."
-        )
-        .into(),
-        tool_call_id: None,
-        tool_calls: None,
-        reasoning_content: None,
-    }
-}
-
-fn safe_progress_identities(output: &serde_json::Value) -> Vec<String> {
-    const SAFE_IDENTITY_KEYS: &[&str] = &[
-        "resourceId",
-        "resource_id",
-        "resourceIds",
-        "resource_ids",
-        "canonicalUrl",
-        "canonical_url",
-        "canonicalUrls",
-        "canonical_urls",
-        "contentHash",
-        "content_hash",
-        "revision",
-        "fileHash",
-        "file_hash",
-        "targetFileHash",
-        "target_file_hash",
-    ];
-
-    fn collect_identity_values(value: &serde_json::Value, identities: &mut HashSet<String>) {
-        match value {
-            serde_json::Value::String(value) if !value.trim().is_empty() => {
-                identities.insert(value.clone());
-            }
-            serde_json::Value::Number(value) => {
-                identities.insert(value.to_string());
-            }
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    collect_identity_values(value, identities);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn collect(value: &serde_json::Value, identities: &mut HashSet<String>) {
-        match value {
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    collect(value, identities);
-                }
-            }
-            serde_json::Value::Object(values) => {
-                for (key, value) in values {
-                    if SAFE_IDENTITY_KEYS.contains(&key.as_str()) {
-                        collect_identity_values(value, identities);
-                    }
-                    collect(value, identities);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut identities = HashSet::new();
-    collect(output, &mut identities);
-    let mut identities = identities.into_iter().collect::<Vec<_>>();
-    identities.sort();
-    identities
-}
-
-fn tool_surface_closed_instruction() -> LlmMessage {
-    LlmMessage {
-        role: MessageRole::System,
-        content: "Tool work is now closed because it has reached a bounded limit or produced no new safe resources in two complete rounds. Synthesize the best answer from the current transcript, state material uncertainty plainly, and do not request another business tool.".into(),
-        tool_call_id: None,
-        tool_calls: None,
-        reasoning_content: None,
-    }
-}
-
-fn missing_evidence_repair_instruction() -> LlmMessage {
-    LlmMessage {
-        role: MessageRole::System,
-        content: "The previous draft cannot be shown because this Run requires current evidence and no usable evidence has been registered. Use an available authorized read tool now to verify the answer. Do not invent facts or claim that you searched when no tool result is present.".into(),
-        tool_call_id: None,
-        tool_calls: None,
-        reasoning_content: None,
-    }
-}
-
-fn source_binding_repair_instruction() -> LlmMessage {
-    LlmMessage {
-        role: MessageRole::System,
-        content: "The previous draft cannot be shown because it does not bind its factual claims to this Run's sources. Revise it using only the existing transcript and cite the supplied Run-local source labels precisely. Do not call further business tools or invent a source.".into(),
-        tool_call_id: None,
-        tool_calls: None,
-        reasoning_content: None,
-    }
-}
-
-fn evidence_limited_outcome(
-    content: String,
-    model_turns: u32,
-    tool_calls: u32,
-    prompt_tokens: u32,
-    completion_tokens: u32,
-    total_tokens: u32,
-) -> AgentToolLoopOutcome {
-    AgentToolLoopOutcome {
-        content,
-        finish_reason: "evidence_limited".to_string(),
-        final_submission: None,
-        model_turns,
-        tool_calls,
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
-    }
-}
-
-pub(crate) fn is_evidence_limited_response(content: &str) -> bool {
-    content
-        .trim_start()
-        .starts_with(EVIDENCE_LIMITED_RESPONSE_PREFIX)
-}
-
-/// Update the already-compiled system message after the bounded compaction
-/// turn succeeds. The final answer must see the same durable summary that was
-/// just persisted; deferring it until the next Run made the compression call
-/// consume budget without improving the active answer.
-fn replace_conversation_memory_in_current_messages(
-    messages: &mut [LlmMessage],
-    prior_fragment: &str,
-    updated_fragment: &str,
-) {
-    let Some(system_message) = messages
-        .iter_mut()
-        .find(|message| matches!(message.role, MessageRole::System))
-    else {
-        return;
-    };
-    let Some(content) = system_message.content.as_mut_str() else {
-        return;
-    };
-    let prior_block = format!("{prior_fragment}{CONVERSATION_HISTORY_COVERAGE_WARNING}");
-    if content.contains(&prior_block) {
-        *content = content.replacen(&prior_block, updated_fragment, 1);
-    } else if content.contains(prior_fragment) {
-        *content = content.replacen(prior_fragment, updated_fragment, 1);
-    }
-}
-
-fn enforce_prompt_budget(
-    messages: &[LlmMessage],
-    tools: &[ToolSpec],
-    budget: AgentModelTurnBudget,
-) -> AppResult<()> {
-    if budget
-        .max_prompt_tokens
-        .is_some_and(|limit| estimate_prompt_tokens(messages, tools) > limit)
-    {
-        return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
-    }
-    Ok(())
-}
-
-pub(crate) fn resolved_turn_usage(
-    response: &GatewayResponse,
-    messages: &[LlmMessage],
-    tools: &[ToolSpec],
-) -> (u32, u32, u32) {
-    let prompt_tokens = nonzero_or_estimate(
-        response.usage.prompt_tokens,
-        estimate_prompt_tokens(messages, tools),
-    );
-    let completion_tokens = nonzero_or_estimate(
-        response.usage.completion_tokens,
-        estimate_completion_tokens(response),
-    );
-    let total_tokens = nonzero_or_estimate(
-        response.usage.total_tokens,
-        prompt_tokens.saturating_add(completion_tokens),
-    );
-    (prompt_tokens, completion_tokens, total_tokens)
-}
-
-fn nonzero_or_estimate(reported: u32, estimate: u32) -> u32 {
-    if reported == 0 {
-        estimate
-    } else {
-        reported
-    }
-}
-
-fn estimate_prompt_tokens(messages: &[LlmMessage], tools: &[ToolSpec]) -> u32 {
-    let message_tokens = messages.iter().fold(0_u32, |total, message| {
-        total.saturating_add(estimate_tokens(&message.content.text_content()))
-    });
-    let tool_tokens = serde_json::to_string(tools)
-        .ok()
-        .map(|serialized| estimate_tokens(&serialized))
-        .unwrap_or_default();
-    message_tokens.saturating_add(tool_tokens)
-}
-
-fn estimate_completion_tokens(response: &GatewayResponse) -> u32 {
-    let content_tokens = response
-        .content
-        .as_deref()
-        .map(estimate_tokens)
-        .unwrap_or_default();
-    let tool_tokens = if response.tool_calls.is_empty() {
-        0
-    } else {
-        serde_json::to_string(&response.tool_calls)
-            .ok()
-            .map(|serialized| estimate_tokens(&serialized))
-            .unwrap_or_default()
-    };
-    let reasoning_tokens = response
-        .reasoning_content
-        .as_deref()
-        .map(estimate_tokens)
-        .unwrap_or_default();
-    content_tokens
-        .saturating_add(tool_tokens)
-        .saturating_add(reasoning_tokens)
-}
-
-fn estimate_tokens(value: &str) -> u32 {
-    crate::ai_runtime::text_support::estimate_tokens(value)
-        .try_into()
-        .unwrap_or(u32::MAX)
 }
 
 fn can_recover_visible_stream_error(error: &AppError, visible_draft: Option<&str>) -> bool {
@@ -1817,74 +1897,6 @@ fn assistant_tool_message(response: &GatewayResponse) -> LlmMessage {
         tool_call_id: None,
         tool_calls: Some(response.tool_calls.clone()),
         reasoning_content: response.reasoning_content.clone(),
-    }
-}
-
-fn tool_result_message(
-    call: &ToolCall,
-    result: &ToolCallResult,
-    remaining_model_turns: u32,
-    remaining_tool_calls: u32,
-    remaining_category_calls: u32,
-) -> (LlmMessage, bool) {
-    let payload = serde_json::json!({
-        "success": result.success,
-        "output": result.output,
-        "error": result.error,
-        "loopObservation": {
-            "remainingModelTurns": remaining_model_turns,
-            "remainingToolCalls": remaining_tool_calls,
-            "remainingCategoryCalls": remaining_category_calls,
-        },
-    });
-    let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| {
-        "{\"success\":false,\"error\":\"tool_result_serialization_failed\"}".into()
-    });
-    let budget = tool_result_char_budget(&call.function.name);
-    let truncated = serialized.chars().count() > budget;
-    // Web evidence is a structured protocol packet, not prose. Slicing it
-    // would turn a capacity problem into malformed JSON and let the model
-    // reason over a partial, unverifiable result. The normal Web executor
-    // packs its output below this limit; this branch is a fail-closed guard
-    // for every other executor (including harness implementations).
-    if truncated && matches!(call.function.name.as_str(), "web_search" | "web_fetch") {
-        let overflow = serde_json::json!({
-            "success": false,
-            "output": serde_json::Value::Null,
-            "error": "web_evidence_pack_overflow",
-        });
-        let content = serde_json::to_string(&overflow).unwrap_or_else(|_| {
-            "{\"success\":false,\"error\":\"web_evidence_pack_overflow\"}".into()
-        });
-        return (
-            LlmMessage {
-                role: MessageRole::Tool,
-                content: content.into(),
-                tool_call_id: Some(call.id.clone()),
-                tool_calls: None,
-                reasoning_content: None,
-            },
-            false,
-        );
-    }
-    let content = truncate_chars(&serialized, budget);
-    (
-        LlmMessage {
-            role: MessageRole::Tool,
-            content: content.into(),
-            tool_call_id: Some(call.id.clone()),
-            tool_calls: None,
-            reasoning_content: None,
-        },
-        truncated,
-    )
-}
-
-fn tool_result_char_budget(tool_name: &str) -> usize {
-    if matches!(tool_name, "web_search" | "web_fetch") {
-        MAX_WEB_TOOL_RESULT_CHARS
-    } else {
-        MAX_TOOL_RESULT_CHARS
     }
 }
 
@@ -1968,15 +1980,5 @@ fn rejected_result(call: &ToolCall, reason: &str) -> ToolCallResult {
         duration_ms: 0,
         tokens_used: None,
         error: Some(reason.to_string()),
-    }
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let prefix = chars.by_ref().take(max_chars).collect::<String>();
-    if chars.next().is_some() {
-        format!("{prefix}…")
-    } else {
-        prefix
     }
 }

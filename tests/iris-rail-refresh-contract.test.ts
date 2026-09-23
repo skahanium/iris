@@ -230,16 +230,20 @@ describe("Iris Rail complete interface contracts", () => {
   });
 
   it("ships a manual checklist for the complete Iris Rail refresh", () => {
-    const checklist = read(
-      "docs/testing/iris-rail-refresh-manual-checklist.md",
-    );
-    expect(checklist).toContain("macOS 顶栏与右侧窗口控制");
+    const checklist = read("docs/testing/iris-ui-manual-checklist.md");
+    expect(checklist).toContain("窗口外壳与平台标题栏");
     expect(checklist).toContain("Rail Segments Tab");
     expect(checklist).toContain("Outline Ghost Spine 长文");
-    expect(checklist).toContain("AI 协作侧车长对话");
-    expect(checklist).toContain("任务舱 Overlay");
-    expect(checklist).toContain("壳层边框与字号");
+    expect(checklist).toContain("Agent 侧车与主区阅读");
+    expect(checklist).toContain("禅模式与 Overlay");
+    expect(checklist).toContain("编辑器正文与主题对比");
     expect(checklist).toContain("答复完毕");
+    // The merged checklist must still carry the Rail-only checks themselves, not
+    // just sections named after them.
+    expect(checklist).toContain("左侧 Iris 品牌轨道始终可见");
+    expect(checklist).toContain("workspace-empty");
+    expect(checklist).toContain("仅保留 ghost spine 几何");
+    expect(checklist).toContain("8 个冷灰几何印记");
   });
 
   it("converges chrome shell borders and caption typography", () => {

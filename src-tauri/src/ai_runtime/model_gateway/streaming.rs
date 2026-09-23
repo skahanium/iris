@@ -7,9 +7,19 @@ use std::error::Error as StdError;
 use std::time::{Duration, Instant};
 
 use crate::ai_runtime::text_support::sanitize_provider_visible_content;
-use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
+use crate::ai_types::{EndpointFamily, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult, ProviderErrorKind};
 
+use super::streaming_anthropic::AnthropicStreamState;
+use super::streaming_chat_completions::ChatCompletionsStreamState;
+use super::streaming_reasoning::{
+    append_minimax_reasoning_details, minimax_reasoning_continuation,
+    withhold_partial_provider_control_suffix, withhold_partial_reasoning_open_suffix,
+};
+use super::streaming_witness::{
+    complete_boundary, note_boundary_http_failure, note_boundary_sent, note_boundary_serialized,
+    note_boundary_unsuccessful,
+};
 use super::{
     abort_impl::{clear_abort, is_abort_requested},
     body_impl::{build_llm_api_body, uses_openai_responses, GatewayRequest},
@@ -19,6 +29,10 @@ use super::{
     usage_impl::parse_usage,
     GatewayResponse,
 };
+
+#[path = "streaming_sse.rs"]
+mod streaming_sse;
+use streaming_sse::{decode_sse_utf8, finish_sse_utf8};
 
 /// A provider must acknowledge a streaming request promptly. This deadline covers
 /// waiting for response headers, which reqwest's per-read timeout does not bound.
@@ -167,138 +181,6 @@ fn apply_streaming_auth_headers(
             builder.header("Authorization", format!("Bearer {}", api_key))
         }
     }
-}
-
-#[derive(Default)]
-struct AnthropicToolUseBlock {
-    id: Option<String>,
-    name: Option<String>,
-    input_json: String,
-}
-
-#[derive(Default)]
-struct AnthropicStreamState {
-    content: String,
-    tool_blocks: std::collections::BTreeMap<usize, AnthropicToolUseBlock>,
-    usage: TokenUsage,
-    finish_reason: Option<String>,
-}
-
-impl AnthropicStreamState {
-    fn apply_event_json(&mut self, json: &serde_json::Value) -> AppResult<Option<String>> {
-        match json["type"].as_str() {
-            Some("content_block_start") => {
-                let index = json["index"].as_u64().unwrap_or(0) as usize;
-                let block = &json["content_block"];
-                match block["type"].as_str() {
-                    Some("text") => {
-                        if let Some(text) = block["text"].as_str() {
-                            self.content.push_str(text);
-                            return Ok(Some(text.to_string()));
-                        }
-                    }
-                    Some("tool_use") => {
-                        let entry = self.tool_blocks.entry(index).or_default();
-                        entry.id = block["id"].as_str().map(str::to_string);
-                        entry.name = block["name"].as_str().map(str::to_string);
-                        if let Some(input) = block.get("input") {
-                            if input != &serde_json::json!({}) {
-                                entry.input_json = serde_json::to_string(input)
-                                    .unwrap_or_else(|_| "{}".to_string());
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Some("content_block_delta") => {
-                let index = json["index"].as_u64().unwrap_or(0) as usize;
-                let delta = &json["delta"];
-                match delta["type"].as_str() {
-                    Some("text_delta") => {
-                        if let Some(text) = delta["text"].as_str() {
-                            self.content.push_str(text);
-                            return Ok(Some(text.to_string()));
-                        }
-                    }
-                    Some("input_json_delta") => {
-                        if let Some(partial) = delta["partial_json"].as_str() {
-                            self.tool_blocks
-                                .entry(index)
-                                .or_default()
-                                .input_json
-                                .push_str(partial);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Some("message_start") | Some("message_delta") => {
-                if let Some(stop_reason) = json["delta"]["stop_reason"].as_str() {
-                    self.finish_reason = Some(stop_reason.to_string());
-                }
-                if let Some(input_tokens) = json["message"]["usage"]["input_tokens"].as_u64() {
-                    self.usage.prompt_tokens = input_tokens as u32;
-                }
-                if let Some(input_tokens) = json["usage"]["input_tokens"].as_u64() {
-                    self.usage.prompt_tokens = input_tokens as u32;
-                }
-                if let Some(output_tokens) = json["usage"]["output_tokens"].as_u64() {
-                    self.usage.completion_tokens = output_tokens as u32;
-                }
-                self.usage.total_tokens = self.usage.prompt_tokens + self.usage.completion_tokens;
-            }
-            Some("error") => {
-                let message = json["error"]["message"]
-                    .as_str()
-                    .or_else(|| json["message"].as_str())
-                    .unwrap_or("Anthropic stream error");
-                return Err(AppError::msg(message.to_string()));
-            }
-            _ => {}
-        }
-        Ok(None)
-    }
-
-    fn into_gateway_response(self) -> GatewayResponse {
-        let tool_calls = self
-            .tool_blocks
-            .into_values()
-            .filter_map(|block| {
-                let id = block.id?;
-                let name = block.name?;
-                let arguments = normalize_tool_arguments(block.input_json);
-                Some(ToolCall {
-                    id,
-                    call_type: "function".to_string(),
-                    function: FunctionCall { name, arguments },
-                })
-            })
-            .collect();
-
-        GatewayResponse {
-            content: if self.content.is_empty() {
-                None
-            } else {
-                Some(self.content)
-            },
-            tool_calls,
-            usage: self.usage,
-            finish_reason: self.finish_reason.unwrap_or_else(|| "stop".to_string()),
-            reasoning_content: None,
-            continuation: None,
-        }
-    }
-}
-
-fn normalize_tool_arguments(input_json: String) -> String {
-    let trimmed = input_json.trim();
-    if trimmed.is_empty() {
-        return "{}".to_string();
-    }
-    serde_json::from_str::<serde_json::Value>(trimmed)
-        .and_then(|value| serde_json::to_string(&value))
-        .unwrap_or(input_json)
 }
 
 fn sanitize_stream_error_message(message: &str) -> String {
@@ -517,144 +399,6 @@ fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool, provider_id:
     normalized
 }
 
-fn withhold_partial_provider_control_suffix(visible: &str, provider_id: &str) -> String {
-    if !provider_id.eq_ignore_ascii_case("minimax") {
-        return visible.to_string();
-    }
-    const CONTROL: &str = "<|minimax|>";
-    let mut keep_len = visible.len();
-    for prefix_len in 1..CONTROL.len() {
-        if visible.ends_with(&CONTROL[..prefix_len]) {
-            keep_len = keep_len.min(visible.len().saturating_sub(prefix_len));
-        }
-    }
-    visible[..keep_len].to_string()
-}
-
-fn append_minimax_reasoning_details(
-    value: &serde_json::Value,
-    details: &mut Vec<serde_json::Value>,
-) {
-    let incoming = match value {
-        serde_json::Value::Array(items) => items.iter().collect::<Vec<_>>(),
-        serde_json::Value::Object(_) => vec![value],
-        _ => return,
-    };
-
-    for (position, item) in incoming.into_iter().enumerate() {
-        let Some(item_object) = item.as_object() else {
-            continue;
-        };
-        let matching_index = details
-            .iter()
-            .position(|existing| minimax_reasoning_detail_stably_matches(existing, item))
-            .or_else(|| {
-                details
-                    .get(position)
-                    .filter(|existing| minimax_reasoning_detail_position_matches(existing, item))
-                    .map(|_| position)
-            });
-        let Some(matching_index) = matching_index else {
-            details.push(item.clone());
-            continue;
-        };
-        let Some(existing_object) = details[matching_index].as_object_mut() else {
-            details[matching_index] = item.clone();
-            continue;
-        };
-
-        let merged_text = match (
-            existing_object
-                .get("text")
-                .and_then(serde_json::Value::as_str),
-            item_object.get("text").and_then(serde_json::Value::as_str),
-        ) {
-            (Some(existing), Some(incoming)) if incoming.starts_with(existing) => {
-                Some(incoming.to_string())
-            }
-            (Some(existing), Some(incoming)) if existing.starts_with(incoming) => {
-                Some(existing.to_string())
-            }
-            (Some(existing), Some(incoming)) => Some(format!("{existing}{incoming}")),
-            (None, Some(incoming)) => Some(incoming.to_string()),
-            _ => None,
-        };
-        for (key, value) in item_object {
-            if key != "text" {
-                existing_object.insert(key.clone(), value.clone());
-            }
-        }
-        if let Some(text) = merged_text {
-            existing_object.insert("text".to_string(), serde_json::Value::String(text));
-        }
-    }
-}
-
-fn minimax_reasoning_detail_stably_matches(
-    existing: &serde_json::Value,
-    incoming: &serde_json::Value,
-) -> bool {
-    let (Some(existing), Some(incoming)) = (existing.as_object(), incoming.as_object()) else {
-        return false;
-    };
-    if let Some(id) = incoming.get("id") {
-        return existing.get("id") == Some(id);
-    }
-    if let Some(index) = incoming.get("index") {
-        return existing.get("index") == Some(index)
-            && existing.get("type") == incoming.get("type");
-    }
-    false
-}
-
-fn minimax_reasoning_detail_position_matches(
-    existing: &serde_json::Value,
-    incoming: &serde_json::Value,
-) -> bool {
-    let (Some(existing), Some(incoming)) = (existing.as_object(), incoming.as_object()) else {
-        return false;
-    };
-    existing.get("id").is_none()
-        && existing.get("index").is_none()
-        && incoming.get("id").is_none()
-        && incoming.get("index").is_none()
-        && existing.get("type").is_some()
-        && existing.get("type") == incoming.get("type")
-}
-
-fn minimax_reasoning_continuation(
-    details: Vec<serde_json::Value>,
-    fallback_reasoning: String,
-) -> Option<String> {
-    if !details.is_empty() {
-        return serde_json::to_string(&details).ok();
-    }
-    // `reasoning_split` should yield structured details. Some compatible
-    // gateways still stream only a dedicated text delta; preserve it in the
-    // documented details envelope rather than dropping a tool continuation.
-    (!fallback_reasoning.is_empty()).then(|| {
-        serde_json::json!([{
-            "type": "reasoning.text",
-            "text": fallback_reasoning,
-        }])
-        .to_string()
-    })
-}
-
-fn withhold_partial_reasoning_open_suffix(visible: &str) -> String {
-    const OPEN_TAGS: [&str; 3] = ["<thinking>", "<think>", "<reasoning>"];
-    let lower = visible.to_ascii_lowercase();
-    let mut keep_len = visible.len();
-    for tag in OPEN_TAGS {
-        for prefix_len in 1..tag.len() {
-            if lower.ends_with(&tag[..prefix_len]) {
-                keep_len = keep_len.min(visible.len().saturating_sub(prefix_len));
-            }
-        }
-    }
-    visible[..keep_len].to_string()
-}
-
 fn stream_error_event(
     request_id: &str,
     message: &str,
@@ -731,8 +475,13 @@ fn should_emit_stream_error(
     emit_error_event || has_visible_partial(surface, token_index)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "C26 notes the same stream failure that the observer already receives; a param struct would only wrap these flags"
+)]
 fn finish_stream_with_error(
     observer: &mut dyn StreamEventObserver,
+    request: &GatewayRequest,
     request_id: &str,
     message: impl Into<String>,
     classified: bool,
@@ -741,6 +490,7 @@ fn finish_stream_with_error(
     emit_error_event: bool,
 ) -> AppError {
     let message = message.into();
+    note_boundary_unsuccessful(request, &message);
     let sanitized = sanitize_stream_error_message(&message);
     let visible_partial = has_visible_partial(surface, token_index);
     if should_emit_stream_error(emit_error_event, surface, token_index) {
@@ -850,6 +600,10 @@ fn emit_visible_token_delta(
 }
 
 /// Send a streaming request and deliver each lifecycle event to an observer.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "preserves the existing stream lifecycle flags while adding a Run dispatch hook"
+)]
 pub async fn send_streaming_request_to_observer(
     _client: &Client,
     request_id: &str,
@@ -858,10 +612,12 @@ pub async fn send_streaming_request_to_observer(
     classified: bool,
     surface: StreamSurface,
     emit_error_event: bool,
+    before_dispatch: Option<&(dyn Fn() -> AppResult<()> + Send + Sync)>,
 ) -> AppResult<GatewayResponse> {
     if is_abort_requested(request_id) {
         return Err(finish_stream_with_error(
             observer,
+            &request,
             request_id,
             "request aborted",
             classified,
@@ -879,6 +635,7 @@ pub async fn send_streaming_request_to_observer(
             classified,
             surface,
             emit_error_event,
+            before_dispatch,
         )
         .await;
     }
@@ -890,6 +647,7 @@ pub async fn send_streaming_request_to_observer(
     let mut body = build_llm_api_body(&request).map_err(|e| {
         finish_stream_with_error(
             observer,
+            &request,
             request_id,
             e.to_string(),
             classified,
@@ -898,6 +656,7 @@ pub async fn send_streaming_request_to_observer(
             emit_error_event,
         )
     })?;
+    note_boundary_serialized(&request, &body);
     body["stream"] = serde_json::json!(true);
 
     // Production always builds the dedicated HTTPS-only streaming client. The
@@ -909,6 +668,7 @@ pub async fn send_streaming_request_to_observer(
         crate::network::cert_pinning::create_streaming_https_client().map_err(|e| {
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 e.to_string(),
                 classified,
@@ -927,16 +687,40 @@ pub async fn send_streaming_request_to_observer(
         req_builder = apply_streaming_auth_headers(req_builder, endpoint_family, api_key);
     }
 
-    let send = req_builder.json(&body).send();
+    let http_request = req_builder.json(&body).build().map_err(|error| {
+        finish_stream_with_error(
+            observer,
+            &request,
+            request_id,
+            error.to_string(),
+            classified,
+            surface,
+            0,
+            emit_error_event,
+        )
+    })?;
+    let send = async {
+        if is_abort_requested(request_id) {
+            return Err(AppError::provider(
+                ProviderErrorKind::Cancelled,
+                "request aborted",
+            ));
+        }
+        if let Some(before_dispatch) = before_dispatch {
+            before_dispatch()?;
+        }
+        Ok::<_, AppError>(streaming_client.execute(http_request).await)
+    };
     tokio::pin!(send);
     let first_response_deadline = tokio::time::sleep(STREAM_FIRST_RESPONSE_TIMEOUT);
     tokio::pin!(first_response_deadline);
     let abort_wait = wait_for_abort_signal(request_id);
     tokio::pin!(abort_wait);
     let response = tokio::select! {
-        result = &mut send => result.map_err(|e| {
+        result = &mut send => result?.map_err(|e| {
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 format!("LLM streaming request failed: {e}"),
                 classified,
@@ -947,6 +731,7 @@ pub async fn send_streaming_request_to_observer(
         }),
         _ = &mut first_response_deadline => Err(finish_stream_with_error(
             observer,
+            &request,
             request_id,
             "llm_stream_first_response_timeout",
             classified,
@@ -956,6 +741,7 @@ pub async fn send_streaming_request_to_observer(
         )),
         _ = &mut abort_wait => Err(finish_stream_with_error(
             observer,
+            &request,
             request_id,
             "request aborted",
             classified,
@@ -964,13 +750,16 @@ pub async fn send_streaming_request_to_observer(
             true,
         )),
     }?;
+    note_boundary_sent(&request);
 
     if !response.status().is_success() {
         let status = response.status();
+        note_boundary_http_failure(&request, status.as_u16());
         let text = response.text().await.unwrap_or_default();
         let message = format_llm_http_error(status, &text);
         let _ = finish_stream_with_error(
             observer,
+            &request,
             request_id,
             message.clone(),
             classified,
@@ -1006,19 +795,16 @@ pub async fn send_streaming_request_to_observer(
     let mut token_index: u32 = 0;
     let mut anthropic_state = AnthropicStreamState::default();
     let mut json_failure_tracker = SseJsonFailureTracker::default();
+    let mut chat_state = ChatCompletionsStreamState::default();
     let mut visible_sanitizer = if surface.sanitizes_visible_output() {
         Some(VisibleStreamSanitizer::for_provider(&request.provider.name))
     } else {
         None
     };
 
-    // Incremental tool call accumulator: index -> (id, name, args_buf).
     // OpenAI streams tool calls as deltas: id+name arrive first, then
-    // argument fragments across multiple subsequent deltas.
-    let mut tool_call_deltas: std::collections::HashMap<
-        usize,
-        (Option<String>, Option<String>, String),
-    > = std::collections::HashMap::new();
+    // argument fragments across subsequent events. ChatCompletionsStreamState
+    // is the only accumulator for those deltas and for finish_reason.
 
     // Process SSE stream with carry buffer to handle chunks split across TCP boundaries.
     // The outer loop is labeled so the [DONE] / message_stop terminators can break out
@@ -1035,6 +821,7 @@ pub async fn send_streaming_request_to_observer(
     let mut stream = response.bytes_stream();
     use futures_util::StreamExt;
     let mut carry = String::new();
+    let mut pending_utf8 = Vec::new();
     let mut carry_truncated = false;
     let mut chunk_count: u64 = 0;
     let mut byte_count: u64 = 0;
@@ -1051,6 +838,7 @@ pub async fn send_streaming_request_to_observer(
                 if is_abort_requested(request_id) {
                     return Err(finish_stream_with_error(
                         observer,
+                        &request,
                         request_id,
                         "request aborted",
                         classified,
@@ -1071,6 +859,7 @@ pub async fn send_streaming_request_to_observer(
         if is_abort_requested(request_id) {
             return Err(finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 "request aborted",
                 classified,
@@ -1104,6 +893,7 @@ pub async fn send_streaming_request_to_observer(
             );
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 format!("Stream read error: {e}"),
                 classified,
@@ -1115,7 +905,18 @@ pub async fn send_streaming_request_to_observer(
         chunk_count = chunk_count.saturating_add(1);
         byte_count = byte_count.saturating_add(chunk.len() as u64);
 
-        let chunk_text = String::from_utf8_lossy(&chunk);
+        let chunk_text = decode_sse_utf8(&mut pending_utf8, &chunk).map_err(|error| {
+            finish_stream_with_error(
+                observer,
+                &request,
+                request_id,
+                error.to_string(),
+                classified,
+                surface,
+                token_index,
+                emit_error_event,
+            )
+        })?;
         if carry.len() + chunk_text.len() > MAX_CARRY_BYTES {
             if !carry_truncated {
                 tracing::warn!(
@@ -1170,6 +971,7 @@ pub async fn send_streaming_request_to_observer(
                 Err(err) => {
                     return Err(finish_stream_with_error(
                         observer,
+                        &request,
                         request_id,
                         err.to_string(),
                         classified,
@@ -1185,6 +987,7 @@ pub async fn send_streaming_request_to_observer(
                 if let Some(delta) = anthropic_state.apply_event_json(&json).map_err(|e| {
                     finish_stream_with_error(
                         observer,
+                        &request,
                         request_id,
                         e.to_string(),
                         classified,
@@ -1228,6 +1031,8 @@ pub async fn send_streaming_request_to_observer(
                 continue;
             }
 
+            chat_state.apply_event_json(&json);
+
             // Process content delta
             if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
                 if let Some(parser) = minimax_content_parser.as_mut() {
@@ -1267,31 +1072,24 @@ pub async fn send_streaming_request_to_observer(
                 );
             }
 
-            // Accumulate tool call deltas by index
-            if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
-                for tc_delta in tc_deltas {
-                    let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
-                    let entry = tool_call_deltas
-                        .entry(idx)
-                        .or_insert((None, None, String::new()));
-
-                    if let Some(id) = tc_delta["id"].as_str() {
-                        entry.0 = Some(id.to_string());
-                    }
-                    if let Some(name) = tc_delta["function"]["name"].as_str() {
-                        entry.1 = Some(name.to_string());
-                    }
-                    if let Some(args) = tc_delta["function"]["arguments"].as_str() {
-                        entry.2.push_str(args);
-                    }
-                }
-            }
-
             if json.get("usage").is_some() && json["usage"].get("prompt_tokens").is_some() {
                 usage = parse_usage(&json);
             }
         }
     }
+
+    finish_sse_utf8(&pending_utf8).map_err(|error| {
+        finish_stream_with_error(
+            observer,
+            &request,
+            request_id,
+            error.to_string(),
+            classified,
+            surface,
+            token_index,
+            emit_error_event,
+        )
+    })?;
 
     // Flush remaining carry buffer
     if !carry.trim().is_empty() {
@@ -1300,11 +1098,12 @@ pub async fn send_streaming_request_to_observer(
             if let Some(data) = remainder.strip_prefix("data: ") {
                 let data = data.trim();
                 if data != "[DONE]" {
-                    let Some(json) = (match json_failure_tracker.parse_data(request_id, data) {
+                    let json = match json_failure_tracker.parse_data(request_id, data) {
                         Ok(json) => json,
                         Err(err) => {
                             return Err(finish_stream_with_error(
                                 observer,
+                                &request,
                                 request_id,
                                 err.to_string(),
                                 classified,
@@ -1313,133 +1112,104 @@ pub async fn send_streaming_request_to_observer(
                                 emit_error_event,
                             ));
                         }
-                    }) else {
-                        let content = sanitize_provider_visible_content(
-                            &request.provider.name,
-                            &full_content,
-                        );
-                        return Ok(GatewayResponse {
-                            content: (!content.is_empty()).then_some(content),
-                            tool_calls: vec![],
-                            usage,
-                            finish_reason: "stop".into(),
-                            reasoning_content: if is_minimax {
-                                minimax_reasoning_continuation(
-                                    minimax_reasoning_details,
-                                    full_reasoning,
-                                )
-                            } else {
-                                (!full_reasoning.is_empty()).then_some(full_reasoning)
-                            },
-                            continuation: None,
-                        });
                     };
-                    if endpoint_family == EndpointFamily::AnthropicMessages {
-                        if let Some(delta) =
-                            anthropic_state.apply_event_json(&json).map_err(|e| {
-                                finish_stream_with_error(
-                                    observer,
-                                    request_id,
-                                    e.to_string(),
-                                    classified,
-                                    surface,
-                                    token_index,
-                                    emit_error_event,
-                                )
-                            })?
-                        {
-                            full_content.push_str(delta.as_str());
-                            emit_visible_token_outcome(
-                                observer,
-                                request_id,
-                                visible_token_delta(&mut visible_sanitizer, &delta),
-                                surface,
-                                classified,
-                                &mut token_index,
-                            )?;
-                        }
-                        if json["type"].as_str() == Some("message_stop") {
-                            emit_visible_token_outcome(
-                                observer,
-                                request_id,
-                                visible_token_finish(&mut visible_sanitizer),
-                                surface,
-                                classified,
-                                &mut token_index,
-                            )?;
-                            let event = StreamEvent {
-                                request_id: request_id.to_string(),
-                                event_type: StreamEventType::Done,
-                                data: StreamEventData::Done {
-                                    usage: Some(anthropic_state.usage.clone()),
-                                },
-                                surface,
-                                classified,
-                            };
-                            observer.observe(&event, token_index)?;
-                        }
-                        clear_abort(request_id);
-                        return Ok(anthropic_state.into_gateway_response());
-                    }
-
-                    if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
-                        if let Some(parser) = minimax_content_parser.as_mut() {
-                            let (visible_delta, calls) = parser.push(delta);
-                            minimax_content_tool_calls.extend(calls);
-                            if !visible_delta.is_empty() {
-                                full_content.push_str(&visible_delta);
+                    if let Some(json) = json {
+                        if endpoint_family == EndpointFamily::AnthropicMessages {
+                            if let Some(delta) =
+                                anthropic_state.apply_event_json(&json).map_err(|e| {
+                                    finish_stream_with_error(
+                                        observer,
+                                        &request,
+                                        request_id,
+                                        e.to_string(),
+                                        classified,
+                                        surface,
+                                        token_index,
+                                        emit_error_event,
+                                    )
+                                })?
+                            {
+                                full_content.push_str(delta.as_str());
                                 emit_visible_token_outcome(
                                     observer,
                                     request_id,
-                                    visible_token_delta(&mut visible_sanitizer, &visible_delta),
+                                    visible_token_delta(&mut visible_sanitizer, &delta),
                                     surface,
                                     classified,
                                     &mut token_index,
                                 )?;
                             }
-                        } else {
-                            full_content.push_str(delta);
-                            emit_visible_token_outcome(
-                                observer,
-                                request_id,
-                                visible_token_delta(&mut visible_sanitizer, delta),
-                                surface,
-                                classified,
-                                &mut token_index,
-                            )?;
+                            if json["type"].as_str() == Some("message_stop") {
+                                emit_visible_token_outcome(
+                                    observer,
+                                    request_id,
+                                    visible_token_finish(&mut visible_sanitizer),
+                                    surface,
+                                    classified,
+                                    &mut token_index,
+                                )?;
+                                let event = StreamEvent {
+                                    request_id: request_id.to_string(),
+                                    event_type: StreamEventType::Done,
+                                    data: StreamEventData::Done {
+                                        usage: Some(anthropic_state.usage.clone()),
+                                    },
+                                    surface,
+                                    classified,
+                                };
+                                observer.observe(&event, token_index)?;
+                            }
+                            clear_abort(request_id);
+                            return Ok(complete_boundary(
+                                &request,
+                                anthropic_state.into_gateway_response(),
+                            ));
                         }
-                    }
-                    if let Some(reasoning) =
-                        json["choices"][0]["delta"]["reasoning_content"].as_str()
-                    {
-                        full_reasoning.push_str(reasoning);
-                    }
-                    if is_minimax {
-                        append_minimax_reasoning_details(
-                            &json["choices"][0]["delta"]["reasoning_details"],
-                            &mut minimax_reasoning_details,
-                        );
-                    }
-                    if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
-                        for tc_delta in tc_deltas {
-                            let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
-                            let entry =
-                                tool_call_deltas
-                                    .entry(idx)
-                                    .or_insert((None, None, String::new()));
-                            if let Some(id) = tc_delta["id"].as_str() {
-                                entry.0 = Some(id.to_string());
-                            }
-                            if let Some(name) = tc_delta["function"]["name"].as_str() {
-                                entry.1 = Some(name.to_string());
-                            }
-                            if let Some(args) = tc_delta["function"]["arguments"].as_str() {
-                                entry.2.push_str(args);
+
+                        chat_state.apply_event_json(&json);
+                        if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
+                            if let Some(parser) = minimax_content_parser.as_mut() {
+                                let (visible_delta, calls) = parser.push(delta);
+                                minimax_content_tool_calls.extend(calls);
+                                if !visible_delta.is_empty() {
+                                    full_content.push_str(&visible_delta);
+                                    emit_visible_token_outcome(
+                                        observer,
+                                        request_id,
+                                        visible_token_delta(&mut visible_sanitizer, &visible_delta),
+                                        surface,
+                                        classified,
+                                        &mut token_index,
+                                    )?;
+                                }
+                            } else {
+                                full_content.push_str(delta);
+                                emit_visible_token_outcome(
+                                    observer,
+                                    request_id,
+                                    visible_token_delta(&mut visible_sanitizer, delta),
+                                    surface,
+                                    classified,
+                                    &mut token_index,
+                                )?;
                             }
                         }
-                    }
-                    if json.get("usage").is_some() && json["usage"].get("prompt_tokens").is_some() {
-                        usage = parse_usage(&json);
+                        if let Some(reasoning) =
+                            json["choices"][0]["delta"]["reasoning_content"].as_str()
+                        {
+                            full_reasoning.push_str(reasoning);
+                        }
+                        if is_minimax {
+                            append_minimax_reasoning_details(
+                                &json["choices"][0]["delta"]["reasoning_details"],
+                                &mut minimax_reasoning_details,
+                            );
+                        }
+                        if json.get("usage").is_some()
+                            && json["usage"].get("prompt_tokens").is_some()
+                        {
+                            usage = parse_usage(&json);
+                        }
                     }
                 }
             }
@@ -1461,7 +1231,7 @@ pub async fn send_streaming_request_to_observer(
             observer.observe(&event, token_index)?;
         }
         clear_abort(request_id);
-        return Ok(response);
+        return Ok(complete_boundary(&request, response));
     }
 
     // Flush any remaining MiniMax content that is safe to show, and collect
@@ -1482,24 +1252,33 @@ pub async fn send_streaming_request_to_observer(
         }
     }
 
-    // Assemble tool calls from accumulated deltas (deduplicated by index)
-    let mut tool_calls: Vec<ToolCall> = tool_call_deltas
-        .into_iter()
-        .filter_map(|(_, (id, name, args))| {
-            Some(ToolCall {
-                id: id?,
-                call_type: "function".into(),
-                function: FunctionCall {
-                    name: name?,
-                    arguments: args,
-                },
-            })
-        })
-        .collect();
-    tool_calls.extend(minimax_content_tool_calls);
+    if let Some(slot) = &request.boundary {
+        let proposed_names = chat_state.proposed_tool_names();
+        slot.note_name_origin(
+            crate::ai_runtime::tool_name_origin::handshake_payload_from_calls(
+                slot.correlation().protocol_adapter.as_str(),
+                request.tools.iter().map(|tool| tool.function.name.as_str()),
+                proposed_names.iter().map(String::as_str),
+                minimax_content_tool_calls
+                    .iter()
+                    .map(|call| call.function.name.as_str()),
+            ),
+        );
+    }
+    chat_state.push_completed_tool_calls(minimax_content_tool_calls);
+    let visible_content = sanitize_provider_visible_content(&provider_id, &full_content);
+    chat_state.replace_visible_content(visible_content);
+    let mut response = chat_state.into_gateway_response();
+    response.reasoning_content = if is_minimax {
+        minimax_reasoning_continuation(minimax_reasoning_details, full_reasoning)
+    } else {
+        (!full_reasoning.is_empty()).then_some(full_reasoning)
+    };
+    if response.usage.total_tokens == 0 && usage.total_tokens > 0 {
+        response.usage = usage;
+    }
 
-    // Emit tool call events for each assembled call
-    for tc in &tool_calls {
+    for tc in &response.tool_calls {
         let event = StreamEvent {
             request_id: request_id.to_string(),
             event_type: StreamEventType::ToolCall,
@@ -1513,28 +1292,7 @@ pub async fn send_streaming_request_to_observer(
     }
 
     clear_abort(request_id);
-    Ok(GatewayResponse {
-        content: if full_content.is_empty() {
-            None
-        } else {
-            Some(
-                crate::ai_runtime::text_support::sanitize_provider_visible_content(
-                    &provider_id,
-                    &full_content,
-                ),
-            )
-            .filter(|content| !content.is_empty())
-        },
-        tool_calls,
-        usage,
-        finish_reason: "stop".to_string(),
-        reasoning_content: if is_minimax {
-            minimax_reasoning_continuation(minimax_reasoning_details, full_reasoning)
-        } else {
-            (!full_reasoning.is_empty()).then_some(full_reasoning)
-        },
-        continuation: None,
-    })
+    Ok(complete_boundary(&request, response))
 }
 
 fn responses_endpoint_url(base_url: &str) -> String {
@@ -1556,11 +1314,13 @@ async fn send_openai_responses_stream(
     classified: bool,
     surface: StreamSurface,
     emit_error_event: bool,
+    before_dispatch: Option<&(dyn Fn() -> AppResult<()> + Send + Sync)>,
 ) -> AppResult<GatewayResponse> {
     let url = responses_endpoint_url(request.provider.base_url.as_str());
     let mut body = build_llm_api_body(&request).map_err(|error| {
         finish_stream_with_error(
             observer,
+            &request,
             request_id,
             error.to_string(),
             classified,
@@ -1569,12 +1329,14 @@ async fn send_openai_responses_stream(
             emit_error_event,
         )
     })?;
+    note_boundary_serialized(&request, &body);
     body["stream"] = serde_json::json!(true);
 
     let streaming_client =
         crate::network::cert_pinning::create_streaming_https_client().map_err(|error| {
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 error.to_string(),
                 classified,
@@ -1596,31 +1358,57 @@ async fn send_openai_responses_stream(
         );
     }
 
-    let send = request_builder.json(&body).send();
+    let http_request = request_builder.json(&body).build().map_err(|error| {
+        finish_stream_with_error(
+            observer,
+            &request,
+            request_id,
+            error.to_string(),
+            classified,
+            surface,
+            0,
+            emit_error_event,
+        )
+    })?;
+    let send = async {
+        if is_abort_requested(request_id) {
+            return Err(AppError::provider(
+                ProviderErrorKind::Cancelled,
+                "request aborted",
+            ));
+        }
+        if let Some(before_dispatch) = before_dispatch {
+            before_dispatch()?;
+        }
+        Ok::<_, AppError>(streaming_client.execute(http_request).await)
+    };
     tokio::pin!(send);
     let first_response_deadline = tokio::time::sleep(STREAM_FIRST_RESPONSE_TIMEOUT);
     tokio::pin!(first_response_deadline);
     let abort_wait = wait_for_abort_signal(request_id);
     tokio::pin!(abort_wait);
     let response = tokio::select! {
-        result = &mut send => result.map_err(|error| finish_stream_with_error(
-            observer, request_id, format!("LLM streaming request failed: {error}"),
+        result = &mut send => result?.map_err(|error| finish_stream_with_error(
+            observer, &request, request_id, format!("LLM streaming request failed: {error}"),
             classified, surface, 0, emit_error_event,
         )),
         _ = &mut first_response_deadline => Err(finish_stream_with_error(
-            observer, request_id, "llm_stream_first_response_timeout",
+            observer, &request, request_id, "llm_stream_first_response_timeout",
             classified, surface, 0, emit_error_event,
         )),
         _ = &mut abort_wait => Err(finish_stream_with_error(
-            observer, request_id, "request aborted", classified, surface, 0, true,
+            observer, &request, request_id, "request aborted", classified, surface, 0, true,
         )),
     }?;
+    note_boundary_sent(&request);
     if !response.status().is_success() {
         let status = response.status();
+        note_boundary_http_failure(&request, status.as_u16());
         let text = response.text().await.unwrap_or_default();
         let message = format_llm_http_error(status, &text);
         let _ = finish_stream_with_error(
             observer,
+            &request,
             request_id,
             message.clone(),
             classified,
@@ -1634,6 +1422,7 @@ async fn send_openai_responses_stream(
     use futures_util::StreamExt;
     let mut stream = response.bytes_stream();
     let mut carry = String::new();
+    let mut pending_utf8 = Vec::new();
     let mut state = ResponsesStreamState::default();
     let mut tracker = SseJsonFailureTracker::default();
     let mut visible_sanitizer = surface
@@ -1650,6 +1439,7 @@ async fn send_openai_responses_stream(
                 if is_abort_requested(request_id) {
                     return Err(finish_stream_with_error(
                         observer,
+                        &request,
                         request_id,
                         "request aborted",
                         classified,
@@ -1664,6 +1454,7 @@ async fn send_openai_responses_stream(
         if is_abort_requested(request_id) {
             return Err(finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 "request aborted",
                 classified,
@@ -1675,6 +1466,7 @@ async fn send_openai_responses_stream(
         let chunk = chunk.map_err(|error| {
             finish_stream_with_error(
                 observer,
+                &request,
                 request_id,
                 format!("Stream read error: {error}"),
                 classified,
@@ -1683,7 +1475,19 @@ async fn send_openai_responses_stream(
                 emit_error_event,
             )
         })?;
-        carry.push_str(&String::from_utf8_lossy(&chunk));
+        let chunk_text = decode_sse_utf8(&mut pending_utf8, &chunk).map_err(|error| {
+            finish_stream_with_error(
+                observer,
+                &request,
+                request_id,
+                error.to_string(),
+                classified,
+                surface,
+                token_index,
+                emit_error_event,
+            )
+        })?;
+        carry.push_str(&chunk_text);
 
         while let Some(line_end) = carry.find('\n') {
             let line: String = carry.drain(..=line_end).collect();
@@ -1701,6 +1505,7 @@ async fn send_openai_responses_stream(
             let Some(json) = tracker.parse_data(request_id, data).map_err(|error| {
                 finish_stream_with_error(
                     observer,
+                    &request,
                     request_id,
                     error.to_string(),
                     classified,
@@ -1716,6 +1521,7 @@ async fn send_openai_responses_stream(
             for delta in state.apply_event_json(&json).map_err(|error| {
                 finish_stream_with_error(
                     observer,
+                    &request,
                     request_id,
                     error.to_string(),
                     classified,
@@ -1756,9 +1562,23 @@ async fn send_openai_responses_stream(
         }
     }
 
+    finish_sse_utf8(&pending_utf8).map_err(|error| {
+        finish_stream_with_error(
+            observer,
+            &request,
+            request_id,
+            error.to_string(),
+            classified,
+            surface,
+            token_index,
+            emit_error_event,
+        )
+    })?;
+
     if !completed {
         return Err(finish_stream_with_error(
             observer,
+            &request,
             request_id,
             "responses_stream_incomplete",
             classified,
@@ -1804,7 +1624,7 @@ async fn send_openai_responses_stream(
         token_index,
     )?;
     clear_abort(request_id);
-    Ok(gateway_response)
+    Ok(complete_boundary(&request, gateway_response))
 }
 
 async fn wait_for_abort_signal(request_id: &str) {
@@ -1817,469 +1637,5 @@ async fn wait_for_abort_signal(request_id: &str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Default)]
-    struct RecordingStreamObserver {
-        events: Vec<StreamEvent>,
-    }
-
-    impl StreamEventObserver for RecordingStreamObserver {
-        fn observe(&mut self, event: &StreamEvent, _token_index: u32) -> AppResult<()> {
-            self.events.push(event.clone());
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn stream_events_are_delivered_to_observer_without_tauri_handle() {
-        let mut observer = RecordingStreamObserver::default();
-        let mut token_index = 0;
-
-        emit_visible_token_delta(
-            &mut observer,
-            "agent-run",
-            "观察者令牌".to_string(),
-            StreamSurface::VisibleAnswer,
-            false,
-            &mut token_index,
-        )
-        .unwrap();
-
-        assert_eq!(token_index, 1);
-        assert_eq!(observer.events.len(), 1);
-        assert!(matches!(
-            observer.events[0].data,
-            StreamEventData::Token { ref token, .. } if token == "观察者令牌"
-        ));
-    }
-
-    #[test]
-    fn anthropic_stream_state_accumulates_text_and_tool_use_blocks() {
-        let mut state = AnthropicStreamState::default();
-
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {
-                    "type": "text_delta",
-                    "text": "先查一下。"
-                }
-            }))
-            .unwrap();
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "content_block_start",
-                "index": 1,
-                "content_block": {
-                    "type": "tool_use",
-                    "id": "toolu_stream_1",
-                    "name": "search_hybrid",
-                    "input": {}
-                }
-            }))
-            .unwrap();
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "content_block_delta",
-                "index": 1,
-                "delta": {
-                    "type": "input_json_delta",
-                    "partial_json": "{\"query\":\"阶段 1\""
-                }
-            }))
-            .unwrap();
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "content_block_delta",
-                "index": 1,
-                "delta": {
-                    "type": "input_json_delta",
-                    "partial_json": ",\"limit\":5}"
-                }
-            }))
-            .unwrap();
-        state
-            .apply_event_json(&serde_json::json!({
-                "type": "message_delta",
-                "delta": { "stop_reason": "tool_use" },
-                "usage": { "output_tokens": 11 }
-            }))
-            .unwrap();
-
-        let response = state.into_gateway_response();
-        assert_eq!(response.content.as_deref(), Some("先查一下。"));
-        assert_eq!(response.finish_reason, "tool_use");
-        assert_eq!(response.usage.completion_tokens, 11);
-        assert_eq!(response.tool_calls.len(), 1);
-        assert_eq!(response.tool_calls[0].id, "toolu_stream_1");
-        assert_eq!(response.tool_calls[0].function.name, "search_hybrid");
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&response.tool_calls[0].function.arguments)
-                .unwrap(),
-            serde_json::json!({ "query": "阶段 1", "limit": 5 })
-        );
-    }
-
-    #[test]
-    fn sse_json_failure_tracker_tolerates_single_bad_line_but_fails_after_threshold() {
-        let mut tracker = SseJsonFailureTracker::default();
-        assert!(tracker.record_parse_result("req-json", "{bad json").is_ok());
-        assert_eq!(tracker.consecutive_failures, 1);
-        assert!(tracker
-            .record_parse_result("req-json", "{still bad")
-            .is_ok());
-        let err = tracker
-            .record_parse_result("req-json", "{third bad")
-            .unwrap_err();
-        assert!(err.to_string().contains("stream_invalid_json"));
-    }
-
-    #[test]
-    fn sse_json_failure_tracker_resets_after_valid_json() {
-        let mut tracker = SseJsonFailureTracker::default();
-        assert!(tracker.record_parse_result("req-json", "{bad json").is_ok());
-        tracker.record_success();
-        assert_eq!(tracker.consecutive_failures, 0);
-        assert!(tracker
-            .record_parse_result("req-json", "{bad again")
-            .is_ok());
-    }
-    #[test]
-    fn sse_json_failure_tracker_ignores_empty_data_lines() {
-        let mut tracker = SseJsonFailureTracker::default();
-        assert!(tracker.parse_data("req-json", "   ").unwrap().is_none());
-        assert_eq!(tracker.consecutive_failures, 0);
-    }
-    #[test]
-    fn stream_error_event_uses_public_lifecycle_contract() {
-        let event = stream_error_event(
-            "req-stream-error",
-            "模型请求失败（500）：provider echoed prompt text",
-            false,
-            StreamSurface::VisibleAnswer,
-            true,
-        );
-
-        assert_eq!(event.request_id, "req-stream-error");
-        assert!(matches!(event.event_type, StreamEventType::Error));
-        match event.data {
-            StreamEventData::Error {
-                message,
-                final_error,
-            } => {
-                assert!(message.contains("模型请求失败"));
-                assert!(!message.contains("prompt text"));
-                assert!(final_error);
-            }
-            _ => panic!("expected error payload"),
-        }
-    }
-
-    #[test]
-    fn visible_partial_stream_errors_force_terminal_event() {
-        assert!(!should_emit_stream_error(
-            false,
-            StreamSurface::VisibleAnswer,
-            0
-        ));
-        assert!(should_emit_stream_error(
-            false,
-            StreamSurface::VisibleAnswer,
-            1
-        ));
-        assert!(!should_emit_stream_error(
-            false,
-            StreamSurface::InternalCandidate,
-            1
-        ));
-        assert!(should_emit_stream_error(
-            true,
-            StreamSurface::VisibleAnswer,
-            0
-        ));
-    }
-
-    #[test]
-    fn stream_body_failure_diagnostic_is_structured_and_redacted() {
-        let diagnostic = StreamReadFailureDiagnostic {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-pro".into(),
-            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
-            http_version: "HTTP/2.0".into(),
-            status: 200,
-            content_encoding: Some("identity".into()),
-            transfer_encoding: None,
-            elapsed_ms: 12_345,
-            chunk_count: 7,
-            byte_count: 4096,
-            sse_line_count: 12,
-            saw_done: false,
-            visible_partial: true,
-            error: StreamReadErrorDiagnostic {
-                is_timeout: false,
-                is_body: true,
-                is_connect: false,
-                is_decode: true,
-                source_chain: vec![
-                    "body error".into(),
-                    "secret sk-test-123456789012 request body should not appear".into(),
-                ],
-            },
-        };
-
-        let value = diagnostic.to_safe_json();
-        let rendered = value.to_string();
-
-        assert_eq!(value["provider"], "deepseek");
-        assert_eq!(value["model"], "deepseek-v4-pro");
-        assert_eq!(
-            value["endpoint_family"],
-            "openai_compatible_chat_completions"
-        );
-        assert_eq!(value["http_version"], "HTTP/2.0");
-        assert_eq!(value["status"], 200);
-        assert_eq!(value["content_encoding"], "identity");
-        assert_eq!(value["chunk_count"], 7);
-        assert_eq!(value["byte_count"], 4096);
-        assert_eq!(value["sse_line_count"], 12);
-        assert_eq!(value["saw_done"], false);
-        assert_eq!(value["visible_partial"], true);
-        assert_eq!(value["error"]["is_body"], true);
-        assert_eq!(value["error"]["is_decode"], true);
-        assert_eq!(value["error"]["source_chain"][0]["detail"], "body error");
-        assert!(rendered.contains("stream_body_read_failed"));
-        assert!(!rendered.contains("sk-test"));
-        assert!(!rendered.contains("request body"));
-    }
-
-    #[test]
-    fn visible_stream_sanitizer_holds_split_think_tag_until_safe_text() {
-        let mut sanitizer = VisibleStreamSanitizer::new();
-
-        assert_eq!(
-            sanitizer.sanitize_delta("答复<thi", false).as_test_delta(),
-            "答复"
-        );
-        assert_eq!(
-            sanitizer.sanitize_delta("nk>hidden", false).as_test_delta(),
-            ""
-        );
-        assert_eq!(
-            sanitizer
-                .sanitize_delta("</think>正文开始", false)
-                .as_test_delta(),
-            "正文开始"
-        );
-        assert_eq!(sanitizer.finish().as_test_delta(), "");
-    }
-
-    #[test]
-    fn minimax_stream_sanitizer_withholds_split_control_tokens() {
-        let mut sanitizer = VisibleStreamSanitizer::for_provider("minimax");
-
-        assert_eq!(
-            sanitizer.sanitize_delta("<|mini", false).as_test_delta(),
-            ""
-        );
-        assert_eq!(
-            sanitizer
-                .sanitize_delta("max|><think>private</think>Visible", false)
-                .as_test_delta(),
-            "Visible"
-        );
-        assert_eq!(sanitizer.finish().as_test_delta(), "");
-    }
-
-    #[test]
-    fn minimax_stream_sanitizer_discards_partial_control_token_at_end_of_stream() {
-        let mut sanitizer = VisibleStreamSanitizer::for_provider("minimax");
-
-        assert_eq!(
-            sanitizer
-                .sanitize_delta("Visible<|mini", false)
-                .as_test_delta(),
-            "Visible"
-        );
-        assert_eq!(sanitizer.finish().as_test_delta(), "");
-    }
-
-    #[test]
-    fn minimax_stream_reasoning_details_are_kept_only_for_the_tool_continuation() {
-        let mut details = Vec::new();
-        append_minimax_reasoning_details(
-            &serde_json::json!([{"type":"reasoning.text","text":"private"}]),
-            &mut details,
-        );
-
-        assert_eq!(
-            minimax_reasoning_continuation(details, String::new()).as_deref(),
-            Some(r#"[{"text":"private","type":"reasoning.text"}]"#)
-        );
-    }
-
-    #[test]
-    fn minimax_stream_reasoning_details_merge_cumulative_snapshots() {
-        let mut details = Vec::new();
-        append_minimax_reasoning_details(
-            &serde_json::json!([{
-                "index": 0,
-                "type": "reasoning.text",
-                "text": "private"
-            }]),
-            &mut details,
-        );
-        append_minimax_reasoning_details(
-            &serde_json::json!([{
-                "index": 0,
-                "type": "reasoning.text",
-                "text": "private plan"
-            }]),
-            &mut details,
-        );
-
-        assert_eq!(
-            minimax_reasoning_continuation(details, String::new()).as_deref(),
-            Some(r#"[{"index":0,"text":"private plan","type":"reasoning.text"}]"#)
-        );
-    }
-
-    #[test]
-    fn minimax_stream_reasoning_details_merge_incremental_fragments() {
-        let mut details = Vec::new();
-        append_minimax_reasoning_details(
-            &serde_json::json!({
-                "id": "reasoning-1",
-                "type": "reasoning.text",
-                "text": "private "
-            }),
-            &mut details,
-        );
-        append_minimax_reasoning_details(
-            &serde_json::json!({
-                "id": "reasoning-1",
-                "type": "reasoning.text",
-                "text": "plan"
-            }),
-            &mut details,
-        );
-
-        assert_eq!(
-            minimax_reasoning_continuation(details, String::new()).as_deref(),
-            Some(r#"[{"id":"reasoning-1","text":"private plan","type":"reasoning.text"}]"#)
-        );
-    }
-
-    #[test]
-    fn minimax_stream_reasoning_details_preserve_distinct_same_type_items() {
-        let mut details = Vec::new();
-        append_minimax_reasoning_details(
-            &serde_json::json!([
-                {"type": "reasoning.text", "text": "first"},
-                {"type": "reasoning.text", "text": "second"}
-            ]),
-            &mut details,
-        );
-
-        assert_eq!(
-            minimax_reasoning_continuation(details, String::new()).as_deref(),
-            Some(
-                r#"[{"text":"first","type":"reasoning.text"},{"text":"second","type":"reasoning.text"}]"#
-            )
-        );
-    }
-
-    #[test]
-    fn visible_stream_sanitizer_suppresses_unclosed_reasoning_tail() {
-        let mut sanitizer = VisibleStreamSanitizer::new();
-
-        assert_eq!(
-            sanitizer
-                .sanitize_delta("可以先看结论。", false)
-                .as_test_delta(),
-            "可以先看结论。"
-        );
-        assert_eq!(
-            sanitizer
-                .sanitize_delta("<reasoning>internal", false)
-                .as_test_delta(),
-            ""
-        );
-        assert_eq!(sanitizer.finish().as_test_delta(), "");
-    }
-
-    #[test]
-    fn visible_stream_sanitizer_never_releases_a_long_meta_analysis_prefix() {
-        let mut sanitizer = VisibleStreamSanitizer::new();
-        let first_meta_paragraph = format!(
-            "The user is asking for current sports information. {}",
-            "I should inspect the system instructions before answering. ".repeat(12)
-        );
-        assert!(first_meta_paragraph.chars().count() > 500);
-
-        assert_eq!(
-            sanitizer
-                .sanitize_delta(&first_meta_paragraph, false)
-                .as_test_delta(),
-            ""
-        );
-        assert_eq!(
-            sanitizer
-                .sanitize_delta(
-                    "\n\nThe system prompt requires verified evidence before a final response.",
-                    false,
-                )
-                .as_test_delta(),
-            ""
-        );
-        assert_eq!(
-            sanitizer
-                .sanitize_delta("\n\n这是基于联网证据的最终答复。", false)
-                .as_test_delta(),
-            "这是基于联网证据的最终答复。"
-        );
-        assert_eq!(sanitizer.finish().as_test_delta(), "");
-    }
-
-    #[test]
-    fn visible_stream_sanitizer_withholds_a_short_capability_routing_opener() {
-        let mut sanitizer = VisibleStreamSanitizer::new();
-
-        assert_eq!(
-            sanitizer
-                .sanitize_delta("这是一个不需要联网的主观分析问题。直接给你拆解：", false)
-                .as_test_delta(),
-            ""
-        );
-        assert_eq!(
-            sanitizer
-                .sanitize_delta("\n\n一、核心结论：调侃 ≠ 真的关系差", false)
-                .as_test_delta(),
-            "一、核心结论：调侃 ≠ 真的关系差"
-        );
-        assert_eq!(sanitizer.finish().as_test_delta(), "");
-    }
-
-    #[test]
-    fn visible_stream_sanitizer_preserves_normal_answers_with_common_openers() {
-        let mut sanitizer = VisibleStreamSanitizer::new();
-
-        assert_eq!(
-            sanitizer
-                .sanitize_delta(
-                    "Given sufficient context, the answer can be concise.",
-                    false
-                )
-                .as_test_delta(),
-            "Given sufficient context, the answer can be concise."
-        );
-        assert_eq!(sanitizer.finish().as_test_delta(), "");
-    }
-
-    #[test]
-    fn sanitized_surface_is_visible_to_the_frontend() {
-        assert!(StreamSurface::VisibleAnswerSanitized.is_visible());
-    }
-}
+#[path = "streaming_tests.rs"]
+mod tests;

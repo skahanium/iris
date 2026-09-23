@@ -3,6 +3,7 @@ use crate::ai_runtime::{retrieval_scope::RetrievalScope, ContextPacket, RuntimeD
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+#[derive(Clone)]
 pub struct ToolDispatchContext<'a> {
     /// Database used by domain/evidence dispatch. `None` is reserved for
     /// isolated unit tests that do not exercise provider execution.
@@ -21,6 +22,9 @@ pub struct ToolDispatchContext<'a> {
     /// Exact paths from a consumed frozen change set. This exists only during
     /// deterministic post-confirmation dispatch and never widens a model turn.
     pub confirmed_write_targets: Option<&'a [String]>,
+    /// Frozen vault identity for confirmed writes. Present only with
+    /// `confirmed_write_targets` so a vault switch cannot reuse the plan.
+    pub confirmed_vault_id: Option<&'a str>,
     /// Immutable per-Run document policy evaluated before content can cross a
     /// tool boundary. `None` is reserved for isolated unit tests only.
     pub document_policy:
@@ -36,9 +40,41 @@ pub struct ToolDispatchContext<'a> {
     pub app_handle: Option<tauri::AppHandle>,
     pub attachment_count: usize,
     pub skill_activation_plan: Option<&'a crate::ai_types::SkillActivationPlanSummary>,
+    /// Host-owned action identity, frozen providers and absolute deadline.
+    /// The secondary Web entry point rejects dispatch when this is absent.
+    pub(crate) web_action:
+        Option<&'a crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput>,
 }
 
 impl<'a> ToolDispatchContext<'a> {
+    /// Isolated dispatch context for tests that do not exercise native search.
+    ///
+    /// Production Web dispatch requires one frozen action; this constructor
+    /// leaves that identity absent and therefore cannot execute Web requests.
+    pub fn for_tests(retrieval_scope: &'a RetrievalScope) -> Self {
+        Self {
+            db: None,
+            selected_web_provider_id: None,
+            note_path: None,
+            file_id: None,
+            run_id: None,
+            write_target_path: None,
+            confirmed_write_targets: None,
+            confirmed_vault_id: None,
+            document_policy: None,
+            web_search_enabled: false,
+            available_tool_names: &[],
+            max_web_fetches: 3,
+            cold_start_packets: &[],
+            retrieval_scope,
+            runtime_documents: &[],
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+            web_action: None,
+        }
+    }
+
     pub(crate) fn ensure_note_write_allowed(&self, db: &Database, path: &str) -> AppResult<()> {
         self.ensure_run_active()?;
         self.ensure_write_target_matches(path)?;
@@ -57,6 +93,13 @@ impl<'a> ToolDispatchContext<'a> {
             return Err(AppError::run(SafeRunErrorCode::Cancelled));
         }
         Ok(())
+    }
+
+    pub(crate) fn ensure_confirmed_vault(&self, vault: &std::path::Path) -> AppResult<()> {
+        let Some(expected) = self.confirmed_vault_id else {
+            return Ok(());
+        };
+        crate::ai_runtime::frozen_change_plan::assert_live_vault_id(vault, expected)
     }
 
     pub(crate) fn ensure_write_target_matches(&self, path: &str) -> AppResult<()> {

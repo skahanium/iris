@@ -29,6 +29,7 @@ import {
   type AiPayloadRef,
 } from "@/lib/ai-payload-store";
 import type {
+  AssistantSessionRef,
   ContentPart,
   CitationBinding,
   DisplayMention,
@@ -38,6 +39,7 @@ import type {
   WebCitationEntry,
 } from "@/types/ai";
 import type { AssistantProcessItem } from "@/lib/assistant-process";
+import { AssistantRunDiagnosticEntry } from "@/components/ai/AssistantRunDiagnostic";
 
 export interface ImageAttachment {
   id: string;
@@ -96,6 +98,7 @@ interface AiMessageListProps {
   streaming: boolean;
   pendingInput?: AssistantPendingInputCard | null;
   selectedIndices?: Set<number>;
+  session?: AssistantSessionRef | null;
   onCitationClick?: (ref: string) => void;
   onRetract?: (index: number) => void;
   onSelect?: (
@@ -327,6 +330,7 @@ export const AiMessageList = memo(function AiMessageList({
   streaming,
   pendingInput,
   selectedIndices,
+  session = null,
   onCitationClick,
   onRetract,
   onSelect,
@@ -710,6 +714,9 @@ export const AiMessageList = memo(function AiMessageList({
               onCitationClick={onCitationClick}
               webCitations={m.webCitations}
             />
+            {session && m.runId ? (
+              <AssistantRunDiagnosticEntry session={session} runId={m.runId} />
+            ) : null}
           </div>
         </div>
       );
@@ -745,6 +752,11 @@ export const AiMessageList = memo(function AiMessageList({
               <p className="text-[10px] text-muted-foreground">
                 本次回答已取消，未纳入后续对话上下文。
               </p>
+            ) : null}
+            {session &&
+            m.runId &&
+            (m.turnState === "failed" || m.turnState === "cancelled") ? (
+              <AssistantRunDiagnosticEntry session={session} runId={m.runId} />
             ) : null}
           </div>
         </div>

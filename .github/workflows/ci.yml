@@ -38,6 +38,15 @@ jobs:
       - name: Check document facts
         run: npm run docs:check
 
+      - name: Check Agent Harness document system
+        run: npm run agent-harness:check
+
+      - name: Test Agent Harness checker
+        run: npm run agent-harness:test
+
+      - name: Check first-party file size budget
+        run: npm run size:check
+
       - name: Check formatting
         run: npm run format:check
 
@@ -56,7 +65,9 @@ jobs:
   rust-quality-macos-arm64:
     name: Rust quality / macOS ARM64
     runs-on: macos-15
-    timeout-minutes: 30
+    # Full `cargo test` already takes ~25 minutes on macos-15 after clippy; 30
+    # minutes leaves no room for sqlite-vec extras, cargo-audit, or cache miss.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -109,7 +120,7 @@ jobs:
         run: cargo deny --manifest-path src-tauri/Cargo.toml check licenses
 
   agent-smoke:
-    name: Agent 24-case smoke
+    name: Agent smoke gate
     runs-on: macos-15
     timeout-minutes: 15
 
@@ -133,7 +144,7 @@ jobs:
           workspaces: src-tauri -> ../.iris-dev/target
           shared-key: macos-agent-smoke
 
-      - name: Run Agent 24-case smoke gate
+      - name: Run Agent smoke gate
         run: npm run agent:eval:smoke
 
   release-readiness-macos-arm64:

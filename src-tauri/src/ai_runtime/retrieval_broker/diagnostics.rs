@@ -78,13 +78,13 @@ pub fn hybrid_retrieve_with_diagnostics_with_embedder(
     if request.layers.fts {
         append_layer_result(
             "fts",
-            search_fts(conn, &request.query, candidate_limit),
+            search_fts(conn, &request.query, candidate_limit, &request.scope),
             &mut packets,
             &mut diagnostics,
         );
         append_layer_result(
             "metadata",
-            search_metadata(conn, &request.query, candidate_limit),
+            search_metadata(conn, &request.query, candidate_limit, &request.scope),
             &mut packets,
             &mut diagnostics,
         );

@@ -19,11 +19,14 @@ pub(crate) struct ModelGatewayStreamingDirectAnswerProvider<'a> {
     thinking: bool,
     reasoning: crate::ai_types::ResolvedReasoningRequest,
     continuation: Option<crate::ai_runtime::model_gateway::ProviderContinuation>,
+    boundary: Option<crate::ai_runtime::boundary_events::BoundaryAuditSlot>,
+    budget_db: Option<&'a Database>,
 }
 
 impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
     /// Bind one already-hydrated provider configuration for this direct Run only.
     pub(crate) fn new(
+        db: Option<&'a Database>,
         gateway: &'a crate::ai_runtime::model_gateway::ModelGateway,
         provider: crate::ai_types::ProviderConfig,
         max_tokens: u32,
@@ -38,6 +41,8 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
             thinking: false,
             reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             continuation: None,
+            boundary: None,
+            budget_db: db,
         })
     }
 
@@ -56,6 +61,8 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
             thinking: dispatch.thinking,
             reasoning: dispatch.reasoning,
             continuation: None,
+            boundary: None,
+            budget_db: None,
         })
     }
 
@@ -74,6 +81,34 @@ fn classify_failover_failure(
     error: &AppError,
 ) -> crate::ai_runtime::provider_router::ProviderFailure {
     crate::ai_runtime::provider_router::classify_provider_failure_from_app_error(error)
+}
+
+fn protocol_family_of(
+    provider: &crate::ai_types::ProviderConfig,
+    reasoning: &crate::ai_types::ResolvedReasoningRequest,
+) -> crate::ai_runtime::boundary_events::ProtocolFamily {
+    use crate::ai_types::{EndpointFamily, ReasoningAdapter};
+    if provider.endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
+        && reasoning.adapter == ReasoningAdapter::OpenAiResponses
+    {
+        crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiResponses
+    } else if provider.endpoint_family == EndpointFamily::AnthropicMessages {
+        crate::ai_runtime::boundary_events::ProtocolFamily::AnthropicMessages
+    } else {
+        crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiChatCompletions
+    }
+}
+
+fn input_revision_for_run(db: &Database, run_id: &str) -> String {
+    db.with_read_conn(|conn| {
+        conn.query_row(
+            "SELECT turn_id FROM agent_runs WHERE run_id = ?1",
+            [run_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(Into::into)
+    })
+    .unwrap_or_else(|_| run_id.to_string())
 }
 
 fn failover_reason(failure: crate::ai_runtime::provider_router::ProviderFailure) -> &'static str {
@@ -482,10 +517,18 @@ pub(crate) fn gateway_request_for_messages(
         reasoning,
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     }
 }
 
 impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
+    fn manages_attempt_budget(&self) -> bool {
+        true
+    }
+    fn budget_database(&self) -> Option<&Database> {
+        self.budget_db
+    }
+
     fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
@@ -510,10 +553,53 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
         );
         apply_model_turn_budget(&mut request, budget);
         request.continuation = self.continuation.clone();
+        request.boundary = self.boundary.clone();
         Box::pin(async move {
-            self.gateway
-                .send_streaming_request_to_observer(run_id, request, observer)
-                .await
+            let attempt_budget = AgentModelTurnBudget {
+                max_turn_output_tokens: Some(
+                    budget
+                        .max_turn_output_tokens
+                        .unwrap_or(self.max_tokens)
+                        .min(self.max_tokens),
+                ),
+                ..budget
+            };
+            let lease = crate::ai_runtime::model_turn_ledger::claim_attempt(
+                self.budget_db,
+                run_id,
+                crate::ai_runtime::model_turn_ledger::current_purpose(),
+                attempt_budget,
+            )?;
+            apply_model_turn_budget(&mut request, lease.budget);
+            let before_dispatch =
+                || crate::ai_runtime::model_turn_ledger::mark_dispatched(self.budget_db, &lease);
+            let result = self
+                .gateway
+                .send_streaming_request_with_dispatch(run_id, request, observer, &before_dispatch)
+                .await;
+            crate::ai_runtime::model_turn_ledger::settle_attempt(
+                self.budget_db,
+                &lease,
+                result.as_ref().ok().map(|response| &response.usage),
+            )?;
+            if let Ok(response) = &result {
+                let (prompt, completion, _) = resolved_turn_usage(response, messages, tools);
+                if lease
+                    .budget
+                    .max_prompt_tokens
+                    .is_some_and(|limit| prompt > limit)
+                {
+                    return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
+                }
+                if lease
+                    .budget
+                    .max_turn_output_tokens
+                    .is_some_and(|limit| completion > limit)
+                {
+                    return Err(AppError::run(SafeRunErrorCode::OutputTooLong));
+                }
+            }
+            result
         })
     }
 }
@@ -590,6 +676,24 @@ impl<'a> FailoverStreamingProvider<'a> {
         }
     }
 
+    /// Frozen model/endpoint for C10 native-search probing. Taken from the
+    /// already-selected route candidate; never inferred from a brand name.
+    pub(crate) fn native_search_endpoint(
+        &self,
+    ) -> Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef> {
+        self.route
+            .select_streaming_for_requirements(self.requirements)
+            .first()
+            .map(
+                |candidate| crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef {
+                    model_id: candidate.model.clone(),
+                    endpoint_family: candidate.endpoint_family,
+                    api_base: Some(candidate.base_url.clone()),
+                    credential_service: candidate.credential_service.clone(),
+                },
+            )
+    }
+
     /// Test-only seam for exercising the production failover loop against a
     /// local deterministic transport without weakening the HTTPS-only client
     /// used by every production construction path.
@@ -601,6 +705,13 @@ impl<'a> FailoverStreamingProvider<'a> {
 }
 
 impl ToolLoopProvider for FailoverStreamingProvider<'_> {
+    fn manages_attempt_budget(&self) -> bool {
+        true
+    }
+    fn budget_database(&self) -> Option<&Database> {
+        Some(self.db)
+    }
+
     fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
@@ -662,15 +773,61 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                     crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![dispatch
                         .provider
                         .clone()])?;
-                let provider =
+                let mut provider =
                     ModelGatewayStreamingDirectAnswerProvider::from_dispatch_with_continuation(
                         &gateway,
                         dispatch,
                         continuation.clone(),
                     )?;
-                let attempt = provider
-                    .answer_turn(provider_state_key, messages, tools, budget, observer)
-                    .await;
+                let child_run_id =
+                    (parent_run_id != provider_state_key).then(|| provider_state_key.to_string());
+                let input_revision = input_revision_for_run(self.db, parent_run_id);
+                let protocol_family = protocol_family_of(&provider.provider, &provider.reasoning);
+                let slot = crate::ai_runtime::boundary_events::BoundaryAuditSlot::new(
+                    crate::ai_runtime::boundary_events::BoundaryCorrelation {
+                        run_id: parent_run_id.to_string(),
+                        input_revision,
+                        parent_run_id: child_run_id.as_ref().map(|_| parent_run_id.to_string()),
+                        child_run_id,
+                        model_turn: crate::ai_runtime::boundary_events::next_handshake_turn(
+                            self.db,
+                            parent_run_id,
+                        ),
+                        call_id: format!("model-{dispatch_attempt}"),
+                        attempt_id: format!("{provider_state_key}:{dispatch_attempt}"),
+                        tool_surface_version:
+                            crate::ai_runtime::boundary_events::tool_surface_version(
+                                tools.iter().map(|tool| tool.name.as_str()),
+                            ),
+                        protocol_adapter:
+                            crate::ai_runtime::boundary_events::protocol_adapter_name(
+                                protocol_family,
+                            )
+                            .to_string(),
+                    },
+                );
+                slot.note_generated(
+                    messages,
+                    u32::try_from(tools.len()).unwrap_or(u32::MAX),
+                    true,
+                );
+                let _ = crate::ai_runtime::boundary_events::record_handshake_start(self.db, &slot);
+                let _persist = crate::ai_runtime::boundary_events::BoundaryPersistGuard::new(
+                    self.db,
+                    slot.clone(),
+                );
+                provider.boundary = Some(slot);
+                provider.budget_db = Some(self.db);
+                let purpose = if dispatch_attempt == 1 {
+                    crate::ai_runtime::model_turn_ledger::current_purpose()
+                } else {
+                    crate::ai_runtime::model_turn_ledger::AttemptPurpose::Retry
+                };
+                let attempt = crate::ai_runtime::model_turn_ledger::with_purpose(
+                    purpose,
+                    provider.answer_turn(provider_state_key, messages, tools, budget, observer),
+                )
+                .await;
                 let attempt = match attempt {
                     Ok(response)
                         if response
@@ -932,5 +1089,42 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// Attach the root repository to providers that use the common attempt seam.
+pub(super) struct RunBudgetProvider<'a, P: ToolLoopProvider> {
+    pub(super) provider: &'a P,
+    pub(super) db: &'a Database,
+}
+impl<P: ToolLoopProvider> ToolLoopProvider for RunBudgetProvider<'_, P> {
+    fn manages_attempt_budget(&self) -> bool {
+        self.provider.manages_attempt_budget()
+    }
+    fn budget_database(&self) -> Option<&Database> {
+        Some(self.db)
+    }
+    fn answer_turn<'a>(
+        &'a self,
+        run_id: &'a str,
+        messages: &'a [crate::ai_runtime::LlmMessage],
+        tools: &'a [crate::ai_runtime::ToolSpec],
+        budget: AgentModelTurnBudget,
+        observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        self.provider
+            .answer_turn(run_id, messages, tools, budget, observer)
+    }
+    fn on_tool_call_dispatched(&self, run_id: &str) -> AppResult<()> {
+        self.provider.on_tool_call_dispatched(run_id)
+    }
+    fn on_tool_proposals_not_dispatched(&self, run_id: &str) -> AppResult<()> {
+        self.provider.on_tool_proposals_not_dispatched(run_id)
     }
 }

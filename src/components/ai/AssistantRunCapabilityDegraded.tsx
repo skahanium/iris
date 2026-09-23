@@ -1,4 +1,5 @@
-import type { AssistantRunEventPayload } from "@/types/ai";
+import type { AssistantRunEventPayload, AssistantSessionRef } from "@/types/ai";
+import { AssistantRunDiagnosticEntry } from "@/components/ai/AssistantRunDiagnostic";
 import {
   triageWebCapabilityDegradation,
   WEB_CAPABILITY_DEGRADATION_DOMAIN_LABEL,
@@ -9,6 +10,8 @@ interface AssistantRunCapabilityDegradedProps {
     AssistantRunEventPayload,
     { kind: "capability_degraded" }
   >;
+  session?: AssistantSessionRef | null;
+  runId?: string | null;
 }
 
 interface AssistantRunWebVerificationFailedProps {
@@ -19,6 +22,7 @@ interface AssistantRunWebVerificationFailedProps {
   retrying: boolean;
   onRetry: () => void;
   onCheckConfiguration?: () => void;
+  session?: AssistantSessionRef | null;
 }
 
 function webFailureReasonMessage(
@@ -60,6 +64,7 @@ export function AssistantRunWebVerificationFailed({
   retrying,
   onRetry,
   onCheckConfiguration,
+  session = null,
 }: AssistantRunWebVerificationFailedProps) {
   return (
     <div
@@ -71,14 +76,16 @@ export function AssistantRunWebVerificationFailed({
       <p className="font-medium text-foreground">联网核实未完成</p>
       <p>未取得可用联网证据，因此没有生成未经核实的答复。</p>
       <p className="mt-1">{webFailureReasonMessage(failure.failureReason)}</p>
-      <details className="mt-2 text-[11px]">
-        <summary className="cursor-pointer select-none text-foreground/70">
-          诊断信息
-        </summary>
-        <p className="mt-1 font-mono text-[10px]">
-          诊断编号：{failure.diagnosticId}
+      {session ? (
+        <AssistantRunDiagnosticEntry
+          session={session}
+          runId={failure.diagnosticId}
+        />
+      ) : (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          诊断入口需要当前会话。
         </p>
-      </details>
+      )}
       {failure.retryable ? (
         <button
           type="button"
@@ -105,6 +112,8 @@ export function AssistantRunWebVerificationFailed({
 /** Nonterminal, conversation-local notice for a safely degraded capability. */
 export function AssistantRunCapabilityDegraded({
   degradation,
+  session = null,
+  runId = null,
 }: AssistantRunCapabilityDegradedProps) {
   const retryHint = degradation.retryable
     ? "可稍后重试联网核实。"
@@ -162,6 +171,13 @@ export function AssistantRunCapabilityDegraded({
           </div>
         </dl>
       </details>
+      {session && runId ? (
+        <AssistantRunDiagnosticEntry session={session} runId={runId} />
+      ) : (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          诊断入口需要当前会话。
+        </p>
+      )}
     </div>
   );
 }

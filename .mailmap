@@ -1,0 +1,13 @@
+# Git 作者身份归一。
+#
+# 2026-09-20 至 2026-09-21 的一批提交把作者记成 `Skahanium`（首字母大写），
+# 而仓库与全局 git 身份都是 `skahanium`；同一轮工作因此出现两种作者串。
+# 那些提交已经推送，按「不改写历史」的纪律不做 rebase 或 filter-branch，
+# 改用 .mailmap 让日志与工具看到同一个身份：
+#
+#   git log --format='%aN <%aE>'   # 应用本文件
+#   git log --format='%an <%ae>'   # 原始记录，保留原样
+#
+# 本文件只影响显示，不改动任何已提交对象的作者字段。
+
+skahanium <skahanium@gmail.com> Skahanium <skahanium@gmail.com>

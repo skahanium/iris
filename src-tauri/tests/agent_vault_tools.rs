@@ -23,25 +23,9 @@ fn ctx_with_scope<'a>(
     note_path: Option<&'a str>,
     retrieval_scope: &'a RetrievalScope,
 ) -> ToolDispatchContext<'a> {
-    ToolDispatchContext {
-        db: None,
-        selected_web_provider_id: None,
-        note_path,
-        file_id: None,
-        run_id: None,
-        write_target_path: None,
-        confirmed_write_targets: None,
-        document_policy: None,
-        web_search_enabled: false,
-        available_tool_names: &[],
-        max_web_fetches: 3,
-        cold_start_packets: &[],
-        retrieval_scope,
-        runtime_documents: &[],
-        app_handle: None,
-        attachment_count: 0,
-        skill_activation_plan: None,
-    }
+    let mut ctx = ToolDispatchContext::for_tests(retrieval_scope);
+    ctx.note_path = note_path;
+    ctx
 }
 
 fn index_note(state: &std::sync::Arc<AppState>, path: &str, content: &str) {

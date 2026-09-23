@@ -13,7 +13,7 @@ function usesTransparentDesktopShell(): boolean {
   return true;
 }
 
-/** Tauri 桌面壳：顶栏由 DesktopTitleBar（document / splash）提供；Linux 另做透明圆角裁切 */
+/** Tauri 桌面壳：顶栏由 DesktopTitleBar（document / splash）提供；非 Windows/macOS 宿主另做透明圆角裁切 */
 export function DesktopFrame({ children }: DesktopFrameProps) {
   if (!isTauriRuntime()) {
     return <>{children}</>;

@@ -22,6 +22,8 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 | Success        | `--success`、`--success-bg`、`--success-fg` | 就绪/成功徽章；禁止业务层裸用 `emerald-*`                                                                                                  |
 | Destructive    | `--destructive`                             | 终态错误与危险操作                                                                                                                         |
 
+Monogram 的几何规格（viewBox、外框与衬线参数、`skewX(-7°)`）与栅格资源来源见 [design-system/brand.md](./design-system/brand.md)。
+
 ### 表面与边框
 
 | Token 组                                            | 用途                                                   |
@@ -149,7 +151,7 @@ Agent 提交状态必须区分本地与远端事实：`已保存`、`正在连�
 - 自定义 LLM 端点的连通性、文本或视觉验证不代表 Agent 工具与多轮续接协议已经验证。每个自定义模型在所有验证状态下都必须常显「仅支持对话；Agent 工具协议尚未验证」，不得用“验证成功”覆盖或隐藏该限制。
 - 进入供应商详情时同步更新 overlay 的 `managementCenterProviderId`，以支持深链恢复与面板内导航一致。
 - 供应商列表行使用 `rounded-lg border-border/65 bg-background/55` 的整行可点区域；钻取入口用右侧 `ChevronRight`，勿用裸「配置」文案。MCP 联网候选直接在行内常显「主服务／备用 1／备用 2」标签；上移、下移是详情箭头前的纯图标控件，鼠标悬停或键盘聚焦时显示、粗指针环境保持可见，必须有 tooltip 与 `aria-label`，且不得嵌套在行点击按钮内。状态点：`bg-success`（就绪/Key 已配置/映射完整）、`bg-amber-500`（待完善）、`bg-muted-foreground/60`（未启用）；须配 `aria-label`。
-- AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
+- AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](../src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
 - 二级/三级详情页顶栏采用「左侧弱化返回按钮（`rounded-full` + `border-border-subtle` + `text-muted-foreground` + `aria-label="返回 X"`）+ 跨行居中标题/副标题」结构；返回按钮与主标题视觉分层，不再左对齐混排。
 - 进入 MCP 第三级（`managementCenterProviderId` 非空）时，二级「联网搜索」PanelSection（当前搜索提供方、联网已开启）整体隐藏，仅保留 `McpProfilesPanel` 详情；返回列表时恢复。
 - MCP 详情页的「外部只读工具」只承担 discovery、只读审查、显式信任 binding 与诊断：候选必须显示为“服务端声明只读、待用户审核”，副作用或不支持的 Schema 只汇总拒绝数量，不展示服务端原始 description。绑定操作必须二次确认精确 provider/tool/schema，并明确说明服务端 `readOnlyHint` 不是 Iris 对第三方行为的证明；取消确认不得调用 Upsert。已信任、启用且配置未漂移的只读 binding 在普通 Run 接受时自动冻结；classified 与 local-only 状态不得显示或提交这些 grant。
@@ -239,6 +241,10 @@ v1.2.19 在现有 Rail 体系中增加 Workspace Navigator 与 Agent Focus Surfa
 严格核实与日常时效请求的最低观察由 Host 在首个模型答复前执行，过程区只能根据实际派发显示「正在联网检索」或「正在读取页面」；它不是模型提出的工具调用，也不得展示为“模型已搜索”。日常 `WebPreferred` 的最低检索义务独立于正文证据要求。未派发的工具提议不显示抓取、失败或切换状态；一般模型准备阶段使用「正在处理」，不暗示工具已经执行。无结果、读取失败、工具不可用和调用修复耗尽使用各自真实原因；普通问题不得套用处分、用药或签证专用限制文案。`completed` 表示回复提交，不代表事实质量已通过验收。
 
 模型的来源绑定标记与最终界面表达必须区分：模型可在采用来源的句段旁输出当前 Run 提供的 `[Wn]` 或精确来源链接，Harness 将其解析为既有徽章和来源区。禁止界面裸露内部标记，不能被提示词解释为禁止模型提交绑定；仍禁止另建来源附录。
+
+### AI 任务结果条
+
+`completed`／`partial`／`blocked` 是任务结果，不是 Run 生命周期。`partial` 与 `blocked` 使用 warning 条（`--warning`／`--warning-bg`），`aria-live="polite"`，禁止 `destructive`、禁止 `role="alert"`，不得写成「模型能力降级」。条不替代限制说明正文。`completed` 只保留合同字段，不另加成功横幅（过程栏「答复完毕」已表达提交）。
 
 ### AI 过程流
 

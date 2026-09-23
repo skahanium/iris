@@ -17,6 +17,19 @@ impl FinalAnswerIntegrity {
         )
     }
 
+    /// Whether assembled tool calls may be dispatched.
+    ///
+    /// `tool_calls` / `tool_use` are the protocol terminals for a tool turn.
+    /// A normal finish (`stop` / `end_turn` / `completed`) may still carry
+    /// MiniMax content-embedded tools. Truncation (`length`, `unknown`, …)
+    /// must not execute those calls as complete actions.
+    pub(crate) fn may_execute_tool_calls(finish_reason: &str) -> bool {
+        matches!(
+            finish_reason.trim().to_ascii_lowercase().as_str(),
+            "tool_calls" | "tool_use"
+        ) || Self::has_normal_finish_reason(finish_reason)
+    }
+
     /// Whether visible text has enough structure for a route that requires a
     /// factual answer. Creative, rewrite, code and simple conversation routes
     /// deliberately do not impose this extra shape rule.
@@ -65,5 +78,18 @@ mod tests {
             "stop",
             false
         ));
+        assert!(!FinalAnswerIntegrity::has_normal_finish_reason("length"));
+        assert!(!FinalAnswerIntegrity::has_normal_finish_reason("unknown"));
+        assert!(FinalAnswerIntegrity::needs_recovery(
+            "截断正文",
+            "length",
+            false
+        ));
+        assert!(FinalAnswerIntegrity::may_execute_tool_calls("tool_calls"));
+        assert!(FinalAnswerIntegrity::may_execute_tool_calls("tool_use"));
+        assert!(FinalAnswerIntegrity::may_execute_tool_calls("stop"));
+        assert!(!FinalAnswerIntegrity::may_execute_tool_calls("length"));
+        assert!(!FinalAnswerIntegrity::may_execute_tool_calls("unknown"));
+        assert!(!FinalAnswerIntegrity::may_execute_tool_calls("max_tokens"));
     }
 }

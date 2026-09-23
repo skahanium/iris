@@ -277,6 +277,7 @@ impl ClassifiedEphemeralStore {
             RunEventPayload::Completed {
                 message_id: None,
                 source_summary: Vec::new(),
+                task_outcome: Some(crate::ai_runtime::delivery_outcome::TaskOutcome::Completed),
             },
         )
         .map_err(AppError::msg)?;

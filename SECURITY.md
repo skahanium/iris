@@ -10,17 +10,17 @@
 
 ## API Key 与凭据
 
-Iris 使用本地 **AES-256-GCM** 加密凭据存储，刻意不调用 Windows Credential Manager、macOS Keychain 或 Linux Secret Service，避免系统密码弹窗打断常规 LLM/MCP 使用。
+Iris 使用本地 **AES-256-GCM** 加密凭据存储，刻意不调用 Windows Credential Manager 或 macOS Keychain，避免系统密码弹窗打断常规 LLM/MCP 使用。
 
 - 每条凭据使用随机 12 字节 nonce，服务名作为 AAD；密文以 Base64 记录在本地凭据文件中。
 - 32 字节主密钥由 `OsRng` 生成，保存在平台配置目录；密文位于应用数据目录，两者分离。
-- macOS/Linux 使用私有目录/文件权限；Windows 仅允许当前用户访问。
+- macOS 使用私有目录/文件权限；Windows 仅允许当前用户访问。
 - 解密值以 `Zeroizing<String>` 保存，离开作用域自动清零。
 - API Key 永不写入明文文件、SQLite、日志、错误消息或环境变量；仅在 HTTPS 请求的授权头中短暂使用。
 
 ## 数据与网络边界
 
-- 用户笔记是标准 UTF-8 `.md` 文件；Iris 不提供 Vault 目录级加密。需要静态磁盘保护时，请使用 BitLocker、FileVault 或 LUKS。
+- 用户笔记是标准 UTF-8 `.md` 文件；Iris 不提供 Vault 目录级加密。需要静态磁盘保护时，请使用 Windows BitLocker 或 macOS FileVault。
 - LLM 和自定义 provider 必须使用 HTTPS；`http://` endpoint 会被配置边界拒绝。
 - 文件操作进行 Vault 路径校验；数据库查询参数化；渲染 HTML 经 DOMPurify 清理。
 - 日志、诊断与错误中不得包含 API Key、token、用户笔记正文、完整 prompt 或原始模型思维链。

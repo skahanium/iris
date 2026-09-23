@@ -1,5 +1,6 @@
 //! Shared, scene-free contracts for the unified Agent Run control plane.
 
+use crate::ai_runtime::delivery_outcome::TaskOutcome;
 use crate::ai_runtime::retrieval_scope::ContextScopeDto;
 use crate::ai_types::{ContentPart, ContextReferenceWire, SourceSpan};
 use serde::{Deserialize, Serialize};
@@ -446,6 +447,13 @@ impl RunBudgetPolicy {
         Self::for_profile(RunBudgetProfile::Standard)
     }
 
+    /// Delegated ChildRun policy for isolated executor tests that spawn children
+    /// without going through intake envelope classification.
+    #[cfg(test)]
+    pub(crate) fn delegated() -> Self {
+        Self::for_profile(RunBudgetProfile::Delegated)
+    }
+
     fn for_profile(profile: RunBudgetProfile) -> Self {
         match profile {
             RunBudgetProfile::Direct => Self {
@@ -778,6 +786,17 @@ pub struct AssistantRunGetRequest {
     pub(crate) run_id: Option<String>,
 }
 
+/// Session-bound C27 diagnostic query. `run_id` is required; omitting it is
+/// not a latest-active lookup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantRunDiagnoseRequest {
+    /// Session that owns the Run.
+    pub(crate) session: AssistantSessionRef,
+    /// Stable Run identifier taken from the current answer or failure.
+    pub(crate) run_id: String,
+}
+
 /// Start a fresh attempt from the latest terminal failed Run without
 /// duplicating the user turn in the persisted conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1095,7 +1114,10 @@ pub(crate) enum RunEventPayload {
         /// Safe effect category projected from the frozen plan.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effect: Option<Effect>,
-        /// Counted and redacted change targets; never paths or arguments.
+        /// Bounded normalized target labels (truncated relative paths) and
+        /// risk classes; never note body, tool arguments, or diff hunks.
+        /// The on-demand diff preview is a separate transient IPC response
+        /// that is never persisted into events or tool results.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         targets: Option<Vec<ConfirmationTargetSummary>>,
         /// RFC 3339 expiry of the frozen approval window.
@@ -1172,6 +1194,9 @@ pub(crate) enum RunEventPayload {
         /// Minimal source-origin category counts for the final answer.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         source_summary: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
+        /// K15 task result; absent on historical events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_outcome: Option<TaskOutcome>,
     },
     /// Safe terminal failure metadata.
     Failed {
@@ -1547,6 +1572,12 @@ pub enum SafeRunErrorCode {
     /// The pending change plan expired or no longer matches.
     #[serde(rename = "agent_run_confirmation_expired")]
     ConfirmationExpired,
+    /// The requested plan identity does not match the pending confirmation.
+    #[serde(rename = "agent_run_confirmation_plan_hash_mismatch")]
+    ConfirmationPlanHashMismatch,
+    /// The frozen candidate cannot be replayed into a bounded diff preview.
+    #[serde(rename = "agent_run_confirmation_diff_unavailable")]
+    ConfirmationDiffUnavailable,
     /// No suitable Provider can complete the permitted route.
     #[serde(rename = "agent_run_provider_unavailable")]
     ProviderUnavailable,
@@ -1740,6 +1771,8 @@ impl SafeRunErrorCode {
             Self::StateVersionConflict => "agent_run_state_version_conflict",
             Self::PermissionDenied => "agent_run_permission_denied",
             Self::ConfirmationExpired => "agent_run_confirmation_expired",
+            Self::ConfirmationPlanHashMismatch => "agent_run_confirmation_plan_hash_mismatch",
+            Self::ConfirmationDiffUnavailable => "agent_run_confirmation_diff_unavailable",
             Self::ProviderUnavailable => "agent_run_provider_unavailable",
             Self::ProviderTimeout => "agent_run_provider_timeout",
             Self::NoCapableModel => "agent_run_no_capable_model",

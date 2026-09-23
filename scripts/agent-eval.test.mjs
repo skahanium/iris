@@ -15,6 +15,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  EVAL_SUMMARY_SCHEMA_V3,
+  CAPACITY_REPORT_SCHEMA_V3,
+  assertFullContractArtifacts,
   assertStrictContractSummary,
   assertStrictSmokeSummary,
   buildAgentEvalChildEnvironment,
@@ -41,6 +44,53 @@ function isolatedLiveRoots() {
   return { temporaryRoot, dataDir, configDir };
 }
 
+function closedBaselineIdentity(overrides = {}) {
+  const { fixtureHashes, ...rest } = overrides;
+  return {
+    sourceCommit: "a".repeat(40),
+    workingTree: "clean",
+    comparable: true,
+    release: "test-release",
+    scoringSchema: CAPACITY_REPORT_SCHEMA_V3,
+    scenarioSetHash: "b".repeat(64),
+    fixtureHashes: {
+      agentAnswerV1: "c".repeat(64),
+      ...fixtureHashes,
+    },
+    os: "windows",
+    arch: "x64",
+    ...rest,
+  };
+}
+
+function completeSmokeSummary(overrides = {}) {
+  return {
+    schemaVersion: EVAL_SUMMARY_SCHEMA_V3,
+    caseCount: 24,
+    completedCaseCount: 24,
+    passed: 24,
+    failed: 0,
+    baselineIdentity: closedBaselineIdentity(),
+    ...overrides,
+  };
+}
+
+function completeContractSummary(overrides = {}) {
+  return {
+    schemaVersion: EVAL_SUMMARY_SCHEMA_V3,
+    caseCount: 48,
+    executedCaseCount: 48,
+    completedCaseCount: 36,
+    answeredCaseCount: 36,
+    expectedRefusalCount: 12,
+    unexpectedFailureCount: 0,
+    passed: 48,
+    failed: 0,
+    baselineIdentity: closedBaselineIdentity(),
+    ...overrides,
+  };
+}
+
 function productGateChildEnvironment(overrides) {
   const environment = {
     ...process.env,
@@ -53,76 +103,174 @@ function productGateChildEnvironment(overrides) {
 test("smoke release gate requires all 24 deterministic interaction cases to pass", () => {
   assert.throws(
     () =>
-      assertStrictSmokeSummary({
-        caseCount: 24,
-        completedCaseCount: 23,
-        passed: 24,
-        failed: 0,
-      }),
+      assertStrictSmokeSummary(
+        completeSmokeSummary({
+          completedCaseCount: 23,
+        }),
+      ),
     /agent_eval_smoke_incomplete/,
   );
   assert.throws(
     () =>
-      assertStrictSmokeSummary({
-        caseCount: 24,
-        completedCaseCount: 24,
-        passed: 23,
-        failed: 1,
-      }),
+      assertStrictSmokeSummary(
+        completeSmokeSummary({
+          passed: 23,
+          failed: 1,
+        }),
+      ),
     /agent_eval_smoke_failed/,
   );
-  assert.doesNotThrow(() =>
-    assertStrictSmokeSummary({
-      caseCount: 24,
-      completedCaseCount: 24,
-      passed: 24,
-      failed: 0,
-    }),
+  assert.doesNotThrow(() => assertStrictSmokeSummary(completeSmokeSummary()));
+});
+
+test("smoke release gate rejects v2 summaries and non-comparable baselines", () => {
+  assert.throws(
+    () =>
+      assertStrictSmokeSummary(
+        completeSmokeSummary({
+          schemaVersion: "agent-eval-summary-v2",
+        }),
+      ),
+    /agent_eval_smoke_summary_invalid/,
+  );
+  const missingIdentity = completeSmokeSummary();
+  delete missingIdentity.baselineIdentity;
+  assert.throws(
+    () => assertStrictSmokeSummary(missingIdentity),
+    /agent_eval_smoke_summary_invalid/,
+  );
+  assert.throws(
+    () =>
+      assertStrictSmokeSummary(
+        completeSmokeSummary({
+          baselineIdentity: closedBaselineIdentity({
+            workingTree: "dirty",
+            comparable: true,
+          }),
+        }),
+      ),
+    /agent_eval_smoke_summary_invalid/,
+  );
+  assert.throws(
+    () =>
+      assertStrictSmokeSummary(
+        completeSmokeSummary({
+          baselineIdentity: closedBaselineIdentity({
+            workingTree: "dirty",
+            comparable: false,
+          }),
+        }),
+      ),
+    /agent_eval_smoke_baseline_not_comparable/,
   );
 });
 
 test("contract release gate rejects partial 36/48 reports and accepts an explicit complete result", () => {
   assert.throws(
     () =>
-      assertStrictContractSummary({
-        schemaVersion: "agent-eval-summary-v2",
-        caseCount: 48,
-        executedCaseCount: 36,
-        completedCaseCount: 36,
-        answeredCaseCount: 36,
-        expectedRefusalCount: 0,
-        unexpectedFailureCount: 0,
-        passed: 36,
-        failed: 12,
-      }),
+      assertStrictContractSummary(
+        completeContractSummary({
+          executedCaseCount: 36,
+          completedCaseCount: 36,
+          answeredCaseCount: 36,
+          expectedRefusalCount: 0,
+          unexpectedFailureCount: 0,
+          passed: 36,
+          failed: 12,
+        }),
+      ),
     /agent_eval_contract_incomplete/,
   );
   assert.throws(
     () =>
-      assertStrictContractSummary({
-        schemaVersion: "agent-eval-summary-v2",
-        caseCount: 48,
-        executedCaseCount: 48,
-        completedCaseCount: 48,
-        answeredCaseCount: 36,
-        expectedRefusalCount: 0,
-        unexpectedFailureCount: 12,
-        passed: 36,
-        failed: 12,
-      }),
+      assertStrictContractSummary(
+        completeContractSummary({
+          completedCaseCount: 48,
+          answeredCaseCount: 36,
+          expectedRefusalCount: 0,
+          unexpectedFailureCount: 12,
+          passed: 36,
+          failed: 12,
+        }),
+      ),
     /agent_eval_contract_failed/,
   );
   assert.doesNotThrow(() =>
-    assertStrictContractSummary({
-      schemaVersion: "agent-eval-summary-v2",
-      caseCount: 48,
-      executedCaseCount: 48,
-      completedCaseCount: 36,
-      answeredCaseCount: 36,
-      expectedRefusalCount: 12,
-      unexpectedFailureCount: 0,
-      passed: 48,
-      failed: 0,
+    assertStrictContractSummary(completeContractSummary()),
+  );
+});
+
+test("contract release gate rejects v2 summaries, missing identity, and dirty trees", () => {
+  assert.throws(
+    () =>
+      assertStrictContractSummary(
+        completeContractSummary({
+          schemaVersion: "agent-eval-summary-v2",
+        }),
+      ),
+    /agent_eval_contract_summary_invalid/,
+  );
+  const missingIdentity = completeContractSummary();
+  delete missingIdentity.baselineIdentity;
+  assert.throws(
+    () => assertStrictContractSummary(missingIdentity),
+    /agent_eval_contract_summary_invalid/,
+  );
+  assert.throws(
+    () =>
+      assertStrictContractSummary(
+        completeContractSummary({
+          baselineIdentity: closedBaselineIdentity({
+            workingTree: "dirty",
+            comparable: true,
+          }),
+        }),
+      ),
+    /agent_eval_contract_summary_invalid/,
+  );
+  assert.throws(
+    () =>
+      assertStrictContractSummary(
+        completeContractSummary({
+          baselineIdentity: closedBaselineIdentity({
+            workingTree: "dirty",
+            comparable: false,
+          }),
+        }),
+      ),
+    /agent_eval_contract_baseline_not_comparable/,
+  );
+});
+
+test("full contract artifacts require a v3 capacity report whose release matches identity", () => {
+  const summary = completeContractSummary();
+  assert.throws(
+    () => assertFullContractArtifacts(summary, null),
+    /agent_eval_contract_summary_invalid/,
+  );
+  assert.throws(
+    () =>
+      assertFullContractArtifacts(summary, {
+        schemaVersion: "agent-capacity-report-v2",
+        release: "test-release",
+        baselineIdentity: closedBaselineIdentity(),
+      }),
+    /agent_eval_contract_summary_invalid/,
+  );
+  assert.throws(
+    () =>
+      assertFullContractArtifacts(summary, {
+        schemaVersion: CAPACITY_REPORT_SCHEMA_V3,
+        release: "other-release",
+        baselineIdentity: closedBaselineIdentity(),
+      }),
+    /agent_eval_contract_summary_invalid/,
+  );
+  assert.doesNotThrow(() =>
+    assertFullContractArtifacts(summary, {
+      schemaVersion: CAPACITY_REPORT_SCHEMA_V3,
+      release: "test-release",
+      baselineIdentity: closedBaselineIdentity(),
     }),
   );
 });
@@ -131,7 +279,7 @@ test("credential metadata uses POSIX ownership and mode checks only on POSIX", (
   const metadata = { mode: 0o100666, uid: 1001 };
 
   assert.equal(hasUnsafeCredentialMetadata(metadata, "win32", 1000), false);
-  assert.equal(hasUnsafeCredentialMetadata(metadata, "linux", 1000), true);
+  assert.equal(hasUnsafeCredentialMetadata(metadata, "darwin", 1001), true);
   assert.equal(
     hasUnsafeCredentialMetadata({ mode: 0o100600, uid: 1000 }, "darwin", 1000),
     false,

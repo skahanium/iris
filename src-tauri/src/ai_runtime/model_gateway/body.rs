@@ -44,6 +44,8 @@ pub struct GatewayRequest {
     pub continuation: Option<ProviderContinuation>,
     /// Tool call IDs still awaiting user confirmation - must not receive error stubs.
     pub skip_stub_ids: Vec<String>,
+    /// Optional C26 handshake slot filled by the live send path.
+    pub boundary: Option<crate::ai_runtime::boundary_events::BoundaryAuditSlot>,
 }
 
 fn messages_need_tool_prep(messages: &[LlmMessage], tools: &[LlmToolDef]) -> bool {
@@ -286,14 +288,20 @@ fn build_openai_responses_body_inner(request: &GatewayRequest) -> serde_json::Va
     });
 
     for (index, message) in request.messages.iter().enumerate() {
-        if continuation_tool_start.is_some_and(|start| index < start) {
+        if continuation_tool_start.is_some_and(|start| index < start)
+            && !matches!(message.role, MessageRole::System)
+        {
             continue;
         }
         let text = message.content.text_content();
         match message.role {
-            MessageRole::System if continuation_response_id.is_none() => {
-                system_instructions.push(text)
+            MessageRole::System if continuation_tool_start.is_some_and(|start| index >= start) => {
+                input.push(serde_json::json!({
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": text}],
+                }))
             }
+            MessageRole::System => system_instructions.push(text),
             MessageRole::User if continuation_response_id.is_none() => {
                 input.push(serde_json::json!({
                     "role": "user",
@@ -392,7 +400,7 @@ fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) 
     }
     match reasoning.adapter {
         ReasoningAdapter::DeepSeekReasoningContent => {
-            body["extra_body"]["thinking"] = serde_json::json!({ "type": "enabled" });
+            body["thinking"] = serde_json::json!({ "type": "enabled" });
             body["reasoning_effort"] = serde_json::json!(deepseek_effort_for_mode(reasoning.mode));
         }
         ReasoningAdapter::MiniMaxReasoningDetails => {}
@@ -696,23 +704,21 @@ fn build_anthropic_messages_body_inner(request: &GatewayRequest) -> serde_json::
 /// Anthropic represents an assistant tool request as `tool_use` content
 /// blocks, unlike OpenAI-compatible `tool_calls` fields.
 fn anthropic_assistant_content(message: &LlmMessage) -> serde_json::Value {
+    let thinking = anthropic_thinking_replay_blocks(message.reasoning_content.as_deref());
     let Some(tool_calls) = message
         .tool_calls
         .as_ref()
         .filter(|calls| !calls.is_empty())
     else {
-        return content_to_anthropic_json(&message.content);
+        let content = content_to_anthropic_json(&message.content);
+        if thinking.is_empty() {
+            return content;
+        }
+        return serde_json::Value::Array(merge_anthropic_content_blocks(thinking, content));
     };
 
-    let mut blocks = match content_to_anthropic_json(&message.content) {
-        serde_json::Value::String(text) if text.is_empty() => Vec::new(),
-        serde_json::Value::String(text) => vec![serde_json::json!({
-            "type": "text",
-            "text": text,
-        })],
-        serde_json::Value::Array(blocks) => blocks,
-        _ => Vec::new(),
-    };
+    let mut blocks =
+        merge_anthropic_content_blocks(thinking, content_to_anthropic_json(&message.content));
     for call in tool_calls {
         let input = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
             .unwrap_or_else(|_| serde_json::json!({}));
@@ -724,6 +730,38 @@ fn anthropic_assistant_content(message: &LlmMessage) -> serde_json::Value {
         }));
     }
     serde_json::Value::Array(blocks)
+}
+
+fn anthropic_thinking_replay_blocks(reasoning: Option<&str>) -> Vec<serde_json::Value> {
+    let Some(reasoning) = reasoning.filter(|value| !value.trim().is_empty()) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<serde_json::Value>(reasoning) {
+        Ok(serde_json::Value::Array(items)) => items
+            .into_iter()
+            .filter(|item| {
+                matches!(
+                    item["type"].as_str(),
+                    Some("thinking") | Some("redacted_thinking")
+                )
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn merge_anthropic_content_blocks(
+    mut prefix: Vec<serde_json::Value>,
+    content: serde_json::Value,
+) -> Vec<serde_json::Value> {
+    match content {
+        serde_json::Value::String(text) if !text.is_empty() => {
+            prefix.push(serde_json::json!({ "type": "text", "text": text }));
+        }
+        serde_json::Value::Array(blocks) => prefix.extend(blocks),
+        _ => {}
+    }
+    prefix
 }
 
 #[cfg(test)]
@@ -763,6 +801,7 @@ mod phase3_adapter_contract_tests {
             reasoning: ResolvedReasoningRequest::disabled(),
             continuation: None,
             skip_stub_ids: vec![],
+            boundary: None,
         }
     }
 
@@ -842,6 +881,7 @@ mod phase3_adapter_contract_tests {
             reasoning: ResolvedReasoningRequest::disabled(),
             continuation: None,
             skip_stub_ids: vec![],
+            boundary: None,
         };
 
         let body = build_llm_api_body(&request).unwrap();
@@ -914,8 +954,9 @@ mod phase3_adapter_contract_tests {
 
         let body = build_chat_completions_body(&request);
 
-        assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("extra_body").is_none());
     }
 
     #[test]
@@ -932,8 +973,9 @@ mod phase3_adapter_contract_tests {
 
         let body = build_chat_completions_body(&request);
 
-        assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["reasoning_effort"], "max");
+        assert!(body.get("extra_body").is_none());
     }
 
     #[test]
@@ -972,6 +1014,42 @@ mod phase3_adapter_contract_tests {
 
         assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["thinking"]["budget_tokens"], 1_199);
+    }
+
+    #[test]
+    fn anthropic_tool_continuation_replays_thinking_blocks_before_text() {
+        let mut request = request_for(EndpointFamily::AnthropicMessages);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::High,
+            adapter: ReasoningAdapter::AnthropicExtendedThinking,
+            control: ReasoningControl::Budget,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+        request.messages.push(LlmMessage {
+            role: MessageRole::Assistant,
+            content: "已检索。".into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![crate::ai_types::ToolCall::new(
+                "toolu_1",
+                "web_search",
+                r#"{"query":"status"}"#,
+            )]),
+            reasoning_content: Some(
+                r#"[{"type":"thinking","thinking":"先核验来源。","signature":"sig_abc"}]"#.into(),
+            ),
+        });
+
+        let body = build_llm_api_body(&request).unwrap();
+        let content = &body["messages"][1]["content"];
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "先核验来源。");
+        assert_eq!(content[0]["signature"], "sig_abc");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "已检索。");
+        assert_eq!(content[2]["type"], "tool_use");
+        assert_eq!(content[2]["id"], "toolu_1");
     }
 
     #[test]
@@ -1115,5 +1193,123 @@ mod phase3_adapter_contract_tests {
         assert_eq!(body["input"][0]["type"], "function_call_output");
         assert_eq!(body["input"][0]["call_id"], "call_2");
         assert!(body.get("instructions").is_none());
+    }
+
+    #[test]
+    fn responses_continuation_keeps_stable_instructions() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Auto,
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+        request.messages.insert(
+            0,
+            LlmMessage {
+                role: MessageRole::System,
+                content: "stable system instructions".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        );
+        request.continuation = Some(ProviderContinuation::OpenAiResponses {
+            response_id: "resp_prior_1".into(),
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![crate::ai_types::ToolCall::new(
+                "call_1",
+                "search_hybrid",
+                r#"{"query":"Iris"}"#,
+            )]),
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"success":true}"#.into(),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        });
+
+        let body = build_llm_api_body(&request).unwrap();
+
+        assert_eq!(body["previous_response_id"], "resp_prior_1");
+        assert_eq!(body["instructions"], "stable system instructions");
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+        assert_eq!(body["input"][0]["type"], "function_call_output");
+        assert_eq!(body["input"][0]["call_id"], "call_1");
+    }
+
+    #[test]
+    fn responses_continuation_includes_host_repair_system_in_input() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Auto,
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+        request.messages.insert(
+            0,
+            LlmMessage {
+                role: MessageRole::System,
+                content: "stable system instructions".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        );
+        request.continuation = Some(ProviderContinuation::OpenAiResponses {
+            response_id: "resp_prior_1".into(),
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![crate::ai_types::ToolCall::new(
+                "call_1",
+                "search_hybrid",
+                r#"{"query":"Iris"}"#,
+            )]),
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"success":true}"#.into(),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::System,
+            content: "Host repair: resubmit a valid tool call.".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        });
+
+        let body = build_llm_api_body(&request).unwrap();
+        let input = body["input"].as_array().expect("input array");
+
+        assert_eq!(body["previous_response_id"], "resp_prior_1");
+        assert_eq!(body["instructions"], "stable system instructions");
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0]["type"], "function_call_output");
+        assert_eq!(input[0]["call_id"], "call_1");
+        assert_eq!(input[1]["role"], "system");
+        assert_eq!(
+            input[1]["content"][0]["text"],
+            "Host repair: resubmit a valid tool call."
+        );
+        assert_eq!(input[1]["content"][0]["type"], "input_text");
     }
 }

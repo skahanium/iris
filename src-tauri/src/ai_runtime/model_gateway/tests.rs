@@ -196,6 +196,7 @@ fn ordinary_openai_compatible_tool_continuation_never_replays_reasoning_content(
         },
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     });
 
     assert!(body["messages"][0].get("reasoning_content").is_none());
@@ -247,6 +248,7 @@ fn mimo_tool_turn_disables_thinking_and_replays_same_provider_reasoning_content(
         },
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     });
 
     assert_eq!(body["thinking"]["type"], "disabled");
@@ -301,12 +303,14 @@ fn deepseek_tool_continuation_preserves_reasoning_content_and_provider_control()
         },
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     });
     assert_eq!(
         body["messages"][0]["reasoning_content"],
         "internal chain of thought"
     );
-    assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert!(body.get("extra_body").is_none());
     assert_eq!(body["messages"][1]["role"], "tool");
 }
 
@@ -356,6 +360,7 @@ fn minimax_m3_tool_continuation_preserves_reasoning_details_and_uses_native_cont
         },
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     });
 
     assert_eq!(body["thinking"]["type"], "adaptive");
@@ -387,6 +392,7 @@ fn minimax_response_keeps_private_reasoning_details_out_of_visible_content() {
         reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     };
     let response = super::parse_gateway_response(
         &request,
@@ -434,6 +440,7 @@ fn minimax_content_embedded_tool_calls_are_parsed_and_hidden_from_visible_conten
         reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         continuation: None,
         skip_stub_ids: vec![],
+        boundary: None,
     };
     let response = super::parse_gateway_response(
         &request,
@@ -455,6 +462,118 @@ fn minimax_content_embedded_tool_calls_are_parsed_and_hidden_from_visible_conten
         .function
         .arguments
         .contains("\"query\":\"x\""));
+}
+
+fn origin_slot() -> crate::ai_runtime::boundary_events::BoundaryAuditSlot {
+    crate::ai_runtime::boundary_events::BoundaryAuditSlot::new(
+        crate::ai_runtime::boundary_events::BoundaryCorrelation {
+            run_id: "run-origin".into(),
+            input_revision: "turn-1".into(),
+            parent_run_id: None,
+            child_run_id: None,
+            model_turn: 1,
+            call_id: "call_1".into(),
+            attempt_id: "attempt_1".into(),
+            tool_surface_version: "surface-v1".into(),
+            protocol_adapter: "openai_chat_completions".into(),
+        },
+    )
+}
+
+fn minimax_request_with_slot(
+    slot: crate::ai_runtime::boundary_events::BoundaryAuditSlot,
+) -> GatewayRequest {
+    GatewayRequest {
+        provider: ProviderConfig {
+            name: "minimax".into(),
+            base_url: "https://api.minimaxi.com/v1".into(),
+            model: "MiniMax-M3".into(),
+            api_key: None,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        messages: vec![],
+        tools: vec![LlmToolDef {
+            tool_type: "function".into(),
+            function: LlmFunctionDef {
+                name: "web_search".into(),
+                description: String::new(),
+                parameters: serde_json::json!({"type":"object"}),
+            },
+        }],
+        max_tokens: None,
+        input_token_budget: None,
+        temperature: None,
+        stream: false,
+        thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
+        continuation: None,
+        skip_stub_ids: vec![],
+        boundary: Some(slot),
+    }
+}
+
+#[test]
+fn minimax_structured_tool_calls_are_not_labeled_content_extraction() {
+    let slot = origin_slot();
+    let request = minimax_request_with_slot(slot.clone());
+    let _ = super::parse_gateway_response(
+        &request,
+        &serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "content": "Searching now",
+                    "tool_calls": [{
+                        "id":"call_1",
+                        "type":"function",
+                        "function":{"name":"web_search","arguments":"{\"query\":\"MiniMax\"}"}
+                    }]
+                }
+            }]
+        }),
+    );
+    let hops = crate::ai_runtime::tool_name_origin::hops_from_payload(
+        &slot.recorded_name_origin().expect("origin"),
+    );
+    assert_eq!(hops.len(), 1);
+    assert_eq!(
+        hops[0].parse_path,
+        crate::ai_runtime::tool_name_origin::ParsePath::OpenAiToolCalls
+    );
+    assert!(!hops[0].rewritten);
+}
+
+#[test]
+fn minimax_content_extraction_records_rewritten_protocol_path() {
+    let slot = origin_slot();
+    let request = minimax_request_with_slot(slot.clone());
+    let _ = super::parse_gateway_response(
+        &request,
+        &serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "content": "I'll look.]<|minimax|>[{\"name\":\"unknown_search\",\"arguments\":{\"query\":\"x\"}}]<|minimax|>[Done",
+                    "reasoning_details": []
+                }
+            }]
+        }),
+    );
+    let hops = crate::ai_runtime::tool_name_origin::hops_from_payload(
+        &slot.recorded_name_origin().expect("origin"),
+    );
+    assert_eq!(hops.len(), 1);
+    assert_eq!(
+        hops[0].fingerprint,
+        crate::ai_runtime::tool_name_origin::name_fingerprint("unknown_search")
+    );
+    assert_eq!(
+        hops[0].parse_path,
+        crate::ai_runtime::tool_name_origin::ParsePath::MinimaxContent
+    );
+    assert!(hops[0].rewritten);
+    let encoded = slot.recorded_name_origin().expect("origin").to_string();
+    assert!(!encoded.contains("unknown_search"), "{encoded}");
 }
 
 #[test]

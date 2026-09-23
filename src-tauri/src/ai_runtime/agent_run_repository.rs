@@ -4,6 +4,7 @@
 //! dispatch providers, emit IPC events, or provide a compatibility path for
 //! the legacy Harness. Stage 4 owns those responsibilities.
 
+use crate::ai_runtime::delivery_outcome::TaskOutcome;
 use crate::ai_runtime::prompt_contract::PROMPT_CONTRACT_VERSION;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::run_contract::{
@@ -22,6 +23,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+
+#[path = "agent_run_repository/budget.rs"]
+mod budget;
 
 const MAX_SAFE_EVENT_TEXT_CHARS: usize = 2_000;
 const MAX_REASONING_SUMMARY_CHARS: usize = 1_500;
@@ -282,6 +286,8 @@ pub(crate) struct FinalizeRunInput {
     /// Host-authored fallback reports persist the assistant message without
     /// replaying it as model `ContentDelta` streaming.
     pub(crate) publish_content_deltas: bool,
+    /// K15 task result attached to the Completed event; absent on historical rows.
+    pub(crate) task_outcome: Option<TaskOutcome>,
 }
 
 /// Safe process-event history for one latest Run belonging to a logical turn.
@@ -1053,6 +1059,7 @@ impl AgentRunRepository {
                     RunEventPayload::Completed {
                         message_id: Some(message_id.clone()),
                         source_summary: input.source_summary,
+                        task_outcome: input.task_outcome,
                     },
                 ).map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
@@ -1067,6 +1074,10 @@ impl AgentRunRepository {
                 conn.execute("UPDATE agent_runs SET provider_route_summary_json = json_set(provider_route_summary_json, '$.publication.rejectedFinalizations', COALESCE(json_extract(provider_route_summary_json, '$.publication.rejectedFinalizations'), 0) + 1, '$.publication.finalizationRejectionReason', 'already_committed') WHERE run_id = ?1 AND json_extract(provider_route_summary_json, '$.publication.version') = 1", [&diagnostic_run_id])?;
                 Ok(())
             });
+        }
+        if result.is_ok() {
+            let _ =
+                crate::ai_runtime::boundary_events::close_open_handshakes(db, &diagnostic_run_id);
         }
         result
     }
@@ -1733,6 +1744,45 @@ impl AgentRunRepository {
             })
         })
     }
+
+    /// Drop unconsumed confirmations whose frozen vault is no longer live.
+    pub(crate) fn expire_pending_confirmations_for_foreign_vault(
+        db: &Database,
+        live_vault_id: &str,
+    ) -> AppResult<usize> {
+        db.with_conn(|conn| {
+            let pending: Vec<(String, String)> = {
+                let mut statement = conn.prepare(
+                    "SELECT confirmation_id, plan_json
+                     FROM agent_run_confirmations WHERE status = 'pending'",
+                )?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            let now = chrono::Utc::now().to_rfc3339();
+            let mut expired = 0usize;
+            for (confirmation_id, plan_json) in pending {
+                let Ok(plan) =
+                    crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
+                        &plan_json,
+                    )
+                else {
+                    continue;
+                };
+                if plan.vault_id() == live_vault_id {
+                    continue;
+                }
+                expired += conn.execute(
+                    "UPDATE agent_run_confirmations
+                     SET status = 'rejected', consumed_at = ?1
+                     WHERE confirmation_id = ?2 AND status = 'pending'",
+                    rusqlite::params![now, confirmation_id],
+                )?;
+            }
+            Ok(expired)
+        })
+    }
+
     /// Return only the safe Run snapshot and ordered persisted events.
     pub(crate) fn get(db: &Database, run_id: &str) -> AppResult<Option<AssistantRunGetResponse>> {
         Self::get_scoped(db, run_id, None)

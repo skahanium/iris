@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{
-    is_evidence_limited_response, is_natural_clarification, AgentModelTurnBudget, AgentToolLoop,
+    is_natural_clarification, AgentModelTurnBudget, AgentTerminalType, AgentToolLoop,
     RequiredWebBootstrapObservation, ToolLoopExecutor, ToolLoopProvider,
 };
 use super::model_gateway::{StreamEventObserver, StreamSurface};
@@ -22,15 +22,40 @@ fn standard_tool_loop() -> AgentToolLoop {
     AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
 }
 
-fn assert_host_evidence_limited(content: &str) {
-    assert!(
-        is_evidence_limited_response(content),
-        "host limitation must keep the evidence-limited prefix: {content}"
+/// The Host-authored limitation is identified by the loop's own terminal type,
+/// never by its body text. Body assertions stay here only to prove the user
+/// still receives a complete, non-domain-specific limitation.
+fn assert_host_evidence_limited(outcome: &super::agent_tool_loop::AgentToolLoopOutcome) {
+    assert_eq!(
+        outcome.terminal,
+        AgentTerminalType::HostEvidenceLimited,
+        "a Host limitation must be typed, not inferred from prose: {}",
+        outcome.content
     );
+    assert!(
+        outcome.terminal.is_host_authored(),
+        "a Host limitation must never be validated as model output"
+    );
+    let content = outcome.content.as_str();
     assert!(
         content.contains("无法确认") && !content.contains("用药") && !content.contains("签证"),
         "the limitation must describe missing verification without unrelated domain advice: {content}"
     );
+}
+
+/// Ordinary prose stays model output even when it opens with the exact words a
+/// Host limitation uses. This is the regression that used to let a model answer
+/// skip validation by prefix.
+fn assert_model_answer(outcome: &super::agent_tool_loop::AgentToolLoopOutcome) {
+    assert!(
+        matches!(
+            outcome.terminal,
+            AgentTerminalType::ModelAnswer | AgentTerminalType::RepairedModelAnswer
+        ),
+        "model prose must stay model output: {:?}",
+        outcome.terminal
+    );
+    assert!(!outcome.terminal.is_host_authored());
 }
 
 #[test]
@@ -140,16 +165,14 @@ async fn parent_turn_keeps_the_frozen_ceiling_while_reserving_final_synthesis() 
                 tool_calls: vec![tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         budgets: Mutex::new(Vec::new()),
@@ -183,7 +206,7 @@ async fn parent_turn_keeps_the_frozen_ceiling_while_reserving_final_synthesis() 
     let budgets = provider.budgets.lock().expect("budget lock");
     assert_eq!(budgets.len(), 2);
     assert_eq!(budgets[0].max_prompt_tokens, Some(128_000));
-    assert_eq!(budgets[0].max_completion_tokens, Some(12_000));
+    assert_eq!(budgets[0].max_completion_tokens, Some(4_000));
     assert_eq!(budgets[0].max_turn_output_tokens, Some(4_000));
     assert_eq!(budgets[1].max_prompt_tokens, Some(128_000));
     assert!(
@@ -261,16 +284,14 @@ async fn unexposed_tool_call_is_rejected_without_reaching_executor() {
                 }],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -671,7 +692,7 @@ async fn network_category_cap_rejects_the_second_dispatch_without_calling_execut
 }
 
 #[tokio::test]
-async fn rejected_tool_proposals_close_the_business_surface_before_the_reserved_synthesis_turn() {
+async fn final_model_turn_after_a_rejected_proposal_withholds_business_tools() {
     let provider = ToolSurfaceRecordingProvider {
         responses: Mutex::new(VecDeque::from([
             scripted_tool_response(tool_call_with_arguments(
@@ -695,13 +716,13 @@ async fn rejected_tool_proposals_close_the_business_surface_before_the_reserved_
         .execute(
             &provider,
             &executor,
-            "run-rejected-proposal-synthesis",
+            "run-rejected-proposal-final-turn",
             Vec::new(),
             vec![web_tool_spec()],
             &mut observer,
         )
         .await
-        .expect("a rejected proposal still leaves the reserved synthesis turn");
+        .expect("a rejected proposal still leaves the reserved final model turn");
 
     assert_eq!(outcome.content, "I can answer from the available context.");
     assert_eq!(
@@ -797,7 +818,7 @@ async fn frozen_category_caps_reject_the_first_call_beyond_each_boundary() {
         (
             "unknown_frozen_external_read",
             readonly_tool_spec("unknown_frozen_external_read"),
-            6,
+            0,
         ),
     ] {
         let calls = (0..=allowed_dispatches)
@@ -849,7 +870,7 @@ async fn frozen_category_caps_reject_the_first_call_beyond_each_boundary() {
 }
 
 #[tokio::test]
-async fn two_complete_rounds_without_progress_close_tools_before_final_synthesis() {
+async fn two_complete_rounds_without_progress_keep_tools_while_the_ledger_allows_it() {
     let provider = ToolSurfaceRecordingProvider {
         responses: Mutex::new(VecDeque::from([
             scripted_tool_response(tool_call_with_arguments(
@@ -876,13 +897,13 @@ async fn two_complete_rounds_without_progress_close_tools_before_final_synthesis
         .execute(
             &provider,
             &executor,
-            "run-no-progress-synthesis",
+            "run-no-progress-keeps-tools",
             Vec::new(),
             vec![readonly_tool_spec("system_time_now")],
             &mut observer,
         )
         .await
-        .expect("two no-progress rounds must reserve a final synthesis turn");
+        .expect("two no-progress rounds must not exhaust the envelope");
 
     assert_eq!(outcome.content, "synthesized from bounded results");
     assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
@@ -895,7 +916,7 @@ async fn two_complete_rounds_without_progress_close_tools_before_final_synthesis
         [
             vec!["system_time_now".to_string()],
             vec!["system_time_now".to_string()],
-            vec![]
+            vec!["system_time_now".to_string()]
         ]
     );
 }
@@ -1023,8 +1044,7 @@ async fn missing_provider_usage_is_estimated_from_the_local_turn_data() {
             tool_calls: Vec::new(),
             usage: Default::default(),
             finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
+            ..Default::default()
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -1178,7 +1198,10 @@ struct ChangeSetRecordingExecutor {
 struct FailingWebExecutor;
 struct LargeResultExecutor;
 struct LargeWebResultExecutor;
-struct OversizedWebResultExecutor;
+#[derive(Default)]
+struct OversizedWebResultExecutor {
+    produced: Mutex<Vec<ToolCallResult>>,
+}
 struct RequiredWebExecutor;
 struct RequiredExternalExecutor;
 struct SourceBindingExecutor;
@@ -1508,14 +1531,19 @@ impl ToolLoopExecutor for OversizedWebResultExecutor {
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         let tool_name = call.function.name.clone();
         Box::pin(async move {
-            Ok(ToolCallResult {
+            let result = ToolCallResult {
                 tool_name,
                 success: true,
                 output: serde_json::json!({ "evidence": "x".repeat(40_000) }),
                 duration_ms: 1,
                 tokens_used: None,
                 error: None,
-            })
+            };
+            self.produced
+                .lock()
+                .expect("produced observations")
+                .push(result.clone());
+            Ok(result)
         })
     }
 }
@@ -1608,12 +1636,18 @@ impl ToolLoopExecutor for ChangeSetRecordingExecutor {
         _run_id: &'a str,
         calls: &'a [ToolCall],
         _first_step: u32,
-    ) -> Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>> {
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<super::agent_tool_loop::ChangeSetRequestOutcome>>
+                + Send
+                + 'a,
+        >,
+    > {
         self.batches
             .lock()
             .expect("batch lock")
             .push(calls.iter().map(|call| call.id.clone()).collect());
-        Box::pin(async { Ok(()) })
+        Box::pin(async { Ok(super::agent_tool_loop::ChangeSetRequestOutcome::Frozen) })
     }
 }
 
@@ -1774,8 +1808,7 @@ impl ToolLoopProvider for InterruptedThenRecoveryProvider {
                     .collect(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -1833,10 +1866,8 @@ async fn partial_visible_stream_error_recovers_once_with_same_provider_and_no_to
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     assert_eq!(
         outcome.completion_tokens,
-        crate::ai_runtime::text_support::estimate_tokens("已经露出的开头，") as u32
-            + crate::ai_runtime::text_support::estimate_tokens("这是同一回答的续写，现已完整。")
-                as u32,
-        "the recovery budget includes the visible draft exactly once"
+        8_000,
+        "both unknown-usage attempts retain their output reservation; visible text is not provider usage"
     );
     assert!(provider
         .recovery_tools
@@ -1878,7 +1909,7 @@ async fn partial_visible_stream_recovery_rejects_a_business_tool_call() {
         content: String::new(),
     };
 
-    let error = standard_tool_loop()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &executor,
@@ -1896,9 +1927,11 @@ async fn partial_visible_stream_recovery_rejects_a_business_tool_call() {
             &mut observer,
         )
         .await
-        .expect_err("an append-only recovery may not reopen the tool surface");
+        .expect("an append-only recovery stays closed and the Run ends bounded");
 
-    assert_eq!(error.to_string(), "agent_run_incomplete_output");
+    // The tool surface stays shut: no business tool executed. The Run closes
+    // with the bounded limitation rather than a terminal error.
+    assert_host_evidence_limited(&outcome);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -1908,7 +1941,7 @@ async fn interrupted_visible_drafts_count_against_per_turn_and_cumulative_budget
 
     for (draft_tokens, expected_error) in [
         (LIMIT - 1, None),
-        (LIMIT, Some("agent_run_tool_loop_limit")),
+        (LIMIT, None),
         (LIMIT + 1, Some("agent_run_output_too_long")),
     ] {
         let provider = InterruptedThenRecoveryProvider {
@@ -1962,9 +1995,10 @@ async fn interrupted_visible_drafts_count_against_per_turn_and_cumulative_budget
         match expected_error {
             None => {
                 let outcome =
-                    result.expect("N-1 visible draft leaves exactly one completion token");
+                    result.expect("unknown usage exhausts the allowance with a bounded limitation");
+                assert_host_evidence_limited(&outcome);
                 assert_eq!(outcome.completion_tokens, LIMIT as u32);
-                assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+                assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
             }
             Some(expected_error) => {
                 assert_eq!(
@@ -2024,10 +2058,14 @@ fn scripted_tool_calls_response(calls: Vec<ToolCall>) -> super::model_gateway::G
     super::model_gateway::GatewayResponse {
         content: None,
         tool_calls: calls,
-        usage: Default::default(),
+        usage: crate::ai_types::TokenUsage {
+            prompt_tokens: 10,
+            completion_tokens: 1,
+            total_tokens: 11,
+            ..Default::default()
+        },
         finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     }
 }
 
@@ -2035,10 +2073,14 @@ fn scripted_final_response(content: &str) -> super::model_gateway::GatewayRespon
     super::model_gateway::GatewayResponse {
         content: Some(content.into()),
         tool_calls: Vec::new(),
-        usage: Default::default(),
+        usage: crate::ai_types::TokenUsage {
+            prompt_tokens: 10,
+            completion_tokens: 1,
+            total_tokens: 11,
+            ..Default::default()
+        },
         finish_reason: "stop".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     }
 }
 
@@ -2118,15 +2160,14 @@ async fn internal_final_answer_submission_bypasses_executor_history_and_tool_bud
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
                 reasoning_content: Some("private reasoning must not enter the transcript".into()),
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("the loop must not request a second turn".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2170,8 +2211,7 @@ async fn invalid_structured_source_binding_gets_one_no_tool_repair_turn() {
         }))],
         usage: Default::default(),
         finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     };
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([response("W8"), response("W1")])),
@@ -2218,8 +2258,7 @@ async fn repeated_invalid_structured_source_binding_finishes_with_limitation() {
         }))],
         usage: Default::default(),
         finish_reason: "tool_calls".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     };
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([invalid(), invalid()])),
@@ -2240,7 +2279,7 @@ async fn repeated_invalid_structured_source_binding_finishes_with_limitation() {
         .await
         .expect("invalid structured submission degrades safely");
 
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
     assert!(outcome.final_submission.is_none());
     assert_eq!(outcome.tool_calls, 0);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
@@ -2256,7 +2295,7 @@ async fn final_submission_retries_one_withheld_plain_draft() {
                 usage: Default::default(),
                 finish_reason: "stop".into(),
                 reasoning_content: Some("private".into()),
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -2265,8 +2304,7 @@ async fn final_submission_retries_one_withheld_plain_draft() {
                 }))],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2403,16 +2441,14 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
                 tool_calls: vec![tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2485,24 +2521,21 @@ async fn successful_equivalent_tool_call_is_not_executed_twice() {
                 tool_calls: vec![tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
                 tool_calls: vec![repeated_call],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2598,8 +2631,7 @@ async fn hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -2610,16 +2642,14 @@ async fn hr1_adaptive_search_accepts_a_refined_query_with_a_new_resource() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("已基于第二轮的新资料完成回答。".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2667,8 +2697,7 @@ async fn hr1_local_multi_hop_reads_distinct_notes_without_web_access() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -2679,8 +2708,7 @@ async fn hr1_local_multi_hop_reads_distinct_notes_without_web_access() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -2691,16 +2719,14 @@ async fn hr1_local_multi_hop_reads_distinct_notes_without_web_access() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("已综合两份本地笔记。".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2755,32 +2781,28 @@ async fn hr1_repeated_failed_tool_call_stops_after_two_real_executions() {
                 tool_calls: vec![repeated_call("failed-first")],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
                 tool_calls: vec![repeated_call("failed-second")],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
                 tool_calls: vec![repeated_call("failed-third")],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("工具暂不可用，已说明限制。".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2824,16 +2846,14 @@ async fn malformed_spawn_subagent_arguments_reach_the_bounded_executor() {
                 }],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("handled invalid child request".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2880,8 +2900,7 @@ async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
             tool_calls: Vec::new(),
             usage: Default::default(),
             finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
+            ..Default::default()
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -2933,16 +2952,14 @@ async fn web_required_without_a_tool_surface_finishes_with_a_bounded_limitation(
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("still unverified".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -2960,7 +2977,7 @@ async fn web_required_without_a_tool_surface_finishes_with_a_bounded_limitation(
         )
         .await
         .expect("a mismatched required-Web surface should degrade without showing a draft");
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
 }
 
 #[tokio::test]
@@ -2976,16 +2993,14 @@ async fn empty_web_search_preserves_a_research_repair_before_bounded_completion(
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("unsupported current claim [W1]".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             scripted_final_response("Current status still cannot be verified."),
         ])),
@@ -3006,7 +3021,7 @@ async fn empty_web_search_preserves_a_research_repair_before_bounded_completion(
         .await
         .expect("an empty current Web result should complete safely");
 
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
     assert_eq!(outcome.model_turns, 3);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
 }
@@ -3024,16 +3039,14 @@ async fn web_preferred_keeps_the_model_draft_when_search_or_fetch_fails() {
                 )],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("勒布朗仍在打球，以下分析不依赖本轮网页正文。".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3057,8 +3070,8 @@ async fn web_preferred_keeps_the_model_draft_when_search_or_fetch_fails() {
         outcome.content,
         "勒布朗仍在打球，以下分析不依赖本轮网页正文。"
     );
-    assert!(!is_evidence_limited_response(&outcome.content));
-    assert_ne!(outcome.finish_reason, "evidence_limited");
+    assert_model_answer(&outcome);
+    assert_eq!(outcome.finish_reason, "stop");
 }
 
 #[test]
@@ -3084,8 +3097,7 @@ async fn web_required_accepts_a_natural_clarification_before_any_tool_dispatch()
             tool_calls: Vec::new(),
             usage: Default::default(),
             finish_reason: "stop".into(),
-            reasoning_content: None,
-            continuation: None,
+            ..Default::default()
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -3148,8 +3160,7 @@ async fn external_required_repairs_then_limits_an_answer_without_registered_evid
         tool_calls: Vec::new(),
         usage: Default::default(),
         finish_reason: "stop".into(),
-        reasoning_content: None,
-        continuation: None,
+        ..Default::default()
     };
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([unverified(), unverified()])),
@@ -3168,7 +3179,7 @@ async fn external_required_repairs_then_limits_an_answer_without_registered_evid
         )
         .await
         .expect("external-required degrades to a safe limitation");
-    assert_host_evidence_limited(&outcome.content);
+    assert_host_evidence_limited(&outcome);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 
@@ -3213,8 +3224,7 @@ async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
                 tool_calls: vec![web_tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some(
@@ -3224,8 +3234,7 @@ async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3290,8 +3299,7 @@ async fn evaluation_tool_loop_tap_records_turns_usage_tools_and_truncation_in_me
                     prompt_cache_miss_tokens: 10,
                 },
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
@@ -3304,8 +3312,7 @@ async fn evaluation_tool_loop_tap_records_turns_usage_tools_and_truncation_in_me
                     prompt_cache_miss_tokens: 8,
                 },
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3358,16 +3365,14 @@ async fn web_tool_results_use_the_web_specific_budget_without_losing_the_tail() 
                 tool_calls: vec![web_tool_call()],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3407,41 +3412,29 @@ async fn web_tool_results_use_the_web_specific_budget_without_losing_the_tail() 
     }));
 }
 
-#[tokio::test]
-async fn oversized_web_tool_results_fail_closed_with_valid_json() {
+// Projection failure is a Host budget boundary, not a fabricated failed fetch.
+async fn assert_web_projection_boundary(call: ToolCall) {
+    let tool_name = call.function.name.clone();
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
-            super::model_gateway::GatewayResponse {
-                content: None,
-                tool_calls: vec![web_tool_call()],
-                usage: Default::default(),
-                finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
-            },
-            super::model_gateway::GatewayResponse {
-                content: Some("I cannot verify this from the returned evidence.".into()),
-                tool_calls: Vec::new(),
-                usage: Default::default(),
-                finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
-            },
+            scripted_tool_response(call),
+            scripted_final_response("This model turn must not receive an oversized observation."),
         ])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
     };
+    let executor = OversizedWebResultExecutor::default();
     let mut observer = NoopObserver;
-    standard_tool_loop()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
-            &OversizedWebResultExecutor,
-            "run-web-result-overflow",
+            &executor,
+            &format!("run-{tool_name}-projection"),
             Vec::new(),
             vec![ToolSpec {
-                name: "web_search".into(),
-                description: "Search Web".into(),
-                input_schema: serde_json::json!({ "type": "object" }),
+                name: tool_name,
+                description: "Web observation".into(),
+                input_schema: serde_json::json!({"type":"object"}),
                 access_level: crate::ai_runtime::ToolAccessLevel::Network,
                 requires_confirmation: false,
                 max_results: None,
@@ -3450,72 +3443,38 @@ async fn oversized_web_tool_results_fail_closed_with_valid_json() {
             &mut observer,
         )
         .await
-        .expect("overflow is presented as a valid failed tool result");
-
-    let messages = provider
+        .expect("projection overflow has a visible Host outcome");
+    assert_host_evidence_limited(&outcome);
+    assert_eq!(outcome.tool_calls, 1);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert!(provider
         .second_turn_messages
         .lock()
-        .expect("second turn messages lock");
-    let tool_payload = messages
-        .iter()
-        .find(|message| matches!(message.role, MessageRole::Tool))
-        .expect("tool result")
-        .content
-        .text_content();
-    let parsed: serde_json::Value = serde_json::from_str(&tool_payload).expect("valid JSON packet");
-    assert_eq!(parsed["success"], false);
-    assert_eq!(parsed["error"], "web_evidence_pack_overflow");
+        .expect("model transcript")
+        .is_empty());
+    let produced = executor.produced.lock().expect("execution facts");
+    assert_eq!(produced.len(), 1);
+    assert!(produced[0].success);
+    assert!(produced[0].error.is_none());
+    assert_eq!(
+        produced[0].output["evidence"].as_str().unwrap().len(),
+        40_000
+    );
 }
 
 #[tokio::test]
-async fn oversized_web_fetch_results_fail_closed_with_valid_json() {
-    let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            scripted_tool_response(tool_call_with_arguments(
-                "call-web-fetch",
-                "web_fetch",
-                serde_json::json!({"urls":["https://example.test/article"]}),
-            )),
-            scripted_final_response("I cannot verify this from the returned evidence."),
-        ])),
-        calls: AtomicU32::new(0),
-        second_turn_messages: Mutex::new(Vec::new()),
-    };
-    let mut observer = NoopObserver;
-    standard_tool_loop()
-        .execute(
-            &provider,
-            &OversizedWebResultExecutor,
-            "run-web-fetch-result-overflow",
-            Vec::new(),
-            vec![ToolSpec {
-                name: "web_fetch".into(),
-                description: "Fetch selected Web pages".into(),
-                input_schema: serde_json::json!({ "type": "object" }),
-                access_level: crate::ai_runtime::ToolAccessLevel::Network,
-                requires_confirmation: false,
-                max_results: None,
-                capability_affinity: Vec::new(),
-            }],
-            &mut observer,
-        )
-        .await
-        .expect("overflow is presented as a valid failed fetch result");
+async fn oversized_web_tool_results_stop_at_projection_boundary_without_fabricated_failure() {
+    assert_web_projection_boundary(web_tool_call()).await;
+}
 
-    let messages = provider
-        .second_turn_messages
-        .lock()
-        .expect("second turn messages lock");
-    let tool_payload = messages
-        .iter()
-        .find(|message| matches!(message.role, MessageRole::Tool))
-        .expect("tool result")
-        .content
-        .text_content();
-    let parsed: serde_json::Value =
-        serde_json::from_str(&tool_payload).expect("web_fetch overflow must remain valid JSON");
-    assert_eq!(parsed["success"], false);
-    assert_eq!(parsed["error"], "web_evidence_pack_overflow");
+#[tokio::test]
+async fn oversized_web_fetch_results_stop_at_projection_boundary_without_fabricated_failure() {
+    assert_web_projection_boundary(tool_call_with_arguments(
+        "call-web-fetch",
+        "web_fetch",
+        serde_json::json!({"urls":["https://example.test/article"]}),
+    ))
+    .await;
 }
 
 #[tokio::test]
@@ -3526,8 +3485,7 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
             tool_calls: vec![tool_call()],
             usage: Default::default(),
             finish_reason: "tool_calls".into(),
-            reasoning_content: None,
-            continuation: None,
+            ..Default::default()
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -3559,7 +3517,7 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
     };
     let mut observer = NoopObserver;
 
-    let error = AgentToolLoop::from_policy(&policy)
+    let outcome = AgentToolLoop::from_policy(&policy)
         .execute(
             &provider,
             &executor,
@@ -3577,9 +3535,12 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
             &mut observer,
         )
         .await
-        .expect_err("a direct policy must reject every tool call");
+        .expect("a direct policy closes with a bounded limitation rather than an error");
 
-    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    // The protected invariant is that no tool executed. The Run now ends with
+    // the Host-authored bounded limitation instead of a terminal error, because
+    // a terminal error reached the user as nothing at all.
+    assert_host_evidence_limited(&outcome);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
@@ -3605,8 +3566,7 @@ impl ToolLoopProvider for BudgetRecordingProvider {
                 tool_calls: Vec::new(),
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -3686,8 +3646,7 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
                 tool_calls,
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
             super::model_gateway::GatewayResponse {
                 content: None,
@@ -3701,8 +3660,7 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
                 }],
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             },
         ])),
         calls: AtomicU32::new(0),
@@ -3735,7 +3693,7 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
     };
     let mut observer = NoopObserver;
 
-    let error = AgentToolLoop::from_child_policy(&policy)
+    let outcome = AgentToolLoop::from_child_policy(&policy)
         .execute(
             &provider,
             &executor,
@@ -3753,9 +3711,156 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
             &mut observer,
         )
         .await
-        .expect_err("the seventh child tool call must exceed the frozen budget");
+        .expect("the seventh child tool call is rejected and the Run closes bounded");
 
-    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    // Six calls executed and the seventh did not: that is the frozen budget,
+    // and it is unchanged. Only the terminal shape moved from a hard error to a
+    // publishable limitation.
+    assert_host_evidence_limited(&outcome);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 6);
+}
+
+/// A strict Run that answers in prose twice must not fail silently.
+///
+/// Before this regression the second prose answer returned a terminal
+/// `agent_run_final_submission_required`, which reached the user as nothing at
+/// all (2026-09-10, session 21). A Run with a strict current-evidence contract
+/// must not publish unsourced prose, so the correct close is the Host-authored
+/// bounded limitation.
+#[tokio::test]
+async fn strict_submission_exhaustion_publishes_a_bounded_limitation() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_final_response("prose answer without a structured submission"),
+            scripted_final_response("prose answer again without a submission"),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: true,
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_model_turns = 4;
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-strict-submission-exhaustion",
+            Vec::new(),
+            vec![crate::ai_runtime::final_answer_submission::tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("strict submission exhaustion must publish a bounded limitation");
+
+    assert_eq!(
+        outcome.terminal,
+        AgentTerminalType::HostEvidenceLimited,
+        "expected the Host-authored bounded limitation, got {:?}",
+        outcome.content
+    );
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+/// Exhausting the model turns must not fail the Run either.
+///
+/// Before this regression the loop returned `agent_run_tool_loop_limit` after
+/// burning every turn on rejected proposals (2026-09-10, session 21: seven
+/// rejections over eight turns). The user saw nothing. The Run now closes with
+/// the bounded limitation, and the real cause stays in the diagnostics.
+#[tokio::test]
+async fn model_turn_exhaustion_publishes_a_bounded_limitation() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            scripted_tool_response(tool_call_with_arguments(
+                "outside-1",
+                "not_exposed",
+                serde_json::json!({}),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "outside-2",
+                "not_exposed",
+                serde_json::json!({}),
+            )),
+            scripted_tool_response(tool_call_with_arguments(
+                "outside-3",
+                "not_exposed",
+                serde_json::json!({}),
+            )),
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: true,
+    };
+    let mut policy = RunBudgetPolicy::standard();
+    policy.max_model_turns = 3;
+    let mut observer = NoopObserver;
+
+    let outcome = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-turn-exhaustion",
+            Vec::new(),
+            vec![web_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("model turn exhaustion must publish a bounded limitation");
+
+    assert_eq!(
+        outcome.terminal,
+        AgentTerminalType::HostEvidenceLimited,
+        "expected the Host-authored bounded limitation, got {:?}",
+        outcome.content
+    );
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn review_regression_a_child_after_two_parent_attempts_still_executes() {
+    let root = "review-parent-two-then-child";
+    let _guard = super::model_turn_ledger::BindGuard::new(root, 8);
+    super::model_turn_ledger::claim(root).unwrap();
+    super::model_turn_ledger::claim(root).unwrap();
+    let child = super::agent_tool_loop::scoped_child_provider_run_id(root, "first-child");
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([scripted_final_response("子任务完成")])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut usage = super::agent_tool_loop::AgentToolLoopUsage::default();
+    let mut policy = RunBudgetPolicy::standard();
+    policy.child_max_model_turns = 2;
+    policy.child_input_tokens_per_turn = 1000;
+    policy.child_output_tokens_per_turn = 100;
+    let outcome = AgentToolLoop::from_child_policy(&policy)
+        .execute_child(
+            &provider,
+            &executor,
+            root,
+            &child,
+            Vec::new(),
+            Vec::new(),
+            &mut NoopObserver,
+            &mut usage,
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.model_turns, 1);
+    assert_eq!(outcome.content, "子任务完成");
+    assert_eq!(usage.model_turns, 1);
+    assert_eq!(super::model_turn_ledger::used(root), 3);
 }

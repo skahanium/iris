@@ -9,6 +9,10 @@ import {
   AssistantRunWebVerificationFailed,
 } from "@/components/ai/AssistantRunCapabilityDegraded";
 
+vi.mock("@/lib/ipc", () => ({
+  assistantRunDiagnose: vi.fn(),
+}));
+
 describe("AssistantRunCapabilityDegraded", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -74,15 +78,21 @@ describe("AssistantRunCapabilityDegraded", () => {
           retrying={false}
           onRetry={retry}
           onCheckConfiguration={openSettings}
+          session={{ domain: "normal", sessionKey: "session-web" }}
         />,
       );
     });
     const alert = host.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain("run-web-1");
-    const buttons = host.querySelectorAll("button");
-    (buttons[0] as HTMLButtonElement).click();
+    expect(alert?.textContent).toContain("查看诊断");
+    expect(alert?.textContent).not.toContain("诊断编号");
+    const buttons = [...host.querySelectorAll("button")];
+    buttons
+      .find((button) => button.textContent?.includes("重试联网核实"))
+      ?.click();
     expect(retry).toHaveBeenCalledOnce();
-    (buttons[1] as HTMLButtonElement).click();
+    buttons
+      .find((button) => button.textContent?.includes("检查联网配置"))
+      ?.click();
     expect(openSettings).toHaveBeenCalledOnce();
   });
 
@@ -154,6 +164,24 @@ describe("AssistantRunCapabilityDegraded", () => {
     expect(host.textContent).not.toContain("可稍后重试");
   });
 
+  it("explains that diagnosis needs the current session", () => {
+    act(() => {
+      root.render(
+        <AssistantRunCapabilityDegraded
+          degradation={{
+            kind: "capability_degraded",
+            capability: "web.search",
+            code: "agent_run_web_provider_timeout",
+            retryable: true,
+            attemptCount: 1,
+            message: "联网核实暂不可用，已继续生成受约束答复。",
+          }}
+        />,
+      );
+    });
+    expect(host.textContent).toContain("诊断入口需要当前会话");
+  });
+
   it("is wired into the production assistant panel event projection", () => {
     const source = readFileSync(
       "src/components/ai/UnifiedAssistantPanel.impl.tsx",
@@ -163,5 +191,7 @@ describe("AssistantRunCapabilityDegraded", () => {
     expect(source).toContain("AssistantRunCapabilityDegraded");
     expect(source).toContain("eventState?.capabilityDegradation");
     expect(source).toContain("<AssistantRunCapabilityDegraded");
+    expect(source).toContain("AssistantRunWebVerificationFailed");
+    expect(source).toContain("session={runSession}");
   });
 });

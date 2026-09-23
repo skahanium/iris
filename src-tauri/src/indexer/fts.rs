@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use crate::error::AppResult;
 
 /// Detect CJK character ranges (CJK Unified Ideographs, Extension A, etc.).
-fn is_cjk(c: char) -> bool {
+pub(crate) fn is_cjk(c: char) -> bool {
     matches!(c,
         '\u{4E00}'..='\u{9FFF}'   // CJK Unified Ideographs
         | '\u{3400}'..='\u{4DBF}'   // CJK Extension A
@@ -18,7 +18,7 @@ fn is_cjk(c: char) -> bool {
 /// Converts CJK runs like "你好世界" into space-separated bigrams
 /// ("你好 好世 世界") so that SQLite's unicode61 tokenizer produces
 /// word-level matches instead of single-character tokens.
-fn cjk_bigrams(text: &str) -> String {
+pub(crate) fn cjk_bigrams(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 2);
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;

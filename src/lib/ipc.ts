@@ -6,7 +6,9 @@ import type { AssistantPresentationEvent } from "@/lib/assistant-presentation";
 
 import type {
   AssistantRunAccepted,
+  AssistantRunConfirmationDiffRequest,
   AssistantRunControlRequest,
+  AssistantRunDiagnoseRequest,
   AssistantRunEvent,
   AssistantRunGetRequest,
   AssistantRunGetResponse,
@@ -14,6 +16,8 @@ import type {
   AssistantRunStartRequest,
   ClassifiedDocumentContext,
   ClassifiedRunResultRequest,
+  ConfirmationDiffPreview,
+  DiagnosticReport,
   AssistantSessionListRequest,
   AssistantSessionLoadRequest,
   AssistantSessionMessage,
@@ -25,12 +29,16 @@ import type {
 
 export type {
   AssistantRunAccepted,
+  AssistantRunConfirmationDiffRequest,
   AssistantRunControlRequest,
+  AssistantRunDiagnoseRequest,
   AssistantRunEvent,
   AssistantRunGetRequest,
   AssistantRunGetResponse,
   AssistantRunRetryRequest,
   AssistantRunStartRequest,
+  ConfirmationDiffPreview,
+  DiagnosticReport,
   ExternalToolGrantRef,
   RunRecoveryKind,
   ClassifiedDocumentContext,
@@ -1018,6 +1026,14 @@ export async function webSearchRouteSet(
   return invoke<WebSearchRouteConfig>("web_search_route_set", { route });
 }
 
+export async function webSearchRoutePromote(
+  providerId: string,
+): Promise<WebSearchRouteConfig> {
+  return invoke<WebSearchRouteConfig>("web_search_route_promote", {
+    providerId,
+  });
+}
+
 export async function webEvidenceProviderToggle(
   providerId: string,
   enabled: boolean,
@@ -1140,12 +1156,26 @@ export async function assistantRunControl(
   return invoke<void>("assistant_run_control", { request });
 }
 
+export async function assistantRunConfirmationDiff(
+  request: AssistantRunConfirmationDiffRequest,
+): Promise<ConfirmationDiffPreview> {
+  return invoke<ConfirmationDiffPreview>("assistant_run_confirmation_diff", {
+    request,
+  });
+}
+
 export async function assistantRunGet(
   request: AssistantRunGetRequest,
 ): Promise<AssistantRunGetResponse | null> {
   return invoke<AssistantRunGetResponse | null>("assistant_run_get", {
     request,
   });
+}
+
+export async function assistantRunDiagnose(
+  request: AssistantRunDiagnoseRequest,
+): Promise<DiagnosticReport> {
+  return invoke<DiagnosticReport>("assistant_run_diagnose", { request });
 }
 
 export async function assistantClassifiedContextOpen(

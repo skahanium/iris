@@ -146,7 +146,7 @@ describe("GitHub Actions workflows", () => {
     expect(frontend["runs-on"]).toBe("ubuntu-24.04");
     expect(rust.name).toBe("Rust quality / macOS ARM64");
     expect(rust["runs-on"]).toBe("macos-15");
-    expect(agent.name).toBe("Agent 24-case smoke");
+    expect(agent.name).toBe("Agent smoke gate");
     expect(agent["runs-on"]).toBe("macos-15");
     expect(windows.name).toBe("Windows x64 desktop E2E");
     expect(windows.if).toBe("github.event_name == 'workflow_dispatch'");
@@ -174,6 +174,7 @@ describe("GitHub Actions workflows", () => {
       "npm ci",
       "npm run version:check",
       "npm run docs:check",
+      "npm run size:check",
       "npm run format:check",
       "npm run lint",
       "npm run typecheck",

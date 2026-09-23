@@ -1,4 +1,4 @@
-//! 桌面壳层尺寸单一指标源（macOS / Windows / Linux 统一 44px）。
+//! 桌面壳层尺寸单一指标源（Windows / macOS 统一 44px）。
 //!
 //! 与前端 `globals.css`、`get_desktop_chrome_metrics` IPC 共用数值。
 

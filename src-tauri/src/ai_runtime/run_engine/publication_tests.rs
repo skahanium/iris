@@ -93,8 +93,7 @@ impl ToolLoopProvider for DraftProvider {
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".into(),
-                reasoning_content: None,
-                continuation: None,
+                ..Default::default()
             })
         })
     }
@@ -249,6 +248,7 @@ async fn second_commit_cannot_replace_the_published_answer() {
             citation_map: serde_json::json!({}),
             source_summary: vec![],
             publish_content_deltas: true,
+            task_outcome: None,
         }
     )
     .is_err());

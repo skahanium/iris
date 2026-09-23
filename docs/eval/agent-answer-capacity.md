@@ -1,15 +1,16 @@
 # Iris Agent 复杂回答与承压评测
 
-> **文档状态**：历史评测记录（非现行 Harness 规范）
+> **文档状态**：现行（Agent 评测执行口径），事实基线 2026-09-13。
 >
-> 2026-08-31 起，现行任务矩阵、确定性验收边界与 Provider 授权规则以
-> [Agent Harness 验收规范](../../agent-harness/06-evaluation-performance-and-acceptance.md)
-> 为唯一权威。本文件保留 v1.2.15 的结果和当时的领域化试验，供 Git 历史比较；其中
-> “所有外部事实严格联网”“六领域 DTO/地点状态机”以及指定 MiniMax/MiMo 的试点前提
-> 已被 HR-2/HR-6/HR-7 撤回，不能作为新 Run 行为或当前质量结论。
+> 本文件规定 Agent 门禁**怎么执行、怎么读**：证据层级、分栏评分、批准门、核心矩阵构成、
+> 压力阶梯、安全轨与运行命令。**可声称范围的唯一权威是
+> [Agent Harness 文档体系](../../agent-harness/README.md)**；
+> 阶段进度见该入口下的工作包与登记表。历史对照见
+> [归档清单](../../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)。
+> 本文件不复述它们的结论。文末[历史记录](#历史记录已被取代的评测口径与结果)只作对照，
+> 不代表当前架构状态。
 
-本文保留 Iris Agent 在长问题、复杂问题和多来源问题上的历史可重复评测口径。
-评测首先按“回答所需的最小证据”分组，而不是按模型实际调用了什么工具分组：
+评测按“回答所需的最小证据”分组，而不是按模型实际调用了什么工具分组：
 
 - `no_retrieval`：不需要外部事实或本地材料；
 - `local_only`：事实只存在于授权的本地材料；
@@ -36,7 +37,7 @@ headless live 环境会先建立与桌面运行时等价的本地索引，再执
 | `contract_verified`      | OpenAI-compatible、Anthropic Messages、Responses continuation 与 MCP search/fetch 的协议形状和失败分类 | 某个真实厂商服务可用或效果良好     |
 | `live_not_tested`        | 尚未经过用户批准的真实配置                                                                             | 不得转述为 live 通过               |
 
-当前 v1.2.15 结果属于 `headless_deterministic`。确定性矩阵使用受控的 synthetic
+v1.2.15 的确定性结果属于 `headless_deterministic`。确定性矩阵使用受控的 synthetic
 来源，并以精确事实／引用断言验证 Iris 自身的完整链路；它不能替代真实模型评测。
 真实 live pilot 必须使用真实 LLM 和已配置的 HTTPS 搜索服务，但不得要求公网
 结果包含 synthetic `fact-web-N=value-N` 占位断言：这类断言只可能由本地假源满足，
@@ -51,7 +52,18 @@ headless live 环境会先建立与桌面运行时等价的本地索引，再执
 
 - `hardAdmission`：授权违规、Offline Web 泄漏、高风险无依据主张（零容忍）；
 - `quality`：事实 Precision/Recall/F1、全部必需来源召回、引用支持、约束遵循，
-  以及 90%/95%/95% 门槛布尔位（以 basis points 存储）；
+  以及 90%/95%/95% 门槛布尔位（以 basis points 存储）。整组样本汇总后，某维
+  分母为 0 时该维 `*Bps` 为 JSON `null`（未覆盖），对应 `*Gate` 必须为 `false`，
+  不得当作质量证据放行；分母大于 0 时 `*Bps` 为 0–10000，门槛不变（召回 90%、
+  引用/约束 95%）。报告同时给出各维 `*Numerator` / `*Denominator`。F1 没有独立
+  计数分母：Precision 或 Recall 任一未覆盖则 `factF1Bps` 为 `null`。新生成的
+  确定性报告使用 `schemaVersion` `agent-capacity-report-v3`，并内嵌封闭
+  `baselineIdentity`（提交、工作树、`CARGO_PKG_VERSION`、评分 schema、场景集合
+  哈希、夹具哈希、os／arch）。`comparable=true` 当且仅当工作树干净且身份字段合法；
+  脏树仍可写出报告，但不得当作冻结基线或 product-gate 输入。D01 同期 v3 smoke 记录为
+  `docs/eval/results/v1.3.0-d01-trustworthy-baseline.json`；冻结的
+  `docs/eval/results/v1.2.15-agent-capacity.json` 仍为 v1 旧口径，不得回写。
+  夹具或场景集合哈希对不上时整次运行无效，不是把某个案例记成失败。
 - `performance`：模型耗时与 TTFT 的 p50/p95、轮数与工具调用计数；
 - `faultRecovery`：降级、约束失败与截断计数。
 
@@ -125,10 +137,11 @@ Run-local 来源、引用绑定、安全、连续性与预算后才标记 `live_
 
 ## 时效事实核验硬门槛
 
-保留核心 48 题的历史可比性，另增加 24 个确定性时效核验案例（12 个场景各联网/离线一次）。
-联网案例必须调用 `web_search`、写入本 Run 的 Web 证据关联并生成可解析引用；离线、
+联网时效案例必须调用 `web_search`、写入本 Run 的 Web 证据关联并生成可解析引用；离线、
 搜索失败、来源冲突、旧证据复用或伪造引用时必须拒绝事实结论。场景覆盖无时间关键词的
 赛事提问、赛果、新闻、职位、价格、中英混合、长对话中的错误前提、历史摘要和提示注入干扰。
+最低实际观察与证据义务由现行 [Agent Harness 文档体系](../../agent-harness/README.md)
+冻结，本节不重复其规则。历史路线见 [归档清单](../../agent-harness/archive/2026-09-15-pre-reform/MANIFEST.md)，只作对照。
 
 本轮另增加固定多轮 current-fact 复现场景：
 
@@ -137,44 +150,45 @@ Run-local 来源、引用绑定、安全、连续性与预算后才标记 `live_
 - `agent_does_not_deny_web_after_current_run_search`：模型在同一 Run 已使用 `web_search`
   后，不得再声称“没有联网/抓取能力”。
 
-## 六领域当前事实可靠性矩阵
+## 核心矩阵
 
-CAP-001 收口后，六类当前事实（天气、新闻、金融、影视、体育以及 runtime 日期）的
-确定性契约由领域 DTO 验证器、确认地点解析和 provider 白名单映射共同执行。本轮新增
-以下成功/失败矩阵测试：
+核心集由基础问题表的 Offline/Online 成对变体组成，当前为 **26 个基础问题、52 题**：
 
-- `domain_tool_output_requires_source_and_observed_time`：领域 DTO 缺少 HTTPS 来源或
-  数据时点（天气 observation time / 金融 asOf）时失败关闭，不产生最终事实正文；
-  成功夹具保留 `EvidenceOrigin.evidenceId/observedAt/sourceUrl`。
-- `weather_without_confirmed_city_requests_location`：天气缺少确认城市时返回
-  `agent_run_location_required`，只从当前请求或 global `location.city` 取城市，
-  不从 Web/IP/相似 key 推断。
-- `location_scope_widens_city_then_province_then_country`：新闻/全国档期等允许放宽的
-  领域遵守固定 city → province → country 顺序；天气不得放宽。
-- `stale_weather_and_market_data_fail_closed`：天气 observation 超过 3 小时、金融
-  行情声明 delay 超过 15 分钟时均以 `agent_run_fresh_evidence_stale` 拒绝。
-- `movie_availability_requires_region_channel_and_date`：影视可用性必须同时包含
-  region、channel 和 date，缺失即失败关闭。
-- `finance_analysis_cannot_introduce_unsupported_numbers`：描述性金融分析只能使用
-  输入 `FinanceRecord` 中已验证的数值，出现证据外数字返回
-  `finance_analysis_unsupported_number`。
-
-## 诊断哨兵与原始 provider 输出隔离
-
-新增 `domain_tool_diagnostics_never_expose_raw_output`：把 provider 原始 JSON 中的
-`SECRET_SENTINEL`、`NOTE_SENTINEL`、`ARGUMENT_SENTINEL` 放入映射边界，断言白名单
-DTO、Run event、tool audit、UI error 和版本化 eval report 均不包含这些哨兵。原始
-provider JSON 只经过白名单 output mapping 缩略为附录 D 字段，不会进入事件、审计、
-错误或评测报告。
-
-## 核心 48 题
-
-核心集由 24 个基础问题的 Offline/Online 成对变体组成，共 48 题：
-
-- 四个证据组各 12 题；
-- 中文 34、英文 10、中英混合 4；
+- 四个证据组：无检索 12、仅本地 12、仅 Web 16、混合 12；
+- 中文 38、英文 10、中英混合 4（比例带 70/20/10 的 ±5 点内，且保持成对）；
 - Web 开关只改变能力可用性，不改变问题的证据分类；
 - 纯创作和改写不强制引用；事实型回答要求事实、来源和引用相互绑定。
+
+矩阵规模由 `BASE_QUESTION_PLANS` **派生**，不写死字面量；`CORE_MATRIX_MIN_CASES` 只设下限，
+覆盖只增不减。序列化校验的上限同样由矩阵规模派生，避免"第 49 题被一个陈旧上限拒绝"。
+
+### 覆盖维度（2026-09-11 增补）
+
+分类器可把 Run 冻结进不同的验证类，而**从未走到某个类的门无法对该类做出任何结论**。
+2026-09-11 实测发现原 48 题只落两类（`DefaultOnline` 25、`ExplicitWebRequest` 23），
+`VolatileExternalFact`（全部日常时效问题所属类）与 `HighStakesCurrentFact`（交叉印证严格分支）
+均为零覆盖，生产侧高速分支与日常分支因此长期无人测量。现增补两个 WebOnly 基础问题，
+使矩阵覆盖四类：
+
+| 类                                            | 覆盖 |
+| --------------------------------------------- | ---: |
+| `DefaultOnline` / `verification: none`        |   25 |
+| `ExplicitWebRequest` / `current_run_web`      |   23 |
+| `HighStakesCurrentFact` / `current_run_web`   |    2 |
+| `VolatileExternalFact` / `verification: none` |    2 |
+
+`CurrentRunExternal` 在确定性矩阵中**结构上不可表达**（请求构造冻结外部授权为空），
+由 `run_intake_tests` 的分类器契约门承担；这一归属在
+`agent_verification_tests::every_gate_covers_every_verification_class` 中以显式所有权表固定。
+
+同时新增 `core_case_identity_is_pinned`：用例序号由表内位置派生，而安全轨迹与 live pilot
+按序号寻址，因此在表中部插入会**静默换题**；该测试把序号↔题面映射钉死，使位移变成响亮失败。
+
+严格结构化终局（`submit_final_answer`）已可端到端驱动，并作为必过用例纳入矩阵。
+此前的阻塞点是脚本化提交的正文带有 `[W1]` 标记：来源标记由 Run 侧校验器事后添加，
+`FinalAnswerSubmission::from_tool_call` 会直接拒绝模型自填的 `[W...]` 标记，因此提交
+连校验都未走到。改为无标记提交正文后，严格协议的请求序列
+`web_search` → `web_fetch` → `submit_final_answer` 在确定性双端下完整走通。
 
 v1.2.15 确定性 full 结果为 48/48：
 
@@ -316,11 +330,13 @@ IRIS_AGENT_EVAL_LIVE_RESULTS="<result-a>:<result-b>" \
 IRIS_AGENT_EVAL_LIVE_REVIEW="<review.json>" npm run agent:eval
 ```
 
-`agent:eval:smoke` 执行完整 24 条 online headless interaction matrix，且仅当
-明细与 v2 汇总一致、无意外失败时通过；离线和硬边界由独立安全轨执行。
-`agent:eval:contract` 执行 48 题并分开统计正常回答、预期安全拒绝与意外失败，同时执行逐层五次压力、
+`agent:eval:smoke` 执行完整 online headless interaction matrix（当前 26 条，等于基础问题数），
+且仅当明细与 v2 汇总一致、无意外失败时通过；离线和硬边界由独立安全轨执行。
+`agent:eval:contract` 执行完整核心矩阵（当前 52 题，为基础问题表的成对变体）并分开统计正常回答、
+预期安全拒绝与意外失败，同时执行逐层五次压力、
 硬边界、安全轨和组合终端；`agent:eval` 是额外产品门，不能由 contract 单独满足。
-安全案例失败会写入 `securityGate=false`，不会阻止报告生成。版本化确定性结果见
+安全案例失败会写入 `securityGate=false`，不会阻止报告生成。D01 同期确定性 smoke（v3 summary、`comparable=true`）见
+`docs/eval/results/v1.3.0-d01-trustworthy-baseline.json`；v1 旧口径对照见
 `docs/eval/results/v1.2.15-agent-capacity.json`。`agent:eval:live -- preflight`
 只生成被 Git 忽略的 `target/agent-eval/live-preflight.json`；它不是 live
 测试结果，也不会绕过后续批准与费用 checkpoint。Pilot 的严格白名单结果写入
@@ -334,7 +350,45 @@ Windows E2E 属于后者，不在 push CI 中。`agent:eval` 产品门仍要求�
 不作为每次 tag 打包前置。步骤见 [桌面发版手册](../testing/desktop-release-runbook.md)。
 最终草稿 Release 依赖两个平台包。
 
-## 历史终验记录（v1.2.15，已被当前产品门取代）
+## 历史记录（已被取代的评测口径与结果）
+
+本节只保存已被取代的材料，供与 Git 历史对照，**不代表当前架构状态**：其中的领域模块与
+测试已随 HR-2／HR-6 退役，指定 MiniMax／MiMo 的试点前提已随 HR-7 撤回。
+
+### 六领域当前事实可靠性矩阵
+
+CAP-001 收口后，六类当前事实（天气、新闻、金融、影视、体育以及 runtime 日期）的
+确定性契约由领域 DTO 验证器、确认地点解析和 provider 白名单映射共同执行。本轮新增
+以下成功/失败矩阵测试：
+
+> 下列 7 个测试与它们描述的领域 DTO 验证器、确认地点解析和 provider 白名单映射已随
+> HR-6 退役，仓库中不再存在；本节保留当时的评测口径，不构成当前能力声明。
+
+- `domain_tool_output_requires_source_and_observed_time`：领域 DTO 缺少 HTTPS 来源或
+  数据时点（天气 observation time / 金融 asOf）时失败关闭，不产生最终事实正文；
+  成功夹具保留 `EvidenceOrigin.evidenceId/observedAt/sourceUrl`。
+- `weather_without_confirmed_city_requests_location`：天气缺少确认城市时返回
+  `agent_run_location_required`，只从当前请求或 global `location.city` 取城市，
+  不从 Web/IP/相似 key 推断。
+- `location_scope_widens_city_then_province_then_country`：新闻/全国档期等允许放宽的
+  领域遵守固定 city → province → country 顺序；天气不得放宽。
+- `stale_weather_and_market_data_fail_closed`：天气 observation 超过 3 小时、金融
+  行情声明 delay 超过 15 分钟时均以 `agent_run_fresh_evidence_stale` 拒绝。
+- `movie_availability_requires_region_channel_and_date`：影视可用性必须同时包含
+  region、channel 和 date，缺失即失败关闭。
+- `finance_analysis_cannot_introduce_unsupported_numbers`：描述性金融分析只能使用
+  输入 `FinanceRecord` 中已验证的数值，出现证据外数字返回
+  `finance_analysis_unsupported_number`。
+
+### 诊断哨兵与原始 provider 输出隔离
+
+新增 `domain_tool_diagnostics_never_expose_raw_output`：把 provider 原始 JSON 中的
+`SECRET_SENTINEL`、`NOTE_SENTINEL`、`ARGUMENT_SENTINEL` 放入映射边界，断言白名单
+DTO、Run event、tool audit、UI error 和版本化 eval report 均不包含这些哨兵。原始
+provider JSON 只经过白名单 output mapping 缩略为附录 D 字段，不会进入事件、审计、
+错误或评测报告。
+
+### v1.2.15 终验记录（已被当前产品门取代）
 
 本轮（harness 诚实 + 产品授权收窄）后已执行并通过：
 

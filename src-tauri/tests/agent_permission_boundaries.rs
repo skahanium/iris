@@ -29,27 +29,7 @@ fn dispatchable(name: &str) -> bool {
 
 fn ctx() -> ToolDispatchContext<'static> {
     let retrieval_scope = Box::leak(Box::new(RetrievalScope::default()));
-    ToolDispatchContext {
-        db: None,
-
-        selected_web_provider_id: None,
-
-        note_path: None,
-        file_id: None,
-        run_id: None,
-        write_target_path: None,
-        confirmed_write_targets: None,
-        document_policy: None,
-        web_search_enabled: false,
-        available_tool_names: &[],
-        max_web_fetches: 3,
-        cold_start_packets: &[],
-        retrieval_scope,
-        runtime_documents: &[],
-        app_handle: None,
-        attachment_count: 0,
-        skill_activation_plan: None,
-    }
+    ToolDispatchContext::for_tests(retrieval_scope)
 }
 
 #[test]

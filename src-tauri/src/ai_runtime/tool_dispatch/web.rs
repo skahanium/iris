@@ -6,6 +6,7 @@ use super::ToolDispatchContext;
 fn web_search_tool_response(
     query: &str,
     output: crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput,
+    discovery_only: bool,
 ) -> AppResult<serde_json::Value> {
     let evidence = output.items;
     let packets =
@@ -31,7 +32,7 @@ fn web_search_tool_response(
         }
     }
 
-    Ok(serde_json::json!({
+    let mut payload = serde_json::json!({
         "broker": "网络证据代理",
         "results": packets,
         "count": packets.len(),
@@ -59,7 +60,44 @@ fn web_search_tool_response(
             "rawEvidenceOmitted": true,
         },
         "webUsage": output.usage,
-    }))
+    });
+    // dualPath is a web_search coordination fact (K11). web_fetch reuses this
+    // packetizer but must not present search-route status as if fetch were dual-path.
+    if discovery_only {
+        if let Some(results) = payload["results"].as_array_mut() {
+            for result in results {
+                result["citation_label"] = serde_json::json!("");
+            }
+        }
+        payload["citations"] = serde_json::json!([]);
+        payload["evidenceIds"] = serde_json::json!([]);
+        payload["requiresFetchForCitation"] = serde_json::json!(true);
+        payload["citationHint"] = serde_json::json!(
+            "搜索摘要仅用于发现来源；须调用 web_fetch 读取并登记正文后才能引用。"
+        );
+        payload["dualPath"] =
+            crate::ai_runtime::dual_path_search::dual_path_status_json(&output.dual_path);
+    }
+    Ok(payload)
+}
+
+fn frozen_web_action(
+    ctx: &ToolDispatchContext<'_>,
+) -> AppResult<crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput> {
+    let input = ctx
+        .web_action
+        .ok_or_else(|| AppError::msg("web_action_context_missing"))?;
+    if ctx.run_id != Some(input.search_identity.run_id.as_str())
+        || input.search_identity.run_id.is_empty()
+        || input.search_identity.input_revision.is_empty()
+        || input.search_identity.action_id.is_empty()
+        || input.search_identity.tool_surface_version.is_empty()
+        || !input.provider_selection_frozen
+        || input.search_deadline.is_none()
+    {
+        return Err(AppError::msg("web_action_context_invalid"));
+    }
+    Ok(input.clone())
 }
 
 pub(super) async fn web_search_tool(
@@ -72,21 +110,20 @@ pub(super) async fn web_search_tool(
     }
     let query = args["query"]
         .as_str()
+        .filter(|query| !query.trim().is_empty())
         .ok_or_else(|| AppError::msg("missing query"))?;
-    let output = crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(
-        &state.db,
-        crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
-            query: query.to_string(),
-            urls: Vec::new(),
-            enabled: ctx.web_search_enabled,
-            max_search_results: 8,
-            max_fetches: 0,
-            provider_snapshots: Vec::new(),
-            provider_selection_frozen: false,
-        },
-    )
-    .await?;
-    web_search_tool_response(query, output)
+    let mut input = frozen_web_action(ctx)?;
+    if query != input.query {
+        return Err(AppError::msg("web_action_query_mismatch"));
+    }
+    input.urls.clear();
+    input.max_fetches = 0;
+    let output =
+        crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
+            &state.db, input,
+        )
+        .await?;
+    web_search_tool_response(query, output, true)
 }
 
 pub(super) async fn web_fetch_tool(
@@ -102,37 +139,233 @@ pub(super) async fn web_fetch_tool(
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
+                .filter_map(|item| item.as_str().map(str::to_owned))
                 .collect()
         })
         .unwrap_or_default();
     if urls.is_empty() {
         return Err(AppError::msg("missing urls"));
     }
-    let query = "selected current-run web candidates";
-    let output = crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(
+    let mut input = frozen_web_action(ctx)?;
+    input.urls = crate::ai_runtime::run_tool_loop::validate_public_fetch_urls(&urls)?;
+    input.max_search_results = 0;
+    input.max_fetches = input.max_fetches.min(ctx.max_web_fetches);
+    let run_id = input.search_identity.run_id.clone();
+    let query = input.query.clone();
+    let limit = input.max_fetches;
+    let mut output =
+        crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
+            &state.db, input,
+        )
+        .await?;
+    // Register exactly the bounded excerpt visible in the model packet.
+    let packets =
+        crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
+            &query,
+            &output.items,
+            crate::ai_runtime::run_tool_loop::MAX_WEB_EXCERPT_CHARS,
+        );
+    for (item, packet) in output
+        .items
+        .iter_mut()
+        .filter(|item| item.failure_reason.is_none())
+        .zip(packets.iter())
+    {
+        if item.fetched_excerpt.is_some() {
+            item.fetched_excerpt = Some(packet.excerpt.clone());
+        }
+    }
+    let ids = crate::ai_runtime::run_tool_loop::register_web_evidence_for_run(
         &state.db,
-        crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
-            query: query.into(),
-            urls,
-            enabled: ctx.web_search_enabled,
-            max_search_results: 0,
-            max_fetches: ctx.max_web_fetches,
-            provider_snapshots: Vec::new(),
-            provider_selection_frozen: false,
-        },
-    )
-    .await?;
-    web_search_tool_response(query, output)
+        &run_id,
+        &output.items,
+        limit,
+    )?;
+    let links = crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_selected_current_run_web_citation_links(
+        &state.db, &run_id, &ids,
+    )?;
+    let mut response = web_search_tool_response(&query, output, false)?;
+    if let Some(results) = response["results"].as_array_mut() {
+        results.retain_mut(|packet| {
+            let Some(link) = links
+                .iter()
+                .find(|link| packet["source_path"].as_str() == Some(link.url.as_str()))
+            else {
+                return false;
+            };
+            packet["citation_label"] = serde_json::json!(link.label);
+            true
+        });
+        response["count"] = serde_json::json!(results.len());
+    }
+    response["evidenceIds"] = serde_json::json!(ids);
+    response["requiresFetchForCitation"] = serde_json::json!(false);
+    response["citations"] = serde_json::json!(links
+        .iter()
+        .map(|link| serde_json::json!({
+            "label":link.label, "title":link.title, "url":link.url,
+            "citeMarkdown": format!("[{}]({})", link.title, link.url),
+        }))
+        .collect::<Vec<_>>());
+    Ok(response)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn review_regression_d_secondary_web_requires_frozen_action_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        let scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+        let mut ctx = ToolDispatchContext::for_tests(&scope);
+        ctx.web_search_enabled = true;
+        let error = web_search_tool(&state, &serde_json::json!({"query":"fixture"}), &ctx)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "web_action_context_missing");
+    }
+
+    #[test]
+    fn review_regression_d_secondary_discovery_is_not_citable_evidence() {
+        let mut item = successful_provider_item(0, String::new());
+        item.fetched_excerpt = None;
+        let output = WebEvidenceBrokerOutput {
+            items: vec![item],
+            usage: Default::default(),
+            dual_path: Default::default(),
+        };
+        let response = web_search_tool_response("fixture", output, true).unwrap();
+        assert_eq!(response["citations"], serde_json::json!([]));
+        assert_eq!(response["evidenceIds"], serde_json::json!([]));
+        assert_eq!(response["requiresFetchForCitation"], true);
+    }
+
+    #[tokio::test]
+    async fn review_regression_d_secondary_query_cannot_widen_frozen_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        let scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+        let action = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
+            query: "approved public query".into(),
+            urls: Vec::new(),
+            enabled: true,
+            max_search_results: 8,
+            max_fetches: 0,
+            provider_snapshots: Vec::new(),
+            provider_selection_frozen: true,
+            search_identity: crate::ai_runtime::dual_path_search::SearchActionIdentity {
+                run_id: "fixture-run".into(),
+                input_revision: "fixture-turn".into(),
+                action_id: "fixture-call".into(),
+                tool_surface_version: "fixture-tools".into(),
+                ..Default::default()
+            },
+            native_endpoint: None,
+            search_deadline: Some(tokio::time::Instant::now() + std::time::Duration::from_secs(90)),
+            web_revocation_epoch: crate::ai_runtime::model_gateway::web_revocation_epoch(),
+        };
+        let mut ctx = ToolDispatchContext::for_tests(&scope);
+        ctx.run_id = Some("fixture-run");
+        ctx.web_search_enabled = true;
+        ctx.web_action = Some(&action);
+        let error = web_search_tool(
+            &state,
+            &serde_json::json!({"query":"unapproved private content"}),
+            &ctx,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "web_action_query_mismatch");
+    }
     use crate::ai_runtime::web_evidence_broker::{
         WebEvidenceBrokerOutput, WebEvidenceItem, WebEvidenceSearchRequestUsage, WebEvidenceUsage,
     };
     use crate::ai_runtime::{WebSearchBackend, WebSourceRank};
+
+    #[tokio::test]
+    async fn review_regression_d_secondary_fetch_uses_registered_run_labels() {
+        use crate::ai_runtime::{
+            mcp_runtime_registry as registry, web_evidence_broker::WebEvidenceBrokerInput,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        let identity =
+            crate::ai_runtime::web_evidence_broker_tests::authorized_broker_identity(&state.db);
+        let prior = successful_provider_item(99, "prior retrieved body".into());
+        crate::ai_runtime::run_tool_loop::register_web_evidence_for_run(
+            &state.db,
+            &identity.run_id,
+            &[prior],
+            1,
+        )
+        .unwrap();
+        registry::upsert_web_evidence_provider(
+            &state.db,
+            &registry::WebEvidenceProviderInput {
+                id: "secondary-fixture".into(),
+                name: "secondary-fixture".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json:
+                    crate::ai_runtime::mcp_stdio_test_support::contract_mcp_stdio_transport_config(
+                        "search-fetch",
+                        "1",
+                    )
+                    .to_string(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: None,
+                web_fetch_mapping_json: Some(r#"{"tool":"fetch","urlArg":"url"}"#.into()),
+            },
+        )
+        .unwrap();
+        let input = WebEvidenceBrokerInput {
+            query: "contract".into(),
+            urls: vec!["https://source.invalid/contract".into()],
+            enabled: true,
+            max_search_results: 0,
+            max_fetches: 1,
+            provider_snapshots: registry::list_enabled_web_provider_mappings(&state.db).unwrap(),
+            provider_selection_frozen: true,
+            search_identity: identity,
+            native_endpoint: None,
+            search_deadline: Some(tokio::time::Instant::now() + std::time::Duration::from_secs(30)),
+            web_revocation_epoch: crate::ai_runtime::model_gateway::web_revocation_epoch(),
+        };
+        let scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+        let mut ctx = ToolDispatchContext::for_tests(&scope);
+        ctx.run_id = Some(&input.search_identity.run_id);
+        ctx.web_search_enabled = true;
+        ctx.web_action = Some(&input);
+        let result = crate::ai_runtime::tool_dispatch::dispatch_tool(
+            &state,
+            &ctx,
+            "web_fetch",
+            &serde_json::json!({"urls":input.urls}),
+        )
+        .await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["evidenceIds"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            result.output["results"][0]["citation_label"],
+            result.output["citations"][0]["label"]
+        );
+        assert_eq!(result.output["citations"][0]["label"], "[W2]");
+        let evidence_id = result.output["evidenceIds"][0].as_i64().unwrap();
+        let persisted = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT bounded_excerpt FROM session_evidence WHERE id = ?1",
+                    [evidence_id],
+                    |row| row.get::<_, String>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(result.output["results"][0]["excerpt"], persisted);
+    }
 
     fn failed_provider_output(reason: &str) -> WebEvidenceBrokerOutput {
         WebEvidenceBrokerOutput {
@@ -143,6 +376,7 @@ mod tests {
                 domain: String::new(),
                 snippet: String::new(),
                 fetched_excerpt: None,
+                completeness: Default::default(),
                 provider_id: "web.provider".into(),
                 provider_kind: "mcp".into(),
                 cost_class: "free".into(),
@@ -162,6 +396,7 @@ mod tests {
                 successful_page_fetches: 0,
                 providers: Vec::new(),
             },
+            dual_path: crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default(),
         }
     }
 
@@ -173,6 +408,7 @@ mod tests {
             domain: "example.com".into(),
             snippet: "摘要".into(),
             fetched_excerpt: Some(fetched_excerpt),
+            completeness: Default::default(),
             provider_id: "web.provider".into(),
             provider_kind: "mcp".into(),
             cost_class: "free".into(),
@@ -194,6 +430,7 @@ mod tests {
         let err = web_search_tool_response(
             "武亮 结婚",
             failed_provider_output("web_search_failed: HTTP error"),
+            true,
         )
         .unwrap_err();
 
@@ -206,6 +443,7 @@ mod tests {
         let err = web_search_tool_response(
             "高市早苗 最近 动向",
             failed_provider_output("mcp_search_parse_empty:text_without_url"),
+            true,
         )
         .unwrap_err();
 
@@ -222,18 +460,64 @@ mod tests {
                 .map(|index| successful_provider_item(index, "长正文".repeat(4_000)))
                 .collect(),
             usage: WebEvidenceUsage {
-                successful_search_requests: WebEvidenceSearchRequestUsage { mcp: 1 },
+                successful_search_requests: WebEvidenceSearchRequestUsage { mcp: 1, native: 0 },
                 successful_page_fetches: 0,
                 providers: Vec::new(),
             },
+            dual_path: {
+                let mut dual_path =
+                    crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default();
+                dual_path.identity.action_id = "web_search".into();
+                dual_path.mcp.supported = true;
+                dual_path.mcp.attempted = true;
+                dual_path.mcp.succeeded = true;
+                dual_path.mcp_internal_provider_attempts = 2;
+                dual_path.usage.mcp = 1;
+                dual_path.native_unsupported_reason = Some(
+                    crate::ai_runtime::native_search_subrequest::NativeSearchUnsupportedReason::AdapterAbsent,
+                );
+                dual_path
+            },
         };
 
-        let response = web_search_tool_response("近期世界杯战况", output).unwrap();
+        let response = web_search_tool_response("近期世界杯战况", output, true).unwrap();
         let encoded = serde_json::to_string(&response).unwrap();
 
         assert!(response.get("evidence").is_none());
         assert_eq!(response["count"], serde_json::json!(8));
         assert_eq!(response["results"].as_array().unwrap().len(), 8);
         assert!(encoded.chars().count() < 50_000);
+        assert_eq!(response["dualPath"]["native"]["supported"], false);
+        assert_eq!(response["dualPath"]["native"]["attempted"], false);
+        assert_eq!(
+            response["dualPath"]["native"]["unsupportedReason"],
+            "adapter_absent"
+        );
+        assert_eq!(response["dualPath"]["mcp"]["succeeded"], true);
+        assert_eq!(response["dualPath"]["mcpInternalProviderAttempts"], 2);
+        assert_eq!(response["dualPath"]["bothAvailableRoutesAttempted"], false);
+        assert!(!encoded.contains("能力降级"));
+        assert!(!encoded.contains("模型出错"));
+    }
+
+    #[test]
+    fn web_fetch_response_does_not_present_search_dual_path() {
+        let mut dual_path = crate::ai_runtime::dual_path_search::DualPathSearchOutcome::default();
+        dual_path.identity.action_id = "web_fetch".into();
+        let output = WebEvidenceBrokerOutput {
+            items: vec![successful_provider_item(0, "正文".into())],
+            usage: WebEvidenceUsage {
+                successful_search_requests: WebEvidenceSearchRequestUsage::default(),
+                successful_page_fetches: 1,
+                providers: Vec::new(),
+            },
+            dual_path,
+        };
+
+        let response =
+            web_search_tool_response("selected current-run web candidates", output, false).unwrap();
+
+        assert!(response.get("dualPath").is_none());
+        assert_eq!(response["count"], serde_json::json!(1));
     }
 }

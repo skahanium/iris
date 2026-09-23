@@ -48,11 +48,22 @@ fn plan_tool_surface(
 /// current facts and explicitly granted external evidence use the reserved
 /// terminal submission so the final source set can be mechanically reduced to
 /// references the model actually used.
-fn requires_structured_finalization(context: &crate::ai_runtime::run_context::RunContext) -> bool {
+/// Which Runs reserve the structured terminal submission.
+///
+/// Exposed so the deterministic evaluation double can script the protocol a
+/// Run actually requires. Resolving it from the frozen envelope keeps one
+/// predicate instead of a second copy inside the eval harness.
+pub(crate) fn requires_structured_finalization_for_envelope(
+    envelope: &crate::ai_runtime::run_contract::ExecutionEnvelope,
+) -> bool {
     matches!(
-        context.envelope.web_reason,
+        envelope.web_reason,
         WebDecisionReason::HighStakesCurrentFact
-    ) || context.envelope.verification_requirement == VerificationRequirement::CurrentRunExternal
+    ) || envelope.verification_requirement == VerificationRequirement::CurrentRunExternal
+}
+
+fn requires_structured_finalization(context: &crate::ai_runtime::run_context::RunContext) -> bool {
+    requires_structured_finalization_for_envelope(&context.envelope)
 }
 
 /// Execute one already-accepted normal-domain Run through the production
@@ -74,17 +85,42 @@ pub(crate) async fn execute_post_confirmation_verification(
     state: Arc<AppState>,
     accepted: AssistantRunAccepted,
     vault: Option<PathBuf>,
-    targets: &[String],
+    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
     execution_report: &str,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     let db = Arc::clone(&state.db);
-    let context = crate::ai_runtime::run_context::RunContextAssembler::assemble(
+    let targets = plan.relative_paths();
+    let input = AgentRunRepository::prompt_input_for_session(
         &db,
-        vault.as_deref(),
         &accepted.session.session_key,
         &accepted.run_id,
-    )?;
+    )?
+    .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
+    // read_note returns a whole note. A write confirmation or a bounded source
+    // selection does not grant permission to send that whole body to a model.
+    if targets.iter().any(|path| {
+        !input.explicit_references.iter().any(|reference| {
+            reference.kind == crate::ai_types::ContextReferenceKind::Note
+                && reference.file_path.as_deref() == Some(path.as_str())
+                && reference.utf8_range.is_none()
+                && !reference.stale
+                && reference.invalid_reason.is_none()
+        })
+    }) {
+        return Err(AppError::msg(
+            "post_confirmation_verification_scope_unavailable",
+        ));
+    }
+    let context =
+        crate::ai_runtime::run_context::RunContextAssembler::assemble_at_confirmed_boundary(
+            &db,
+            vault.as_deref(),
+            &accepted.session.session_key,
+            &accepted.run_id,
+            &plan.all_expected_post_content_hashes(),
+            plan.operations(),
+        )?;
     let decision = evaluate_normal_run_policy(&db, &accepted)?;
     if decision.denial_code.is_some() {
         return Err(AppError::msg("post_confirmation_verification_unavailable"));
@@ -139,7 +175,8 @@ pub(crate) async fn execute_post_confirmation_verification(
         sink,
         Vec::new(),
     )
-    .with_verification_targets(targets);
+    .with_verification_targets(targets)
+    .with_native_search_endpoint(provider.native_search_endpoint());
     let message = |role, content| LlmMessage {
         role,
         content: MessageContent::Text(content),
@@ -622,6 +659,7 @@ async fn dispatch_normal_run_after_context(
         )
         .with_allowed_tool_names(&tool_surface_plan.tool_names)
         .with_skill_activation_plan(active_skills.plan.clone())
+        .with_native_search_endpoint(provider.native_search_endpoint())
         .with_child_run_provider(&provider);
         return if let Some(telemetry) = telemetry {
             RunEngine::execute_tool_loop_with_eval_telemetry_and_policy(
@@ -701,6 +739,7 @@ async fn dispatch_normal_run_after_context(
         )
         .with_allowed_tool_names(&[])
         .with_skill_activation_plan(active_skills.plan.clone())
+        .with_native_search_endpoint(provider.native_search_endpoint())
         .with_child_run_provider(&provider);
         return if let Some(telemetry) = telemetry {
             RunEngine::execute_tool_loop_with_eval_telemetry_and_policy(

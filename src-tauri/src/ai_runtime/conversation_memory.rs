@@ -692,30 +692,14 @@ fn extract_summary(
                 return bounded_summary(&summary);
             }
         }
-    }
-    if let Some(summary) = extract_by_hints(messages, hints, fallback_label) {
-        return summary;
+        if contains_any_hint(&message.content, hints) {
+            return bounded_summary(&format!("{fallback_label}: {}", message.content.trim()));
+        }
     }
     match fallback {
         SummaryFallback::Goal => fallback_goal_summary(messages, fallback_label),
         SummaryFallback::Optional => not_recorded(),
     }
-}
-
-fn extract_by_hints(
-    messages: &[MemoryMessage],
-    hints: &[&str],
-    fallback_label: &str,
-) -> Option<String> {
-    messages
-        .iter()
-        .rev()
-        .find(|msg| {
-            msg.role == "user"
-                && !msg.content.trim().is_empty()
-                && contains_any_hint(&msg.content, hints)
-        })
-        .map(|msg| bounded_summary(&format!("{fallback_label}: {}", msg.content.trim())))
 }
 
 fn contains_any_hint(content: &str, hints: &[&str]) -> bool {
@@ -845,6 +829,29 @@ mod memory_extraction_tests {
         assert!(preference.contains("placeholder"));
         assert!(decision.contains("privacy boundary"));
         assert!(open.contains("frontend recovery"));
+    }
+
+    #[test]
+    fn a_newer_hint_beats_an_older_marker() {
+        let messages = vec![
+            msg(1, "user", "goal: archive this obsolete plan"),
+            msg(2, "user", "I want the current repair instead."),
+        ];
+        let goal = extract_summary(
+            &messages,
+            &["goal:"],
+            &["want"],
+            "goal",
+            SummaryFallback::Goal,
+        );
+        assert!(
+            goal.contains("current repair"),
+            "newer hint must win: {goal}"
+        );
+        assert!(
+            !goal.contains("obsolete plan"),
+            "stale marker leaked: {goal}"
+        );
     }
 
     #[test]

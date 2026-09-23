@@ -49,15 +49,30 @@ describe("docs:check — document facts verification", () => {
 
     expect(source).toContain("checkRetiredArchitectureReferences");
     expect(source).toContain("checkAgentHarnessDocumentation");
-    expect(source).toContain("../agent-harness/README.md");
     expect(source).toContain("2026-08-pre-unification");
+    expect(source).toContain("2026-09-15-pre-reform");
     expect(source).toContain("version_cleanup_cmd");
   });
 
-  it("keeps one active Agent Harness entry and a complete historical archive", () => {
+  it("keeps the retired Harness construction set archived, not active", () => {
+    // `agent-harness/` 被**重建**为现行体系后，同名入口 `README.md` 重新存在，它是
+    // 现行入口（`P01`）而不是被归档的那一套。旧施工集的判据因此不是「入口不存在」，
+    // 而是「旧施工集只在 archive 里、根目录不残留被取代的路径」。这条断言原先写的是
+    // 重建前的形状，在 787ff28a 把新入口加回来之后就一直与 docs:check 相反。
     expect(existsSync(path.join(repoRoot, "agent-harness", "README.md"))).toBe(
       true,
     );
+    expect(
+      existsSync(
+        path.join(
+          repoRoot,
+          "agent-harness",
+          "archive",
+          "2026-09-15-pre-reform",
+          "MANIFEST.md",
+        ),
+      ),
+    ).toBe(true);
     expect(
       existsSync(
         path.join(

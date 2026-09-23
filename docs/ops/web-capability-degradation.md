@@ -59,15 +59,15 @@ LIMIT 20;
 
 ## 步骤 2：按 code 分流
 
-| code                                 | 故障域  | 含义                     | 下一步                                      |
-| ------------------------------------ | ------- | ------------------------ | ------------------------------------------- |
-| `agent_run_web_provider_auth_failed` | MCP     | API Key 无效/缺失        | 步骤 3：凭据 + 实时诊断                     |
-| `agent_run_web_provider_timeout`     | MCP     | Run 预算内 MCP 超时      | 步骤 3：网络 + 诊断 + `web_duration_bucket` |
-| `agent_run_web_provider_failed`      | MCP     | 传输/限流/配额等         | 步骤 3：健康表 + 诊断                       |
-| `agent_run_web_evidence_invalid`     | MCP     | 无可用 HTTPS 行或摘录空  | 步骤 3：`searchResultParseLive`             |
-| `agent_run_mcp_unavailable`          | MCP     | 无可用搜索映射/提供方    | 步骤 3：提供方与映射                        |
-| `agent_run_web_evidence_required`    | Harness | 循环级 Err（通常无黄条） | 红色 `failed` 终态                          |
-| 黄条存在 + 正文编造                  | LLM     | 工具失败已回灌仍编造     | 步骤 5                                      |
+| code                                 | 故障域  | 含义                     | 下一步                                                     |
+| ------------------------------------ | ------- | ------------------------ | ---------------------------------------------------------- |
+| `agent_run_web_provider_auth_failed` | MCP     | API Key 无效/缺失        | 步骤 3：凭据 + 实时诊断                                    |
+| `agent_run_web_provider_timeout`     | MCP     | Run 预算内 MCP 超时      | 步骤 3：网络 + 诊断 + `web_duration_bucket`                |
+| `agent_run_web_provider_failed`      | MCP     | 传输/限流/配额等         | 步骤 3：健康表 + 诊断                                      |
+| `agent_run_web_evidence_invalid`     | MCP     | 无可用 HTTPS 行或摘录空  | 步骤 3：`searchResultParseLive`                            |
+| `agent_run_mcp_unavailable`          | MCP     | 无可用搜索映射/提供方    | 步骤 3：提供方与映射                                       |
+| `agent_run_web_evidence_required`    | Harness | 循环级 Err（通常无黄条） | 红色 `failed` 终态；其余终态见「终态与来源可见性（HR-8）」 |
+| 黄条存在 + 正文编造                  | LLM     | 工具失败已回灌仍编造     | 步骤 5                                                     |
 
 前端映射逻辑：[`web-capability-degradation-triage.ts`](../../src/lib/web-capability-degradation-triage.ts)。
 
@@ -93,7 +93,17 @@ ORDER BY updated_at DESC;
 
 - **内存熔断**（[`circuit_breaker.rs`](../../src-tauri/src/ai_runtime/circuit_breaker.rs)）：连续 5 次瞬时失败打开，冷却 30s；**重启进程即清空**，偶发问题需在当次会话抓日志。
 - **重试**：单次 Web 工具派发内最多 **2** 次 Broker 尝试，瞬态失败间隔 **250ms**，同时受该次调用剩余时限约束（[`run_tool_loop.rs`](../../src-tauri/src/ai_runtime/run_tool_loop.rs)）。不同查询/读取仍共享 Run 的网络逻辑预算；`attemptCount` 是累计 Broker 尝试次数，不能当作模型提议数或网络逻辑动作数。
-- **黄条是否应出现**：对照 `web_failure`、`!has_web_evidence`、`emit_deferred_web_degradation`（[`run_engine.rs`](../../src-tauri/src/ai_runtime/run_engine.rs)）。
+- **黄条是否应出现**：对照 `web_failure`、`!has_web_evidence`、`emit_deferred_web_degradation`（[`run_engine/mod.rs`](../../src-tauri/src/ai_runtime/run_engine/mod.rs)、[`agent_tool_loop.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop.rs)）。
+- **Web 观测的适用范围自检**：候选与正文两路载荷都带 `sourceDomains`（去重、小写、有序，最多 8 个，单域名 ≤80 字符）与 `scopeCheck` 提示（[`run_tool_loop.rs`](../../src-tauri/src/ai_runtime/run_tool_loop.rs)）。它们只把来源域名交给模型，Host 不持有域名→市场映射或地区词典。听到「来源地区不对」时，判读顺序是：域名与问题适用范围不一致 → 模型应继续换源，而不是直接判本轮失败；`scopeCheck` 出现本身不是降级。
+
+### 终态与来源可见性（HR-8）
+
+HR-8 之后，降级面不再等于「要么黄条、要么零回复」。排查终态时先分清这四处：
+
+- **有界限制说明取代硬错误终态**：循环续写契约被破坏、模型轮次耗尽或提交协议失败时，Host 发布自己撰写的限制说明，而不是返回让用户什么也看不到的终态错误（[`agent_tool_loop.rs`](../../src-tauri/src/ai_runtime/agent_tool_loop.rs)）。真实成因留在 `toolLoop` 诊断的 `exhausted` 事件里，按 `cause`（`agent_run_incomplete_output` / `agent_run_tool_loop_limit`）区分轮次耗尽与正常收束。因此上表里「循环级 Err → 红色 `failed` 终态」的映射只覆盖仍走硬错误的路径，不再覆盖全部终态。
+- **非严格联网运行剥离未登记链接**：普通（非严格、非自然澄清、非限制说明）回答保留正文，只去掉无法在来源组核实的链接，不再因为模型自造 URL 而丢弃整篇；因此「正文高置信编造」不再等同于零回复（[`run_engine/finalization.rs`](../../src-tauri/src/ai_runtime/run_engine/finalization.rs)）。严格分支在验证绑定前仍然封存草稿。
+- **失败轮在转录区可见**：失败标记落在**用户行**的 `turnState: "failed"`，界面显示「本次请求未完成，未纳入后续对话上下文。」（[`useAssistantConversationProjection.ts`](../../src/components/ai/hooks/useAssistantConversationProjection.ts)、[`AiMessageList.tsx`](../../src/components/ai/AiMessageList.tsx)）。用户看不到失败反馈时，不要去找助手槽——空的助手槽是故意丢弃的，失败脚注只挂在用户行。
+- **降级横幅文案**：联网失败后的黄条正文是「已继续生成未经联网核实的答复」，且 Host 不约束也不包裹该正文；看到旧文案「受约束答复」说明运行的是旧构建。
 
 ### 连续两条备用服务提示
 
@@ -123,12 +133,12 @@ ORDER BY updated_at DESC;
 
 无统一 span 名；用固定 message + 结构化字段：
 
-| message                                    | 位置                    | 字段                                                                            |
-| ------------------------------------------ | ----------------------- | ------------------------------------------------------------------------------- |
-| `Run Web decision`                         | `normal_run_service.rs` | `web_mode`, `web_reason`, `web_execution`                                       |
-| `Run model-decided Web capability outcome` | `run_tool_loop.rs`      | `web_failure_code`, `web_retryable`, `web_attempt_count`, `web_duration_bucket` |
-| `Agent Run finalization stage failed`      | `run_engine.rs`         | `stage`, `safe_code`                                                            |
-| 熔断开/关                                  | `circuit_breaker.rs`    | `provider`, `failures`, `cooldown_secs`                                         |
+| message                                    | 位置                         | 字段                                                                            |
+| ------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------------- |
+| `Run Web decision`                         | `normal_run_service.rs`      | `web_mode`, `web_reason`, `web_execution`                                       |
+| `Run model-decided Web capability outcome` | `run_tool_loop.rs`           | `web_failure_code`, `web_retryable`, `web_attempt_count`, `web_duration_bucket` |
+| `Agent Run finalization stage failed`      | `run_engine/finalization.rs` | `stage`, `safe_code`                                                            |
+| 熔断开/关                                  | `circuit_breaker.rs`         | `provider`, `failures`, `cooldown_secs`                                         |
 
 `web_duration_bucket`：`not_started` / `under_1s` / `1s_to_3s` / `3s_to_10s` / `budget_exhausted`。
 

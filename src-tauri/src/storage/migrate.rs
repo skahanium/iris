@@ -198,6 +198,9 @@ const MIGRATION_073_DOWN: &str =
 const MIGRATION_074_UP: &str = include_str!("../../migrations/074_durable_version_ownership.sql");
 const MIGRATION_074_DOWN: &str =
     include_str!("../../migrations/074_durable_version_ownership.down.sql");
+const MIGRATION_075_UP: &str = include_str!("../../migrations/075_audit_boundary_events.sql");
+const MIGRATION_075_DOWN: &str =
+    include_str!("../../migrations/075_audit_boundary_events.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -733,6 +736,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_074_UP,
         false,
     )?;
+    apply_migration(conn, "075_audit_boundary_events", MIGRATION_075_UP, false)?;
 
     Ok(())
 }
@@ -744,6 +748,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "075_audit_boundary_events", MIGRATION_075_DOWN);
     if is_applied(conn, "074_durable_version_ownership") {
         conn.execute_batch("BEGIN IMMEDIATE")?;
         if let Err(error) = conn.execute_batch(MIGRATION_074_DOWN).and_then(|()| {

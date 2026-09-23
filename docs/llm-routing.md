@@ -22,6 +22,12 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 解析后的候选保留输入/输出 token 预算。视觉直答和工具循环都从同一模型池筛选，并将图片消息原样交给选中的视觉模型。
 
+## 采样参数
+
+- Assistant Run / Model Gateway 请求当前**固定不传** `temperature`（`None`）。
+- 网关 body 层已支持 `Option<f64>`；设置页与 `LlmRoutingConfig` **未**暴露该控件。
+- 产品若需要可调采样，应经 routing 配置透传，而不是在网关硬编码默认值。
+
 ## HTTPS 与连通性
 
 - 自定义 provider 必须使用 HTTPS；`http://`、loopback HTTP 和通用 settings 写入会被拒绝。

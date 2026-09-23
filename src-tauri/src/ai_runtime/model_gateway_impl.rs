@@ -1,3 +1,4 @@
+use crate::ai_runtime::native_search_subrequest::RetrievalObservation;
 pub use crate::ai_types::{
     ContextPacket, EndpointFamily, FunctionCall, LlmMessage, MessageRole, ProviderConfig,
     TokenUsage, ToolCall, ToolSpec,
@@ -20,12 +21,25 @@ mod messages_impl;
 mod minimax_tool_call_impl;
 #[path = "model_gateway/responses.rs"]
 mod responses_impl;
+#[path = "model_gateway/streaming_anthropic.rs"]
+mod streaming_anthropic;
+#[path = "model_gateway/streaming_chat_completions.rs"]
+mod streaming_chat_completions;
 #[path = "model_gateway/streaming.rs"]
 mod streaming_impl;
+#[path = "model_gateway/streaming_reasoning.rs"]
+mod streaming_reasoning;
+#[path = "model_gateway/streaming_search_events.rs"]
+mod streaming_search_events;
+#[path = "model_gateway/streaming_witness.rs"]
+mod streaming_witness;
 #[path = "model_gateway/usage.rs"]
 mod usage_impl;
 
 pub use abort_impl::{clear_abort, is_abort_requested, request_abort};
+pub(crate) use abort_impl::{
+    notify_web_revoked, wait_for_abort, wait_for_web_revocation, web_revocation_epoch,
+};
 use anthropic_response_impl::parse_anthropic_response;
 pub use body_impl::{build_chat_completions_body, GatewayRequest, LlmFunctionDef, LlmToolDef};
 use body_impl::{build_llm_api_body, uses_openai_responses};
@@ -61,7 +75,7 @@ impl fmt::Debug for ProviderContinuation {
 }
 
 /// Gateway response (non-streaming).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GatewayResponse {
     pub content: Option<String>,
     pub tool_calls: Vec<ToolCall>,
@@ -71,6 +85,9 @@ pub struct GatewayResponse {
     pub reasoning_content: Option<String>,
     #[serde(skip)]
     pub continuation: Option<ProviderContinuation>,
+    #[serde(skip)]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) retrieval_observation: Option<RetrievalObservation>,
 }
 
 /// Model Gateway: handles LLM provider communication.
@@ -246,6 +263,24 @@ impl ModelGateway {
         let url = llm_endpoint_url(&request);
 
         let body = build_llm_api_body(&request)?;
+        if let Some(slot) = &request.boundary {
+            slot.note_generated(
+                &request.messages,
+                u32::try_from(request.tools.len()).unwrap_or(u32::MAX),
+                !request.provider.model.is_empty(),
+            );
+            let family = if uses_openai_responses(&request) {
+                crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiResponses
+            } else {
+                match request.provider.endpoint_family {
+                    EndpointFamily::AnthropicMessages => {
+                        crate::ai_runtime::boundary_events::ProtocolFamily::AnthropicMessages
+                    }
+                    _ => crate::ai_runtime::boundary_events::ProtocolFamily::OpenAiChatCompletions,
+                }
+            };
+            slot.note_serialized(family, &body, &request.messages);
+        }
 
         let mut req_builder = self
             .client
@@ -257,14 +292,31 @@ impl ModelGateway {
                 apply_auth_headers(req_builder, request.provider.endpoint_family, api_key);
         }
 
-        let response = req_builder
-            .json(&body)
-            .send()
-            .await
-            .map_err(AppError::from_reqwest_transport)?;
+        let response = req_builder.json(&body).send().await.map_err(|error| {
+            if let Some(slot) = &request.boundary {
+                slot.note_known_failure("transport");
+            }
+            AppError::from_reqwest_transport(error)
+        })?;
+        if let Some(slot) = &request.boundary {
+            slot.note_request_sent();
+        }
 
         if !response.status().is_success() {
             let status = response.status();
+            if let Some(slot) = &request.boundary {
+                slot.note_provider_returned(
+                    crate::ai_runtime::boundary_events::ProviderReturnStructure {
+                        http_status_class: Some(if status.as_u16() < 500 { "4xx" } else { "5xx" }),
+                        has_content: false,
+                        tool_call_count: 0,
+                        finish_reason_class: Some("error"),
+                    },
+                );
+                slot.note_handshake_end(
+                    crate::ai_runtime::boundary_events::RecordCompleteness::Complete,
+                );
+            }
             let text = response.text().await.unwrap_or_default();
             return Err(AppError::from_llm_http_status(
                 status,
@@ -272,14 +324,59 @@ impl ModelGateway {
             ));
         }
 
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| AppError::msg(format!("Failed to read LLM response body: {}", e)))?;
+        let response_text = response.text().await.map_err(|e| {
+            if let Some(slot) = &request.boundary {
+                slot.note_known_failure("transport");
+            }
+            AppError::msg(format!("Failed to read LLM response body: {}", e))
+        })?;
 
-        let json = parse_gateway_json(&response_text)?;
+        let json = match parse_gateway_json(&response_text) {
+            Ok(json) => json,
+            Err(error) => {
+                if let Some(slot) = &request.boundary {
+                    slot.note_known_failure("protocol");
+                }
+                return Err(error);
+            }
+        };
 
-        Ok(parse_gateway_response(&request, &json))
+        let parsed = parse_gateway_response(&request, &json);
+        if let Some(slot) = &request.boundary {
+            slot.note_provider_returned(
+                crate::ai_runtime::boundary_events::ProviderReturnStructure {
+                    http_status_class: Some("2xx"),
+                    has_content: parsed
+                        .content
+                        .as_deref()
+                        .is_some_and(|content| !content.is_empty()),
+                    tool_call_count: u32::try_from(parsed.tool_calls.len()).unwrap_or(u32::MAX),
+                    finish_reason_class: Some(match parsed.finish_reason.as_str() {
+                        "stop" | "end_turn" => "stop",
+                        "tool_calls" | "tool_use" => "tool_calls",
+                        "length" | "max_tokens" => "length",
+                        _ => "other",
+                    }),
+                },
+            );
+            if !slot.has_name_origin() {
+                slot.note_name_origin(
+                    crate::ai_runtime::tool_name_origin::handshake_payload_from_calls(
+                        slot.correlation().protocol_adapter.as_str(),
+                        request.tools.iter().map(|tool| tool.function.name.as_str()),
+                        parsed
+                            .tool_calls
+                            .iter()
+                            .map(|call| call.function.name.as_str()),
+                        std::iter::empty::<&str>(),
+                    ),
+                );
+            }
+            slot.note_handshake_end(
+                crate::ai_runtime::boundary_events::RecordCompleteness::Complete,
+            );
+        }
+        Ok(parsed)
     }
 
     /// Send a streaming request to a caller-owned observer without Tauri event emission.
@@ -300,6 +397,28 @@ impl ModelGateway {
             false,
             run_observer_stream_surface(),
             true,
+            None,
+        )
+        .await
+    }
+
+    /// Run-owned dispatch hook executes only when the validated HTTP future is polled.
+    pub(crate) async fn send_streaming_request_with_dispatch(
+        &self,
+        request_id: &str,
+        request: GatewayRequest,
+        observer: &mut dyn StreamEventObserver,
+        before_dispatch: &(dyn Fn() -> AppResult<()> + Send + Sync),
+    ) -> AppResult<GatewayResponse> {
+        streaming_impl::send_streaming_request_to_observer(
+            &self.client,
+            request_id,
+            request,
+            observer,
+            false,
+            run_observer_stream_surface(),
+            true,
+            Some(before_dispatch),
         )
         .await
     }
@@ -413,6 +532,7 @@ fn parse_openai_responses_response(json: &serde_json::Value) -> GatewayResponse 
                 response_id: response_id.to_string(),
             }
         }),
+        retrieval_observation: None,
     }
 }
 
@@ -470,6 +590,18 @@ fn parse_openai_compatible_response(
                 .collect()
         })
         .unwrap_or_default();
+    if let Some(slot) = &request.boundary {
+        slot.note_name_origin(
+            crate::ai_runtime::tool_name_origin::handshake_payload_from_calls(
+                slot.correlation().protocol_adapter.as_str(),
+                request.tools.iter().map(|tool| tool.function.name.as_str()),
+                tool_calls.iter().map(|call| call.function.name.as_str()),
+                content_tool_calls
+                    .iter()
+                    .map(|call| call.function.name.as_str()),
+            ),
+        );
+    }
     tool_calls.extend(content_tool_calls);
 
     GatewayResponse {
@@ -482,6 +614,7 @@ fn parse_openai_compatible_response(
             .to_string(),
         reasoning_content,
         continuation: None,
+        retrieval_observation: None,
     }
 }
 
