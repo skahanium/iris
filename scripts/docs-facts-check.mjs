@@ -381,6 +381,7 @@ function checkAgentHarnessDocumentation() {
     path.join(activeHarnessRoot, "README.md"),
     path.join(activeHarnessRoot, "catalog.mjs"),
     path.join(activeHarnessRoot, "registry.json"),
+    path.join(activeHarnessRoot, "registry-history.json"),
     path.join(activeHarnessRoot, "rules", "governance.md"),
     path.join(activeHarnessRoot, "rules", "objects.md"),
     path.join(activeHarnessRoot, "requirements", "current-baseline.md"),

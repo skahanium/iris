@@ -13,13 +13,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   FILE_OBJECT_SUFFIX,
-  IDENTITY_ALIASES,
   isContainerRegistration,
   normalizeContainerId,
   reviewerIdentity,
   isIndependentReview,
   reviewCoversCurrentObject,
 } from "./agent-harness-identity.mjs";
+import {
+  SNAPSHOT_MARKER,
+  closedIssueBlockViolations,
+  historyPath,
+  readMergedRegistry,
+  splitRegistry,
+  unknownRegistrySections,
+} from "./agent-harness-registry.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -108,20 +115,29 @@ function readText(filePath, check) {
   }
 }
 
-function readJson(filePath, check) {
-  const text = readText(filePath, check);
-  if (text === null) return null;
-  // 登记表用首行标记声明文件级身份（JSON 不能承载注释）；解析前剥掉标记行。
-  const payload = text
-    .split("\n")
-    .filter((line) => !line.startsWith("<!--"))
-    .join("\n");
+function loadHarnessRegistry() {
+  if (!existsSync(registryPath)) {
+    return {
+      schemaVersion: "iris-agent-harness-registry-v1",
+      registryRevision: 0,
+      sources: {},
+      files: {},
+      objects: {},
+      verify: [],
+      changes: [],
+      reviews: [],
+      issues: {},
+    };
+  }
   try {
-    return JSON.parse(payload);
+    return readMergedRegistry(harnessRoot);
   } catch (error) {
+    const message = String(error?.message ?? error);
     broken(
-      check,
-      `${path.relative(options.root, filePath)} 不是合法 JSON: ${error.message}`,
+      "registry",
+      message.includes("JSON")
+        ? `registry.json 不是合法 JSON: ${message}`
+        : message,
     );
     return null;
   }
@@ -480,7 +496,7 @@ function walk(dir) {
 }
 
 // 工具文件不参与对象标记解析：登记表本身用首行标记声明身份，catalog 是纯代码。
-const TOOLING_FILES = new Set(["catalog.mjs"]);
+const TOOLING_FILES = new Set(["catalog.mjs", "registry-history.json"]);
 
 function discoverManagedFiles(catalogFiles) {
   const discovered = new Set();
@@ -1277,65 +1293,41 @@ function checkSources(catalog, registry) {
  * 让 `--reconcile` 写出的字节就是 format:check 期望的字节。Prettier 不可用时退回
  * JSON.stringify：格式告警好过让登记表写不出去。
  */
-async function formatRegistryJson(ordered) {
+async function formatRegistryJson(ordered, filepath = registryPath) {
   try {
     const prettier = await import("prettier");
     return await prettier.format(JSON.stringify(ordered), {
-      filepath: registryPath,
+      filepath,
     });
   } catch (error) {
     process.stderr.write(
-      `  ! Prettier 不可用，registry.json 退回 JSON.stringify：${error.message}\n`,
+      `  ! Prettier 不可用，登记表退回 JSON.stringify：${error.message}\n`,
     );
     return `${JSON.stringify(ordered, null, 2)}\n`;
   }
 }
 
-async function writeRegistry(registry, next) {
-  const ordered = {
-    schemaVersion: next.schemaVersion,
-    registryRevision: next.registryRevision,
-    baseline: next.baseline,
-    sources: next.sources,
-    files: next.files,
-    objects: Object.fromEntries(
-      Object.keys(next.objects)
-        .sort()
-        .map((id) => [id, next.objects[id]]),
-    ),
-    verify: next.verify,
-    changes: next.changes,
-    reviews: next.reviews,
-    issues: next.issues,
-    // 序列化必须覆盖登记表的每个段：漏掉一个段会让 --reconcile 静默丢数据
-    // （notes 与 gaps 都曾因漏写而消失）。
-    gaps: next.gaps ?? [],
-    notes: next.notes ?? [],
-  };
-  // 防回归：登记表的顶层段一旦在序列化里漏掉就会被静默丢弃。
-  const missingSections = Object.keys(next).filter(
-    (key) => !(key in ordered) && next[key] !== undefined,
-  );
+async function writeRegistry(_registry, next) {
+  const missingSections = unknownRegistrySections(next);
   if (missingSections.length > 0) {
     broken(
       "registry",
       `writeRegistry 会丢弃以下段：${missingSections.join("、")}（序列化必须覆盖全部段）`,
     );
   }
-  // 登记表首行标记必须保留；正文由 Prettier 产出，与 format:check 同源。
-  const body = await formatRegistryJson(ordered);
-  writeFileSync(
-    registryPath,
-    `<!-- iris:object FILE-REGISTRY kind=rules file=true -->\n${body}`,
-    "utf8",
-  );
-  return registry;
+  const { snapshot, history } = splitRegistry(next);
+  const snapshotBody = await formatRegistryJson(snapshot, registryPath);
+  writeFileSync(registryPath, `${SNAPSHOT_MARKER}\n${snapshotBody}`, "utf8");
+  const historyFile = historyPath(harnessRoot);
+  const historyBody = await formatRegistryJson(history, historyFile);
+  writeFileSync(historyFile, historyBody, "utf8");
+  return next;
 }
 
 const catalog = await loadCatalog();
 
 if (catalog && !infrastructure.length) {
-  const registry = readJson(registryPath, "registry") ?? {
+  const registry = loadHarnessRegistry() ?? {
     schemaVersion: "iris-agent-harness-registry-v1",
     registryRevision: 0,
     sources: {},
@@ -1594,6 +1586,9 @@ if (catalog && !infrastructure.length) {
   }
 
   checkRelations(catalog, definitions);
+  for (const message of closedIssueBlockViolations(catalog, registry.issues)) {
+    violation("issues", message);
+  }
 
   // 成熟度：defined 的合同要素。
   // 正文取该对象的定义块，并并入其所在文件的容器正文——文件级对象与子对象共同构成

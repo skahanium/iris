@@ -34,8 +34,9 @@ export const normalizeContainerId = (id) =>
  *
  * `dsh agent` 与 `deepseek harness` 归并的依据写在 `agent-harness/registry.json`
  * 的 `notes` 里：讨论纪要开篇写明「DeepSeek（批注署名 DSH）」，且环境
- * `DSH_HOME=~/.dsh`，两者是同一实体。检查器不猜测实体同一性，只按本表归并；
- * 新增实体必须同步更新登记表的说明。
+ * `DSH_HOME=~/.dsh`，两者是同一实体。`mimo` 是 2026-09-22 登记的独立复核者
+ * （MiniMax MiMo），与 `cursor-grok-4.6`／`dsh-agent`／`codex-*` 不是同一实体。
+ * 检查器不猜测实体同一性，只按本表归并；新增实体必须同步更新登记表的说明。
  */
 export const IDENTITY_ALIASES = {
   "dsh-agent": "dsh-agent",
@@ -43,6 +44,7 @@ export const IDENTITY_ALIASES = {
   "deepseek harness": "dsh-agent",
   "cursor grok 4.6": "cursor-grok-4.6",
   "cursor-grok-4.6": "cursor-grok-4.6",
+  mimo: "mimo",
   skahanium: "skahanium",
   user: "user",
 };
@@ -77,7 +79,13 @@ export function reviewerIdentity(value) {
     : null;
 }
 
-/** A completed independent review; current object bindings are checked separately. */
+/**
+ * 已完成的独立复核。当前对象绑定另由 `reviewCoversCurrentObject` 检查。
+ *
+ * `reviews[].author` 是复核者，`reviews[].reviewer` 是该变更的编写方（P03 §5.2）。
+ * 复核者必须既不等于 `changes[].author`，也不等于 `reviews[].reviewer`。
+ * 把 author 与 reviewer 都写成独立身份（例如两者都是 `mimo`）不能解封。
+ */
 export function isIndependentReview(review, change) {
   const author = reviewerIdentity(review?.author);
   const changedBy = reviewerIdentity(change?.author);

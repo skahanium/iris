@@ -45,7 +45,7 @@
     "docs:check": "node scripts/docs-facts-check.mjs",
     "agent-harness:check": "node scripts/agent-harness-check.mjs",
     "agent-harness:show": "node scripts/agent-harness-show.mjs",
-    "agent-harness:test": "node --test scripts/agent-harness-check.test.mjs",
+    "agent-harness:test": "node --test scripts/agent-harness-check.test.mjs scripts/agent-harness-registry.test.mjs",
     "size:check": "node scripts/file-size-budget.mjs",
     "diagnose:web-degradation": "node scripts/diagnose-web-capability-degradation.mjs"
   },

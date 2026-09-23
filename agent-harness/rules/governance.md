@@ -99,7 +99,7 @@
 
 ### 3.3 问题关闭不等于解封
 
-关闭一个问题只移除**该问题造成的**阻断。其他问题、过期合同、缺失证据或未完成前置仍然有效；不会自动把工作包提升为可施工或已验收。
+关闭一个问题只移除**该问题造成的**阻断。其他问题、过期合同、缺失证据或未完成前置仍然有效；不会自动把工作包提升为可施工或已验收。关闭后，该 issue 在 catalog 中不得再带 `blocks` 边；残留边由 `X01` 检出（就绪计算本来就会忽略已关闭 issue，但残留边会让阅读面再次撒谎）。
 
 ## 四、变更分类
 
@@ -116,7 +116,7 @@
 
 ### 4.2 变更记录
 
-每次接受变化写入 `registry.json.changes[]`：
+每次接受变化写入 `registry-history.json` 的 `changes[]`（工作副本 `registry.json` 不保存 WAL）：
 
 | 字段             | 含义                                         |
 | ---------------- | -------------------------------------------- |
@@ -142,7 +142,7 @@
 
 **架构变更后的“无影响”结论必须由独立 AI 或人工复核。**
 
-复核记录（`registry.json.reviews[]`）必须绑定：
+复核记录（`registry-history.json` 的 `reviews[]`；检查器读与工作副本合并后的视图）必须绑定：
 
 - 变更 ID、对象 ID、变更前后修订与内容指纹；
 - 具体差异范围、受影响对象、判断理由；
@@ -221,6 +221,8 @@
 | 身份   | ID 前缀与 kind 一致、无重复 ID、无未登记对象标记                                                                                     |
 | 结构   | 每份托管文件有且只有一个文件级对象、标记成对不嵌套、无无法归属的正文                                                                 |
 | 登记   | `registry.json.files` 与磁盘一致、声明 `defined` 的对象必须有真实定义位置                                                            |
+| 流水   | 当前快照在 `registry.json`；`changes`／`reviews`／非 current 的 verify 在 `registry-history.json`；拆开后缺流水文件则基础设施失败    |
+| 问题   | `issues.state=closed` 不得在 catalog 残留 `blocks`                                                                                   |
 | 指纹   | 对象指纹、文件级指纹与来源指纹同登记一致（未接受的变化报错）                                                                         |
 | 关系   | 边端点存在、`depends_on`/`supersedes` 无环、`blocks` 注明门槛、`scope` 有需求依据                                                    |
 | 成熟度 | 声明 `defined` 的对象必须写全该种类必备合同要素                                                                                      |
@@ -238,9 +240,9 @@
 
 ### X02 检查器负例自测
 
-`scripts/agent-harness-check.test.mjs` 用 `node --test` 运行，夹具全部在系统临时目录生成，**不写入仓库**。它覆盖检查器**当前已实现**的阻断，而不是 `document.md` §5 的全部愿望清单。
+`scripts/agent-harness-check.test.mjs` 与 `scripts/agent-harness-registry.test.mjs` 用 `node --test` 运行，夹具全部在系统临时目录生成，**不写入仓库**。它覆盖检查器**当前已实现**的阻断，而不是 `document.md` §5 的全部愿望清单。
 
-**已覆盖**：多消费者共享合同；登记、定义缺失、标记损坏、对象移动、外围正文；对象正文与标题变化；无关对象不被误报为指纹变化；一个问题关闭而另一阻断仍在；只有登记不能施工；架构缺复核者拒绝写入；reconcile 不得自签；作者自签 `synchronized` 不能解封；独立复核后可解封；复核缺少理由或绑定旧指纹不能解封；历史通过过期；注册表损坏与文件缺失；关系成环；复核绑定文件级容器指纹时不得按对象指纹判违规（同时验证该键的真实对象绑定仍然受检）；已退役证据（`obsolete`）保留旧指纹不算违规，`current`／`needs-review` 的旧指纹仍算。
+**已覆盖**：多消费者共享合同；登记、定义缺失、标记损坏、对象移动、外围正文；对象正文与标题变化；无关对象不被误报为指纹变化；一个问题关闭而另一阻断仍在；已关闭 issue 残留 `blocks`；登记表快照与流水拆分及 obsolete 压缩；只有登记不能施工；架构缺复核者拒绝写入；reconcile 不得自签；作者自签 `synchronized` 不能解封；独立复核后可解封；复核缺少理由或绑定旧指纹不能解封；历史通过过期；注册表损坏与文件缺失；关系成环；复核绑定文件级容器指纹时不得按对象指纹判违规（同时验证该键的真实对象绑定仍然受检）；已退役证据（`obsolete`）保留旧指纹不算违规，`current`／`needs-review` 的旧指纹仍算。
 
 **尚未机械覆盖**（仍以 `document.md` §5 为后续目标；本对象 `verification.state=passed` 只证明上列负例，不证明 §5 已全部落地）：
 
@@ -254,13 +256,16 @@
 
 ### X03 登记表
 
-`agent-harness/registry.json` 是登记表的权威存储：身份、正式定义位置与行号、修订、内容指纹、类型化关系、来源指纹、证据记录、变更与复核记录、问题状态。它由 `catalog.mjs`（人工维护的身份与关系）加 `agent-harness-check.mjs --reconcile`（计算得出的指纹与修订）共同产出。
+`agent-harness/registry.json` 是**当前快照**：身份、正式定义位置与行号、修订、内容指纹、类型化关系、来源指纹、当前 `verify`、问题状态、`gaps`、`notes`。`agent-harness/registry-history.json` 是**只增流水**：`changes[]`、`reviews[]`、非 `current` 的 verify。检查器与查询脚本读合并视图。流水文件不进 `catalog.files`，以免每次 reconcile 打漂容器指纹。
+
+二者由 `catalog.mjs`（人工维护的身份与关系）加 `agent-harness-check.mjs --reconcile`（计算得出的指纹与修订，并写入拆分后的两份文件）共同产出。
 
 **规则**：
 
-- 登记表自身的文件级标记是首行 `<!-- iris:object FILE-REGISTRY kind=rules file=true -->`（JSON 不能承载注释）；
+- 工作副本的文件级标记是首行 `<!-- iris:object FILE-REGISTRY kind=rules file=true -->`（JSON 不能承载注释）；
 - 指纹、修订与行号是计算值，禁止手写；
-- 接受变化必须给出作者、分类与理由，并留下 `changes` 记录；架构与治理变更还需要独立复核（`reviews`）；
-- 登记表不可解析、与实际内容不一致或缺少必需段，一律阻断检查，不降级为警告。
+- 接受变化必须给出作者、分类与理由，并留下 `changes` 记录（写在流水文件）；架构与治理变更还需要独立复核（`reviews`）；
+- `obsolete` verify 压缩为 `object`／`kind`／`fingerprint`／`applicability`／一行原因，**不改写 fingerprint**；
+- 登记表不可解析、与实际内容不一致、缺少必需段，或已拆表却缺少流水文件，一律阻断检查，不降级为警告。
 
 <!-- iris:end X03 -->

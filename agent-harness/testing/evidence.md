@@ -97,7 +97,9 @@
 
 ## 记录字段与适用性
 
-每条证据记录（写入 `registry.json.verify`）必须包含：`object`（被验证对象 ID）、`kind`（`V03`–`V07`）、`testPath`、`command`、`environment`、`fingerprint`（对象当时的定义指纹）、`at`、`applicability`（`current`／`needs-review`／`obsolete`）。
+每条**当前**证据记录（`applicability=current`，写在 `registry.json.verify`）必须包含：`object`（被验证对象 ID）、`kind`（`V03`–`V07`）、`testPath`、`command`、`environment`、`fingerprint`（对象当时的定义指纹）、`at`、`applicability`。
+
+已退役（`obsolete`）记录存放在 `registry-history.json`，压缩为 `object`、`kind`、`fingerprint`、`applicability` 与一行原因；**不改写 fingerprint**。`needs-review` 仍声称适用，保留完整字段。
 
 绑定与适用性：
 
@@ -107,7 +109,7 @@
 - 历史通过保留，但不足以支持变化后的当前验收；
 - 模块及工作包验收由具体声明汇总，不能用一个测试覆盖全部能力。
 
-存储位置：结论与记录在 `registry.json.verify`；执行产物沿用既有 `docs/eval/results/`，本体系不复制证据仓库。
+存储位置：当前结论在 `registry.json.verify`；变更、复核与已退役证据在 `registry-history.json`；执行产物沿用既有 `docs/eval/results/`，本体系不复制证据仓库。
 
 ## 消费方
 

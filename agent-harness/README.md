@@ -20,20 +20,21 @@
 
 ## 二、目录与职责
 
-| 区域                               | 职责                                                                                                                                                       |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 入口与维护规则                     | 本文件（阅读路径、体系总览）与 [`rules/`](./rules/governance.md)（权威、状态、复核、变更、归档规则）                                                       |
-| `requirements/`                    | [需求条目 N01–N23](./requirements/requirements.md)、[当前基线与未决问题 Q\*](./requirements/current-baseline.md)、[缺口 G\*](./requirements/open-items.md) |
-| `modules/`                         | 9 份模块规范，逐项展开 [`C01`–`C27`](./modules/README.md)；另有[评测系统 E01–E03](./modules/eval-system.md)                                                |
-| `contracts/`                       | 共享接口、状态转换、不变量及异常合同（[`K01`–`K18`](./contracts/README.md)）                                                                               |
-| `tools/`                           | [39 个业务工具的独立卡片](./tools/README.md)，以及协议入口、Planned 与外部 MCP 的区别                                                                      |
-| `flows/`                           | [对话与修订、联网、编辑、格式保持、上下文与记忆、委派六条链路](./flows/README.md)                                                                          |
-| `testing/`                         | [证据分类、覆盖关系、证据组合与验收要求](./testing/evidence.md)                                                                                            |
-| `implementation/`                  | [D0–D5 依赖、工作包与执行记录](./implementation/README.md)                                                                                                 |
-| `decisions/`                       | [架构变更、细化、复核与替代记录](./decisions/README.md)                                                                                                    |
-| [`registry.json`](./registry.json) | 身份、正式定义位置、修订、指纹、类型化关联、决定与复核记录                                                                                                 |
-| `catalog.mjs`                      | 登记表的人工维护部分（身份、责任归属、成熟度、关系、作用域）                                                                                               |
-| `archive/`                         | 已被取代的材料，只作对照，**不得作为现行依据**                                                                                                             |
+| 区域                                               | 职责                                                                                                                                                       |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 入口与维护规则                                     | 本文件（阅读路径、体系总览）与 [`rules/`](./rules/governance.md)（权威、状态、复核、变更、归档规则）                                                       |
+| `requirements/`                                    | [需求条目 N01–N23](./requirements/requirements.md)、[当前基线与未决问题 Q\*](./requirements/current-baseline.md)、[缺口 G\*](./requirements/open-items.md) |
+| `modules/`                                         | 9 份模块规范，逐项展开 [`C01`–`C27`](./modules/README.md)；另有[评测系统 E01–E03](./modules/eval-system.md)                                                |
+| `contracts/`                                       | 共享接口、状态转换、不变量及异常合同（[`K01`–`K18`](./contracts/README.md)）                                                                               |
+| `tools/`                                           | [39 个业务工具的独立卡片](./tools/README.md)，以及协议入口、Planned 与外部 MCP 的区别                                                                      |
+| `flows/`                                           | [对话与修订、联网、编辑、格式保持、上下文与记忆、委派六条链路](./flows/README.md)                                                                          |
+| `testing/`                                         | [证据分类、覆盖关系、证据组合与验收要求](./testing/evidence.md)                                                                                            |
+| `implementation/`                                  | [D0–D5 依赖、工作包与执行记录](./implementation/README.md)                                                                                                 |
+| `decisions/`                                       | [架构变更、细化、复核与替代记录](./decisions/README.md)                                                                                                    |
+| [`registry.json`](./registry.json)                 | 当前快照：身份、正式定义位置、修订、指纹、当前证据、问题状态                                                                                               |
+| [`registry-history.json`](./registry-history.json) | 只增流水：变更、复核、已退役证据。不进 `catalog.files`，以免每次 reconcile 打漂容器指纹                                                                    |
+| `catalog.mjs`                                      | 登记表的人工维护部分（身份、责任归属、成熟度、关系、作用域）                                                                                               |
+| `archive/`                                         | 已被取代的材料，只作对照，**不得作为现行依据**                                                                                                             |
 
 执行结果继续放在既有 `docs/eval/results/`，本体系不复制证据仓库。
 
@@ -121,7 +122,7 @@ CI 不允许对文档门使用忽略失败或成功兜底；只有全部检查�
 ## 九、维护规则
 
 1. 新增、改名或删除托管文件，必须同步 `catalog.mjs` 的 `files` 与 `objects`，再运行
-   `node scripts/agent-harness-check.mjs --reconcile --author <你> --classification refinement --reason <理由>`。
+   `node scripts/agent-harness-check.mjs --reconcile --author <你> --classification refinement --reason <理由>`。当前快照写入 `registry.json`，变更流水写入 `registry-history.json`。
 2. 修改任何对象正文后，检查器会报“登记未接受”；**接受变化是显式动作**，必须给出分类与理由。
 3. 改变责任归属、状态权威、输入输出语义、决定权、不变量、权限、副作用、兼容或用户承诺，属于
    **架构变更**，必须同步架构定义、写 `decisions/` 记录，并由独立复核者作出结论。

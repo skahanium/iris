@@ -12,6 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  readMergedRegistry,
+  writeMergedRegistrySync,
+} from "./agent-harness-registry.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const checker = path.join(scriptDir, "agent-harness-check.mjs");
@@ -19,6 +23,7 @@ const checker = path.join(scriptDir, "agent-harness-check.mjs");
 for (const [author, reviewer] of [
   ["dsh-agent", "DSH Agent (复核)"],
   ["cursor-grok-4.6", "Cursor Grok 4.6"],
+  ["mimo", "mimo"],
   ["user", "用户（确认）"],
   ["dsh-agent", ""],
   ["dsh-agent", "unattributed"],
@@ -658,19 +663,11 @@ function reconcileFixture(root, classification = "refinement") {
 }
 
 function loadRegistry(harness) {
-  const text = readFileSync(path.join(harness, "registry.json"), "utf8");
-  const payload = text
-    .split("\n")
-    .filter((line) => !line.startsWith("<!--"))
-    .join("\n");
-  return JSON.parse(payload);
+  return readMergedRegistry(harness);
 }
 
 function saveRegistry(harness, registry) {
-  writeFileSync(
-    path.join(harness, "registry.json"),
-    `<!-- iris:object FILE-REGISTRY kind=rules file=true -->\n${JSON.stringify(registry, null, 2)}\n`,
-  );
+  writeMergedRegistrySync(harness, registry);
 }
 
 const K01_BODY = `# 夹具合同
@@ -1330,8 +1327,19 @@ test("一个问题关闭但另一阻断仍存在，工作包不能解封", () =>
     assert.equal(registry.issues?.Q02?.state, "open");
     registry.issues.Q01 = { state: "closed" };
     saveRegistry(fixture.harness, registry);
-
+    const cat = path.join(fixture.harness, "catalog.mjs");
+    const src = readFileSync(cat, "utf8");
+    const objs = JSON.parse(src.match(/export const objects = (.*);/)[1]);
+    objs.Q01.blocks = [];
+    writeFileSync(
+      cat,
+      src.replace(
+        /export const objects = .*;/,
+        `export const objects = ${JSON.stringify(objs)};`,
+      ),
+    );
     const { report } = runCheck(fixture.root);
+    assert.equal(hasViolation(report, "issues"), false);
     const ready = report.readiness?.D01;
     assert.ok(ready);
     assert.equal(ready.acceptanceReady, false);

@@ -8,15 +8,15 @@
  *   npm run agent-harness:show -- C25
  */
 
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fileContainers, files, objects } from "../agent-harness/catalog.mjs";
+import { readMergedRegistry } from "./agent-harness-registry.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
-const registryPath = path.join(repoRoot, "agent-harness", "registry.json");
+const harnessDir = path.join(repoRoot, "agent-harness");
 
 const RELATION_KEYS = [
   "implements",
@@ -30,12 +30,7 @@ const RELATION_KEYS = [
 ];
 
 function loadRegistry() {
-  const text = readFileSync(registryPath, "utf8");
-  const payload = text
-    .split("\n")
-    .filter((line) => !line.startsWith("<!--"))
-    .join("\n");
-  return JSON.parse(payload);
+  return readMergedRegistry(harnessDir);
 }
 
 function formatValue(value) {
