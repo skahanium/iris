@@ -429,6 +429,8 @@ export type AssistantRunErrorCode =
   | "agent_run_not_found"
   | "agent_run_permission_denied"
   | "agent_run_confirmation_expired"
+  | "agent_run_confirmation_plan_hash_mismatch"
+  | "agent_run_confirmation_diff_unavailable"
   | "agent_run_persistence_failed"
   | "agent_run_provider_unavailable"
   | "agent_run_provider_timeout"
@@ -501,7 +503,12 @@ export type ProviderSwitchReasonCode =
   | "manual_override_rejected"
   | "unknown";
 
-/** Safe confirmation target projection. It must never contain source body or tool arguments. */
+/**
+ * Safe confirmation target projection for persisted events and reconnect
+ * replay. Persisted events and tool results never contain source body, tool
+ * arguments, or diff hunks; the on-demand diff preview is a separate transient
+ * response that is never persisted.
+ */
 export interface ConfirmationTargetSummary {
   kind: "note" | "file" | "external" | "process" | "other";
   label: string;
@@ -519,6 +526,49 @@ export interface PendingConfirmation {
   targets?: ConfirmationTargetSummary[];
   /** ISO 8601 timestamp, absent on events emitted by pre-maturity backends. */
   expiresAt?: string;
+}
+
+/** Request accepted by `assistantRunConfirmationDiff`. */
+export interface AssistantRunConfirmationDiffRequest {
+  session: AssistantSessionRef;
+  runId: string;
+  confirmationId: string;
+  planHash: string;
+}
+
+/**
+ * On-demand, bounded unified diff for one pending frozen change plan.
+ * Transient review response for the owning user: it is never persisted into
+ * run events, tool results, audit records, or logs.
+ */
+export interface ConfirmationDiffPreview {
+  /** Per-target diffs in frozen first-use order. */
+  files: ConfirmationFileDiff[];
+  /** True when hunk or line bounds dropped the remaining difference. */
+  truncated: boolean;
+}
+
+/** Unified diff projection for exactly one frozen change target. */
+export interface ConfirmationFileDiff {
+  path: string;
+  /** False when the frozen candidate cannot be replayed for display. */
+  previewable: boolean;
+  hunks: ConfirmationDiffHunk[];
+}
+
+/** One bounded region of changed lines with surrounding context. */
+export interface ConfirmationDiffHunk {
+  oldStart: number;
+  newStart: number;
+  /** Ordered unified diff lines without trailing newlines. */
+  lines: ConfirmationDiffLine[];
+}
+
+export type ConfirmationDiffLineKind = "context" | "add" | "del";
+
+export interface ConfirmationDiffLine {
+  kind: ConfirmationDiffLineKind;
+  text: string;
 }
 
 export interface PendingRunInput {

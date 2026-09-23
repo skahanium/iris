@@ -6,6 +6,7 @@ import type { AssistantPresentationEvent } from "@/lib/assistant-presentation";
 
 import type {
   AssistantRunAccepted,
+  AssistantRunConfirmationDiffRequest,
   AssistantRunControlRequest,
   AssistantRunDiagnoseRequest,
   AssistantRunEvent,
@@ -15,6 +16,7 @@ import type {
   AssistantRunStartRequest,
   ClassifiedDocumentContext,
   ClassifiedRunResultRequest,
+  ConfirmationDiffPreview,
   DiagnosticReport,
   AssistantSessionListRequest,
   AssistantSessionLoadRequest,
@@ -27,6 +29,7 @@ import type {
 
 export type {
   AssistantRunAccepted,
+  AssistantRunConfirmationDiffRequest,
   AssistantRunControlRequest,
   AssistantRunDiagnoseRequest,
   AssistantRunEvent,
@@ -34,6 +37,7 @@ export type {
   AssistantRunGetResponse,
   AssistantRunRetryRequest,
   AssistantRunStartRequest,
+  ConfirmationDiffPreview,
   DiagnosticReport,
   ExternalToolGrantRef,
   RunRecoveryKind,
@@ -1150,6 +1154,14 @@ export async function assistantRunControl(
   request: AssistantRunControlRequest,
 ): Promise<void> {
   return invoke<void>("assistant_run_control", { request });
+}
+
+export async function assistantRunConfirmationDiff(
+  request: AssistantRunConfirmationDiffRequest,
+): Promise<ConfirmationDiffPreview> {
+  return invoke<ConfirmationDiffPreview>("assistant_run_confirmation_diff", {
+    request,
+  });
 }
 
 export async function assistantRunGet(

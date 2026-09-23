@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::ai_runtime::agent_tool_loop::ToolLoopProvider;
+use crate::ai_runtime::confirmation_diff::{
+    AssistantRunConfirmationDiffRequest, ConfirmationDiffPreview,
+};
 use crate::ai_runtime::diagnostic_query::{diagnose_run, DiagnosticReport};
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunDiagnoseRequest,
@@ -591,6 +594,19 @@ async fn assistant_run_control_inner<R: AssistantRunRuntime>(
             Ok(())
         }
     }
+}
+
+/// Bounded, on-demand unified diff for one pending frozen change plan.
+///
+/// The response is transient review data for the owning user: it is never
+/// persisted into run events, tool call results, audit records, or logs, and
+/// it never approves, extends, or rewrites the change plan.
+#[tauri::command]
+pub async fn assistant_run_confirmation_diff(
+    state: State<'_, Arc<AppState>>,
+    request: AssistantRunConfirmationDiffRequest,
+) -> AppResult<ConfirmationDiffPreview> {
+    crate::ai_runtime::confirmation_diff::preview_pending_confirmation_diff(&state, request)
 }
 
 /// Replay one isolated Agent Run through its owning session reference.

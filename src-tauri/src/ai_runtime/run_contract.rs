@@ -1107,7 +1107,10 @@ pub(crate) enum RunEventPayload {
         /// Safe effect category projected from the frozen plan.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effect: Option<Effect>,
-        /// Counted and redacted change targets; never paths or arguments.
+        /// Bounded normalized target labels (truncated relative paths) and
+        /// risk classes; never note body, tool arguments, or diff hunks.
+        /// The on-demand diff preview is a separate transient IPC response
+        /// that is never persisted into events or tool results.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         targets: Option<Vec<ConfirmationTargetSummary>>,
         /// RFC 3339 expiry of the frozen approval window.
@@ -1562,6 +1565,12 @@ pub enum SafeRunErrorCode {
     /// The pending change plan expired or no longer matches.
     #[serde(rename = "agent_run_confirmation_expired")]
     ConfirmationExpired,
+    /// The requested plan identity does not match the pending confirmation.
+    #[serde(rename = "agent_run_confirmation_plan_hash_mismatch")]
+    ConfirmationPlanHashMismatch,
+    /// The frozen candidate cannot be replayed into a bounded diff preview.
+    #[serde(rename = "agent_run_confirmation_diff_unavailable")]
+    ConfirmationDiffUnavailable,
     /// No suitable Provider can complete the permitted route.
     #[serde(rename = "agent_run_provider_unavailable")]
     ProviderUnavailable,
@@ -1755,6 +1764,8 @@ impl SafeRunErrorCode {
             Self::StateVersionConflict => "agent_run_state_version_conflict",
             Self::PermissionDenied => "agent_run_permission_denied",
             Self::ConfirmationExpired => "agent_run_confirmation_expired",
+            Self::ConfirmationPlanHashMismatch => "agent_run_confirmation_plan_hash_mismatch",
+            Self::ConfirmationDiffUnavailable => "agent_run_confirmation_diff_unavailable",
             Self::ProviderUnavailable => "agent_run_provider_unavailable",
             Self::ProviderTimeout => "agent_run_provider_timeout",
             Self::NoCapableModel => "agent_run_no_capable_model",

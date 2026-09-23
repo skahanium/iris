@@ -245,6 +245,7 @@ pub fn run() {
             commands::assistant_commands::assistant_run_start,
             commands::assistant_commands::assistant_run_retry,
             commands::assistant_commands::assistant_run_control,
+            commands::assistant_commands::assistant_run_confirmation_diff,
             commands::assistant_commands::assistant_run_get,
             commands::assistant_commands::assistant_run_diagnose,
             commands::assistant_commands::assistant_classified_context_open,

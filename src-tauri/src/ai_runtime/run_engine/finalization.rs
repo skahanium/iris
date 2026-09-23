@@ -680,6 +680,8 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::InvalidFinalOutput
         | SafeRunErrorCode::ConfirmationPending
         | SafeRunErrorCode::ConfirmationMissing
+        | SafeRunErrorCode::ConfirmationPlanHashMismatch
+        | SafeRunErrorCode::ConfirmationDiffUnavailable
         | SafeRunErrorCode::InvalidSubagentLifecycle
         | SafeRunErrorCode::InvalidSubagentBatchReport
         | SafeRunErrorCode::RetryNotAvailable

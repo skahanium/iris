@@ -1,10 +1,14 @@
 import { Check, X } from "lucide-react";
 
+import { AssistantConfirmationDiff } from "@/components/ai/AssistantConfirmationDiff";
 import { Button } from "@/components/ui/button";
 import type { AssistantRunConfirmation as AssistantRunConfirmationState } from "@/hooks/useAssistantRun";
+import type { AssistantSessionRef } from "@/types/ai";
 
 export interface AssistantRunConfirmationProps {
   confirmation: AssistantRunConfirmationState;
+  /** Owning session; without it no diff entry is shown. */
+  session: AssistantSessionRef | null;
   disabled?: boolean;
   onApprove: () => void;
   onReject: () => void;
@@ -26,6 +30,7 @@ function effectLabel(effect: AssistantRunConfirmationState["effect"]): string {
 /** Renders the persisted, safe change-plan projection before a Run can resume. */
 export function AssistantRunConfirmation({
   confirmation,
+  session,
   disabled = false,
   onApprove,
   onReject,
@@ -54,6 +59,16 @@ export function AssistantRunConfirmation({
         <p className="mt-2 text-[11px] text-muted-foreground">
           确认有效期至：{confirmation.expiresAt}
         </p>
+      ) : null}
+      {session ? (
+        <AssistantConfirmationDiff
+          request={{
+            session,
+            runId: confirmation.runId,
+            confirmationId: confirmation.confirmationId,
+            planHash: confirmation.planHash,
+          }}
+        />
       ) : null}
       <div className="mt-2 flex gap-2">
         <Button

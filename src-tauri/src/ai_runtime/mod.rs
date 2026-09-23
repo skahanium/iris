@@ -74,6 +74,7 @@ mod streaming_finish_reason_sse_tests;
 // Legacy CEF history is retained only so users' pre-existing encrypted files
 // remain untouched. New classified Runs use `classified_ephemeral` exclusively.
 pub mod classified_session;
+pub(crate) mod confirmation_diff;
 pub(crate) mod content_preservation;
 pub(crate) mod context_materials;
 pub mod conversation_memory;
@@ -81,6 +82,8 @@ pub mod conversation_memory;
 mod d05_content_preservation_tests;
 #[cfg(test)]
 mod d05_delivery_outcome_tests;
+#[cfg(test)]
+mod d05_diff_preview_tests;
 #[cfg(test)]
 mod d05_document_task_tests;
 #[cfg(test)]

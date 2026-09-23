@@ -530,6 +530,7 @@ export function UnifiedAssistantPanel({
         <div className={cn("w-full", assistantFocus && "ai-focus-column")}>
           <AssistantRunConfirmation
             confirmation={assistantRun.pendingConfirmation}
+            session={runSession}
             disabled={confirming}
             onApprove={() => handleConfirmation("approve")}
             onReject={() => handleConfirmation("reject")}

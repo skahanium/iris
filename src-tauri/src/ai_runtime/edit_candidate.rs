@@ -7,13 +7,16 @@
 //! no write.
 //!
 //! Host memory holds the applied body for format-preservation and freeze JSON.
-//! Confirmation events still project only `summary` + `targets`; this module
-//! never puts note body, `original_text`, `replacement`, or diff hunks into a
-//! `ToolCallResult`.
+//! Confirmation events and tool call results still project only `summary` +
+//! `targets`; this module never puts note body, `original_text`, `replacement`,
+//! or diff hunks into them. The on-demand confirmation diff preview
+//! (`confirmation_diff`) is a separate transient IPC response for the owning
+//! user's review and is never persisted into events, tool results, audit, or
+//! logs.
 //!
 //! `added_chars` / `removed_chars` are Unicode scalar differences
 //! (`candidate_chars.saturating_sub(original_chars)` and the reverse), not a
-//! Myers diff. This wave does not add a diff crate.
+//! line diff; unified diff computation lives in `confirmation_diff`.
 //!
 //! Format-unproven stays `format_preservation_unproven` in the C23 gate; it is
 //! not an `EditCandidateError`.

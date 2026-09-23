@@ -1414,6 +1414,17 @@ export const objects = {
     note: "已采用：当前不改默认值；改数必须先升 schema_version。常量表延后到第一次改数。不关闭 Q13，不把 D02 标为可验收。",
   },
 
+  R14: {
+    kind: "decision",
+    name: "on-demand-transient-confirmation-diff",
+    title: "R14 确认差异预览按需瞬时投影，持久化事件保持无正文（已采用）",
+    owner: "M08",
+    maturity: "defined",
+    definition: { file: "decisions/README.md", anchor: "R14" },
+    consumes: ["K05"],
+    note: "已采用：差异展示走按需瞬时 IPC，持久化事件与工具结果保持 summary + targets；classified 不提供差异预览。不关闭 Q14/N04/D05/C24，不标 verification.passed。架构变更待独立复核解封。",
+  },
+
   // ── Q01–Q19 / G01–G06 未决问题与缺口 ──────────────────────
   Q01: {
     kind: "issue",

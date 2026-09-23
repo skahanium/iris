@@ -48,6 +48,14 @@
 - `Resume` 后 worker 共用边界；当前前缀 hash 装配后只执行后缀。
 - 选区仅精确映射已执行编辑。定向回归不替代 V05、语义验收或本工作包关闭证据。
 
+## 第五波（2026-09-22，不关闭）
+
+- **已落地**：确认卡片差异预览走按需瞬时 IPC `assistant_run_confirmation_diff`（`session + runId + confirmationId + planHash`，只读、无副作用）。宿主侧复放冻结候选（original vs candidate 全文行 diff）并以 `similar` 计算有界统一 diff（上下文 2 行、≤50 hunks、≤20k 字符、`truncated` 标志）；磁盘漂移、不可读或非编辑操作的目标准确降级为 `previewable: false`。前端 `AssistantConfirmationDiff` 默认折叠、展开懒加载、统一内联 diff，失败静默回退不阻断批准／拒绝。新增稳定错误码 `agent_run_confirmation_plan_hash_mismatch`／`agent_run_confirmation_diff_unavailable`。持久化事件与工具结果保持只投影 `summary` + `targets`；瞬时预览响应不持久化、不进事件、工具结果、审计或日志。输入输出语义变更登记为 `R14`。
+- **本波做**：C24 候选差异呈现（收口第四波缺口「确认卡片仍无 Markdown 差异」）。机械 `V03`／`V04` 绑 `d05_diff_preview_tests.rs`，前端交互绑 `V07` `tests/assistant-run-confirmation-diff.test.tsx`。
+- **本波范围外**：N23 撤回≠重规划；差异行的 Markdown 渲染（本波为纯文本行）；`taskOutcome` warning 条的交互升格；并排双栏差异。
+- **跨波锁定**：不关闭 Q14／N04／D05／C24；不把任何对象标 `verification.passed`；不回头做 D04／G02／G03／Q17；不做 D06、HR-7 live、V05；不加 K15 独立 SQLite 列或 `agent_runs` 新列；不授予 `document.transform`／`note.apply_patch`；涉密域不提供差异预览、不降级安全边界。
+- **不能当作关闭证据**：差异可展示不能推出 N04 内容保持已验收或 D05／Q14 已关闭；机械 `V03`／`V04`／`V07` 不替代 V05／V06 语义验收；`R14` 的 `needs-reverification` 复核记录只是待复核登记，不是独立复核完成。
+
 <!-- iris:end FILE-D05-JOURNAL -->
 
 <!-- iris:object FILE-D05-JOURNAL kind=rules -->
