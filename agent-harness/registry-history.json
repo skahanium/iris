@@ -14752,6 +14752,23 @@
           "fingerprintTo": "b7b4038f55ff507e6502460f4cefc758"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-23-98",
+      "at": "2026-09-23T02:13:28.652Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "日记读法补摘要说明，不改合同与第五波执行事实",
+      "review": null,
+      "objects": [
+        {
+          "id": "FILE-D05-JOURNAL#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "c2e69b83e564a42d613e2179ddbc11ed",
+          "fingerprintTo": "26f702d7a98967cb98a1f201250454e3"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -14791,7 +14808,8 @@
         {
           "id": "X03",
           "revision": 10,
-          "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc"
+          "fingerprint": "a3a82ed7e23bf01a63c5923b7e20aabc",
+          "stale": true
         }
       ],
       "reviewer_was": "用户（会话内确认按 document.md 定稿方案执行）"
@@ -15475,7 +15493,8 @@
         {
           "id": "X02",
           "revision": 13,
-          "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869"
+          "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869",
+          "stale": true
         }
       ]
     },
@@ -15662,12 +15681,14 @@
         {
           "id": "X01",
           "revision": 14,
-          "fingerprint": "1c85b2afe464d3bd20f0d0913fac1fed"
+          "fingerprint": "1c85b2afe464d3bd20f0d0913fac1fed",
+          "stale": true
         },
         {
           "id": "X02",
           "revision": 13,
-          "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869"
+          "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869",
+          "stale": true
         },
         {
           "id": "D02#file",
@@ -15791,7 +15812,8 @@
         {
           "id": "P01#file",
           "revision": 0,
-          "fingerprint": "2059bd306eced9c5ae0d2aa1ad0302b8"
+          "fingerprint": "2059bd306eced9c5ae0d2aa1ad0302b8",
+          "stale": true
         },
         {
           "id": "D03#file",
@@ -15813,7 +15835,8 @@
         {
           "id": "P03#file",
           "revision": 0,
-          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a"
+          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a",
+          "stale": true
         },
         {
           "id": "K05",
@@ -15899,12 +15922,14 @@
         {
           "id": "P01#file",
           "revision": 0,
-          "fingerprint": "2059bd306eced9c5ae0d2aa1ad0302b8"
+          "fingerprint": "2059bd306eced9c5ae0d2aa1ad0302b8",
+          "stale": true
         },
         {
           "id": "P03#file",
           "revision": 0,
-          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a"
+          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a",
+          "stale": true
         },
         {
           "id": "V02",
@@ -16006,7 +16031,8 @@
         {
           "id": "P03#file",
           "revision": 0,
-          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a"
+          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a",
+          "stale": true
         }
       ]
     },
@@ -16023,7 +16049,8 @@
         {
           "id": "P03#file",
           "revision": 0,
-          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a"
+          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a",
+          "stale": true
         }
       ]
     },
@@ -16045,7 +16072,8 @@
         {
           "id": "P03#file",
           "revision": 0,
-          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a"
+          "fingerprint": "5ace7c9af1edc11d17a4ffeb8ded2f2a",
+          "stale": true
         }
       ]
     },
@@ -16106,7 +16134,8 @@
         {
           "id": "P01#file",
           "revision": 0,
-          "fingerprint": "2059bd306eced9c5ae0d2aa1ad0302b8"
+          "fingerprint": "2059bd306eced9c5ae0d2aa1ad0302b8",
+          "stale": true
         },
         {
           "id": "P06#file",
@@ -16491,7 +16520,7 @@
       "author": "mimo",
       "reviewer": "cursor-grok-4.6",
       "conclusion": "synchronized",
-      "reason": "第二波拆表与 closed-issue 禁残留 blocks：核对清单 1–7 已核。registry.json 只留当前快照（302KB），changes/reviews/obsolete verify 在 registry-history.json（542KB）；流水未进 catalog.files；obsolete 压缩未改写指纹；建立期 CHG-2026-09-15-* 在流水且 notes 有指针；X01 负例已接入检查器；缺 history 按基础设施失败。分类 governance 恰当。P01#file/X01 本条标 stale，当前覆盖在对 CHG-2026-09-22-95 的复核。不绑 V02/D05#file，保留 CHG-84 缺口。不解封 CHG-83/84。 【入库字段：reviews.author=mimo，reviews.reviewer=cursor-grok-4.6（P03 §5.2：reviewer 是变更编写方）。聊天稿两者同填 mimo 不能原样入库。】",
+      "reason": "第二波拆表与 closed-issue 禁残留 blocks：核对清单 1–7 已核。registry.json 只留当前快照（302KB），changes/reviews/obsolete verify 在 registry-history.json（542KB）；流水未进 catalog.files；obsolete 压缩未改写指纹；建立期 CHG-2026-09-15-* 在流水且 notes 有指针；X01 负例已接入检查器；缺 history 按基础设施失败。分类 governance 恰当。P01#file/X01 本条标 stale，当前覆盖在对 CHG-2026-09-22-95 的复核。不绑 V02/D05#file，保留 CHG-84 缺口。不解封 CHG-83/84。 【入库字段：reviews.author=mimo，reviews.reviewer=cursor-grok-4.6（P03 §5.2：reviewer 是变更编写方）。聊天稿两者同填 mimo 不能原样入库。】 【并表改号：远程 000393d5 占用 CHG/REV-2026-09-22-93／94／95 为第五波日记与 R14。本条 change 已改为 CHG-2026-09-23-96；文中「CHG-2026-09-22-95」现为 CHG-2026-09-23-97／MIMO-52。objects[] 指纹未改。】",
       "evidence": "docs/eval/results/2026-09-22-mimo-wave2-review.md；docs/eval/results/2026-09-22-wave2-pending-review.md；scripts/agent-harness-registry.mjs + agent-harness-registry.test.mjs（closed issue 不得残留 catalog blocks / 缺 history 抛错 / compress 不改写 fingerprint）；agent-harness:test 49 pass；docs:check PASSED；size:check PASSED；agent-harness:check 仅因 94/95 待复核而红",
       "objects": [
         {
@@ -16535,7 +16564,7 @@
       "author": "mimo",
       "reviewer": "cursor-grok-4.6",
       "conclusion": "synchronized",
-      "reason": "Prettier 折行后 P01#file/X01 当前指纹重绑：与 wave2-pending-review 指纹表及 registry 计算值一致；未改写 CHG-94 时点旧指纹。本条只覆盖这两项的当前绑定。不解封 CHG-83/84，不授权产品验收。 【入库字段：reviews.author=mimo，reviews.reviewer=cursor-grok-4.6。】",
+      "reason": "Prettier 折行后 P01#file/X01 当前指纹重绑：与 wave2-pending-review 指纹表及 registry 计算值一致；未改写 CHG-94 时点旧指纹。本条只覆盖这两项的当前绑定。不解封 CHG-83/84，不授权产品验收。 【入库字段：reviews.author=mimo，reviews.reviewer=cursor-grok-4.6。】 【并表改号：文中 CHG-94 现为 CHG-2026-09-23-96。本条 change 为 CHG-2026-09-23-97。objects[] 指纹未改。】",
       "evidence": "docs/eval/results/2026-09-22-mimo-wave2-review.md；P01#file=4e7f3a5f33d46314fbd1d0ebcb1d0aee（files README.md）；X01 rev16=b7b4038f55ff507e6502460f4cefc758；经 readMergedRegistry 复算一致",
       "objects": [
         {
@@ -16763,11 +16792,25 @@
       "reason": "2026-09-19：X01 的正文（检查器职责表）与 P03 §六／§八 一同改写，原绑定指纹失效，按实际重跑补一条绑定当前指纹的记录：本机退出码 0（95 个托管文件、194 个已定义对象、194 个登记对象，0 violation）。"
     },
     {
+      "object": "X02",
+      "kind": "V03",
+      "fingerprint": "4b3775188b1fad3fdf06e14ac64d5869",
+      "applicability": "obsolete",
+      "reason": "第二波拆表后定义指纹变化，本条不再声称适用。"
+    },
+    {
       "object": "K16",
       "kind": "V03",
       "fingerprint": "897922f16ba134494da949a65678dfd9",
       "applicability": "obsolete",
       "reason": "2026-09-19 排版后重跑并重新绑定：本机 3 passed / 0 failed。"
+    },
+    {
+      "object": "X01",
+      "kind": "V03",
+      "fingerprint": "1c85b2afe464d3bd20f0d0913fac1fed",
+      "applicability": "obsolete",
+      "reason": "第二波拆表后定义指纹变化，本条不再声称适用。"
     },
     {
       "object": "T03",

@@ -1,8 +1,10 @@
-# 独立复核：治理剂量校正第二波（`CHG-2026-09-22-94`／`CHG-2026-09-22-95`）
+# 独立复核：治理剂量校正第二波（现行 `CHG-2026-09-23-96`／`CHG-2026-09-23-97`）
 
 本文件是 `REV-2026-09-22-MIMO-51`／`REV-2026-09-22-MIMO-52` 的可追溯评审记录。它**不是**复核权威存储；权威在 `registry-history.json` 的 `reviews[]`（检查器读合并视图）。
 
-- **复核者**：`mimo`（未参与 94／95 编写）
+并表改号：远程 `000393d5` 已占用 `CHG/REV-2026-09-22-93`／`94`／`95`（第五波日记与 R14）。下文若仍写「94／95」，均指第二波原编号，现行为 `CHG-2026-09-23-96`／`97`。`change` 指针已改号；`objects[]` 指纹未改。
+
+- **复核者**：`mimo`（未参与 96／97 编写；原施工编号 94／95）
 - **变更作者**：`cursor-grok-4.6`
 - **对象**：方案「Harness dose correction」第二波；施工提交 `06ab01a4`（基线 `9374d367`）
 - **结论**：两条均为 `synchronized`（治理）
@@ -18,7 +20,7 @@
 
 入库时 `reviews[].author = mimo`（复核者），`reviews[].reviewer = cursor-grok-4.6`（变更编写方）。P03 §5.2 写明：`reviews[].reviewer` 是参与该变更编写的身份，用来核对独立性。检查器要求 `review.author ≠ change.author` **且** `review.author ≠ review.reviewer`。两者同填 `mimo` 会使检查器判定非独立，不得原样照抄聊天稿。负例见 `scripts/agent-harness-registry.test.mjs`。
 
-`objects` **不**绑定 `V02`／`D05#file`：`openStaleBindings` 按对象 ID 跨变更密封。94 的 `P01#file`／`X01` 标 `stale: true`（当时 To），当前覆盖在 95。
+`objects` **不**绑定 `V02`／`D05#file`：`openStaleBindings` 按对象 ID 跨变更密封。96 的 `P01#file`／`X01` 标 `stale: true`（当时 To），当前覆盖在 97。
 
 施工方不得改写已入库独立复核的 `objects[]`。若绑定面必须收缩，由复核者重签，不由施工方裁剪。`REV-2026-09-22-MIMO-50` 当时为挡住规则 8 未绑 `V02`／`D05#file`，本波不回改那条绑定面。
 

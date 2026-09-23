@@ -1,10 +1,10 @@
 /**
- * Agent Harness 登记目录（authored half of agent-harness/registry.json）
+ * Agent Harness 登记目录（authored half of the registry snapshot）
  *
  * 这里是**人工维护**的部分：身份、责任归属、成熟度、类型化关系、作用域。
  * 指纹、行列号、摘要与 effective 状态是**计算得出**的，由
- * `node scripts/agent-harness-check.mjs --reconcile` 写入 registry.json，
- * 不要手写。
+ * `node scripts/agent-harness-check.mjs --reconcile` 写入 `registry.json`
+ *（当前快照）与 `registry-history.json`（只增流水），不要手写。
  *
  * 规则见 agent-harness/rules/objects.md（身份与标记）
  *   与 agent-harness/rules/governance.md（状态、关系、复核）。
@@ -1662,7 +1662,7 @@ export const objects = {
     maturity: "defined",
     definition: { file: "rules/governance.md", anchor: "X03" },
     consumes: ["P01", "P02", "P03", "P04", "P05", "P06", "P07"],
-    note: "身份、定义位置、修订与指纹、类型化关系、决定与复核记录；由 --reconcile 写入计算结果",
+    note: "当前快照与流水拆分；身份、定义位置、修订与指纹、类型化关系、决定与复核记录；由 --reconcile 写入计算结果",
   },
 };
 
