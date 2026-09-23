@@ -46,7 +46,7 @@ notify-debouncer-full = "0.6"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "system-proxy", "socks"] }
 rmcp = { version = "2.2.0", default-features = false, features = ["client", "reqwest", "transport-async-rw", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 http = "1"
-rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std", "ring"] }
 # 安全抓取直接使用 HTTP/1 + rustls 隧道，固定 CONNECT/SOCKS 的目标 IP；
 # 下列版本已存在于锁文件（MIT OR Apache-2.0），不引入代理库。
 bytes = "=1.12.1"
