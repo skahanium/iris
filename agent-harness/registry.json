@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 161,
+  "registryRevision": 162,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-23T02:13:28.652Z"
+    "recordedAt": "2026-09-23T03:28:35.842Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -206,7 +206,7 @@
     "implementation/D05-wave-log.md": {
       "container": "FILE-D05-JOURNAL",
       "registration": "FILE-D05-JOURNAL#file",
-      "fingerprint": "26f702d7a98967cb98a1f201250454e3"
+      "fingerprint": "3a3a136b9e1cd9cea6cd58045d66378c"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "e353828f8d1e500e87385d5951df9000"
+      "fingerprint": "60b6fd5a9d8ad25e41c11ddb9d02a9f2"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1334,8 +1334,8 @@
       "definition": {
         "file": "implementation/D05-wave-log.md",
         "anchor": "FILE-D05-JOURNAL",
-        "line": 62,
-        "endLine": 68,
+        "line": 70,
+        "endLine": 76,
         "fingerprint": "9311168c21dcbb777ce5e704b7a060f8"
       },
       "implementation": { "state": "unknown" },

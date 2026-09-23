@@ -88,6 +88,8 @@ mod d05_diff_preview_tests;
 mod d05_document_task_tests;
 #[cfg(test)]
 mod d05_edit_candidate_tests;
+#[cfg(test)]
+mod d05_ten_task_campaign_tests;
 pub(crate) mod delivery_outcome;
 pub(crate) mod direct_provider_route;
 pub(crate) mod document_policy_repository;

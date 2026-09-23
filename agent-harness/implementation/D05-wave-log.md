@@ -57,6 +57,14 @@
 - **跨波锁定**：不关闭 Q14／N04／D05／C24；不把任何对象标 `verification.passed`；不回头做 D04／G02／G03／Q17；不做 D06、HR-7 live、V05；不加 K15 独立 SQLite 列或 `agent_runs` 新列；不授予 `document.transform`／`note.apply_patch`；涉密域不提供差异预览、不降级安全边界。
 - **不能当作关闭证据**：差异可展示不能推出 N04 内容保持已验收或 D05／Q14 已关闭；机械 `V03`／`V04`／`V07` 不替代 V05／V06 语义验收；`R14` 的 `needs-reverification` 复核记录只是待复核登记，不是独立复核完成。
 
+## 十任务战役（2026-09-23，不关闭）
+
+- **已落地**：具名 T01–T10 生产入口战役 `src-tauri/src/ai_runtime/d05_ten_task_campaign_tests.rs`；报告 [docs/eval/results/2026-09-23-d05-ten-task-campaign.md](../../docs/eval/results/2026-09-23-d05-ten-task-campaign.md)。证据层级 `headless_deterministic`（V03／V04）+ 既有确认卡片 V07。T09 在 Approved 后对漂移磁盘执行已确认变更，错误码 `frozen_change_base_hash_drift`，磁盘保持漂移正文。
+- **本战役做**：用固定题面把五波机械测试收成任务级复验表。T08 UI 只引用 `tests/assistant-run-confirmation-diff.test.tsx`，不重写前端测。
+- **本战役范围外**：不跑 V05 live；不扩 52 题问答矩阵；不写 `product-gate.json`；不把本战役写成 D05 第六波产品施工。
+- **跨波锁定**：不关 Q14／N04／D05／D04／C24／C25；不解封 CHG-83／CHG-84；不绑 V02／D05#file；不改 D05 合同正文；不加 SQLite 列、LangChain、品牌 `format:check` 文件。
+- **不能当作关闭证据**：十题全绿不能推出 D05／N04／Q14 已验收；`headless_deterministic` 不替代 V05／V06。
+
 <!-- iris:end FILE-D05-JOURNAL -->
 
 <!-- iris:object FILE-D05-JOURNAL kind=rules -->

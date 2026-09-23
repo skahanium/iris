@@ -12052,9 +12052,7 @@
       "reason": "D01 文件内登记本轮状态与证据时点：说明 work.state=done 早于证据 1 的登记，并列明本轮已绑定与「已绑定但未端到端」的边界。只补说明文字与指针，不改变 D01 的改动范围、证据要求、回退条件或任何用户承诺，故为细化。 【原 author：(D01 收尾)】",
       "review": null,
       "objects": [],
-      "files": [
-        "implementation/D01-trustworthy-baseline.md"
-      ]
+      "files": ["implementation/D01-trustworthy-baseline.md"]
     },
     {
       "id": "CHG-2026-09-16-22",
@@ -12708,11 +12706,7 @@
       "reason": "修掉两处机械缺陷，均不改任何对象定义正文、关系或状态：① 文件级对象登记 ID 不再由代码猜——catalog.fileContainers 之外的容器名（rules/governance.md 的 P03、rules/objects.md 的 P02）登记为裸 ID，不再生成 catalog 从未登记的 P03#file／P02#file；② registry.json 正文改由仓库 Prettier 序列化，消除与 format:check 的长期不一致。按 P03 §4.1 属细化。 【原 author：(登记ID修正)】",
       "review": null,
       "objects": [],
-      "files": [
-        "rules/governance.md",
-        "rules/objects.md",
-        "registry.json"
-      ]
+      "files": ["rules/governance.md", "rules/objects.md", "registry.json"]
     },
     {
       "id": "CHG-2026-09-17-47",
@@ -14773,6 +14767,23 @@
           "revisionTo": 0,
           "fingerprintFrom": "c2e69b83e564a42d613e2179ddbc11ed",
           "fingerprintTo": "26f702d7a98967cb98a1f201250454e3"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-23-99",
+      "at": "2026-09-23T03:28:35.842Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "十任务战役日记不关闭，只重绑 FILE-D05-JOURNAL 文件级指纹",
+      "review": null,
+      "objects": [
+        {
+          "id": "FILE-D05-JOURNAL#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "26f702d7a98967cb98a1f201250454e3",
+          "fingerprintTo": "3a3a136b9e1cd9cea6cd58045d66378c"
         }
       ]
     }
