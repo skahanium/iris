@@ -408,7 +408,8 @@ fn t08_ui_v07_contract_is_cited_not_rewritten() {
     });
     assert!(source.contains("展开更改差异"));
     assert!(source.contains("assistantRunConfirmationDiff"));
-    assert!(source.contains("stays collapsed and fetches nothing until expanded"));
+    assert!(source.contains("loads on mount while expanded"));
+    assert!(source.contains("keeps approve disabled until a visible diff has loaded"));
 }
 
 #[tokio::test]

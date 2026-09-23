@@ -1341,6 +1341,25 @@ async fn live_minimax_m3_adapter_returns_https_citations() {
         .iter()
         .all(|hit| hit.url.starts_with("https://")));
     assert!(!outcome.candidates.is_empty());
+    let mut hosts: Vec<String> = outcome
+        .candidates
+        .iter()
+        .filter_map(|hit| {
+            hit.url
+                .strip_prefix("https://")
+                .map(|rest| rest.split('/').next().unwrap_or(rest).to_string())
+        })
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    eprintln!(
+        "live_minimax_trace {} has_retrieval_credentials={} candidate_count={} prompt_tokens={:?} completion_tokens={:?} hosts={hosts:?}",
+        super::native_search_adapter::last_live_native_search_trace(),
+        outcome.has_retrieval_credentials,
+        outcome.candidates.len(),
+        outcome.prompt_tokens,
+        outcome.completion_tokens,
+    );
 }
 
 fn install_deepseek_live_dirs() {
@@ -1641,4 +1660,23 @@ async fn live_deepseek_flash_adapter_returns_https_citations() {
         .iter()
         .all(|hit| hit.url.starts_with("https://")));
     assert!(!outcome.candidates.is_empty());
+    let mut hosts: Vec<String> = outcome
+        .candidates
+        .iter()
+        .filter_map(|hit| {
+            hit.url
+                .strip_prefix("https://")
+                .map(|rest| rest.split('/').next().unwrap_or(rest).to_string())
+        })
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    eprintln!(
+        "live_deepseek_trace {} has_retrieval_credentials={} candidate_count={} prompt_tokens={:?} completion_tokens={:?} hosts={hosts:?}",
+        super::native_search_adapter::last_live_native_search_trace(),
+        outcome.has_retrieval_credentials,
+        outcome.candidates.len(),
+        outcome.prompt_tokens,
+        outcome.completion_tokens,
+    );
 }

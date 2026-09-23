@@ -112,6 +112,33 @@ fn n04_fullwidth_space_is_unknown_not_passed() {
 }
 
 #[test]
+fn n04_table_is_unknown_not_passed() {
+    let table = "a | b\n---|---\n1 | 2\n";
+    let report = check_format_preservation(table, table);
+    assert_eq!(report.body_text, ReportStatus::Unknown);
+    assert!(!report.is_proven());
+    assert!(!report.has_failed());
+}
+
+#[test]
+fn n04_html_is_unknown_not_passed() {
+    let html = "<div>keep</div>\n";
+    let report = check_format_preservation(html, html);
+    assert_eq!(report.body_text, ReportStatus::Unknown);
+    assert!(!report.is_proven());
+    assert!(!report.has_failed());
+}
+
+#[test]
+fn n04_zwsp_is_unknown_not_passed() {
+    let zwsp = "hello\u{200B}world";
+    let report = check_format_preservation(zwsp, zwsp);
+    assert_eq!(report.body_text, ReportStatus::Unknown);
+    assert!(!report.is_proven());
+    assert!(!report.has_failed());
+}
+
+#[test]
 fn n04_link_label_must_stay_when_target_stays() {
     let report = check_format_preservation(
         "[x](https://a.example) and [[note-a|shown]]",
@@ -380,6 +407,51 @@ async fn n04_format_unproven_replace_leaves_zero_confirmations() {
     );
     assert_eq!(fixture.confirmation_count(), 0);
     assert_eq!(fixture.note_body(), ORIGINAL_BODY);
+}
+
+#[tokio::test]
+async fn n04_format_table_unknown_still_requests_run_confirmation() {
+    let original = "a | b\n---|---\n1 | 2\n";
+    let fixture = format_write_fixture(FORMAT_MESSAGE, original);
+
+    let error = fixture
+        .execute_replace(original, original)
+        .await
+        .expect_err("table unknown must freeze confirmation instead of only feeding the model");
+
+    assert_eq!(error.to_string(), CONFIRMATION_PENDING_ERROR);
+    assert_eq!(fixture.confirmation_count(), 1);
+    assert_eq!(fixture.note_body(), original);
+}
+
+#[tokio::test]
+async fn n04_format_html_unknown_still_requests_run_confirmation() {
+    let original = "<div>keep</div>\n";
+    let fixture = format_write_fixture(FORMAT_MESSAGE, original);
+
+    let error = fixture
+        .execute_replace(original, original)
+        .await
+        .expect_err("HTML unknown must freeze confirmation instead of only feeding the model");
+
+    assert_eq!(error.to_string(), CONFIRMATION_PENDING_ERROR);
+    assert_eq!(fixture.confirmation_count(), 1);
+    assert_eq!(fixture.note_body(), original);
+}
+
+#[tokio::test]
+async fn n04_format_zwsp_unknown_still_requests_run_confirmation() {
+    let original = "hello\u{200B}world";
+    let fixture = format_write_fixture(FORMAT_MESSAGE, original);
+
+    let error = fixture
+        .execute_replace(original, original)
+        .await
+        .expect_err("ZWSP unknown must freeze confirmation instead of only feeding the model");
+
+    assert_eq!(error.to_string(), CONFIRMATION_PENDING_ERROR);
+    assert_eq!(fixture.confirmation_count(), 1);
+    assert_eq!(fixture.note_body(), original);
 }
 
 #[tokio::test]

@@ -1,6 +1,10 @@
+import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
 
-import { AssistantConfirmationDiff } from "@/components/ai/AssistantConfirmationDiff";
+import {
+  AssistantConfirmationDiff,
+  type ConfirmationDiffGate,
+} from "@/components/ai/AssistantConfirmationDiff";
 import { Button } from "@/components/ui/button";
 import type { AssistantRunConfirmation as AssistantRunConfirmationState } from "@/hooks/useAssistantRun";
 import type { AssistantSessionRef } from "@/types/ai";
@@ -35,6 +39,24 @@ export function AssistantRunConfirmation({
   onApprove,
   onReject,
 }: AssistantRunConfirmationProps) {
+  const [diffGate, setDiffGate] = useState<ConfirmationDiffGate>(
+    session ? "pending" : "visible",
+  );
+
+  useEffect(() => {
+    setDiffGate(session ? "pending" : "visible");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by session/run fields, not object identity
+  }, [
+    session?.domain,
+    session?.sessionKey,
+    confirmation.confirmationId,
+    confirmation.planHash,
+    confirmation.runId,
+  ]);
+
+  const approveDisabled =
+    disabled || (session != null && diffGate !== "visible");
+
   return (
     <section
       className="border-b border-warning/30 bg-warning-bg px-3 py-2"
@@ -68,6 +90,7 @@ export function AssistantRunConfirmation({
             confirmationId: confirmation.confirmationId,
             planHash: confirmation.planHash,
           }}
+          onGateChange={setDiffGate}
         />
       ) : null}
       <div className="mt-2 flex gap-2">
@@ -75,7 +98,7 @@ export function AssistantRunConfirmation({
           type="button"
           size="sm"
           className="h-7 gap-1 text-xs"
-          disabled={disabled}
+          disabled={approveDisabled}
           onClick={onApprove}
         >
           <Check className="h-3.5 w-3.5" />

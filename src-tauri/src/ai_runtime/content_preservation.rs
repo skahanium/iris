@@ -60,6 +60,7 @@ impl ReportStatus {
         }
     }
 
+    #[cfg(test)]
     fn allows_proof(self) -> bool {
         matches!(self, Self::Passed | Self::NotApplicable)
     }
@@ -102,10 +103,18 @@ impl ContentPreservationReport {
     }
 
     /// True only when every dimension is `passed` or `not-applicable`.
+    #[cfg(test)]
     pub(crate) fn is_proven(&self) -> bool {
         self.body_text.allows_proof()
             && self.block_order.allows_proof()
             && self.link_targets.allows_proof()
+    }
+
+    /// True when any dimension is `failed`. `unknown` is not failed.
+    pub(crate) fn has_failed(&self) -> bool {
+        matches!(self.body_text, ReportStatus::Failed)
+            || matches!(self.block_order, ReportStatus::Failed)
+            || matches!(self.link_targets, ReportStatus::Failed)
     }
 }
 

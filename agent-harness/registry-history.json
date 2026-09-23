@@ -14786,6 +14786,78 @@
           "fingerprintTo": "3a3a136b9e1cd9cea6cd58045d66378c"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-23-100",
+      "at": "2026-09-23T14:11:24.858Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "钉死 D05 关闭清单；K16 将 unknown 与 failed 分列以对齐 L04 差异交付。不关 Q14/N04/D05/D04，不解封 CHG-83/CHG-84，不绑 V02/D05#file。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "763f7df0f7e64dac229e80a71154c882",
+          "fingerprintTo": "a18fc5f9134bb0ae295c1be8a327ba4e"
+        },
+        {
+          "id": "FILE-D05-JOURNAL#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "3a3a136b9e1cd9cea6cd58045d66378c",
+          "fingerprintTo": "a36ea856b06cd5fd3b8ae9b8ad50b337"
+        },
+        {
+          "id": "K16",
+          "revisionFrom": 18,
+          "revisionTo": 19,
+          "fingerprintFrom": "454c69ff585227140faa37c1a1c7483a",
+          "fingerprintTo": "b84f0c6d8668881f3831737e35973b73"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-23-101",
+      "at": "2026-09-23T14:31:43.695Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "接受 D05 关条清单排版与施工日记 V05 执行记录；同步 D04 备注：MiniMax live 通过、DeepSeek 凭据缺失跳过。不关 Q14/N04/D05/D04，不解封 CHG-83/84。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "a18fc5f9134bb0ae295c1be8a327ba4e",
+          "fingerprintTo": "1a43f1b10d44305a36df8112a1f47372"
+        },
+        {
+          "id": "FILE-D05-JOURNAL#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "a36ea856b06cd5fd3b8ae9b8ad50b337",
+          "fingerprintTo": "b392c848782fdd80981e02004badd697"
+        }
+      ]
+    },
+    {
+      "id": "CHG-2026-09-23-102",
+      "at": "2026-09-23T15:13:10.779Z",
+      "author": "cursor-grok-4.6",
+      "classification": "refinement",
+      "reason": "同步施工日记与 D04 备注：DeepSeek-Flash 两条 live 补跑通过。不关 Q17/G02/G03/D04，不解封 CHG-83/84。",
+      "review": null,
+      "objects": [
+        {
+          "id": "FILE-D05-JOURNAL#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "b392c848782fdd80981e02004badd697",
+          "fingerprintTo": "e517b376727583ed3263a8c4d88489dc"
+        }
+      ]
     }
   ],
   "reviews": [

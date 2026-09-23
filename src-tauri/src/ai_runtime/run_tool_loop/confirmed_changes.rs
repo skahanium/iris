@@ -34,7 +34,9 @@ impl NormalRunToolExecutor<'_> {
         };
         if is_format_preservation_request(&self.context.user_message) {
             let report = check_format_preservation(&original, &candidate.candidate_body);
-            if !report.is_proven() {
+            // `failed` still refuses freeze. `unknown` (tables/HTML/ZWSP) enters
+            // confirmation + diff; unapproved writes stay off the disk.
+            if report.has_failed() {
                 return Ok(Some(unproven_tool_result(name, &report)));
             }
         }

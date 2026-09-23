@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 162,
+  "registryRevision": 166,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-23T03:28:35.842Z"
+    "recordedAt": "2026-09-23T15:13:10.779Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -201,12 +201,12 @@
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "763f7df0f7e64dac229e80a71154c882"
+      "fingerprint": "1a43f1b10d44305a36df8112a1f47372"
     },
     "implementation/D05-wave-log.md": {
       "container": "FILE-D05-JOURNAL",
       "registration": "FILE-D05-JOURNAL#file",
-      "fingerprint": "3a3a136b9e1cd9cea6cd58045d66378c"
+      "fingerprint": "e517b376727583ed3263a8c4d88489dc"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "60b6fd5a9d8ad25e41c11ddb9d02a9f2"
+      "fingerprint": "98bfdb0a28fa55bf623f10d4403da055"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1005,7 +1005,7 @@
       "work": null,
       "scope": [],
       "relations": { "implements": ["K16"], "depends_on": ["C22"] },
-      "note": "2026-09-21 第二波：格式整理内容保持核对器已接线（body_text／block_order／link_targets；未证明不冻结确认）。verification 仍 none，不关 D05／N04。"
+      "note": "2026-09-23：格式整理核对器仍接线。failed（内容被改）不冻结；unknown（表／HTML／零宽）冻结并交付差异，未批准零写入。verification 仍 none，不关 D05／N04。"
     },
     "C24": {
       "kind": "component",
@@ -1212,7 +1212,7 @@
         "depends_on": ["D02", "D03", "K09", "K11", "K12", "K13", "K14", "K18"],
         "closes": ["Q05", "Q17", "G02", "G03"]
       },
-      "note": "2026-09-20 差距收口开工：work.state=active；不关 Q05/Q17/G02/G03；V04≠V05；Available≠端点通过；子请求仍 stream:false；V05 live 未获四项批准，本波跳过。"
+      "note": "2026-09-23 1A 窄窗口：MiniMax-M3 与 DeepSeek-Flash 适配器 live 均通过；DeepSeek 协议探针通过（HTTP 门闩）。work.state=active。不关 Q05/Q17/G02/G03；V04≠V05；Available≠端点通过；子请求仍 stream:false。记录见 docs/eval/results/2026-09-23-v05-*-live.md，不算全矩阵通过。"
     },
     "D05": {
       "kind": "work",
@@ -1224,8 +1224,8 @@
       "definition": {
         "file": "implementation/D05-document-tasks-and-delivery.md",
         "anchor": "D05",
-        "line": 71,
-        "endLine": 84,
+        "line": 86,
+        "endLine": 99,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
       "implementation": { "state": "unknown" },
@@ -1235,7 +1235,7 @@
       "relations": {
         "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
       },
-      "note": "2026-09-22 第四波：work.state=active。第一至三波仍在（Intake、格式门、C24 候选）。第四波 C25 交付表达：Completed.taskOutcome，Host 限制=blocked，部分写入=partial。不关 Q14/D05/N04/C25/K15；不是 DiffView、新列或 V05。"
+      "note": "2026-09-23 关条钉死：work.state=active，verification.state=none。合同 §三 关闭清单已写入；N23 未做故不能关包。不关 Q14/N04/D05/D04/C24/C25，不标 passed，不解封 CHG-83/84，不绑 V02/D05#file。"
     },
     "D06": {
       "kind": "work",
@@ -1334,8 +1334,8 @@
       "definition": {
         "file": "implementation/D05-wave-log.md",
         "anchor": "FILE-D05-JOURNAL",
-        "line": 70,
-        "endLine": 76,
+        "line": 79,
+        "endLine": 85,
         "fingerprint": "9311168c21dcbb777ce5e704b7a060f8"
       },
       "implementation": { "state": "unknown" },
@@ -1855,13 +1855,13 @@
       "title": "K16 验证报告与可恢复错误反馈",
       "owner": "C23",
       "maturity": "defined",
-      "revision": 18,
+      "revision": 19,
       "definition": {
         "file": "contracts/K16-verification-report.md",
         "anchor": "K16",
         "line": 13,
         "endLine": 113,
-        "fingerprint": "454c69ff585227140faa37c1a1c7483a"
+        "fingerprint": "b84f0c6d8668881f3831737e35973b73"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -3176,7 +3176,7 @@
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D05", "at": "acceptance" }] },
-      "note": "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。格式整理核对器也不能推出本条已关闭。"
+      "note": "2026-09-23 关闭清单已钉：Intake LocalTransformation 与十题 T01–T04 只作机械钉；斜杠 webEnabled:false 与格式门单独不算关条。仍 open，不关 Q14／D05。"
     },
     "Q15": {
       "kind": "issue",
@@ -6191,19 +6191,6 @@
       "testFingerprint": "sha256:689c00bad626df597d85fe3e7a80786b6870d67188b90f61aa7111b975c2bb37"
     },
     {
-      "object": "K16",
-      "kind": "V04",
-      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
-      "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
-      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
-      "fingerprint": "454c69ff585227140faa37c1a1c7483a",
-      "at": "2026-09-21T17:14:35.730649+00:00",
-      "applicability": "current",
-      "note": "B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。",
-      "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:689c00bad626df597d85fe3e7a80786b6870d67188b90f61aa7111b975c2bb37"
-    },
-    {
       "object": "K05",
       "kind": "V04",
       "testPath": "src-tauri/src/commands/assistant_commands_tests.rs",
@@ -6217,51 +6204,12 @@
       "testFingerprint": "sha256:4cea53faef0220a4cc8faeeb26741e9ddd6d84a53028ac31bff25e145c5b26ae"
     },
     {
-      "object": "K16",
-      "kind": "V04",
-      "testPath": "src-tauri/src/commands/assistant_commands_tests.rs",
-      "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
-      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
-      "fingerprint": "454c69ff585227140faa37c1a1c7483a",
-      "at": "2026-09-21T17:14:35.730649+00:00",
-      "applicability": "current",
-      "note": "C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。",
-      "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:4cea53faef0220a4cc8faeeb26741e9ddd6d84a53028ac31bff25e145c5b26ae"
-    },
-    {
-      "object": "K16",
-      "kind": "V07",
-      "testPath": "tests/assistant-run-failure-progress.test.ts",
-      "command": "npm run test -- --run tests/assistant-run-failure-progress.test.ts tests/use-assistant-run.test.tsx tests/use-assistant-run.test.ts",
-      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
-      "fingerprint": "454c69ff585227140faa37c1a1c7483a",
-      "at": "2026-09-21T17:14:35.730649+00:00",
-      "applicability": "current",
-      "note": "3个相关前端文件16通过；确认、取消、失败/部分进度沿现有投影，没有新增UI。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。",
-      "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:6880fa034e330890c815f82a933036890979d0fc3e2ef7e313c1015e2ff663c1"
-    },
-    {
       "object": "K05",
       "kind": "V04",
       "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
       "fingerprint": "75d9b140b5e816e83cbf84c547f0b316",
-      "at": "2026-09-21T17:33:11.425112+00:00",
-      "applicability": "current",
-      "note": "实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。",
-      "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
-      "testFingerprint": "sha256:c659d750242ae1f3648676be027b10577f3cd48f43ef1ed506a86b0b5db5fb13"
-    },
-    {
-      "object": "K16",
-      "kind": "V04",
-      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
-      "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
-      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
-      "fingerprint": "454c69ff585227140faa37c1a1c7483a",
       "at": "2026-09-21T17:33:11.425112+00:00",
       "applicability": "current",
       "note": "实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。",
@@ -6409,6 +6357,58 @@
       "at": "2026-09-22T08:50:00Z",
       "applicability": "current",
       "note": "CHG-2026-09-23-97：Prettier 折行后重绑当前定义指纹。agent-harness:test 50 pass。不解封 CHG-83／CHG-84。原施工编号 CHG-2026-09-22-95 已让给远程 R14 复核。"
+    },
+    {
+      "object": "K16",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
+      "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
+      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
+      "fingerprint": "b84f0c6d8668881f3831737e35973b73",
+      "at": "2026-09-23T14:20:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
+      "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
+      "testFingerprint": "sha256:689c00bad626df597d85fe3e7a80786b6870d67188b90f61aa7111b975c2bb37"
+    },
+    {
+      "object": "K16",
+      "kind": "V04",
+      "testPath": "src-tauri/src/commands/assistant_commands_tests.rs",
+      "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
+      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
+      "fingerprint": "b84f0c6d8668881f3831737e35973b73",
+      "at": "2026-09-23T14:20:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
+      "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
+      "testFingerprint": "sha256:4cea53faef0220a4cc8faeeb26741e9ddd6d84a53028ac31bff25e145c5b26ae"
+    },
+    {
+      "object": "K16",
+      "kind": "V07",
+      "testPath": "tests/assistant-run-failure-progress.test.ts",
+      "command": "npm run test -- --run tests/assistant-run-failure-progress.test.ts tests/use-assistant-run.test.tsx tests/use-assistant-run.test.ts",
+      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
+      "fingerprint": "b84f0c6d8668881f3831737e35973b73",
+      "at": "2026-09-23T14:20:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。3个相关前端文件16通过；确认、取消、失败/部分进度沿现有投影，没有新增UI。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
+      "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
+      "testFingerprint": "sha256:6880fa034e330890c815f82a933036890979d0fc3e2ef7e313c1015e2ff663c1"
+    },
+    {
+      "object": "K16",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/d05_content_preservation_tests.rs",
+      "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
+      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
+      "fingerprint": "b84f0c6d8668881f3831737e35973b73",
+      "at": "2026-09-23T14:20:00Z",
+      "applicability": "current",
+      "note": "CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
+      "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
+      "testFingerprint": "sha256:c659d750242ae1f3648676be027b10577f3cd48f43ef1ed506a86b0b5db5fb13"
     }
   ],
   "issues": {
@@ -6439,6 +6439,11 @@
     "G06": { "state": "closed" }
   },
   "gaps": [
+    {
+      "review": "REV-2026-09-21-84",
+      "object": "K16",
+      "reason": "变更对象缺少独立复核覆盖"
+    },
     {
       "review": "REV-2026-09-21-84",
       "object": "V02",
@@ -6780,6 +6785,12 @@
       "author": "cursor-grok-4.6",
       "topic": "远程 Diff 与第二波拆表并表",
       "detail": "以 origin/branch-v1.3.1（000393d5）为基。远程已占用 CHG/REV-2026-09-22-93／94／95（第五波日记与 R14）。第二波拆表 CHG-94／95 改号为 CHG-2026-09-23-96／97，占位复核改号为 REV-2026-09-23-96／97；MIMO-51／52 的 change 指针同步改号，不改绑定指纹。X01／X02 当前 verify 注记与核对清单已改号。不绑 V02／D05#file，不解封 CHG-83／84。R14 的 catalog.note 仍写「待独立复核」，权威是 REV-2026-09-22-95 synchronized，本并表不改 R14 正文以免打漂指纹。verify／reviews／notes 是作者字段，按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-23T14:20:00Z",
+      "author": "cursor-grok-4.6",
+      "topic": "2026-09-23 D05 关条钉死：K16 verify 重绑",
+      "detail": "CHG-2026-09-23-100 细化后，将 K16 四条 current 标 obsolete 并重绑当前定义指纹 b84f0c6d8668881f3831737e35973b73。不改写旧指纹。不把 verification.state 标 passed，不关 Q14/N04/D05/D04/C24/C25，不解封 CHG-83/CHG-84，不绑 V02/D05#file。verify 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ],
   "history": "registry-history.json"

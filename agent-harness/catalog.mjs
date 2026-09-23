@@ -770,7 +770,7 @@ export const objects = {
     verification: { state: "none" },
     implements: ["K16"],
     depends_on: ["C22"],
-    note: "2026-09-21 第二波：格式整理内容保持核对器已接线（body_text／block_order／link_targets；未证明不冻结确认）。verification 仍 none，不关 D05／N04。",
+    note: "2026-09-23：格式整理核对器仍接线。failed（内容被改）不冻结；unknown（表／HTML／零宽）冻结并交付差异，未批准零写入。verification 仍 none，不关 D05／N04。",
   },
   C24: {
     kind: "component",
@@ -1276,7 +1276,7 @@ export const objects = {
     ],
     depends_on: ["D02", "D03", "K09", "K11", "K12", "K13", "K14", "K18"],
     closes: ["Q05", "Q17", "G02", "G03"],
-    note: "2026-09-20 差距收口开工：work.state=active；不关 Q05/Q17/G02/G03；V04≠V05；Available≠端点通过；子请求仍 stream:false；V05 live 未获四项批准，本波跳过。",
+    note: "2026-09-23 1A 窄窗口：MiniMax-M3 与 DeepSeek-Flash 适配器 live 均通过；DeepSeek 协议探针通过（HTTP 门闩）。work.state=active。不关 Q05/Q17/G02/G03；V04≠V05；Available≠端点通过；子请求仍 stream:false。记录见 docs/eval/results/2026-09-23-v05-*-live.md，不算全矩阵通过。",
   },
   D05: {
     kind: "work",
@@ -1291,7 +1291,7 @@ export const objects = {
     work: { state: "active" },
     scope: ["N02", "N03", "N04", "N11", "N23", "Q14"],
     depends_on: ["D02", "D03", "K05", "K15", "K16", "L03", "L04"],
-    note: "2026-09-22 第四波：work.state=active。第一至三波仍在（Intake、格式门、C24 候选）。第四波 C25 交付表达：Completed.taskOutcome，Host 限制=blocked，部分写入=partial。不关 Q14/D05/N04/C25/K15；不是 DiffView、新列或 V05。",
+    note: "2026-09-23 关条钉死：work.state=active，verification.state=none。合同 §三 关闭清单已写入；N23 未做故不能关包。不关 Q14/N04/D05/D04/C24/C25，不标 passed，不解封 CHG-83/84，不绑 V02/D05#file。",
   },
   D06: {
     kind: "work",
@@ -1538,7 +1538,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q14" },
     blocks: blocks("acceptance", ["D05"]),
-    note: "2026-09-21 Intake LocalTransformation 已接线；仍 open。斜杠命令 webEnabled:false 不能单独当作关闭证据；不能推出已关闭或 N04 内容保持。格式整理核对器也不能推出本条已关闭。",
+    note: "2026-09-23 关闭清单已钉：Intake LocalTransformation 与十题 T01–T04 只作机械钉；斜杠 webEnabled:false 与格式门单独不算关条。仍 open，不关 Q14／D05。",
   },
   Q15: {
     kind: "issue",

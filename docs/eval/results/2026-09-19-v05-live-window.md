@@ -2,14 +2,16 @@
 
 本文件登记 `V05`（厂商端点及协议兼容）的**授权前置**：要跑什么、要花什么、需要谁批。它**不是**验证结果。
 
-书面批准（缺一不可，当前均未批；勾选前不得施工跑 V05）：
+书面批准（缺一不可。**1A 窄窗口已于 2026-09-23 勾选**，仅 MiniMax-M3 + DeepSeek-Flash；13 厂商其余端点仍未批，勾选前不得扩大施工）：
 
-- [ ] 端点范围：13 个厂商中的哪些，各用哪个模型
-- [ ] 费用上限：本轮 live 验证的总费用上限（含原生搜索计费）
-- [ ] 凭据：哪些厂商的 Key 已配置、允许本轮使用
-- [ ] 原生搜索端点：`G03` 要接哪一家的原生搜索
+- [x] 端点范围：仅 MiniMax-M3、DeepSeek-Flash（已登记两适配器）；其余 11 家厂商本窗口不跑
+- [x] 费用上限：本窗口不另设数字上限，以这两家已有套餐为限；失败如实记录，不缩范围重跑掩盖
+- [x] 凭据：本机 `iris.llm.minimax` / `iris.llm.deepseek`，不入库；未配置则该条标注跳过、不算通过
+- [x] 原生搜索端点：就这两家（`G03` 接入面仍 open，本窗口不关 `G03`／`Q17`／`D04`）
 
 2026-09-20 已按批准跑过 MiniMax-M3 原生搜索诊断探针（2 次调用），记录见 [2026-09-20 V05 MiniMax-M3 实网探针](./2026-09-20-v05-endpoint-live.md)。同日另跑 DeepSeek-Flash 原生搜索协议探针与适配器 live，记录见 [2026-09-20 V05 DeepSeek-Flash 原生搜索](./2026-09-20-v05-deepseek-native-search-live.md)。两份记录**都不关闭** `G03`／`Q17`／`D04`，也不把对应端点标为 V05 全矩阵已通过。窗口其余端点仍未获批、未运行。此后生产已登记这两模型的 K12 适配器且 C10 为 `Available`；这不是 `V05`，也不改变「生产目录没有支持工具的 Responses 端点」这一目录族事实。
+
+2026-09-23 **1A 窄窗口**书面批准见上列四勾；执行记录见 [MiniMax-M3 适配器 live](./2026-09-23-v05-minimax-m3-live.md) 与 [DeepSeek-Flash live](./2026-09-23-v05-deepseek-native-search-live.md)。该窗口只跑已有 `#[ignore]` 探针 `live_minimax_m3_adapter_returns_https_citations`、`live_deepseek_flash_native_search_protocol_probe`、`live_deepseek_flash_adapter_returns_https_citations`。当日结果：MiniMax-M3 适配器 live **通过**。DeepSeek-Flash 两条先因无 Key **跳过**，补配 `iris.llm.deepseek` 后同日补跑均 **通过**（协议探针仅为 HTTP 门闩；适配器为检索凭据 + HTTPS 候选）。**不关** `G02`／`G03`／`Q17`／`D04`；不把 `npm run agent:eval:live` 当 V05；生产目录仍无「带工具的 Responses」端点。
 
 - 判据来源：`V01`「厂商端点及协议兼容 = 协议测试 + 对应端点真实调用」。
 - 承接方：`G03`（原生搜索事件的接入与端点适配）、`Q17`（原生搜索端点、混合续轮、费用与权限适配待验证）；两者由 `D04` 关闭。

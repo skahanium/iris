@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssistantConfirmationDiff } from "@/components/ai/AssistantConfirmationDiff";
+import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { assistantRunConfirmationDiff } from "@/lib/ipc";
 import type {
   AssistantRunConfirmationDiffRequest,
@@ -61,19 +62,21 @@ beforeEach(() => {
 });
 
 describe("AssistantConfirmationDiff", () => {
-  it("stays collapsed and fetches nothing until expanded", () => {
-    render(<AssistantConfirmationDiff request={request} />);
-
-    const toggle = screen.getByRole("button", { name: "展开更改差异" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(assistantRunConfirmationDiff).not.toHaveBeenCalled();
-  });
-
-  it("fetches once and renders unified diff lines on expand", async () => {
+  it("loads on mount while expanded", async () => {
     vi.mocked(assistantRunConfirmationDiff).mockResolvedValue(previewFixture());
     render(<AssistantConfirmationDiff request={request} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "展开更改差异" }));
+    const toggle = screen.getByRole("button", { name: "折叠更改差异" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => {
+      expect(assistantRunConfirmationDiff).toHaveBeenCalledTimes(1);
+    });
+    expect(assistantRunConfirmationDiff).toHaveBeenCalledWith(request);
+  });
+
+  it("fetches once and renders unified diff lines", async () => {
+    vi.mocked(assistantRunConfirmationDiff).mockResolvedValue(previewFixture());
+    render(<AssistantConfirmationDiff request={request} />);
 
     expect(
       screen.getByRole("button", { name: "折叠更改差异" }),
@@ -94,7 +97,6 @@ describe("AssistantConfirmationDiff", () => {
     vi.mocked(assistantRunConfirmationDiff).mockResolvedValue(previewFixture());
     render(<AssistantConfirmationDiff request={request} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "展开更改差异" }));
     await waitFor(() => {
       expect(screen.getByText("notes/a.md")).toBeInTheDocument();
     });
@@ -110,8 +112,6 @@ describe("AssistantConfirmationDiff", () => {
     );
     render(<AssistantConfirmationDiff request={request} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "展开更改差异" }));
-
     await waitFor(() => {
       expect(
         screen.getByText("差异已截断，仅显示部分内容"),
@@ -124,8 +124,6 @@ describe("AssistantConfirmationDiff", () => {
       new Error("backend unavailable"),
     );
     render(<AssistantConfirmationDiff request={request} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "展开更改差异" }));
 
     await waitFor(() => {
       expect(screen.getByText("差异暂不可用")).toBeInTheDocument();
@@ -140,12 +138,96 @@ describe("AssistantConfirmationDiff", () => {
     });
     render(<AssistantConfirmationDiff request={request} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "展开更改差异" }));
-
     await waitFor(() => {
       expect(screen.getByText("notes/new.md")).toBeInTheDocument();
     });
     expect(screen.getByText("此目标无法预览差异")).toBeInTheDocument();
     expect(screen.queryByText("−b")).not.toBeInTheDocument();
+  });
+});
+
+const confirmation = {
+  confirmationId: "conf-1",
+  planHash: "sha256:plan",
+  summary: "等待确认：replace_selection 将修改 1 个目标",
+  effect: "apply" as const,
+  runId: "run-1",
+  stateVersion: 1,
+};
+
+describe("AssistantRunConfirmation approve latch", () => {
+  it("keeps approve disabled until a visible diff has loaded", async () => {
+    let resolvePreview: (value: ConfirmationDiffPreview) => void = () => {
+      throw new Error("resolvePreview unset");
+    };
+    vi.mocked(assistantRunConfirmationDiff).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePreview = resolve;
+        }),
+    );
+
+    render(
+      <AssistantRunConfirmation
+        confirmation={confirmation}
+        session={request.session}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+
+    const approve = screen.getByRole("button", { name: "应用更改" });
+    const reject = screen.getByRole("button", { name: "拒绝" });
+    expect(approve).toBeDisabled();
+    expect(reject).toBeEnabled();
+
+    resolvePreview(previewFixture());
+    await waitFor(() => {
+      expect(approve).toBeEnabled();
+    });
+    expect(reject).toBeEnabled();
+  });
+
+  it("keeps approve disabled when the preview fails and never blocks reject", async () => {
+    vi.mocked(assistantRunConfirmationDiff).mockRejectedValue(
+      new Error("backend unavailable"),
+    );
+
+    render(
+      <AssistantRunConfirmation
+        confirmation={confirmation}
+        session={request.session}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("差异暂不可用")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "应用更改" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "拒绝" })).toBeEnabled();
+  });
+
+  it("keeps approve disabled when every target is unpreviewable", async () => {
+    vi.mocked(assistantRunConfirmationDiff).mockResolvedValue({
+      files: [{ path: "notes/new.md", previewable: false, hunks: [] }],
+      truncated: false,
+    });
+
+    render(
+      <AssistantRunConfirmation
+        confirmation={confirmation}
+        session={request.session}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("此目标无法预览差异")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "应用更改" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "拒绝" })).toBeEnabled();
   });
 });

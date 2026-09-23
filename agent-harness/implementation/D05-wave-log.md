@@ -65,6 +65,15 @@
 - **跨波锁定**：不关 Q14／N04／D05／D04／C24／C25；不解封 CHG-83／CHG-84；不绑 V02／D05#file；不改 D05 合同正文；不加 SQLite 列、LangChain、品牌 `format:check` 文件。
 - **不能当作关闭证据**：十题全绿不能推出 D05／N04／Q14 已验收；`headless_deterministic` 不替代 V05／V06。
 
+## 关条钉死与 2A 前置（2026-09-23，不关闭）
+
+- **已落地**：D05 合同 §三写入关闭清单；K16 窄改 `unknown`／`failed` 分列（`failed` 全批零冻结，`unknown` 进冻结并交付差异，未批准零写入）；`format_gate` 对表／HTML／零宽 `unknown` 进入确认卡；确认卡差异可见前禁止批准、拒绝始终可点。
+- **本波做**：钉死关条文面；2A 两处产品门闩；1A 书面批准落到 V05 窗口并本机跑 MiniMax-M3／DeepSeek-Flash 三条 `#[ignore]` live，写 `docs/eval/results/<日期>-v05-*-live.md`。
+- **V05 执行**：`live_minimax_m3_adapter_returns_https_citations` 通过。DeepSeek-Flash 两条先跳过后补跑：`live_deepseek_flash_native_search_protocol_probe` 与 `live_deepseek_flash_adapter_returns_https_citations` 均通过。不关 `G02`／`G03`／`Q17`／`D04`。
+- **本波范围外**：`N23` 撤回≠重规划；Host `approve_change` IPC 防绕过；Markdown 显式保存改写 `.md`；D06、HR-7 `agent:eval:live`、扩 13 厂商矩阵。
+- **跨波锁定**：不关 `Q14`／`N04`／`D05`／`D04`／`C24`／`C25`；不把任何对象标 `verification.passed`；不解封 CHG-83／CHG-84；不绑 V02／D05#file；不回头做 G02／G03／Q17；不做 D06。
+- **不能当作关闭证据**：关闭清单本身、`unknown` 可冻结、确认卡门闩、两条适配器 live、Key 缺失跳过。窄窗口 live 不是 V05 全矩阵，也不把 `npm run agent:eval:live` 当 V05。
+
 <!-- iris:end FILE-D05-JOURNAL -->
 
 <!-- iris:object FILE-D05-JOURNAL kind=rules -->
