@@ -12052,7 +12052,9 @@
       "reason": "D01 文件内登记本轮状态与证据时点：说明 work.state=done 早于证据 1 的登记，并列明本轮已绑定与「已绑定但未端到端」的边界。只补说明文字与指针，不改变 D01 的改动范围、证据要求、回退条件或任何用户承诺，故为细化。 【原 author：(D01 收尾)】",
       "review": null,
       "objects": [],
-      "files": ["implementation/D01-trustworthy-baseline.md"]
+      "files": [
+        "implementation/D01-trustworthy-baseline.md"
+      ]
     },
     {
       "id": "CHG-2026-09-16-22",
@@ -12706,7 +12708,11 @@
       "reason": "修掉两处机械缺陷，均不改任何对象定义正文、关系或状态：① 文件级对象登记 ID 不再由代码猜——catalog.fileContainers 之外的容器名（rules/governance.md 的 P03、rules/objects.md 的 P02）登记为裸 ID，不再生成 catalog 从未登记的 P03#file／P02#file；② registry.json 正文改由仓库 Prettier 序列化，消除与 format:check 的长期不一致。按 P03 §4.1 属细化。 【原 author：(登记ID修正)】",
       "review": null,
       "objects": [],
-      "files": ["rules/governance.md", "rules/objects.md", "registry.json"]
+      "files": [
+        "rules/governance.md",
+        "rules/objects.md",
+        "registry.json"
+      ]
     },
     {
       "id": "CHG-2026-09-17-47",
@@ -16566,6 +16572,72 @@
       "conclusion": "synchronized",
       "reason": "Prettier 折行后 P01#file/X01 当前指纹重绑：与 wave2-pending-review 指纹表及 registry 计算值一致；未改写 CHG-94 时点旧指纹。本条只覆盖这两项的当前绑定。不解封 CHG-83/84，不授权产品验收。 【入库字段：reviews.author=mimo，reviews.reviewer=cursor-grok-4.6。】 【并表改号：文中 CHG-94 现为 CHG-2026-09-23-96。本条 change 为 CHG-2026-09-23-97。objects[] 指纹未改。】",
       "evidence": "docs/eval/results/2026-09-22-mimo-wave2-review.md；P01#file=4e7f3a5f33d46314fbd1d0ebcb1d0aee（files README.md）；X01 rev16=b7b4038f55ff507e6502460f4cefc758；经 readMergedRegistry 复算一致",
+      "objects": [
+        {
+          "id": "P01#file",
+          "revision": 0,
+          "fingerprint": "4e7f3a5f33d46314fbd1d0ebcb1d0aee"
+        },
+        {
+          "id": "X01",
+          "revision": 16,
+          "fingerprint": "b7b4038f55ff507e6502460f4cefc758"
+        }
+      ]
+    },
+    {
+      "at": "2026-09-23T02:45:00Z",
+      "author": "mimo",
+      "reviewer": "cursor-grok-4.6",
+      "conclusion": "synchronized",
+      "id": "REV-2026-09-23-MIMO-53",
+      "change": "CHG-2026-09-23-96",
+      "reason": "并表改号后对 HEAD 1e45d948 的独立核对（非新施工）。五条清单：(1) 快照／流水仍分离，registry.json 无 changes/reviews，registry-history.json 不在 catalog.files。(2) 远程编号：CHG-2026-09-22-93=第五波日记(refinement)、CHG-2026-09-22-94=R14(architecture, author=zcode-agent)；第二波现为 CHG-2026-09-23-96／97。注：CHG-2026-09-22-95 不是变更记录（现存 REV-2026-09-22-95 为对 CHG-94 的复核），审计原文「94／95 仍是 R14」在编号语义上略糙，不影响隔离。(3) MIMO-51 对 P03#file/V08/X02/X03 的非 stale 绑定与当前指纹一致；P01#file/X01 仍为有意 stale，当前覆盖在 MIMO-52，未改写旧指纹。(4) gaps 仅 REV-2026-09-21-84→V02／D05#file；MIMO-51/52 未绑这两项，CHG-84 缺口未清、未被误清。(5) D04/D05 仍 active+verification=none；Q14 仍 blocks D05；Q05/Q17/G02/G03 仍 blocks D04；未顺手关包。本条不解封 CHG-83／84，不授权 D04/D05/N04/C25 验收，不预批 V05。",
+      "evidence": "HEAD=1e45d948；readMergedRegistry 与 catalog.mjs 复算；npm run agent-harness:check PASSED(97/196) gaps 仅 CHG-84 两项；agent-harness:test 50 pass；MIMO-51 非 stale 绑定 4/4 match current，MIMO-52 P01#file/X01 match current",
+      "objects": [
+        {
+          "id": "P03#file",
+          "revision": 0,
+          "fingerprint": "eada0bde491a87e5708d68a6f50f63d9"
+        },
+        {
+          "id": "V08",
+          "revision": 12,
+          "fingerprint": "de14538f1439db6162db1aafca887c43"
+        },
+        {
+          "id": "X02",
+          "revision": 14,
+          "fingerprint": "0ed8e97c3f4f4c619a60121beae0f131"
+        },
+        {
+          "id": "X03",
+          "revision": 11,
+          "fingerprint": "e3d49ff5d70a04bdae59098c211d1868"
+        },
+        {
+          "id": "P01#file",
+          "revision": 0,
+          "fingerprint": "d4010055dc38193bbf9ca9912f2d3cdd",
+          "stale": true
+        },
+        {
+          "id": "X01",
+          "revision": 15,
+          "fingerprint": "0ab94502e20b7a3386748d2012039872",
+          "stale": true
+        }
+      ]
+    },
+    {
+      "at": "2026-09-23T02:45:00Z",
+      "author": "mimo",
+      "reviewer": "cursor-grok-4.6",
+      "conclusion": "synchronized",
+      "id": "REV-2026-09-23-MIMO-54",
+      "change": "CHG-2026-09-23-97",
+      "reason": "并表后当前指纹覆盖确认（HEAD 1e45d948）：P01#file=4e7f3a5f33d46314fbd1d0ebcb1d0aee、X01 rev16=b7b4038f55ff507e6502460f4cefc758 与 MIMO-52 绑定一致，且是 MIMO-51 stale 槽的合法当前覆盖。Prettier 折行后的重绑在并表中未被打漂。不解封 CHG-83／84；不绑 V02／D05#file。",
+      "evidence": "readMergedRegistry 复算与 MIMO-52 objects 对照；agent-harness:check gaps 仍为 REV-2026-09-21-84→V02／D05#file",
       "objects": [
         {
           "id": "P01#file",
