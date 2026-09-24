@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   mkdirSync,
@@ -1768,6 +1769,64 @@ test("已退役证据保留旧指纹不算违规，needs-review 仍算", () => {
       obsoleteViolations,
       [],
       `obsolete 证据不再声称适用，保留旧指纹不得阻断：${JSON.stringify(obsolete.report.violations)}`,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("证据物漂移即阻断：testFingerprint 与当前测试文件不一致必须报错", () => {
+  const fixture = buildFixture();
+  try {
+    assert.equal(reconcileFixture(fixture.root), 0, "夹具基线登记失败");
+    const registry = loadRegistry(fixture.harness);
+    const testPath = "agent-harness/modules/m01.md";
+    const actual = `sha256:${createHash("sha256")
+      .update(readFileSync(path.join(fixture.root, testPath)))
+      .digest("hex")}`;
+    registry.verify = [
+      ...(registry.verify ?? []),
+      {
+        object: "M01",
+        kind: "V03",
+        testPath,
+        command: "fixture",
+        environment: "fixture",
+        fingerprint: registry.objects.M01.definition.fingerprint,
+        testFingerprint:
+          "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        at: "2026-01-01T00:00:00Z",
+        applicability: "current",
+        note: "夹具证据（故意绑错证据物哈希）",
+      },
+    ];
+    saveRegistry(fixture.harness, registry);
+
+    const drifted = runCheck(fixture.root);
+    assert.equal(drifted.exitCode, 1, "testFingerprint 漂移必须报错");
+    assert.ok(
+      (drifted.report.violations ?? []).some(
+        (entry) =>
+          entry.check === "verify" &&
+          String(entry.message).includes("证据物已漂移"),
+      ),
+      JSON.stringify(drifted.report.violations),
+    );
+
+    const record = registry.verify.at(-1);
+    record.testFingerprint = actual;
+    saveRegistry(fixture.harness, registry);
+    const rebound = runCheck(fixture.root);
+    assert.equal(rebound.exitCode, 0, "证据物哈希一致不得报错");
+
+    record.applicability = "obsolete";
+    record.testFingerprint = "sha256:0000";
+    saveRegistry(fixture.harness, registry);
+    const obsolete = runCheck(fixture.root);
+    assert.equal(
+      obsolete.exitCode,
+      0,
+      "obsolete 记录的证据物留痕不阻断",
     );
   } finally {
     fixture.cleanup();

@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 176,
+  "registryRevision": 177,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T14:16:20.713Z"
+    "recordedAt": "2026-09-24T14:19:50.055Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "5f7359b5df3d34dac6f0e308f6f2631d"
+      "fingerprint": "1c5e2c291f50182c32fd4e0ccddf646b"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -5862,11 +5862,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:689c00bad626df597d85fe3e7a80786b6870d67188b90f61aa7111b975c2bb37"
+      "testFingerprint": "sha256:e065091df5485caf60f1a5ceabdd7a34e6ea3acf199e3e05d9f103c4456cfb73"
     },
     {
       "object": "Q14",
@@ -5875,11 +5875,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "3671d5d5513ced6234b0f33b76180101",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:689c00bad626df597d85fe3e7a80786b6870d67188b90f61aa7111b975c2bb37"
+      "testFingerprint": "sha256:e065091df5485caf60f1a5ceabdd7a34e6ea3acf199e3e05d9f103c4456cfb73"
     },
     {
       "object": "D03",
@@ -5888,11 +5888,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "68122b88f0152c116d52ba35723cd19e",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:4cea53faef0220a4cc8faeeb26741e9ddd6d84a53028ac31bff25e145c5b26ae"
+      "testFingerprint": "sha256:51dfb2824160292884ec90434c4ec52b31f92f975f539dd5d9945a2c63c3aba5"
     },
     {
       "object": "D05",
@@ -5901,11 +5901,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:4cea53faef0220a4cc8faeeb26741e9ddd6d84a53028ac31bff25e145c5b26ae"
+      "testFingerprint": "sha256:51dfb2824160292884ec90434c4ec52b31f92f975f539dd5d9945a2c63c3aba5"
     },
     {
       "object": "K11",
@@ -5914,11 +5914,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "707f06e3112ea01975317479a51e2b78",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:068e51ce91e4e64965dfddab2f3ffa6dff60cf5030d59160f69f340d3e4aad4d"
+      "testFingerprint": "sha256:edfa43c61634acf36c8cb626896561e1fa904a302ab924b06e45ad2366522be7"
     },
     {
       "object": "K12",
@@ -5927,11 +5927,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "71bc62680ad461baf51ded3f10c527b9",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:068e51ce91e4e64965dfddab2f3ffa6dff60cf5030d59160f69f340d3e4aad4d"
+      "testFingerprint": "sha256:edfa43c61634acf36c8cb626896561e1fa904a302ab924b06e45ad2366522be7"
     },
     {
       "object": "D04",
@@ -5940,11 +5940,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "231abe077396d4f660fc5bfcc5282f82",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:068e51ce91e4e64965dfddab2f3ffa6dff60cf5030d59160f69f340d3e4aad4d"
+      "testFingerprint": "sha256:edfa43c61634acf36c8cb626896561e1fa904a302ab924b06e45ad2366522be7"
     },
     {
       "object": "G02",
@@ -5953,11 +5953,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "812829141d7fe58e661239383fa0f165",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:068e51ce91e4e64965dfddab2f3ffa6dff60cf5030d59160f69f340d3e4aad4d"
+      "testFingerprint": "sha256:edfa43c61634acf36c8cb626896561e1fa904a302ab924b06e45ad2366522be7"
     },
     {
       "object": "G03",
@@ -5966,11 +5966,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "02d2e92cce1d9c4110ae01f38b9dc186",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:068e51ce91e4e64965dfddab2f3ffa6dff60cf5030d59160f69f340d3e4aad4d"
+      "testFingerprint": "sha256:edfa43c61634acf36c8cb626896561e1fa904a302ab924b06e45ad2366522be7"
     },
     {
       "object": "Q17",
@@ -5979,11 +5979,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "1631dc778b45fb6e31d8cac48d158ce9",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：D子集21：生产入口搭配注入传输；冻结身份/授权/截止时间/取消/撤权、逐尝试usage、冻结prompt与child预算、真实二入口登记和query一致性。原生邻接38通过3实网忽略，V04入口17通过。最终deadline回归使用POST进入屏障和可人工触发的Notify等待，核验冻结绝对截止时间传递与生产超时分支；Live默认仍使用Tokio sleep_until，不证明真实网络或墙钟延迟。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:068e51ce91e4e64965dfddab2f3ffa6dff60cf5030d59160f69f340d3e4aad4d"
+      "testFingerprint": "sha256:edfa43c61634acf36c8cb626896561e1fa904a302ab924b06e45ad2366522be7"
     },
     {
       "object": "Q08",
@@ -6070,11 +6070,11 @@
       "command": "npm run agent-harness:test",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "ba2e902bad1a39fa846431526b1ba499",
-      "at": "2026-09-21T17:06:47.553904+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "整个检查器39通过：有效/空/占位/前缀/括注身份、独立与自签、无关对象、陈旧补充绑定、有效替代、同名文件/对象兼容。独立红例逐轮复核并修复；17条历史user身份来源仍待核实，不推断实际作者。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：整个检查器39通过：有效/空/占位/前缀/括注身份、独立与自签、无关对象、陈旧补充绑定、有效替代、同名文件/对象兼容。独立红例逐轮复核并修复；17条历史user身份来源仍待核实，不推断实际作者。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:f745fcf8ee1fe8f64483bc3a1e43d70e00207961f47ffcd7033cf653c40f0344"
+      "testFingerprint": "sha256:3d216fbe2d98c249b19694e621a139dbe993720f56b9ab763464764bfb7167ba"
     },
     {
       "object": "Q11",
@@ -6174,11 +6174,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "75d9b140b5e816e83cbf84c547f0b316",
-      "at": "2026-09-21T17:14:35.730649+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:689c00bad626df597d85fe3e7a80786b6870d67188b90f61aa7111b975c2bb37"
+      "testFingerprint": "sha256:e065091df5485caf60f1a5ceabdd7a34e6ea3acf199e3e05d9f103c4456cfb73"
     },
     {
       "object": "K05",
@@ -6187,11 +6187,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "75d9b140b5e816e83cbf84c547f0b316",
-      "at": "2026-09-21T17:14:35.730649+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:4cea53faef0220a4cc8faeeb26741e9ddd6d84a53028ac31bff25e145c5b26ae"
+      "testFingerprint": "sha256:51dfb2824160292884ec90434c4ec52b31f92f975f539dd5d9945a2c63c3aba5"
     },
     {
       "object": "K05",
@@ -6200,11 +6200,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
       "fingerprint": "75d9b140b5e816e83cbf84c547f0b316",
-      "at": "2026-09-21T17:33:11.425112+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。",
       "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
-      "testFingerprint": "sha256:c659d750242ae1f3648676be027b10577f3cd48f43ef1ed506a86b0b5db5fb13"
+      "testFingerprint": "sha256:e065091df5485caf60f1a5ceabdd7a34e6ea3acf199e3e05d9f103c4456cfb73"
     },
     {
       "object": "D05",
@@ -6213,11 +6213,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
       "fingerprint": "3734b7e755da5dce11814be2bc828cd2",
-      "at": "2026-09-21T17:33:11.425112+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。",
       "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
-      "testFingerprint": "sha256:c659d750242ae1f3648676be027b10577f3cd48f43ef1ed506a86b0b5db5fb13"
+      "testFingerprint": "sha256:e065091df5485caf60f1a5ceabdd7a34e6ea3acf199e3e05d9f103c4456cfb73"
     },
     {
       "object": "Q14",
@@ -6226,11 +6226,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
       "fingerprint": "3671d5d5513ced6234b0f33b76180101",
-      "at": "2026-09-21T17:33:11.425112+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。",
       "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
-      "testFingerprint": "sha256:c659d750242ae1f3648676be027b10577f3cd48f43ef1ed506a86b0b5db5fb13"
+      "testFingerprint": "sha256:e065091df5485caf60f1a5ceabdd7a34e6ea3acf199e3e05d9f103c4456cfb73"
     },
     {
       "object": "K12",
@@ -6239,11 +6239,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib native_search_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
       "fingerprint": "71bc62680ad461baf51ded3f10c527b9",
-      "at": "2026-09-21T17:33:11.425112+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "实施后自查补充D：生产MiniMax/DeepSeek解析器原先只按https前缀接纳不可解析URL，RED日志/tmp/iris-selfcheck-d-red.log；现要求可解析HTTPS及主机。原生组64通过、3实网忽略；旧三条coordinator夹具补齐各自实际模拟派发次数，保留原成功/attempted断言，日志/tmp/iris-selfcheck-native.log与/tmp/iris-selfcheck-native-green.log。双路V04邻接17通过。该新增案例是生产解析器机械测试，不提升V05/V06。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：实施后自查补充D：生产MiniMax/DeepSeek解析器原先只按https前缀接纳不可解析URL，RED日志/tmp/iris-selfcheck-d-red.log；现要求可解析HTTPS及主机。原生组64通过、3实网忽略；旧三条coordinator夹具补齐各自实际模拟派发次数，保留原成功/attempted断言，日志/tmp/iris-selfcheck-native.log与/tmp/iris-selfcheck-native-green.log。双路V04邻接17通过。该新增案例是生产解析器机械测试，不提升V05/V06。",
       "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
-      "testFingerprint": "sha256:fcd759d9660e223dbae8d3f2e0d8e7af94160d68dadf83be082feaa5a262ba5b"
+      "testFingerprint": "sha256:2e6825ea453982b623079427ab8af8d87a6836bc24c8a3b90059e52d8d7b439d"
     },
     {
       "object": "D04",
@@ -6252,11 +6252,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib native_search_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
       "fingerprint": "231abe077396d4f660fc5bfcc5282f82",
-      "at": "2026-09-21T17:33:11.425112+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "实施后自查补充D：生产MiniMax/DeepSeek解析器原先只按https前缀接纳不可解析URL，RED日志/tmp/iris-selfcheck-d-red.log；现要求可解析HTTPS及主机。原生组64通过、3实网忽略；旧三条coordinator夹具补齐各自实际模拟派发次数，保留原成功/attempted断言，日志/tmp/iris-selfcheck-native.log与/tmp/iris-selfcheck-native-green.log。双路V04邻接17通过。该新增案例是生产解析器机械测试，不提升V05/V06。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：实施后自查补充D：生产MiniMax/DeepSeek解析器原先只按https前缀接纳不可解析URL，RED日志/tmp/iris-selfcheck-d-red.log；现要求可解析HTTPS及主机。原生组64通过、3实网忽略；旧三条coordinator夹具补齐各自实际模拟派发次数，保留原成功/attempted断言，日志/tmp/iris-selfcheck-native.log与/tmp/iris-selfcheck-native-green.log。双路V04邻接17通过。该新增案例是生产解析器机械测试，不提升V05/V06。",
       "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
-      "testFingerprint": "sha256:fcd759d9660e223dbae8d3f2e0d8e7af94160d68dadf83be082feaa5a262ba5b"
+      "testFingerprint": "sha256:2e6825ea453982b623079427ab8af8d87a6836bc24c8a3b90059e52d8d7b439d"
     },
     {
       "object": "Q17",
@@ -6265,11 +6265,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib native_search_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
       "fingerprint": "1631dc778b45fb6e31d8cac48d158ce9",
-      "at": "2026-09-21T17:33:11.425112+00:00",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "实施后自查补充D：生产MiniMax/DeepSeek解析器原先只按https前缀接纳不可解析URL，RED日志/tmp/iris-selfcheck-d-red.log；现要求可解析HTTPS及主机。原生组64通过、3实网忽略；旧三条coordinator夹具补齐各自实际模拟派发次数，保留原成功/attempted断言，日志/tmp/iris-selfcheck-native.log与/tmp/iris-selfcheck-native-green.log。双路V04邻接17通过。该新增案例是生产解析器机械测试，不提升V05/V06。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：实施后自查补充D：生产MiniMax/DeepSeek解析器原先只按https前缀接纳不可解析URL，RED日志/tmp/iris-selfcheck-d-red.log；现要求可解析HTTPS及主机。原生组64通过、3实网忽略；旧三条coordinator夹具补齐各自实际模拟派发次数，保留原成功/attempted断言，日志/tmp/iris-selfcheck-native.log与/tmp/iris-selfcheck-native-green.log。双路V04邻接17通过。该新增案例是生产解析器机械测试，不提升V05/V06。",
       "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
-      "testFingerprint": "sha256:fcd759d9660e223dbae8d3f2e0d8e7af94160d68dadf83be082feaa5a262ba5b"
+      "testFingerprint": "sha256:2e6825ea453982b623079427ab8af8d87a6836bc24c8a3b90059e52d8d7b439d"
     },
     {
       "object": "D05",
@@ -6316,17 +6316,6 @@
       "note": "C24 确认差异按需瞬时投影：事件与工具结果保持 summary + targets 无正文。不把 C24 verification 标 passed。"
     },
     {
-      "object": "C24",
-      "kind": "V07",
-      "testPath": "tests/assistant-run-confirmation-diff.test.tsx",
-      "command": "npx vitest run tests/assistant-run-confirmation-diff.test.tsx",
-      "environment": "local / macOS / vitest jsdom",
-      "fingerprint": "a134c89546702d47d643e6c4a1cad6f4",
-      "at": "2026-09-22T14:32:20Z",
-      "applicability": "current",
-      "note": "C24 确认卡片差异折叠交互：默认折叠、展开懒加载、截断/失败/不可预览提示、失败不阻断批准与拒绝。不是 C24 验收，不把 verification 标 passed。"
-    },
-    {
       "object": "X02",
       "kind": "V03",
       "testPath": "scripts/agent-harness-check.test.mjs; scripts/agent-harness-registry.test.mjs",
@@ -6355,11 +6344,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "b84f0c6d8668881f3831737e35973b73",
-      "at": "2026-09-23T14:20:00Z",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。B子集7：部分选区数字、链接文字/锚点/代码、未知语法、stale hash、整批拒绝与逐调用反馈、中英文Intake；39条既有d05组通过。真实两轮候选反馈测试，不等价端点live。红绿/tmp/iris-repair-BC-report.md。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:689c00bad626df597d85fe3e7a80786b6870d67188b90f61aa7111b975c2bb37"
+      "testFingerprint": "sha256:e065091df5485caf60f1a5ceabdd7a34e6ea3acf199e3e05d9f103c4456cfb73"
     },
     {
       "object": "K16",
@@ -6368,11 +6357,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
       "fingerprint": "b84f0c6d8668881f3831737e35973b73",
-      "at": "2026-09-23T14:20:00Z",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。C子集4：真实RunIntake Resume→worker重建已应用前缀context、重复Resume/回执补齐、路径集合、选区映射；Approved磁盘已变手动处理在run_engine_recovery_tests.rs；startup12通过。 新增Rust回归统一62通过且匹配数>0；该对象只认领此处描述的子集，不代表完整合同、端点或语义验收。 最终排版后经独立复核判据未变，复用本轮相同源码执行结果。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
       "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:4cea53faef0220a4cc8faeeb26741e9ddd6d84a53028ac31bff25e145c5b26ae"
+      "testFingerprint": "sha256:51dfb2824160292884ec90434c4ec52b31f92f975f539dd5d9945a2c63c3aba5"
     },
     {
       "object": "K16",
@@ -6394,11 +6383,11 @@
       "command": "cargo test --offline --manifest-path src-tauri/Cargo.toml --lib review_regression_ -- --test-threads=1",
       "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮自查未提交工作树；无实网、无新增依赖",
       "fingerprint": "b84f0c6d8668881f3831737e35973b73",
-      "at": "2026-09-23T14:20:00Z",
+      "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：CHG-2026-09-23-100：K16 unknown/failed 分列后重绑当前定义指纹。实施后自查补充B：纠偏耗尽原先返回无关的资料不足，RED日志/tmp/iris-selfcheck-b-red.log；修复后保留正文/顺序/链接的失败或未知状态，说明未确认、未写入和预算限制。新测试同时覆盖循环耗尽与Provider预算拒绝；补证第二轮合格候选确实冻结且plan只含corrected调用、正确前后hash；取消仍返回Cancelled，不发布Host限制。最终总回归66通过；相关D05组42通过、loop组56通过。只认领本包子集，不代表完整合同或语义验收。 不关 D05/N04/K16，不标 verification.passed，不解封 CHG-83/84。",
       "sourceFingerprint": "sha256:c3f76aa59f7ce919f68b369cbe85fc0cc9b288a4029f04c67e216ffa28ec4e38",
-      "testFingerprint": "sha256:c659d750242ae1f3648676be027b10577f3cd48f43ef1ed506a86b0b5db5fb13"
+      "testFingerprint": "sha256:e065091df5485caf60f1a5ceabdd7a34e6ea3acf199e3e05d9f103c4456cfb73"
     },
     {
       "object": "N23",
@@ -6498,6 +6487,18 @@
       "at": "2026-09-24T09:08:24.086Z",
       "applicability": "current",
       "note": "G03 处理路径补全：MainStreamLeak 观察经 answer_budgeted_turn 统一消费进 C26 见证（origin=main_stream_leak、事件种类、引用计数、token 事实，无 URL/正文/密钥，回合级真实身份）；K12 负例保持（不驱动 K11 native.succeeded、不生成可执行 ToolCall）；event_kinds 贯通 isolated 子请求见证（isolated_parse_and_witness_carry_search_event_kinds_content_free，native_search 66 passed）。本机 main_stream_leak 6 passed。处理路径切片不是验收；不是 V05；不关 G02/G03/Q17。"
+    },
+    {
+      "object": "C24",
+      "kind": "V07",
+      "testPath": "tests/assistant-run-confirmation-diff.test.tsx",
+      "command": "npm run test -- tests/assistant-run-confirmation-diff.test.tsx",
+      "environment": "local / macOS / node / vitest（jsdom）",
+      "fingerprint": "a134c89546702d47d643e6c4a1cad6f4",
+      "testFingerprint": "sha256:8c855163ff96ba426bf954d6a0d0a2068df1f5c26da05bdd120b6f4095a36f6f",
+      "at": "2026-09-24T14:19:38.569Z",
+      "applicability": "current",
+      "note": "C24 确认卡交互（当前现实，评审 F4 纠正后重绑）：差异默认展开、失败阻断批准、拒绋试终可点、不确定项块渲染（format-preservation-notice）；涉密域不挂差异门。本机 11 passed。不是 C24 验收，不把 verification 标 passed。"
     }
   ],
   "issues": {
@@ -6912,6 +6913,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-24 F2/F3 收口：安全门架构级复核＋不确定项交付",
       "detail": "F2：CHG-2026-09-23-100（内容保持门 unknown 冻结放宽）按 §4.1 属架构变更、历史分类不改写，以 REV-2026-09-24-ZCODE-57 补非作者架构级复核（maintainer 2026-09-24 本会话背书 unknown 语义）。F3：确认事件与 PendingConfirmationSummary 新增 formatPreservation 有界不确定项投影（bodyText/blockOrder/linkTargets 三态＋固定标签，无笔记正文），K16「交付差异与不确定项」条款完整落地；该新增字段按 §4.1 属架构级（输入输出语义），随 REV-57 一并背书。F9：批准门闩键对齐服务端边界（session.domain===normal）。评审来源：DeepSeek 2026-09-24 检视 F2/F3/F9。"
+    },
+    {
+      "at": "2026-09-24T14:19:38.569Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 F4 收口：证据物漂移校验与反向记录纠正",
+      "detail": "X01 新增 testFingerprint 漂移校验（单路径强制、obsolete 留痕不阻断）＋X02 负例；23 条漂移/反向记录标 obsolete 并复跑重绑（review_regression_ 66 passed、native_search_ 66 passed、agent-harness:test 51 passed、assistant-run-confirmation-diff 11 passed）。C24 反向记录（默认折叠/失败不阻断）按评审 F4 退役，按现实重绑（默认展开/失败阻断批准/拒绋试终可点）。已知债登记：current 记录 155 条中 40 条有证据物绑定，其余 115 条无 testFingerprint（存量债，不在本波重跑）；一条 testPath 为分号双路径的 schema 债待拆。评审来源：DeepSeek 2026-09-24 检视 F4。"
     }
   ],
   "history": "registry-history.json"

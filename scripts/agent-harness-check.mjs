@@ -1185,6 +1185,34 @@ function checkReviews(
         `verify(${entry.object}) 绑定的是旧指纹：需重新验证，或标为 needs-review／obsolete 说明其不再声称适用`,
       );
     }
+    // 证据物漂移校验：定义指纹管「合同变没变」，证据物指纹管「测试变没变」。
+    // 缺了后者，一条描述相反行为的记录可以永远冒充 current（2026-09-24
+    // 评审 F4）。仅对单路径 testPath 强制；分号双路径是已登记的 schema 债。
+    if (entry.testFingerprint) {
+      const testPaths = String(entry.testPath ?? "")
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      if (testPaths.length === 1) {
+        const full = path.join(options.root, testPaths[0]);
+        if (!existsSync(full)) {
+          violation(
+            "verify",
+            `verify(${entry.object}) 的测试物不存在：${testPaths[0]}`,
+          );
+        } else {
+          const actual = `sha256:${createHash("sha256")
+            .update(readFileSync(full))
+            .digest("hex")}`;
+          if (actual !== entry.testFingerprint) {
+            violation(
+              "verify",
+              `verify(${entry.object}) 的证据物已漂移：${testPaths[0]} 的 testFingerprint 与当前测试文件不一致，需复跑重绑或标为 obsolete`,
+            );
+          }
+        }
+      }
+    }
   }
 }
 
