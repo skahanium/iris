@@ -207,7 +207,26 @@ fn failed_http() -> NativeSearchHttpResult {
     }
 }
 
+/// Process-global state shared by every search execution path: the web
+/// revocation epoch (`model_gateway::web_revocation_epoch`), the `IRIS_*`
+/// environment dirs and the credential test store. Concurrent harness tests
+/// used to stomp each other's mid-flight values — a foreign `notify_web_revoked`
+/// or `set_api_key` made `before_dispatch` reject with zero transport counts
+/// and `agent_run_web_provider_failed`, producing load-dependent flakes. Every
+/// harness-driven test holds this gate for its whole body instead.
+static SHARED_STATE_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn v04_harness_holds_the_shared_state_gate_for_its_whole_test() {
+    let _harness = V04Harness::new();
+    assert!(
+        SHARED_STATE_GATE.try_lock().is_err(),
+        "the harness must serialize tests that share revocation/credential/env state"
+    );
+}
+
 struct V04Harness {
+    _gate: std::sync::MutexGuard<'static, ()>,
     _budget: super::model_turn_ledger::BindGuard,
     _directory: tempfile::TempDir,
     state: std::sync::Arc<AppState>,
@@ -222,6 +241,9 @@ impl V04Harness {
     }
 
     fn with_request(input: AssistantRunStartRequest) -> Self {
+        let gate = SHARED_STATE_GATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let directory = tempfile::tempdir().expect("tempdir");
         let data_dir = directory.path().join("data");
         let config_dir = directory.path().join("config");
@@ -256,6 +278,7 @@ impl V04Harness {
         .unwrap();
         begin(&state, &accepted, &sink);
         Self {
+            _gate: gate,
             _budget: budget,
             _directory: directory,
             state,
