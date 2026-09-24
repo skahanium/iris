@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 170,
+  "registryRevision": 171,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T03:53:10.287Z"
+    "recordedAt": "2026-09-24T03:55:40.584Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "fbf2346aa1d7004a86734fee29a07c3c"
+      "fingerprint": "56eaae1387676558d6001f0006de99c6"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -6493,23 +6493,7 @@
     "G05": { "state": "closed" },
     "G06": { "state": "closed" }
   },
-  "gaps": [
-    {
-      "review": "REV-2026-09-21-84",
-      "object": "K16",
-      "reason": "变更对象缺少独立复核覆盖"
-    },
-    {
-      "review": "REV-2026-09-21-84",
-      "object": "V02",
-      "reason": "变更对象缺少独立复核覆盖"
-    },
-    {
-      "review": "REV-2026-09-21-84",
-      "object": "D05#file",
-      "reason": "变更对象缺少独立复核覆盖"
-    }
-  ],
+  "gaps": [],
   "notes": [
     "本登记表由 scripts/agent-harness-check.mjs --reconcile 写入计算值（指纹、行号、修订）；身份、成熟度、关系与作用域在 agent-harness/catalog.mjs 人工维护。",
     "revision > 1 且 changes 中同一批 187 个对象全部变化，是建立期指纹比对缺陷（比较字段层级不一致）造成的假变化，不是 187 次真实修订；该缺陷已修复，此后无内容变化时 reconcile 不再产生变更记录。",
@@ -6864,6 +6848,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-24 Q14 关条：两向证据绑定与 V02 重绑",
       "detail": "Q14 所需两向证据分别验证齐备（纯编辑 8 钉不触发检索；组合 12 钉保留检索，含新增 q14_mixed_edit_and_fresh_fact_keeps_web_search 钉住 run_intake.rs:1013 的 volatile 否决），关条并摘 catalog blocks 边；Q14 保留在 D05 scope 作历史依据（closed 不影响就绪计算，与 Q15/Q16 移出 scope 的先例不同，理由：不动 D05 合同正文以免打漂 D05#file）。V02 current 证据标 obsolete 并重绑当前定义指纹 b6f8e129cc9f40742756f1d8ba12ca13（旧 88761cf13e23705661eec5af50879dee 不改写）。不代标 N04/C20/L02/L03 passed，不关 G02/G03/Q17/D04；D05 关包另批。verify／notes 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-24T03:55:13.956Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 独立复核解封 CHG-83/84 陈旧绑定",
+      "detail": "zcode-agent 以未参与 CHG-2026-09-21-84 编写的独立身份复核 K16/V02/D05#file 当前指纹（REV-2026-09-24-ZCODE-55，conclusion=synchronized，reviews.reviewer=codex-root 为变更编写方），清 REV-2026-09-21-84 遗留的三条陈旧绑定缺口；旧指纹不改写。CHG-2026-09-21-83 已由 REV-2026-09-22-CODEX-35 覆盖，无缺口残留。不关 G02/G03/Q17/D04；D05 关包另批。reviews／notes 是作者字段，按 X03 留痕。"
     }
   ],
   "history": "registry-history.json"

@@ -16774,6 +16774,33 @@
           "fingerprint": "b7b4038f55ff507e6502460f4cefc758"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-24-ZCODE-55",
+      "change": "CHG-2026-09-21-84",
+      "at": "2026-09-24T03:55:13.952Z",
+      "author": "zcode-agent",
+      "reviewer": "codex-root",
+      "conclusion": "synchronized",
+      "reason": "对 CHG-2026-09-21-84（4bd81496 评审修复批）三个未解封对象的当前指纹作独立复核（zcode-agent 未参与该变更编写）：K16 rev19=b84f0c6d8668881f3831737e35973b73，差异范围为验证报告合同经 unknown/failed 分列修订后的现行文本，逐项报告、实际分母与缺口清单口径自洽；V02 rev44=b6f8e129cc9f40742756f1d8ba12ca13，差异范围为证据表自 rev38 以来的增行（C24/C25/N04/N23/Q14 等行），五要素登记与「未运行/不适用不计通过」纪律保持；D05#file rev0=1a43f1b10d44305a36df8112a1f47372，差异范围为合同 §三 关闭清单钉入后的现行正文，与 registry scope 一致、关闭句只点 Q14。三对象当前内容与现行实现/登记一致，无未覆盖差异。绑定均为当前指纹，不改写 REV-2026-09-21-84 旧指纹。",
+      "evidence": "git 10d5f378（Q14 关条批）／5272f640（N23 证据波）；agent-harness:check PASSED（97 托管文件/196 对象）；agent-harness:test 50 pass；registry 复算 K16=b84f0c6d…、V02=b6f8e129…、D05#file=1a43f1b1… 与本条绑定一致",
+      "objects": [
+        {
+          "id": "K16",
+          "revision": 19,
+          "fingerprint": "b84f0c6d8668881f3831737e35973b73"
+        },
+        {
+          "id": "V02",
+          "revision": 44,
+          "fingerprint": "b6f8e129cc9f40742756f1d8ba12ca13"
+        },
+        {
+          "id": "D05#file",
+          "revision": 0,
+          "fingerprint": "1a43f1b10d44305a36df8112a1f47372"
+        }
+      ]
     }
   ],
   "verify": [
