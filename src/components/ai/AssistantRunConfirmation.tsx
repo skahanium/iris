@@ -31,6 +31,19 @@ function effectLabel(effect: AssistantRunConfirmationState["effect"]): string {
   }
 }
 
+function formatCheckStateLabel(state: string): string {
+  switch (state) {
+    case "passed":
+      return "已核实";
+    case "failed":
+      return "检查未通过";
+    case "not-applicable":
+      return "不适用";
+    default:
+      return "尚无法核实";
+  }
+}
+
 /** Renders the persisted, safe change-plan projection before a Run can resume. */
 export function AssistantRunConfirmation({
   confirmation,
@@ -40,12 +53,11 @@ export function AssistantRunConfirmation({
   onReject,
 }: AssistantRunConfirmationProps) {
   const [diffGate, setDiffGate] = useState<ConfirmationDiffGate>(
-    session ? "pending" : "visible",
+    session?.domain === "normal" ? "pending" : "visible",
   );
 
   useEffect(() => {
-    setDiffGate(session ? "pending" : "visible");
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by session/run fields, not object identity
+    setDiffGate(session?.domain === "normal" ? "pending" : "visible");
   }, [
     session?.domain,
     session?.sessionKey,
@@ -55,7 +67,7 @@ export function AssistantRunConfirmation({
   ]);
 
   const approveDisabled =
-    disabled || (session != null && diffGate !== "visible");
+    disabled || (session?.domain === "normal" && diffGate !== "visible");
 
   return (
     <section
@@ -77,12 +89,24 @@ export function AssistantRunConfirmation({
           ))}
         </ul>
       ) : null}
+      {confirmation.formatPreservation?.checks?.length ? (
+        <ul
+          className="mt-2 space-y-1 text-xs text-muted-foreground"
+          data-testid="format-preservation-notice"
+        >
+          {confirmation.formatPreservation.checks.map((check) => (
+            <li key={check.field}>
+              {check.label}：{formatCheckStateLabel(check.state)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {confirmation.expiresAt ? (
         <p className="mt-2 text-[11px] text-muted-foreground">
           确认有效期至：{confirmation.expiresAt}
         </p>
       ) : null}
-      {session ? (
+      {session?.domain === "normal" ? (
         <AssistantConfirmationDiff
           request={{
             session,

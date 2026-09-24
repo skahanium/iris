@@ -230,4 +230,45 @@ describe("AssistantRunConfirmation approve latch", () => {
     expect(screen.getByRole("button", { name: "应用更改" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "拒绝" })).toBeEnabled();
   });
+
+  it("renders the format-preservation uncertainty notice without note text", () => {
+    vi.mocked(assistantRunConfirmationDiff).mockResolvedValue(previewFixture());
+    render(
+      <AssistantRunConfirmation
+        confirmation={{
+          ...confirmation,
+          formatPreservation: {
+            checks: [
+              { field: "bodyText", label: "正文内容", state: "unknown" },
+              { field: "blockOrder", label: "段落顺序", state: "passed" },
+              { field: "linkTargets", label: "链接目标", state: "unknown" },
+            ],
+          },
+        }}
+        session={request.session}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+
+    const notice = screen.getByTestId("format-preservation-notice");
+    expect(notice).toHaveTextContent("正文内容：尚无法核实");
+    expect(notice).toHaveTextContent("段落顺序：已核实");
+    expect(notice).toHaveTextContent("链接目标：尚无法核实");
+  });
+
+  it("does not gate approve on a diff for classified sessions", () => {
+    render(
+      <AssistantRunConfirmation
+        confirmation={confirmation}
+        session={{ domain: "classified", sessionKey: "cef-1" }}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+
+    expect(assistantRunConfirmationDiff).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "应用更改" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "拒绝" })).toBeEnabled();
+  });
 });

@@ -354,6 +354,25 @@ impl FormatWriteFixture {
             .expect("confirmation count")
     }
 
+    /// The `formatPreservation` projection carried by the pending confirmation
+    /// event, if any.
+    fn pending_format_preservation(&self) -> Option<serde_json::Value> {
+        let rows: Vec<String> = self
+            .state
+            .db
+            .with_read_conn(|conn| {
+                let mut statement =
+                    conn.prepare("SELECT payload_json FROM agent_run_events WHERE run_id = ?1")?;
+                let rows =
+                    statement.query_map([&self.accepted.run_id], |row| row.get::<_, String>(0))?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+            })
+            .expect("confirmation events");
+        rows.iter()
+            .filter_map(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
+            .find_map(|payload| payload.get("formatPreservation").cloned())
+    }
+
     fn note_body(&self) -> String {
         std::fs::read_to_string(self.vault.join(NOTE_PATH)).expect("read note")
     }
@@ -422,6 +441,69 @@ async fn n04_format_table_unknown_still_requests_run_confirmation() {
     assert_eq!(error.to_string(), CONFIRMATION_PENDING_ERROR);
     assert_eq!(fixture.confirmation_count(), 1);
     assert_eq!(fixture.note_body(), original);
+}
+
+// F3 closure (K16 delivery of 「差异与不确定项」): an `unknown` candidate's
+// frozen confirmation must carry the bounded uncertainty projection — states
+// and fixed labels only, never note text.
+#[tokio::test]
+async fn n04_unknown_run_confirmation_carries_uncertainty_notice() {
+    let original = "a | b\n---|---\n1 | 2\n";
+    let fixture = format_write_fixture(FORMAT_MESSAGE, original);
+
+    let error = fixture
+        .execute_replace(original, original)
+        .await
+        .expect_err("table unknown freezes confirmation");
+
+    assert_eq!(error.to_string(), CONFIRMATION_PENDING_ERROR);
+    let notice = fixture
+        .pending_format_preservation()
+        .expect("confirmation must deliver the uncertainty notice");
+    let checks = notice["checks"].as_array().expect("checks");
+    assert_eq!(checks.len(), 3);
+    assert!(
+        checks.iter().any(|check| check["state"] == "unknown"),
+        "unknown states must reach the confirmation surface: {notice}"
+    );
+    for check in checks {
+        assert!(
+            check["label"]
+                .as_str()
+                .is_some_and(|label| !label.is_empty()),
+            "every check carries a fixed label: {notice}"
+        );
+    }
+    let encoded = notice.to_string();
+    assert!(
+        !encoded.contains("a | b"),
+        "the notice must never carry note text: {notice}"
+    );
+}
+
+#[test]
+fn n04_preservation_notice_is_content_free_with_fixed_labels() {
+    let report = crate::ai_runtime::content_preservation::check_format_preservation(
+        "hello\u{200B}world",
+        "hello\u{200B}world",
+    );
+    let notice = crate::ai_runtime::content_preservation::preservation_notice(&report);
+    let checks = notice["checks"].as_array().expect("checks");
+    let fields: Vec<&str> = checks
+        .iter()
+        .map(|check| check["field"].as_str().expect("field"))
+        .collect();
+    assert_eq!(fields, ["bodyText", "blockOrder", "linkTargets"]);
+    for check in checks {
+        assert!(
+            check["state"].as_str().is_some_and(|state| {
+                matches!(state, "passed" | "failed" | "unknown" | "not-applicable")
+            }),
+            "states stay inside the K16 four-state vocabulary: {notice}"
+        );
+    }
+    let encoded = notice.to_string();
+    assert!(!encoded.contains("\u{200B}"), "notice is content-free");
 }
 
 #[tokio::test]

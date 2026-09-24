@@ -665,6 +665,7 @@ fn durable_apply_fixture() -> (
         &plan,
         started.state_version(),
         "等待确认：更新 1 个目标",
+        None,
     )
     .expect("await confirmation");
     AgentRunRepository::approve_frozen_confirmation(

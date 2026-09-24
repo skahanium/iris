@@ -213,6 +213,19 @@ pub(crate) fn unproven_tool_result(
     }
 }
 
+/// Content-free uncertainty notice for the confirmation surface (K16 delivery
+/// of 「差异与不确定项」): the three check states with fixed labels only —
+/// never note text.
+pub(crate) fn preservation_notice(report: &ContentPreservationReport) -> serde_json::Value {
+    serde_json::json!({
+        "checks": [
+            {"field": "bodyText", "label": "正文内容", "state": report.body_text.as_str()},
+            {"field": "blockOrder", "label": "段落顺序", "state": report.block_order.as_str()},
+            {"field": "linkTargets", "label": "链接目标", "state": report.link_targets.as_str()},
+        ]
+    })
+}
+
 #[cfg(test)]
 fn string_arg<'a>(args: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
     keys.iter()

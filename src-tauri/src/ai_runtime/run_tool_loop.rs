@@ -819,12 +819,13 @@ impl<'a> NormalRunToolExecutor<'a> {
         state_version: u64,
     ) -> AppResult<()> {
         let plan = self.freeze_change_plan(call, entry, args)?;
-        let summary = self.confirmation_summary_for_plan(entry, args, &plan);
+        let (summary, format_preservation) = self.confirmation_summary_for_plan(entry, args, &plan);
         let event = AgentRunRepository::request_frozen_confirmation(
             &self.state.db,
             &plan,
             state_version,
             &summary,
+            format_preservation.as_ref(),
         )?;
         // The state transition is authoritative. The audit uses only the catalog
         // capability and preflight metadata, never the frozen arguments.
@@ -2196,6 +2197,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 &plan,
                 state_version,
                 &summary,
+                None,
             ) {
                 Ok(event) => event,
                 Err(error) => {

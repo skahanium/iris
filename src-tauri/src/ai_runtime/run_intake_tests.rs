@@ -1568,6 +1568,7 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
                 effect: None,
                 targets: None,
                 expires_at: None,
+                format_preservation: None,
             },
         },
     )
@@ -1901,6 +1902,7 @@ fn accepted_run_awaiting_frozen_change_confirmation() -> (
                 effect: None,
                 targets: None,
                 expires_at: None,
+                format_preservation: None,
             },
         },
     )

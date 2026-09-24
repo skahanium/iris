@@ -827,6 +827,10 @@ pub struct PendingConfirmationSummary {
     /// RFC 3339 expiry of the immutable approval window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) expires_at: Option<String>,
+    /// Bounded format-preservation uncertainty projection for `unknown`
+    /// candidates: three check states with fixed labels, no note text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) format_preservation: Option<serde_json::Value>,
 }
 
 /// Bounded target metadata shown before approving a frozen change plan.
@@ -1123,6 +1127,10 @@ pub(crate) enum RunEventPayload {
         /// RFC 3339 expiry of the frozen approval window.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expires_at: Option<String>,
+        /// Bounded format-preservation uncertainty projection for `unknown`
+        /// candidates: three check states with fixed labels, no note text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format_preservation: Option<serde_json::Value>,
     },
     /// A bounded user input request with no raw provider data.
     InputRequired {

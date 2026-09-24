@@ -1574,6 +1574,7 @@ fn durable_apply_interrupted_after_consumed_confirmation_with_expiry(
         &plan,
         running.state_version(),
         "等待确认：更新 1 个目标",
+        None,
     )
     .expect("await confirmation");
     AgentRunRepository::approve_frozen_confirmation(

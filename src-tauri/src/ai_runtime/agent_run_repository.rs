@@ -300,6 +300,12 @@ pub(crate) struct HistoricalRunProcess {
 }
 
 /// Result of consuming a persisted confirmation through one idempotent control request.
+// The unit-like variants are terminal markers; boxing only the event to satisfy
+// variant-size symmetry would churn every match site for zero user value.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "terminal unit variants next to one event payload; Box churn unjustified"
+)]
 pub(crate) enum FrozenConfirmationApproval {
     /// The pending plan was consumed and the Run durably resumed.
     Resumed(AssistantRunEvent),
@@ -308,6 +314,10 @@ pub(crate) enum FrozenConfirmationApproval {
 }
 
 /// Result of rejecting a persisted confirmation through one idempotent control request.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "terminal unit variants next to one event payload; Box churn unjustified"
+)]
 pub(crate) enum FrozenConfirmationRejection {
     /// The pending plan was rejected and the Run durably cancelled.
     Cancelled(AssistantRunEvent),
@@ -1261,6 +1271,7 @@ impl AgentRunRepository {
         plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
         state_version: u64,
         summary: &str,
+        format_preservation: Option<&serde_json::Value>,
     ) -> AppResult<AssistantRunEvent> {
         if summary.trim().is_empty() || summary.chars().count() > MAX_SAFE_EVENT_TEXT_CHARS {
             return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
@@ -1346,6 +1357,7 @@ impl AgentRunRepository {
                             plan.expires_at_unix_ms(),
                         )
                         .map(|timestamp| timestamp.to_rfc3339()),
+                        format_preservation: format_preservation.cloned(),
                     },
                 )
                 .map_err(AppError::msg)?;
@@ -2663,6 +2675,7 @@ fn pending_confirmation_summary(
             effect,
             targets,
             expires_at,
+            format_preservation,
             ..
         } if event_confirmation_id == confirmation_id => Ok(Some(
             crate::ai_runtime::run_contract::PendingConfirmationSummary {
@@ -2671,6 +2684,7 @@ fn pending_confirmation_summary(
                 effect,
                 targets,
                 expires_at,
+                format_preservation,
             },
         )),
         _ => Err(AppError::run(SafeRunErrorCode::ConfirmationMissing)),

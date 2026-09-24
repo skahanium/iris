@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 175,
+  "registryRevision": 176,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T13:57:57.606Z"
+    "recordedAt": "2026-09-24T14:16:20.713Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "de24d0882116dbc797b13a60a9960017"
+      "fingerprint": "5f7359b5df3d34dac6f0e308f6f2631d"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -6906,6 +6906,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-24 F1 阅读面收口：D05 合同与日记补关包记录",
       "detail": "D05 合同三处 09-23 批口径（active/本批不关包/N23 未做不能关包）标注为历史并补 2026-09-24 另批关包事实；施工日记增「关包」条目（六项依据引 71731801/10d5f378/9ca06b8c/5272f640 等，并如实登记 F3 补课去向）。改动均在文件级容器内，D05 定义块指纹未变、verify 绑定仍有效。D05#file=eb4a660958e700f5a2ecb831f8d7a6ac、FILE-D05-JOURNAL#file=9aa6bbef05a1a259bf3b134031c78962 已由 CHG 接受；REV-2026-09-24-ZCODE-56 补绑新 D05#file 指纹（ZCODE-55 旧绑定 stale 不改写）。评审来源：DeepSeek 2026-09-24 检视 F1。"
+    },
+    {
+      "at": "2026-09-24T14:11:05.774Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 F2/F3 收口：安全门架构级复核＋不确定项交付",
+      "detail": "F2：CHG-2026-09-23-100（内容保持门 unknown 冻结放宽）按 §4.1 属架构变更、历史分类不改写，以 REV-2026-09-24-ZCODE-57 补非作者架构级复核（maintainer 2026-09-24 本会话背书 unknown 语义）。F3：确认事件与 PendingConfirmationSummary 新增 formatPreservation 有界不确定项投影（bodyText/blockOrder/linkTargets 三态＋固定标签，无笔记正文），K16「交付差异与不确定项」条款完整落地；该新增字段按 §4.1 属架构级（输入输出语义），随 REV-57 一并背书。F9：批准门闩键对齐服务端边界（session.domain===normal）。评审来源：DeepSeek 2026-09-24 检视 F2/F3/F9。"
     }
   ],
   "history": "registry-history.json"

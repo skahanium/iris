@@ -16842,6 +16842,33 @@
           "fingerprint": "eb4a660958e700f5a2ecb831f8d7a6ac"
         }
       ]
+    },
+    {
+      "id": "REV-2026-09-24-ZCODE-57",
+      "change": "CHG-2026-09-23-100",
+      "at": "2026-09-24T14:11:05.769Z",
+      "author": "zcode-agent",
+      "reviewer": "cursor-grok-4.6",
+      "conclusion": "synchronized",
+      "reason": "对 CHG-2026-09-23-100 的架构级补复核（处置 DeepSeek 09-24 评审 F2；zcode-agent 未参与该变更编写）：该批把内容保持门从 !is_proven 改为 has_failed——unknown 候选冻结进确认、failed 全批零冻结——并同步 K16 合同文字。按 §4.1「输入输出语义／用户承诺」变化属架构变更，历史 classification=refinement 不改写，以本条补足「无任何非作者身份复核」的欠账；maintainer 已于 2026-09-24 本会话确认该 unknown 语义（维持冻结＋补齐不确定项交付）。逐对象绑当前指纹：K16=b84f0c6d8668881f3831737e35973b73（验证报告合同的 unknown／failed 分列口径与 L04 差异交付一致）；D05#file=eb4a660958e700f5a2ecb831f8d7a6ac、FILE-D05-JOURNAL#file=9aa6bbef05a1a259bf3b134031c78962（关闭清单与波次记录口径自洽）。同批补交付不确定项（formatPreservation 字段，见 n04_unknown_run_confirmation_carries_uncertainty_notice），K16「交付差异与不确定项」条款自此完整落地。",
+      "evidence": "DeepSeek 2026-09-24 检视 F2/F3；maintainer 2026-09-24 本会话确认 unknown 语义（Q4=维持冻结＋补齐不确定项）；git 提交（本批）；cargo n04_ 25 passed、vitest assistant-run-confirmation-diff 11 passed",
+      "objects": [
+        {
+          "id": "K16",
+          "revision": 19,
+          "fingerprint": "b84f0c6d8668881f3831737e35973b73"
+        },
+        {
+          "id": "D05#file",
+          "revision": 0,
+          "fingerprint": "eb4a660958e700f5a2ecb831f8d7a6ac"
+        },
+        {
+          "id": "FILE-D05-JOURNAL#file",
+          "revision": 0,
+          "fingerprint": "9aa6bbef05a1a259bf3b134031c78962"
+        }
+      ]
     }
   ],
   "verify": [

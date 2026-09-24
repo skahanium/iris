@@ -401,6 +401,7 @@ fn dispatching_apply_fixture(operation_count: usize) -> DispatchingApplyFixture 
         &plan,
         tool_started_version,
         "等待确认：更新 1 个目标",
+        None,
     )
     .expect("await confirmation");
     AgentRunRepository::approve_frozen_confirmation(

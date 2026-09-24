@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::ai_runtime::content_preservation::{
-    check_format_preservation, is_format_preservation_request, unproven_tool_result,
+    check_format_preservation, is_format_preservation_request, preservation_notice,
+    unproven_tool_result,
 };
 use crate::ai_runtime::edit_candidate::{
     blocked_unprepared_candidate, prepare_edit_candidate, safe_candidate_summary,
@@ -48,7 +49,7 @@ impl NormalRunToolExecutor<'_> {
         entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
         args: &serde_json::Value,
         plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
-    ) -> String {
+    ) -> (String, Option<serde_json::Value>) {
         if matches!(entry.name, "replace_selection" | "insert_text_at_cursor") {
             if let Some(path) = frozen_relative_paths(entry.name, args, self.context).first() {
                 if let Ok((original, from_virtual)) =
@@ -59,15 +60,30 @@ impl NormalRunToolExecutor<'_> {
                     if let Ok(candidate) =
                         prepare_edit_candidate(entry.name, &preview_args, &original)
                     {
-                        return safe_candidate_summary(&candidate);
+                        // K16 delivery of 「差异与不确定项」: `unknown` candidates
+                        // freeze with a bounded uncertainty projection attached to
+                        // the confirmation. `failed` never reaches this point (the
+                        // pre-freeze gate blocks it); `proven` still reports its
+                        // three `passed` states so the card is self-describing.
+                        let format_preservation =
+                            is_format_preservation_request(&self.context.user_message).then(|| {
+                                preservation_notice(&check_format_preservation(
+                                    &original,
+                                    &candidate.candidate_body,
+                                ))
+                            });
+                        return (safe_candidate_summary(&candidate), format_preservation);
                     }
                 }
             }
         }
-        format!(
-            "等待确认：{} 将修改 {} 个目标",
-            entry.name,
-            plan.relative_paths().len()
+        (
+            format!(
+                "等待确认：{} 将修改 {} 个目标",
+                entry.name,
+                plan.relative_paths().len()
+            ),
+            None,
         )
     }
 

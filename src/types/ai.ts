@@ -526,6 +526,22 @@ export interface PendingConfirmation {
   targets?: ConfirmationTargetSummary[];
   /** ISO 8601 timestamp, absent on events emitted by pre-maturity backends. */
   expiresAt?: string;
+  /**
+   * Bounded format-preservation uncertainty projection for `unknown`
+   * candidates: three check states with fixed labels, never note text.
+   */
+  formatPreservation?: FormatPreservationNotice;
+}
+
+/** Content-free K16 uncertainty projection shown before approval. */
+export interface FormatPreservationNotice {
+  checks: FormatPreservationCheck[];
+}
+
+export interface FormatPreservationCheck {
+  field: "bodyText" | "blockOrder" | "linkTargets";
+  label: string;
+  state: "passed" | "failed" | "unknown" | "not-applicable";
 }
 
 /** Request accepted by `assistantRunConfirmationDiff`. */
@@ -676,6 +692,7 @@ export type AssistantRunEventPayload =
       effect?: PendingConfirmation["effect"];
       targets?: PendingConfirmation["targets"];
       expiresAt?: PendingConfirmation["expiresAt"];
+      formatPreservation?: PendingConfirmation["formatPreservation"];
     }
   | {
       kind: "input_required";

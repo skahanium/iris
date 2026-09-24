@@ -1767,6 +1767,7 @@ fn durable_confirmation_materializes_a_legacy_v1_budget_before_resuming() {
         &plan,
         started.state_version(),
         "Awaiting confirmation: memory_write affects 1 target",
+        None,
     )
     .expect("atomic confirmation request");
     assert_eq!(awaiting.state_version(), started.state_version() + 1);
