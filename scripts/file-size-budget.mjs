@@ -50,6 +50,8 @@ export const SPLIT_QUEUE = {
   "src-tauri/src/commands/file.rs": 2200,
   "src-tauri/src/ai_runtime/run_context_tests.rs": 2200,
   "src-tauri/src/recycle/mod.rs": 2200,
+  "scripts/agent-harness-check.mjs": 2200,
+  "scripts/agent-harness-check.test.mjs": 2200,
 };
 
 /** Line count of a file, where a trailing newline does not start a new line. */
