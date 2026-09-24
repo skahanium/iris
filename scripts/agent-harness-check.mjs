@@ -16,6 +16,7 @@ import {
   isContainerRegistration,
   normalizeContainerId,
   reviewerIdentity,
+  identitiesOverlap,
   isIndependentReview,
   reviewCoversCurrentObject,
 } from "./agent-harness-identity.mjs";
@@ -997,10 +998,15 @@ function checkReviews(
       // 身份比较按**实体**而不是按整串：整串比较会让
       // `X（收口）` 与 `X（收口，自审）` 判成两个身份，于是 P03 §5.2 规则 1
       // 「架构变更的作者不能自行解封」多出一条改字面量就能走通的旁路。
+      // 复合署名按成分集合求交，同一实体的多个标签也不能互充独立。
       const authorIdentity = reviewerIdentity(review.author);
       const changeIdentity = reviewerIdentity(change.author);
       const reviewerIdentityOfReviewer = reviewerIdentity(review.reviewer);
-      if (authorIdentity && authorIdentity === changeIdentity) {
+      if (
+        authorIdentity &&
+        (authorIdentity === changeIdentity ||
+          identitiesOverlap(review.author, change.author))
+      ) {
         violation(
           "reviews",
           `复核 ${review.id} 的作者与变更作者是同一身份（${authorIdentity}）：架构变更的作者不能自行作出无影响结论`,
@@ -1009,7 +1015,8 @@ function checkReviews(
       if (
         reviewerIdentityOfReviewer &&
         authorIdentity &&
-        reviewerIdentityOfReviewer === authorIdentity
+        (reviewerIdentityOfReviewer === authorIdentity ||
+          identitiesOverlap(review.author, review.reviewer))
       ) {
         violation(
           "reviews",

@@ -14923,6 +14923,23 @@
           "fingerprintTo": "9aa6bbef05a1a259bf3b134031c78962"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-24-105",
+      "at": "2026-09-24T14:24:01.285Z",
+      "author": "zcode-agent",
+      "classification": "governance",
+      "reason": "F5/F6 判据文本同步（P03 §5.2）：codex-* 归并、user 不计独立、复合署名求交。maintainer 2026-09-24 本会话裁定口径（Q1/Q2 采纳）。",
+      "review": "REV-2026-09-24-105",
+      "objects": [
+        {
+          "id": "P03#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "eada0bde491a87e5708d68a6f50f63d9",
+          "fingerprintTo": "27bc4e4d2a94e6bfb15b0e2550a8be75"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -16686,7 +16703,8 @@
         {
           "id": "P03#file",
           "revision": 0,
-          "fingerprint": "eada0bde491a87e5708d68a6f50f63d9"
+          "fingerprint": "eada0bde491a87e5708d68a6f50f63d9",
+          "stale": true
         },
         {
           "id": "V08",
@@ -16822,7 +16840,8 @@
         {
           "id": "D05#file",
           "revision": 0,
-          "fingerprint": "1a43f1b10d44305a36df8112a1f47372"
+          "fingerprint": "1a43f1b10d44305a36df8112a1f47372",
+          "stale": true
         }
       ]
     },
@@ -16867,6 +16886,188 @@
           "id": "FILE-D05-JOURNAL#file",
           "revision": 0,
           "fingerprint": "9aa6bbef05a1a259bf3b134031c78962"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-24-ZCODE-58",
+      "change": "CHG-2026-09-21-84",
+      "at": "2026-09-24T14:23:38.517Z",
+      "author": "zcode-agent",
+      "reviewer": "codex-root",
+      "conclusion": "synchronized",
+      "reason": "身份归并后（codex-* 四标签＝同一 root 会话子任务，F5）CHG-84 的既有对象绑定回退，由 zcode-agent 补位复核 13 个当前指纹：各对象自 CHG-84 以来的演进均为已登记细化（K16 unknown/failed 分列、Q14 两向关条、Q17 V05 窄窗口、K11/K12 机械面等），逐对象核对当前内容与现行实现/登记一致，无未覆盖差异。旧绑定（REV-2026-09-21-84 及 codex-* 各条）不改写。",
+      "evidence": "DeepSeek 2026-09-24 检视 F5/F6；maintainer 2026-09-24 本会话裁定身份口径（codex-* 归并＋user 降级＋复合署名求交，Q1/Q2 采纳）；registry 复算当前指纹一致；agent-harness:check 全绿收口",
+      "objects": [
+        {
+          "id": "Q13",
+          "revision": 15,
+          "fingerprint": "eaa3efb166619b69391f3755eff000cd"
+        },
+        {
+          "id": "Q17",
+          "revision": 15,
+          "fingerprint": "1631dc778b45fb6e31d8cac48d158ce9"
+        },
+        {
+          "id": "G03",
+          "revision": 17,
+          "fingerprint": "02d2e92cce1d9c4110ae01f38b9dc186"
+        },
+        {
+          "id": "D03#file",
+          "revision": 0,
+          "fingerprint": "b77f190a6af3a3c12fa899cab11ffecc"
+        },
+        {
+          "id": "D04#file",
+          "revision": 0,
+          "fingerprint": "a1f38b879c84e35a5f2cfa676fe90710"
+        },
+        {
+          "id": "K05",
+          "revision": 14,
+          "fingerprint": "75d9b140b5e816e83cbf84c547f0b316"
+        },
+        {
+          "id": "K06",
+          "revision": 13,
+          "fingerprint": "e8f0c143f39eef8a6bcb4a93305cfc70"
+        },
+        {
+          "id": "K11",
+          "revision": 14,
+          "fingerprint": "707f06e3112ea01975317479a51e2b78"
+        },
+        {
+          "id": "K12",
+          "revision": 13,
+          "fingerprint": "71bc62680ad461baf51ded3f10c527b9"
+        },
+        {
+          "id": "Q08",
+          "revision": 14,
+          "fingerprint": "c21650253828585ed77bfbcb6a510a0e"
+        },
+        {
+          "id": "Q09",
+          "revision": 14,
+          "fingerprint": "504b4e9df38ef179393edea2e04d7403"
+        },
+        {
+          "id": "Q14",
+          "revision": 15,
+          "fingerprint": "3671d5d5513ced6234b0f33b76180101"
+        },
+        {
+          "id": "G05",
+          "revision": 13,
+          "fingerprint": "e652993c4500043c0b8c881d20f28e6d"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-24-ZCODE-59",
+      "change": "CHG-2026-09-16-30",
+      "at": "2026-09-24T14:23:38.517Z",
+      "author": "zcode-agent",
+      "reviewer": "dsh-agent",
+      "conclusion": "synchronized",
+      "reason": "user 复核降级后（F6：登记表自述撰写者无法核实）CHG-2026-09-16-30 失去解封依据，由 zcode-agent 补位复核：Q16（运行中追加/修改指令交互）当前 rev13 记录「Host 拒绝新指令、等待/取消/完成后重发」口径，与 K03 §一 及现状实现一致，无未覆盖差异。",
+      "evidence": "DeepSeek 2026-09-24 检视 F5/F6；maintainer 2026-09-24 本会话裁定身份口径（codex-* 归并＋user 降级＋复合署名求交，Q1/Q2 采纳）；registry 复算当前指纹一致；agent-harness:check 全绿收口",
+      "objects": [
+        {
+          "id": "Q16",
+          "revision": 13,
+          "fingerprint": "0be98a33d79789919db2818c4b319190"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-24-ZCODE-60",
+      "change": "CHG-2026-09-17-37",
+      "at": "2026-09-24T14:23:38.517Z",
+      "author": "zcode-agent",
+      "reviewer": "dsh-agent",
+      "conclusion": "synchronized",
+      "reason": "user 复核降级后（F6）CHG-2026-09-17-37 失去解封依据，由 zcode-agent 补位复核三对象当前指纹：D02 合同容器口径与 D02 收口登记一致；R13 决定记录现行文本未越出其登记边界；Q13 预算存档兼容条目与现状一致。无未覆盖差异。",
+      "evidence": "DeepSeek 2026-09-24 检视 F5/F6；maintainer 2026-09-24 本会话裁定身份口径（codex-* 归并＋user 降级＋复合署名求交，Q1/Q2 采纳）；registry 复算当前指纹一致；agent-harness:check 全绿收口",
+      "objects": [
+        {
+          "id": "D02#file",
+          "revision": 0,
+          "fingerprint": "8d7b0606678123466d5c1eb76a7948ab"
+        },
+        {
+          "id": "R13",
+          "revision": 4,
+          "fingerprint": "98261fd05c8d7c88e67e28146d6a889c"
+        },
+        {
+          "id": "Q13",
+          "revision": 15,
+          "fingerprint": "eaa3efb166619b69391f3755eff000cd"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-24-ZCODE-61",
+      "change": "CHG-2026-09-16-32",
+      "at": "2026-09-24T14:23:38.517Z",
+      "author": "zcode-agent",
+      "reviewer": "cursor-grok-4.6",
+      "conclusion": "synchronized",
+      "reason": "身份归并/降级后 REV-2026-09-16-32（author=user）不再构成独立覆盖，CHG-2026-09-16-32 的 C13／N15／R11 绑定由 zcode-agent 补位复核当前指纹：N15 的 LOOP 语义（R11/R12 约束分层）与现行文本一致；C13／R11 现行内容与登记一致。无未覆盖差异。",
+      "evidence": "DeepSeek 2026-09-24 检视 F5/F6；maintainer 2026-09-24 本会话裁定身份口径（codex-* 归并＋user 降级＋复合署名求交，Q1/Q2 采纳）；registry 复算当前指纹一致；agent-harness:check 全绿收口",
+      "objects": [
+        {
+          "id": "C13",
+          "revision": 13,
+          "fingerprint": "f1499c3b8c81fe35d51e6a6ff7ff543e"
+        },
+        {
+          "id": "N15",
+          "revision": 13,
+          "fingerprint": "8b1e2702b53888edfd021a82a04535d5"
+        },
+        {
+          "id": "R11",
+          "revision": 2,
+          "fingerprint": "1a8c8914c5afa0c9681aaf22b3b4e6f2"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-24-105",
+      "change": "CHG-2026-09-24-105",
+      "at": "2026-09-24T14:24:01.285Z",
+      "author": "skahanium",
+      "reviewer": "zcode-agent",
+      "conclusion": "needs-reverification",
+      "reason": "F5/F6 判据文本同步（P03 §5.2）：codex-* 归并、user 不计独立、复合署名求交。maintainer 2026-09-24 本会话裁定口径（Q1/Q2 采纳）。",
+      "evidence": "--reconcile 只登记待复核，不能作为独立复核完成依据",
+      "objects": [
+        {
+          "id": "P03#file",
+          "revision": 0,
+          "fingerprint": "27bc4e4d2a94e6bfb15b0e2550a8be75"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-24-106",
+      "change": "CHG-2026-09-24-105",
+      "at": "2026-09-24T14:24:45.354Z",
+      "author": "skahanium",
+      "reviewer": "zcode-agent",
+      "conclusion": "synchronized",
+      "reason": "maintainer 于 2026-09-24 本会话给出独立复核结论（AskUserQuestion：身份口径裁定采纳——codex-* 归并＋接受变红补复核、user 降级为不可用证据、复合署名按成分集合求交，Q1/Q2 两项均经勾选确认）；据此对 P03 §5.2 判据文本同步（P03#file=27bc4e4d2a94e6bfb15b0e2550a8be75）作 synchronized 结论：文本仅登记既有 notes 依据与检查器同批已实现的口径，无越出裁定范围的语义扩张。本条同时覆盖 REV-2026-09-23-96 对 P03#file 当前指纹的缺口。",
+      "evidence": "本会话 AskUserQuestion 问答记录（2026-09-24，身份口径两问经 maintainer 勾选）；agent-harness-identity.mjs／agent-harness-check.mjs 同批实现；agent-harness:check 全绿收口。",
+      "objects": [
+        {
+          "id": "P03#file",
+          "revision": 0,
+          "fingerprint": "27bc4e4d2a94e6bfb15b0e2550a8be75"
         }
       ]
     }

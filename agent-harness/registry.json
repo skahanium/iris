@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 177,
+  "registryRevision": 179,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T14:19:50.055Z"
+    "recordedAt": "2026-09-24T14:25:18.346Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "1c5e2c291f50182c32fd4e0ccddf646b"
+      "fingerprint": "c99f552799f01c136c1f840806d7ebd4"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -291,7 +291,7 @@
     "rules/governance.md": {
       "container": "P03",
       "registration": "P03",
-      "fingerprint": "eada0bde491a87e5708d68a6f50f63d9"
+      "fingerprint": "27bc4e4d2a94e6bfb15b0e2550a8be75"
     },
     "rules/objects.md": {
       "container": "P02",
@@ -2790,8 +2790,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "P03",
-        "line": 191,
-        "endLine": 211,
+        "line": 193,
+        "endLine": 213,
         "fingerprint": "ba2e902bad1a39fa846431526b1ba499"
       },
       "implementation": { "state": "unknown" },
@@ -4659,8 +4659,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X01",
-        "line": 213,
-        "endLine": 237,
+        "line": 215,
+        "endLine": 239,
         "fingerprint": "b7b4038f55ff507e6502460f4cefc758"
       },
       "implementation": { "state": "unknown" },
@@ -4680,8 +4680,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X02",
-        "line": 239,
-        "endLine": 253,
+        "line": 241,
+        "endLine": 255,
         "fingerprint": "0ed8e97c3f4f4c619a60121beae0f131"
       },
       "implementation": { "state": "unknown" },
@@ -4701,8 +4701,8 @@
       "definition": {
         "file": "rules/governance.md",
         "anchor": "X03",
-        "line": 255,
-        "endLine": 271,
+        "line": 257,
+        "endLine": 273,
         "fingerprint": "e3d49ff5d70a04bdae59098c211d1868"
       },
       "implementation": { "state": "unknown" },
@@ -6919,6 +6919,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-24 F4 收口：证据物漂移校验与反向记录纠正",
       "detail": "X01 新增 testFingerprint 漂移校验（单路径强制、obsolete 留痕不阻断）＋X02 负例；23 条漂移/反向记录标 obsolete 并复跑重绑（review_regression_ 66 passed、native_search_ 66 passed、agent-harness:test 51 passed、assistant-run-confirmation-diff 11 passed）。C24 反向记录（默认折叠/失败不阻断）按评审 F4 退役，按现实重绑（默认展开/失败阻断批准/拒绋试终可点）。已知债登记：current 记录 155 条中 40 条有证据物绑定，其余 115 条无 testFingerprint（存量债，不在本波重跑）；一条 testPath 为分号双路径的 schema 债待拆。评审来源：DeepSeek 2026-09-24 检视 F4。"
+    },
+    {
+      "at": "2026-09-24T14:23:38.517Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 F5/F6 判据修正与补位复核",
+      "detail": "身份判据三改（maintainer 2026-09-24 本会话裁定，Q1/Q2 采纳）：①codex-root／codex-budget-reviewer／codex-session-reviewer／codex-protocol-reviewer 归并为 codex-root（依据登记表 2026-09-21 自述四者为同一 root 会话子任务路径）；②复合署名按成分集合求交判定独立性，封堵「作者写复合署名、复核者写其中成分」旁路；③user 不构成独立复核身份（17 条 user 复核的撰写者无法核实）。接受变红后由 zcode-agent 补位：REV-58（CHG-84 十三对象）、REV-59（CHG-2026-09-16-30/Q16）、REV-60（CHG-2026-09-17-37 三对象）、REV-61（CHG-2026-09-16-32 三对象），均绑当前指纹；REV-2026-09-24-ZCODE-55 的 D05#file 旧绑定标 stale（不改写）。REV-2026-09-22-95 经 maintainer 于 2026-09-24 本会话确认属实（09-22 确经 AskUserQuestion 给出 synchronized 结论），记录保持。评审来源：DeepSeek 2026-09-24 检视 F5/F6。"
     }
   ],
   "history": "registry-history.json"
