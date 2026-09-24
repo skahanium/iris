@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 171,
+  "registryRevision": 172,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T03:55:40.584Z"
+    "recordedAt": "2026-09-24T03:57:19.229Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "56eaae1387676558d6001f0006de99c6"
+      "fingerprint": "cc1b50934d57e3154e6a6ce2ac4fa486"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1228,14 +1228,15 @@
         "endLine": 99,
         "fingerprint": "3734b7e755da5dce11814be2bc828cd2"
       },
-      "implementation": { "state": "unknown" },
-      "verification": { "state": "none" },
-      "work": { "state": "active" },
+      "implementation": { "state": "present" },
+      "verification": { "state": "passed" },
+      "work": { "state": "done" },
       "scope": ["N02", "N03", "N04", "N11", "N23", "Q14"],
       "relations": {
-        "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"]
+        "depends_on": ["D02", "D03", "K05", "K15", "K16", "L03", "L04"],
+        "closes": ["Q14"]
       },
-      "note": "2026-09-23 关条钉死：work.state=active，verification.state=none。合同 §三 关闭清单已写入；N23 未做故不能关包。不关 Q14/N04/D05/D04/C24/C25，不标 passed，不解封 CHG-83/84，不绑 V02/D05#file。"
+      "note": "2026-09-24 关包：关闭清单六项全绿——1/2=2A 波（71731801）、3=Q14 关条（10d5f378，两向证据分别验证）、4=维持既有合同、5=第一波机械钉（9ca06b8c）、6=N23 证据波（5272f640）；另批关包：work.state=done、implementation.state=present、verification.state=passed——只表示本包清单已绑定，不代标 N04/C24/C25/K15 的 passed，不表示 V05 全矩阵或 V06 语义验收。CHG-83/84 已由 REV-2026-09-24-ZCODE-55 解封。不关 G02/G03/Q17/D04。"
     },
     "D06": {
       "kind": "work",
@@ -3239,7 +3240,7 @@
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。唯一所需证据是 V05 逐端点真实调用（四件事批准制，见 docs/eval/results/2026-09-19-v05-live-window.md）。2026-09-23 1A 窄窗口已批准并实跑 2/13 端点（MiniMax-M3、DeepSeek-Flash 全部通过），已绑两条 current V05 verify；其余 11 家端点仍未获批、未运行。不得用 V03 机械记录或 V04 生产入口录制回放充抵全矩阵；窄窗口不是 V05 全矩阵，不关 G02／G03／Q17／D04。"
+      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。唯一所需证据是 V05 逐端点真实调用（四件事批准制，见 docs/eval/results/2026-09-19-v05-live-window.md）。2026-09-23 1A 窄窗口已批准并实跑 2/13 端点（MiniMax-M3、DeepSeek-Flash 全部通过），已绑两条 current V05 verify；其余 11 家端点仍未获批、未运行。不得用 V03 机械记录或 V04 生产入口录制回放充抵全矩阵；窄窗口不是 V05 全矩阵，不关 G02／G03／Q17／D04。**V05 有界承诺边界（2026-09-24 决定）**：不扩 11 家付费矩阵；Agent 池只承诺已 live 验证端点，其余如实记「仅机械通过，live 未运行」并保持 chat-only 降级（ROADMAP 同款先例）；Responses 族（mimo ASR/TTS，supports_tools=false）记「不适用」，不得写成「Responses 已通过」。2 家已测端点的窗口 §二 剩余项（流式／混合续轮／K06 入账）为后续付费小波，另行批准后再收口本条。"
     },
     "Q18": {
       "kind": "issue",
@@ -6854,6 +6855,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-24 独立复核解封 CHG-83/84 陈旧绑定",
       "detail": "zcode-agent 以未参与 CHG-2026-09-21-84 编写的独立身份复核 K16/V02/D05#file 当前指纹（REV-2026-09-24-ZCODE-55，conclusion=synchronized，reviews.reviewer=codex-root 为变更编写方），清 REV-2026-09-21-84 遗留的三条陈旧绑定缺口；旧指纹不改写。CHG-2026-09-21-83 已由 REV-2026-09-22-CODEX-35 覆盖，无缺口残留。不关 G02/G03/Q17/D04；D05 关包另批。reviews／notes 是作者字段，按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-24T03:57:19.130Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 D05 关包与 V05 有界承诺落档",
+      "detail": "关闭清单六项全绿后另批关包：D05 work.state=done、implementation.state=present、verification.state=passed（只表示本包清单已绑定，不代标 N04/C24/C25/K15 passed，不表示 V05 全矩阵或 V06 语义验收）。closes=Q14（10d5f378 关条）。V05 有界承诺边界落档 Q17 备注：Agent 池只承诺已 live 验证端点、其余 chat-only 降级、Responses 族不适用；不扩 11 家付费矩阵。不关 G02/G03/Q17/D04。"
     }
   ],
   "history": "registry-history.json"
