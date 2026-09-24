@@ -638,6 +638,15 @@ fn insufficiency_note(
             failure_class_name(failure)
         ));
     }
+    // Available + allowed but no native outcome means the run was cancelled
+    // between the two routes; K11 still wants an explanation for
+    // `supported && !attempted`.
+    if matches!(support, NativeSearchSupport::Available)
+        && allow_second_route
+        && native_outcome.is_none()
+    {
+        return Some("第二条搜索路线在取消后未启动；不以单路结果冒充双路完成。".to_string());
+    }
     None
 }
 
@@ -1178,6 +1187,14 @@ mod tests {
         assert!(!outcome.native.attempted);
         assert_eq!(outcome.candidates.len(), 1);
         assert!(channels_of(&outcome, "https://mcp.example/keep").contains(&SearchChannel::Mcp));
+        assert!(
+            outcome
+                .shortage
+                .as_deref()
+                .is_some_and(|text| text.contains("取消")),
+            "supported&&!attempted after a cancel still needs an insufficiency note: {:?}",
+            outcome.shortage
+        );
     }
 
     struct HangNativeRoute;
