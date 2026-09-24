@@ -316,12 +316,7 @@ fn native_search_endpoint_from_run_context(
     context: &RunContext,
 ) -> Option<crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef> {
     let model = context.model_override()?;
-    crate::llm::model_catalog::find_model(&model.model_id).map(|entry| {
-        crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef::new(
-            model.model_id,
-            entry.endpoint_family,
-        )
-    })
+    crate::ai_runtime::native_search_subrequest::NativeSearchEndpointRef::for_model_override(&model)
 }
 
 impl<'a> NormalRunToolExecutor<'a> {

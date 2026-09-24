@@ -296,12 +296,6 @@ where
     let native_support = probe.native_search_support();
     let attempt_native =
         matches!(native_support, NativeSearchSupport::Available) && request.allow_second_route;
-    let shortage = match native_support {
-        NativeSearchSupport::Available if !request.allow_second_route => {
-            Some("本次额度不足以启动第二条搜索路线；不以单路结果冒充双路完成。".to_string())
-        }
-        _ => None,
-    };
 
     // MCP is the existing production route and is attempted first. Native, when
     // allowed, is the second route and runs after MCP in this serial slice.
@@ -316,6 +310,12 @@ where
 
     let native_status = native_route_status(native_support, native_outcome.as_ref());
     let mcp_status = route_status_from_outcome(true, &mcp_outcome);
+    let shortage = insufficiency_note(
+        native_support,
+        request.allow_second_route,
+        &mcp_outcome,
+        native_outcome.as_ref(),
+    );
     let usage = DualPathSearchUsage {
         native: u32::from(native_status.succeeded),
         mcp: u32::from(mcp_status.succeeded),
@@ -421,6 +421,10 @@ fn native_route_status(
 
 fn route_status_from_outcome(supported: bool, outcome: &RouteAttemptOutcome) -> RouteStatus {
     if outcome.dispatched_attempts == 0 {
+        // K11's state machine keeps `failed ⊆ attempted`, so a pre-dispatch
+        // refusal cannot claim `failed` here. Its failure class must instead be
+        // named in the insufficiency note (`insufficiency_note`); silently
+        // folding it away would read as "never tried, nothing wrong".
         return RouteStatus {
             supported,
             ..Default::default()
@@ -573,6 +577,50 @@ fn failure_class_name(class: RouteFailureClass) -> &'static str {
         RouteFailureClass::TemporaryFailure => "temporary_failure",
         RouteFailureClass::TransportOrProviderFailure => "transport_or_provider_failure",
     }
+}
+
+/// K11: `supported && !attempted` is legal but never a compliant dual-route
+/// execution, so it must carry an insufficiency note. Zero-dispatch failures
+/// name their stable failure class here instead of being silently folded away.
+fn insufficiency_note(
+    support: NativeSearchSupport,
+    allow_second_route: bool,
+    mcp_outcome: &RouteAttemptOutcome,
+    native_outcome: Option<&RouteAttemptOutcome>,
+) -> Option<String> {
+    match support {
+        NativeSearchSupport::Available if !allow_second_route => {
+            return Some(
+                "本次额度不足以启动第二条搜索路线；不以单路结果冒充双路完成。".to_string(),
+            );
+        }
+        NativeSearchSupport::TemporarilyFailed => {
+            return Some(
+                "原生搜索能力探测临时不可用，本次未尝试第二条搜索路线；不以单路结果冒充双路完成。"
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+    if let Some(failure) = native_outcome
+        .filter(|outcome| outcome.dispatched_attempts == 0)
+        .and_then(|outcome| outcome.failure)
+    {
+        return Some(format!(
+            "原生搜索路线未派发：{}；不以单路结果冒充双路完成。",
+            failure_class_name(failure)
+        ));
+    }
+    if let Some(failure) = mcp_outcome
+        .failure
+        .filter(|_| mcp_outcome.dispatched_attempts == 0)
+    {
+        return Some(format!(
+            "MCP 搜索路线未派发：{}。",
+            failure_class_name(failure)
+        ));
+    }
+    None
 }
 
 fn canonicalize_search_url(url: &str) -> String {
@@ -1033,6 +1081,14 @@ mod tests {
         assert!(!outcome.native.succeeded);
         assert_eq!(outcome.native.failed, None);
         assert!(outcome.mcp.succeeded);
+        assert!(
+            outcome
+                .shortage
+                .as_deref()
+                .is_some_and(|text| text.contains("临时不可用")),
+            "supported&&!attempted must carry an insufficiency note: {:?}",
+            outcome.shortage
+        );
     }
 
     #[tokio::test]
@@ -1134,6 +1190,72 @@ mod tests {
         );
         assert_eq!(outcome.candidates.len(), 1);
         assert!(channels_of(&outcome, "https://mcp.example/keep").contains(&SearchChannel::Mcp));
+    }
+
+    // K11: `supported && !attempted` must carry an insufficiency note. A
+    // pre-dispatch refusal (zero dispatched attempts + failure class) must not
+    // fold into a silent "never tried, nothing wrong" status.
+    #[tokio::test]
+    async fn zero_dispatch_native_failure_is_named_in_the_insufficiency_note() {
+        let native = ScriptedSearchRoute::new(RouteAttemptOutcome {
+            failure: Some(RouteFailureClass::ProtocolOrResultInsufficient),
+            ..RouteAttemptOutcome::default()
+        });
+        let mcp = ScriptedSearchRoute::new(credentialed(vec![hit("https://mcp.example/b")], 1));
+
+        let outcome = coordinate_dual_path_search(
+            request(true),
+            &NativeSearchSupport::Available,
+            &native,
+            &mcp,
+        )
+        .await;
+
+        assert_legal(&outcome);
+        assert!(outcome.native.supported);
+        assert!(!outcome.native.attempted);
+        assert_eq!(outcome.native.failed, None);
+        assert!(outcome.mcp.succeeded);
+        assert!(
+            outcome
+                .shortage
+                .as_deref()
+                .is_some_and(|text| text.contains("protocol_or_result_insufficient")),
+            "a pre-dispatch failure class must be named, not silently dropped: {:?}",
+            outcome.shortage
+        );
+        assert_no_degradation_copy(&outcome);
+    }
+
+    #[tokio::test]
+    async fn zero_dispatch_mcp_failure_is_named_in_the_insufficiency_note() {
+        let native =
+            ScriptedSearchRoute::new(credentialed(vec![hit("https://native.example/a")], 1));
+        let mcp = ScriptedSearchRoute::new(RouteAttemptOutcome {
+            failure: Some(RouteFailureClass::TransportOrProviderFailure),
+            ..RouteAttemptOutcome::default()
+        });
+
+        let outcome = coordinate_dual_path_search(
+            request(true),
+            &NativeSearchSupport::Available,
+            &native,
+            &mcp,
+        )
+        .await;
+
+        assert_legal(&outcome);
+        assert!(outcome.mcp.supported);
+        assert!(!outcome.mcp.attempted);
+        assert!(!outcome.mcp.succeeded);
+        assert!(
+            outcome
+                .shortage
+                .as_deref()
+                .is_some_and(|text| text.contains("transport_or_provider_failure")),
+            "a zero-dispatch MCP failure class must be named: {:?}",
+            outcome.shortage
+        );
     }
 
     #[test]

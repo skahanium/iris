@@ -70,6 +70,35 @@ fn minimax_endpoint() -> NativeSearchEndpointRef {
     )
 }
 
+#[test]
+fn run_context_endpoint_fallback_carries_api_base_and_credential_service() {
+    let model = crate::ai_runtime::run_contract::ModelOverride {
+        provider_id: "minimax".into(),
+        model_id: "MiniMax-M3".into(),
+    };
+    let endpoint =
+        NativeSearchEndpointRef::for_model_override(&model).expect("catalog model resolves");
+    assert_eq!(endpoint.model_id, "MiniMax-M3");
+    assert_eq!(
+        endpoint.api_base.as_deref(),
+        Some("https://api.minimaxi.com/v1")
+    );
+    assert_eq!(
+        endpoint.credential_service.as_deref(),
+        Some(crate::credentials::llm_credential_service("minimax").as_str())
+    );
+    assert!(
+        NativeSearchEndpointRef::for_model_override(
+            &crate::ai_runtime::run_contract::ModelOverride {
+                provider_id: "custom".into(),
+                model_id: "not-a-catalog-model".into(),
+            }
+        )
+        .is_none(),
+        "unknown models keep the honest no-endpoint answer"
+    );
+}
+
 fn draft(query: &str, private_material: Option<&str>) -> NativeSearchSubrequestDraft {
     NativeSearchSubrequestDraft {
         query: query.into(),

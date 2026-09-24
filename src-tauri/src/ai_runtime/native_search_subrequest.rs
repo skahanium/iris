@@ -41,6 +41,23 @@ impl NativeSearchEndpointRef {
             credential_service: None,
         }
     }
+
+    /// Derive the endpoint ref from the Run's provider/model override. Fills
+    /// `api_base` and `credential_service` from the same provider tables a
+    /// selected route candidate uses, so the run-context fallback cannot report
+    /// `Available` while being guaranteed to refuse every dispatch pre-flight.
+    /// Unknown models stay `None` (no endpoint), never a half-configured ref.
+    pub(crate) fn for_model_override(
+        model: &crate::ai_runtime::run_contract::ModelOverride,
+    ) -> Option<Self> {
+        let entry = crate::llm::model_catalog::find_model(&model.model_id)?;
+        let mut endpoint = Self::new(model.model_id.clone(), entry.endpoint_family);
+        endpoint.api_base = Some(crate::llm::providers::api_base(&model.provider_id, None));
+        endpoint.credential_service = Some(crate::llm::providers::credential_service(
+            &model.provider_id,
+        ));
+        Some(endpoint)
+    }
 }
 
 /// Public retrieval scope that may travel with the approved query.
