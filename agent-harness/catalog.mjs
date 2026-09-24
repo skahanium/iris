@@ -1565,7 +1565,7 @@ export const objects = {
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q17" },
     blocks: blocks("acceptance", ["D04"]),
-    note: "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。唯一所需证据是 V05 逐端点真实调用（四件事批准制，见 docs/eval/results/2026-09-19-v05-live-window.md）。2026-09-23 1A 窄窗口已批准并实跑 2/13 端点（MiniMax-M3、DeepSeek-Flash 全部通过），已绑两条 current V05 verify；其余 11 家端点仍未获批、未运行。不得用 V03 机械记录或 V04 生产入口录制回放充抵全矩阵；窄窗口不是 V05 全矩阵，不关 G02／G03／Q17／D04。**V05 有界承诺边界（2026-09-24 决定）**：不扩 11 家付费矩阵；Agent 池只承诺已 live 验证端点，其余如实记「仅机械通过，live 未运行」并保持 chat-only 降级（ROADMAP 同款先例）；Responses 族（mimo ASR/TTS，supports_tools=false）记「不适用」，不得写成「Responses 已通过」。2 家已测端点的窗口 §二 剩余项（流式／混合续轮／K06 入账）为后续付费小波，另行批准后再收口本条。",
+    note: "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。唯一所需证据是 V05 逐端点真实调用（四件事批准制，见 docs/eval/results/2026-09-19-v05-live-window.md）。2026-09-23 1A 窄窗口已批准并实跑 2/13 端点（MiniMax-M3、DeepSeek-Flash 全部通过），已绑两条 current V05 verify；其余 11 家端点仍未获批、未运行。不得用 V03 机械记录或 V04 生产入口录制回放充抵全矩阵；窄窗口不是 V05 全矩阵，不关 G02／G03／Q17／D04。**V05 有界承诺边界（2026-09-24 决定）**：不扩 11 家付费矩阵；Agent 池只承诺已 live 验证端点，其余如实记「仅机械通过，live 未运行」并保持 chat-only 降级（ROADMAP 同款先例）；Responses 族（mimo ASR/TTS，supports_tools=false）记「不适用」，不得写成「Responses 已通过」。2 家已测端点的窗口 §二 剩余项（流式／混合续轮／K06 入账）为后续付费小波，批准清单见 docs/eval/results/2026-09-24-v05-paid-wave-approval-checklist.md，另行批准后再收口本条。本决定的权威登记即本 note；current-baseline 正文同步刻意推迟至关条批，以免打漂 Q17 定义指纹并作废 2026-09-23 的 V05 证据绑定。",
   },
   Q18: {
     kind: "issue",

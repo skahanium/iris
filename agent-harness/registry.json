@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 172,
+  "registryRevision": 173,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T03:57:19.229Z"
+    "recordedAt": "2026-09-24T09:09:12.906Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "cc1b50934d57e3154e6a6ce2ac4fa486"
+      "fingerprint": "4980f21241f9720bc55c2174b072d259"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -3240,7 +3240,7 @@
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。唯一所需证据是 V05 逐端点真实调用（四件事批准制，见 docs/eval/results/2026-09-19-v05-live-window.md）。2026-09-23 1A 窄窗口已批准并实跑 2/13 端点（MiniMax-M3、DeepSeek-Flash 全部通过），已绑两条 current V05 verify；其余 11 家端点仍未获批、未运行。不得用 V03 机械记录或 V04 生产入口录制回放充抵全矩阵；窄窗口不是 V05 全矩阵，不关 G02／G03／Q17／D04。**V05 有界承诺边界（2026-09-24 决定）**：不扩 11 家付费矩阵；Agent 池只承诺已 live 验证端点，其余如实记「仅机械通过，live 未运行」并保持 chat-only 降级（ROADMAP 同款先例）；Responses 族（mimo ASR/TTS，supports_tools=false）记「不适用」，不得写成「Responses 已通过」。2 家已测端点的窗口 §二 剩余项（流式／混合续轮／K06 入账）为后续付费小波，另行批准后再收口本条。"
+      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。唯一所需证据是 V05 逐端点真实调用（四件事批准制，见 docs/eval/results/2026-09-19-v05-live-window.md）。2026-09-23 1A 窄窗口已批准并实跑 2/13 端点（MiniMax-M3、DeepSeek-Flash 全部通过），已绑两条 current V05 verify；其余 11 家端点仍未获批、未运行。不得用 V03 机械记录或 V04 生产入口录制回放充抵全矩阵；窄窗口不是 V05 全矩阵，不关 G02／G03／Q17／D04。**V05 有界承诺边界（2026-09-24 决定）**：不扩 11 家付费矩阵；Agent 池只承诺已 live 验证端点，其余如实记「仅机械通过，live 未运行」并保持 chat-only 降级（ROADMAP 同款先例）；Responses 族（mimo ASR/TTS，supports_tools=false）记「不适用」，不得写成「Responses 已通过」。2 家已测端点的窗口 §二 剩余项（流式／混合续轮／K06 入账）为后续付费小波，批准清单见 docs/eval/results/2026-09-24-v05-paid-wave-approval-checklist.md，另行批准后再收口本条。本决定的权威登记即本 note；current-baseline 正文同步刻意推迟至关条批，以免打漂 Q17 定义指纹并作废 2026-09-23 的 V05 证据绑定。"
     },
     "Q18": {
       "kind": "issue",
@@ -6465,6 +6465,39 @@
       "at": "2026-09-24T03:53:04.679Z",
       "applicability": "current",
       "note": "Q14 关条证据：所需两向分别验证——纯编辑不触发检索 8 钉、组合任务保留检索 12 钉（含新增 q14_mixed_edit_and_fresh_fact_keeps_web_search 补钉 run_intake.rs 的 volatile 否决），清单见 evidence.md V02 行。本机 q14_ 10 passed；t01–t04 见 d05_ten_task_campaign_tests.rs。斜杠 webEnabled:false 与格式门单独不算关条。机械 V03 不替代 V05/V06；不代标 C20/L02/L03 passed。"
+    },
+    {
+      "object": "D04",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_search.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path_search",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "231abe077396d4f660fc5bfcc5282f82",
+      "at": "2026-09-24T09:08:24.086Z",
+      "applicability": "current",
+      "note": "D04 证据重绑（合同 L27 明文欠账）：K11 协调器机械面——两路状态机（failed⊆attempted）、同 URL 合并、MCP 主备不算双路、supported&&!attempted 必须配不足说明（额度不足／探测临时不可用／零派发失败类点名）、run-context 端点 fallback 补齐 api_base/credential_service、dualPath 诊断摘要内容脱敏（无 URL/正文/密钥）。本机 20 passed。录制与机械均不是 V05 live；不关 G02/G03/Q05/Q17，不代标 C10/C11/C12 passed。"
+    },
+    {
+      "object": "D04",
+      "kind": "V04",
+      "testPath": "src-tauri/src/ai_runtime/dual_path_v04_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib dual_path_v04",
+      "environment": "local / macOS / cargo test（录制回放＋契约 MCP 替身；无实网、无付费调用）",
+      "fingerprint": "231abe077396d4f660fc5bfcc5282f82",
+      "at": "2026-09-24T09:08:24.086Z",
+      "applicability": "current",
+      "note": "D04 证据重绑：生产入口五组场景（原生+单 MCP 同 URL 合并、未登记模型正常单路、MCP 主备不算双路、两设置入口交替保存冻结顺序、运行中关联网拒绝新搜索）＋分路故障三变体＋第二派发入口/web_fetch 部分失败＋review_regression_d_* 执行边界（取消/撤权/预算/截止）。本机 17 passed。生产入口录制回放 ≠ V05 live（G02 关闭仍等端点 live）；不关 G02/G03/Q05/Q17。"
+    },
+    {
+      "object": "G03",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/boundary_events.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib main_stream_leak",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "02d2e92cce1d9c4110ae01f38b9dc186",
+      "at": "2026-09-24T09:08:24.086Z",
+      "applicability": "current",
+      "note": "G03 处理路径补全：MainStreamLeak 观察经 answer_budgeted_turn 统一消费进 C26 见证（origin=main_stream_leak、事件种类、引用计数、token 事实，无 URL/正文/密钥，回合级真实身份）；K12 负例保持（不驱动 K11 native.succeeded、不生成可执行 ToolCall）；event_kinds 贯通 isolated 子请求见证（isolated_parse_and_witness_carry_search_event_kinds_content_free，native_search 66 passed）。本机 main_stream_leak 6 passed。处理路径切片不是验收；不是 V05；不关 G02/G03/Q17。"
     }
   ],
   "issues": {
@@ -6861,6 +6894,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-24 D05 关包与 V05 有界承诺落档",
       "detail": "关闭清单六项全绿后另批关包：D05 work.state=done、implementation.state=present、verification.state=passed（只表示本包清单已绑定，不代标 N04/C24/C25/K15 passed，不表示 V05 全矩阵或 V06 语义验收）。closes=Q14（10d5f378 关条）。V05 有界承诺边界落档 Q17 备注：Agent 池只承诺已 live 验证端点、其余 chat-only 降级、Responses 族不适用；不扩 11 家付费矩阵。不关 G02/G03/Q17/D04。"
+    },
+    {
+      "at": "2026-09-24T09:08:24.086Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 D04 接线收口波：证据重绑与核对结论",
+      "detail": "D04 合同 L27 的「把已有机械/V04 绑到当前指纹」欠账已还（D04 V03/V04 两条 current verify）；G03 处理路径补全钉已绑（缺口 a MainStreamLeak 消费、e event_kinds 贯通，缺口 b dualPath 诊断摘要落 record_tool_loop_diagnostic）。只读核对两件结论：(1) UI 状态投影缺位——前端零消费 dualPath/unsupportedReason，§5.1 的「支持/不支持/待验证/临时不可用」展示尚无实现，属新 UI 工作（受 design-system/ROADMAP 门禁），本波不修；(2) 搜索执行无旁路——call_provider_tool 唯一入口 web_evidence_broker→coordinate_dual_path_search，旧路径已退役。Q17 的 V05 有界承诺决定以 registry note 为准登记：current-baseline 正文同步刻意推迟到关条批，以免打漂 Q17 定义指纹并作废 2026-09-23 的 V05 证据绑定。缺口 (d) 渠道贯穿 Wn、(f) 第二入口生产化按计划移入付费小波评估。不关 G02/G03/Q05/Q17/D04。"
     }
   ],
   "history": "registry-history.json"

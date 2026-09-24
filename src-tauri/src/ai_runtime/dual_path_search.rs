@@ -552,6 +552,21 @@ fn route_status_json(status: &RouteStatus) -> Value {
     })
 }
 
+/// Content-free dual-path status summary for the diagnostic account (V07
+/// locatability: "两路只执行了一路" must be findable). Carries statuses, the
+/// insufficiency note and attempt counts only — never candidate URLs, titles
+/// or snippets.
+pub(crate) fn dual_path_diagnostic_summary(outcome: &DualPathSearchOutcome) -> Value {
+    json!({
+        "event": "web_search_dual_path_status",
+        "native": route_status_json(&outcome.native),
+        "mcp": route_status_json(&outcome.mcp),
+        "shortage": outcome.shortage,
+        "bothAvailableRoutesAttempted": outcome.both_available_routes_attempted(),
+        "mcpInternalProviderAttempts": outcome.mcp_internal_provider_attempts,
+    })
+}
+
 fn native_route_status_json(outcome: &DualPathSearchOutcome) -> Value {
     let mut native = route_status_json(&outcome.native);
     native["unsupportedReason"] = match outcome.native_unsupported_reason {
@@ -1193,6 +1208,47 @@ mod tests {
         );
         assert_eq!(outcome.candidates.len(), 1);
         assert!(channels_of(&outcome, "https://mcp.example/keep").contains(&SearchChannel::Mcp));
+    }
+
+    #[test]
+    fn dual_path_diagnostic_summary_is_status_only_and_content_free() {
+        let outcome = DualPathSearchOutcome {
+            identity: identity(),
+            native: RouteStatus {
+                supported: true,
+                attempted: true,
+                succeeded: true,
+                failed: None,
+            },
+            mcp: RouteStatus {
+                supported: true,
+                attempted: true,
+                succeeded: true,
+                failed: None,
+            },
+            candidates: vec![DualPathCandidate {
+                url: "https://example.test/secret-page".into(),
+                canonical_url: "https://example.test/secret-page".into(),
+                title: "secret title".into(),
+                snippet: "secret snippet".into(),
+                channels: vec![SearchChannel::Native],
+            }],
+            shortage: Some("本次额度不足以启动第二条搜索路线；不以单路结果冒充双路完成。".into()),
+            ..DualPathSearchOutcome::default()
+        };
+
+        let summary = dual_path_diagnostic_summary(&outcome);
+
+        assert_eq!(summary["event"], "web_search_dual_path_status");
+        assert_eq!(summary["native"]["succeeded"], true);
+        assert_eq!(summary["mcp"]["attempted"], true);
+        assert_eq!(summary["bothAvailableRoutesAttempted"], true);
+        assert!(summary["shortage"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty()));
+        let encoded = summary.to_string();
+        assert!(!encoded.contains("https://"));
+        assert!(!encoded.contains("secret"));
     }
 
     // K11: `supported && !attempted` must carry an insufficiency note. A

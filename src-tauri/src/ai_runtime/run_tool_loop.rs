@@ -776,6 +776,13 @@ impl<'a> NormalRunToolExecutor<'a> {
             } else {
                 self.set_web_failure(None)?;
             }
+            // V07 locatability: keep the dual-path status in the diagnostic
+            // account, not only inside the tool output JSON.
+            self.record_tool_loop_diagnostic(
+                crate::ai_runtime::dual_path_search::dual_path_diagnostic_summary(
+                    &output.dual_path,
+                ),
+            );
             return Ok(ToolCallResult {
                 tool_name: tool_name.to_string(),
                 success: true,
