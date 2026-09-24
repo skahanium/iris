@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 169,
+  "registryRevision": 170,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T00:05:20.999Z"
+    "recordedAt": "2026-09-24T03:53:10.287Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "2e52b6c9b666322842d72fa34a51cfab"
+      "fingerprint": "fbf2346aa1d7004a86734fee29a07c3c"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -3175,8 +3175,8 @@
       "verification": { "state": "none" },
       "work": null,
       "scope": [],
-      "relations": { "blocks": [{ "id": "D05", "at": "acceptance" }] },
-      "note": "2026-09-23 关闭清单已钉：Intake LocalTransformation 与十题 T01–T04 只作机械钉；斜杠 webEnabled:false 与格式门单独不算关条。仍 open，不关 Q14／D05。"
+      "relations": {},
+      "note": "2026-09-24 关条：所需两向证据分别验证——纯编辑不触发检索（q14_polish／q14_format_request／q14_colon_body_url_without_verify／t01／web_enabled_rewrite／web_enabled_local_only／quoted_* 两条）；组合任务保留检索（q14_translate_and_verify／q14_translate_colon_verify_url／q14_summarize_latest_news／q14_mixed_edit_and_fresh_fact（补钉 volatile 否决）／q14_standardization_question／q14_chat_greeting／t02／t03／t04／explicit_web_instruction_overrides）。blocks 边已摘；保留在 D05 scope 作历史依据（closed 不影响就绪计算）。机械钉不替代 N04 语义验收，不代标 C20/L02/L03 passed；不关 G02/G03/Q17/D04。"
     },
     "Q15": {
       "kind": "issue",
@@ -4507,13 +4507,13 @@
       "title": "V02 不变量、合法案例与违例案例登记",
       "owner": "M08",
       "maturity": "defined",
-      "revision": 43,
+      "revision": 44,
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V02",
         "line": 47,
-        "endLine": 93,
-        "fingerprint": "88761cf13e23705661eec5af50879dee"
+        "endLine": 94,
+        "fingerprint": "b6f8e129cc9f40742756f1d8ba12ca13"
       },
       "implementation": { "state": "unknown" },
       "verification": { "state": "none" },
@@ -4637,8 +4637,8 @@
       "definition": {
         "file": "testing/evidence.md",
         "anchor": "V08",
-        "line": 95,
-        "endLine": 119,
+        "line": 96,
+        "endLine": 120,
         "fingerprint": "de14538f1439db6162db1aafca887c43"
       },
       "implementation": { "state": "unknown" },
@@ -6400,17 +6400,6 @@
       "testFingerprint": "sha256:c659d750242ae1f3648676be027b10577f3cd48f43ef1ed506a86b0b5db5fb13"
     },
     {
-      "object": "V02",
-      "kind": "V03",
-      "testPath": "scripts/agent-harness-check.test.mjs",
-      "command": "npm run agent-harness:test",
-      "environment": "local / macOS / node / agent-harness:test；无实网或付费调用",
-      "fingerprint": "88761cf13e23705661eec5af50879dee",
-      "at": "2026-09-23T16:19:28.290Z",
-      "applicability": "current",
-      "note": "N23 证据波：证据表补 N23 撤回≠重规划行后重绑当前定义指纹，本机 50 pass。不把 V02 verification 标 passed，不解封 CHG-83 / REV-2026-09-21-84。"
-    },
-    {
       "object": "N23",
       "kind": "V03",
       "testPath": "src-tauri/src/ai_runtime/normal_session_repository_tests.rs",
@@ -6453,6 +6442,28 @@
       "at": "2026-09-23T15:13:00Z",
       "applicability": "current",
       "note": "V05 窄窗口 1A（2/13 端点）：DeepSeek-Flash 两条均通过——live_deepseek_flash_native_search_protocol_probe（仅 HTTP 门闩，10.15s）与 live_deepseek_flash_adapter_returns_https_citations（检索凭据 + HTTPS，5.74s）；响应含 web_search_tool_result_error 块已如实记录。执行记录 docs/eval/results/2026-09-23-v05-deepseek-native-search-live.md。协议探针不能单独当 G03 全项通过；窄窗口 2/13，不关 G02／G03／Q17／D04，不把 C10／C11／K12 标 passed。"
+    },
+    {
+      "object": "V02",
+      "kind": "V03",
+      "testPath": "scripts/agent-harness-check.test.mjs",
+      "command": "npm run agent-harness:test",
+      "environment": "local / macOS / node / agent-harness:test；无实网或付费调用",
+      "fingerprint": "b6f8e129cc9f40742756f1d8ba12ca13",
+      "at": "2026-09-24T03:53:04.679Z",
+      "applicability": "current",
+      "note": "Q14 关条：证据表补双路触发范围两向行后重绑当前定义指纹。不把 V02 verification 标 passed，不解封 CHG-83 / REV-2026-09-21-84。"
+    },
+    {
+      "object": "Q14",
+      "kind": "V03",
+      "testPath": "src-tauri/src/ai_runtime/d05_document_task_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib q14_",
+      "environment": "local / macOS / cargo test",
+      "fingerprint": "3671d5d5513ced6234b0f33b76180101",
+      "at": "2026-09-24T03:53:04.679Z",
+      "applicability": "current",
+      "note": "Q14 关条证据：所需两向分别验证——纯编辑不触发检索 8 钉、组合任务保留检索 12 钉（含新增 q14_mixed_edit_and_fresh_fact_keeps_web_search 补钉 run_intake.rs 的 volatile 否决），清单见 evidence.md V02 行。本机 q14_ 10 passed；t01–t04 见 d05_ten_task_campaign_tests.rs。斜杠 webEnabled:false 与格式门单独不算关条。机械 V03 不替代 V05/V06；不代标 C20/L02/L03 passed。"
     }
   ],
   "issues": {
@@ -6469,7 +6480,7 @@
     "Q11": { "state": "closed" },
     "Q12": { "state": "closed" },
     "Q13": { "state": "open" },
-    "Q14": { "state": "open" },
+    "Q14": { "state": "closed" },
     "Q15": { "state": "closed" },
     "Q16": { "state": "closed" },
     "Q17": { "state": "open" },
@@ -6847,6 +6858,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-23 V05 窄窗口 live 证据绑定",
       "detail": "Q17 声明的唯一所需证据（V05 逐端点真实调用）已在 1A 窄窗口取得 2/13 端点实跑：MiniMax-M3、DeepSeek-Flash 全部通过，记录 docs/eval/results/2026-09-23-v05-minimax-m3-live.md 与 2026-09-23-v05-deepseek-native-search-live.md。现绑两条 current V05 verify 至 Q17。窄窗口不是 V05 全矩阵；不关 G02／G03／Q17／D04，不把 C10／C11／K12 标 passed；其余 11 家端点未获批、未运行。Q17 catalog 备注同步改写「零 verify」过时表述。verify／notes 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-24T03:53:04.679Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 Q14 关条：两向证据绑定与 V02 重绑",
+      "detail": "Q14 所需两向证据分别验证齐备（纯编辑 8 钉不触发检索；组合 12 钉保留检索，含新增 q14_mixed_edit_and_fresh_fact_keeps_web_search 钉住 run_intake.rs:1013 的 volatile 否决），关条并摘 catalog blocks 边；Q14 保留在 D05 scope 作历史依据（closed 不影响就绪计算，与 Q15/Q16 移出 scope 的先例不同，理由：不动 D05 合同正文以免打漂 D05#file）。V02 current 证据标 obsolete 并重绑当前定义指纹 b6f8e129cc9f40742756f1d8ba12ca13（旧 88761cf13e23705661eec5af50879dee 不改写）。不代标 N04/C20/L02/L03 passed，不关 G02/G03/Q17/D04；D05 关包另批。verify／notes 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ],
   "history": "registry-history.json"

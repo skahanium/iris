@@ -179,6 +179,26 @@ fn q14_translate_and_verify_keeps_web_search() {
 }
 
 #[test]
+fn q14_mixed_edit_and_fresh_fact_keeps_web_search() {
+    // Combined task without explicit 联网/核实 words: an edit request that also
+    // needs a current external fact must stay on the search path. This pins the
+    // volatile-fact veto of the LocalTransformation shortcut (Q14 combined side).
+    let mut start = request();
+    start.web_enabled = true;
+    start.turn.message = "把这段话润色一下，并补上 2026 年最新的销量数据。".into();
+
+    let envelope = RunIntake::resolve_envelope(&start).expect("resolve edit with fresh-fact need");
+
+    assert_ne!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+    assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert!(
+        has_capability(&envelope, "web.search"),
+        "a combined edit + fresh-fact request must keep web.search"
+    );
+}
+
+#[test]
 fn q14_summarize_latest_news_keeps_web_search() {
     let mut start = request();
     start.web_enabled = true;

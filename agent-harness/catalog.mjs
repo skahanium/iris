@@ -1537,8 +1537,7 @@ export const objects = {
     owner: "M07",
     maturity: "draft",
     definition: { file: "requirements/current-baseline.md", anchor: "Q14" },
-    blocks: blocks("acceptance", ["D05"]),
-    note: "2026-09-23 关闭清单已钉：Intake LocalTransformation 与十题 T01–T04 只作机械钉；斜杠 webEnabled:false 与格式门单独不算关条。仍 open，不关 Q14／D05。",
+    note: "2026-09-24 关条：所需两向证据分别验证——纯编辑不触发检索（q14_polish／q14_format_request／q14_colon_body_url_without_verify／t01／web_enabled_rewrite／web_enabled_local_only／quoted_* 两条）；组合任务保留检索（q14_translate_and_verify／q14_translate_colon_verify_url／q14_summarize_latest_news／q14_mixed_edit_and_fresh_fact（补钉 volatile 否决）／q14_standardization_question／q14_chat_greeting／t02／t03／t04／explicit_web_instruction_overrides）。blocks 边已摘；保留在 D05 scope 作历史依据（closed 不影响就绪计算）。机械钉不替代 N04 语义验收，不代标 C20/L02/L03 passed；不关 G02/G03/Q17/D04。",
   },
   Q15: {
     kind: "issue",

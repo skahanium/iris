@@ -14882,6 +14882,23 @@
           "fingerprintTo": "88761cf13e23705661eec5af50879dee"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-24-103",
+      "at": "2026-09-24T03:53:10.287Z",
+      "author": "zcode-agent",
+      "classification": "refinement",
+      "reason": "Q14 关条：evidence.md 补双路触发范围两向证据行，摘 Q14 blocks 边并关条；两向 V03 钉齐备（含补钉 volatile 否决）。不代标 N04/C20，不关 G02/G03/Q17/D04，D05 关包另批。",
+      "review": null,
+      "objects": [
+        {
+          "id": "V02",
+          "revisionFrom": 43,
+          "revisionTo": 44,
+          "fingerprintFrom": "88761cf13e23705661eec5af50879dee",
+          "fingerprintTo": "b6f8e129cc9f40742756f1d8ba12ca13"
+        }
+      ]
     }
   ],
   "reviews": [
