@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 168,
+  "registryRevision": 169,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-23T16:21:05.671Z"
+    "recordedAt": "2026-09-24T00:05:20.999Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "ff7ee18de2a80dfb7d52a02ed76a9687"
+      "fingerprint": "2e52b6c9b666322842d72fa34a51cfab"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -3239,7 +3239,7 @@
       "work": null,
       "scope": [],
       "relations": { "blocks": [{ "id": "D04", "at": "acceptance" }] },
-      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。**本条目前没有任何 verify 记录，这是有意的、不是遗漏**：唯一所需证据是 V05 逐端点真实调用，而它需要用户先批准四件事（端点范围、费用上限、凭据、原生搜索端点），见 docs/eval/results/2026-09-19-v05-live-window.md；未获批准前一条也不运行。因此不得用 V03 机械记录或 V04 生产入口录制回放来充抵本条，也不得因本条缺证据而误判为「施工方漏绑」。"
+      "note": "V05 承接方（2026-09-17）：Q04／Q10 的关闭不再要求逐端点 V05，该证据由本条与 G03／D04 承接。D02 不关闭本条。唯一所需证据是 V05 逐端点真实调用（四件事批准制，见 docs/eval/results/2026-09-19-v05-live-window.md）。2026-09-23 1A 窄窗口已批准并实跑 2/13 端点（MiniMax-M3、DeepSeek-Flash 全部通过），已绑两条 current V05 verify；其余 11 家端点仍未获批、未运行。不得用 V03 机械记录或 V04 生产入口录制回放充抵全矩阵；窄窗口不是 V05 全矩阵，不关 G02／G03／Q17／D04。"
     },
     "Q18": {
       "kind": "issue",
@@ -6431,6 +6431,28 @@
       "at": "2026-09-23T16:19:28.290Z",
       "applicability": "current",
       "note": "N23 薄前端钉：handleRetract 只 invoke assistant_session_retract、不 invoke assistant_run_start。本机 8 passed。不做 V07 截图；证据波，不关 D05／Q14／N04。"
+    },
+    {
+      "object": "Q17",
+      "kind": "V05",
+      "testPath": "src-tauri/src/ai_runtime/native_search_adapter_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib live_minimax_m3_adapter_returns_https_citations -- --ignored --nocapture",
+      "environment": "local / macOS / cargo test --ignored（实网付费调用，1A 窄窗口）",
+      "fingerprint": "1631dc778b45fb6e31d8cac48d158ce9",
+      "at": "2026-09-23T14:30:25Z",
+      "applicability": "current",
+      "note": "V05 窄窗口 1A（2/13 端点）：MiniMax-M3 适配器 live 通过（检索凭据 + HTTPS 候选 10 条，HTTP 200，status=completed，墙钟约 14.36s）。执行记录 docs/eval/results/2026-09-23-v05-minimax-m3-live.md。不是「本端点机械与 live 均通过」，不是 V05 全矩阵；不关 G02／G03／Q17／D04，不把 C10／C11／K12 标 passed；其余 11 家厂商端点未获批、未运行。"
+    },
+    {
+      "object": "Q17",
+      "kind": "V05",
+      "testPath": "src-tauri/src/ai_runtime/native_search_adapter_tests.rs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib live_deepseek_flash -- --ignored --nocapture",
+      "environment": "local / macOS / cargo test --ignored（实网付费调用，1A 窄窗口；无 Key 跳过后补配 iris.llm.deepseek 同日补跑）",
+      "fingerprint": "1631dc778b45fb6e31d8cac48d158ce9",
+      "at": "2026-09-23T15:13:00Z",
+      "applicability": "current",
+      "note": "V05 窄窗口 1A（2/13 端点）：DeepSeek-Flash 两条均通过——live_deepseek_flash_native_search_protocol_probe（仅 HTTP 门闩，10.15s）与 live_deepseek_flash_adapter_returns_https_citations（检索凭据 + HTTPS，5.74s）；响应含 web_search_tool_result_error 块已如实记录。执行记录 docs/eval/results/2026-09-23-v05-deepseek-native-search-live.md。协议探针不能单独当 G03 全项通过；窄窗口 2/13，不关 G02／G03／Q17／D04，不把 C10／C11／K12 标 passed。"
     }
   ],
   "issues": {
@@ -6819,6 +6841,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-23 N23 证据波：verify 绑撤回≠重规划",
       "detail": "为 N23 追加绑 n23_ 仓储／命令测试与薄前端钉的 current V03；V02 current 证据标 obsolete 并重绑当前定义指纹 88761cf13e23705661eec5af50879dee（证据表补 N23 行，旧指纹 a765d9910939194ffb4248b0efc1f96e 不改写）。治理复核 REV-2026-09-21-84／REV-2026-09-22-CODEX-30 的 V02 绑定保持 stale，不改写旧指纹。不把 verification.state 标 passed，不关 D05／Q14／N04，不解封 CHG-83／CHG-84，不绑 V02／D05#file 复核。verify／notes 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
+    },
+    {
+      "at": "2026-09-24T00:04:43.678Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-23 V05 窄窗口 live 证据绑定",
+      "detail": "Q17 声明的唯一所需证据（V05 逐端点真实调用）已在 1A 窄窗口取得 2/13 端点实跑：MiniMax-M3、DeepSeek-Flash 全部通过，记录 docs/eval/results/2026-09-23-v05-minimax-m3-live.md 与 2026-09-23-v05-deepseek-native-search-live.md。现绑两条 current V05 verify 至 Q17。窄窗口不是 V05 全矩阵；不关 G02／G03／Q17／D04，不把 C10／C11／K12 标 passed；其余 11 家端点未获批、未运行。Q17 catalog 备注同步改写「零 verify」过时表述。verify／notes 段是作者字段，不由 --reconcile 计算，故按 X03 留痕。"
     }
   ],
   "history": "registry-history.json"
