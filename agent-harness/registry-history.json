@@ -14899,6 +14899,30 @@
           "fingerprintTo": "b6f8e129cc9f40742756f1d8ba12ca13"
         }
       ]
+    },
+    {
+      "id": "CHG-2026-09-24-104",
+      "at": "2026-09-24T13:57:27.324Z",
+      "author": "zcode-agent",
+      "classification": "refinement",
+      "reason": "F1 阅读面收口：D05 合同 09-23 批口径标注为历史、补关包事实；施工日记增「关包」条目（六项依据逐条引提交，F3 补课去向如实登记）。不改写任何历史记录。",
+      "review": null,
+      "objects": [
+        {
+          "id": "D05#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "1a43f1b10d44305a36df8112a1f47372",
+          "fingerprintTo": "eb4a660958e700f5a2ecb831f8d7a6ac"
+        },
+        {
+          "id": "FILE-D05-JOURNAL#file",
+          "revisionFrom": 0,
+          "revisionTo": 0,
+          "fingerprintFrom": "b7c7baeccb516e5084cd23ce674bf591",
+          "fingerprintTo": "9aa6bbef05a1a259bf3b134031c78962"
+        }
+      ]
     }
   ],
   "reviews": [
@@ -16799,6 +16823,23 @@
           "id": "D05#file",
           "revision": 0,
           "fingerprint": "1a43f1b10d44305a36df8112a1f47372"
+        }
+      ]
+    },
+    {
+      "id": "REV-2026-09-24-ZCODE-56",
+      "change": "CHG-2026-09-21-84",
+      "at": "2026-09-24T13:57:44.981Z",
+      "author": "zcode-agent",
+      "reviewer": "codex-root",
+      "conclusion": "synchronized",
+      "reason": "F1 阅读面收口后对 CHG-2026-09-21-84 遗留 D05#file 绑定缺口的当前指纹复核（zcode-agent 未参与该变更编写）：合同容器正文本轮仅做时态与历史口径修正——09-23 批「不能关包」陈述标注为历史批次口径、补 2026-09-24 另批关包事实与六项依据，施工日记增「关包」条目；未改写任何历史记录与关闭清单条件。当前 eb4a660958e700f5a2ecb831f8d7a6ac 与现行登记（work=done/passed，72ca0dba）一致，无未覆盖差异。REV-2026-09-24-ZCODE-55 的旧 D05#file 绑定已 stale，不改写。",
+      "evidence": "git 提交（F1 阅读面收口批）；agent-harness:check PASSED（97 托管/196 对象）；D05 定义块指纹未变、15 条 verify 绑定仍有效",
+      "objects": [
+        {
+          "id": "D05#file",
+          "revision": 0,
+          "fingerprint": "eb4a660958e700f5a2ecb831f8d7a6ac"
         }
       ]
     }

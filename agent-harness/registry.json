@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 173,
+  "registryRevision": 175,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T09:09:12.906Z"
+    "recordedAt": "2026-09-24T13:57:57.606Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -201,12 +201,12 @@
     "implementation/D05-document-tasks-and-delivery.md": {
       "container": "D05",
       "registration": "D05#file",
-      "fingerprint": "1a43f1b10d44305a36df8112a1f47372"
+      "fingerprint": "eb4a660958e700f5a2ecb831f8d7a6ac"
     },
     "implementation/D05-wave-log.md": {
       "container": "FILE-D05-JOURNAL",
       "registration": "FILE-D05-JOURNAL#file",
-      "fingerprint": "b7c7baeccb516e5084cd23ce674bf591"
+      "fingerprint": "9aa6bbef05a1a259bf3b134031c78962"
     },
     "implementation/README.md": {
       "container": "FILE-IMPLEMENTATION",
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "4980f21241f9720bc55c2174b072d259"
+      "fingerprint": "de24d0882116dbc797b13a60a9960017"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -1335,8 +1335,8 @@
       "definition": {
         "file": "implementation/D05-wave-log.md",
         "anchor": "FILE-D05-JOURNAL",
-        "line": 87,
-        "endLine": 93,
+        "line": 94,
+        "endLine": 100,
         "fingerprint": "9311168c21dcbb777ce5e704b7a060f8"
       },
       "implementation": { "state": "unknown" },
@@ -6900,6 +6900,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-24 D04 接线收口波：证据重绑与核对结论",
       "detail": "D04 合同 L27 的「把已有机械/V04 绑到当前指纹」欠账已还（D04 V03/V04 两条 current verify）；G03 处理路径补全钉已绑（缺口 a MainStreamLeak 消费、e event_kinds 贯通，缺口 b dualPath 诊断摘要落 record_tool_loop_diagnostic）。只读核对两件结论：(1) UI 状态投影缺位——前端零消费 dualPath/unsupportedReason，§5.1 的「支持/不支持/待验证/临时不可用」展示尚无实现，属新 UI 工作（受 design-system/ROADMAP 门禁），本波不修；(2) 搜索执行无旁路——call_provider_tool 唯一入口 web_evidence_broker→coordinate_dual_path_search，旧路径已退役。Q17 的 V05 有界承诺决定以 registry note 为准登记：current-baseline 正文同步刻意推迟到关条批，以免打漂 Q17 定义指纹并作废 2026-09-23 的 V05 证据绑定。缺口 (d) 渠道贯穿 Wn、(f) 第二入口生产化按计划移入付费小波评估。不关 G02/G03/Q05/Q17/D04。"
+    },
+    {
+      "at": "2026-09-24T13:57:44.984Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 F1 阅读面收口：D05 合同与日记补关包记录",
+      "detail": "D05 合同三处 09-23 批口径（active/本批不关包/N23 未做不能关包）标注为历史并补 2026-09-24 另批关包事实；施工日记增「关包」条目（六项依据引 71731801/10d5f378/9ca06b8c/5272f640 等，并如实登记 F3 补课去向）。改动均在文件级容器内，D05 定义块指纹未变、verify 绑定仍有效。D05#file=eb4a660958e700f5a2ecb831f8d7a6ac、FILE-D05-JOURNAL#file=9aa6bbef05a1a259bf3b134031c78962 已由 CHG 接受；REV-2026-09-24-ZCODE-56 补绑新 D05#file 指纹（ZCODE-55 旧绑定 stale 不改写）。评审来源：DeepSeek 2026-09-24 检视 F1。"
     }
   ],
   "history": "registry-history.json"
