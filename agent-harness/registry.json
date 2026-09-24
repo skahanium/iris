@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 180,
+  "registryRevision": 181,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T14:27:06.970Z"
+    "recordedAt": "2026-09-24T15:26:39.679Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "19164440ba9cfd2bb157cfc337a92a6b"
+      "fingerprint": "8232282d9186cb70acf06356d27608ae"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -6064,19 +6064,6 @@
       "testFingerprint": "sha256:5dd15ec534e0164b8509a7a1f70654976d0d21dc2e7e63e918e835be020447df"
     },
     {
-      "object": "P03",
-      "kind": "V03",
-      "testPath": "scripts/agent-harness-check.test.mjs",
-      "command": "npm run agent-harness:test",
-      "environment": "local macOS / offline / baseline 4bd814967a660d2fd5d667fbd292b7121419c254 + 本轮未提交工作树；无新增依赖、无实网或付费调用",
-      "fingerprint": "ba2e902bad1a39fa846431526b1ba499",
-      "at": "2026-09-24T14:19:38.569Z",
-      "applicability": "current",
-      "note": "重绑（2026-09-24 证据物漂移后复跑）：整个检查器39通过：有效/空/占位/前缀/括注身份、独立与自签、无关对象、陈旧补充绑定、有效替代、同名文件/对象兼容。独立红例逐轮复核并修复；17条历史user身份来源仍待核实，不推断实际作者。",
-      "sourceFingerprint": "sha256:cbae5507d477ebc81c3b618e966b8035e5efb3aee27234ebd29972baacad6850",
-      "testFingerprint": "sha256:3d216fbe2d98c249b19694e621a139dbe993720f56b9ab763464764bfb7167ba"
-    },
-    {
       "object": "Q11",
       "kind": "V03",
       "testPath": "scripts/agent-eval.test.mjs",
@@ -6498,7 +6485,20 @@
       "testFingerprint": "sha256:8c855163ff96ba426bf954d6a0d0a2068df1f5c26da05bdd120b6f4095a36f6f",
       "at": "2026-09-24T14:19:38.569Z",
       "applicability": "current",
-      "note": "C24 确认卡交互（当前现实，评审 F4 纠正后重绑）：差异默认展开、失败阻断批准、拒绋试终可点、不确定项块渲染（format-preservation-notice）；涉密域不挂差异门。本机 11 passed。不是 C24 验收，不把 verification 标 passed。"
+      "note": "C24 确认卡交互（当前现实，评审 F4 纠正后重绑）：差异默认展开、失败阻断批准、拒绋试终可点、不确定项块渲染（format-preservation-notice）；涉密域不挂差异门。本机 11 passed。不是 C24 验收，不把 verification 标 passed。",
+      "reason": "prettier 重排测试文件致证据物漂移，复跑重绑；旧哈希不改写。"
+    },
+    {
+      "object": "P03",
+      "kind": "V03",
+      "testPath": "scripts/agent-harness-check.test.mjs",
+      "command": "npm run agent-harness:test",
+      "environment": "local / macOS / node / agent-harness:test",
+      "fingerprint": "ba2e902bad1a39fa846431526b1ba499",
+      "testFingerprint": "sha256:6837696a68c665af8102159ce40ca872cbc2cc45246521e7a86861748d050967",
+      "at": "2026-09-24T15:26:39.557Z",
+      "applicability": "current",
+      "note": "重绑（2026-09-24 证据物漂移后复跑）：治理收口波新增漂移校验负例与身份求交后复跑，51 passed。"
     }
   ],
   "issues": {
