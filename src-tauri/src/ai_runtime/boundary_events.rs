@@ -1115,6 +1115,30 @@ pub fn record_native_search_observation(
     )
 }
 
+/// Persist a content-free witness for search credentials observed in the main
+/// dialogue stream (K12 `MainStreamLeak`). Discovery happens while the model
+/// gateway scans its stream state (M04/C11); the observation never drives K11
+/// native `succeeded` and is never an executable tool call.
+pub fn record_main_stream_leak_observation(
+    db: &Database,
+    correlation: &BoundaryCorrelation,
+    payload: &serde_json::Value,
+) -> AppResult<()> {
+    record_event(
+        db,
+        correlation,
+        BoundaryLayer::Generated,
+        BoundaryEventKind::OutboundWitness,
+        RecordCompleteness::Complete,
+        DiscoveryLocation {
+            module: "M04",
+            component: "C11",
+            tool_instance: Some("main_stream_search".into()),
+        },
+        payload.clone(),
+    )
+}
+
 /// Best-effort handshake start used by the production model path.
 pub fn record_handshake_start(db: &Database, slot: &BoundaryAuditSlot) -> AppResult<()> {
     record_event(
@@ -1605,6 +1629,60 @@ mod tests {
             assess_completeness(&db, &run_id).expect("assess"),
             RecordCompleteness::Complete
         );
+    }
+
+    #[test]
+    fn main_stream_leak_observation_is_witnessed_content_free() {
+        let db = Database::open_in_memory().expect("db");
+        let run_id = accept_run(&db, "c26-main-stream-leak");
+        let correlation = closed_correlation(&run_id);
+        let fragment = serde_json::json!({
+            "output": [
+                { "type": "web_search_call", "id": "ws_leak", "status": "completed" },
+                { "type": "message", "content": [ { "type": "output_text", "text": "答复",
+                    "annotations": [ { "type": "url_citation", "url": "https://example.test/leak", "title": "leak" } ] } ] }
+            ],
+            "usage": { "input_tokens": 11, "output_tokens": 7 }
+        });
+        let observation =
+            crate::ai_runtime::native_search_subrequest::observation_from_main_stream_json(
+                &fragment,
+            )
+            .expect("leak observation");
+        crate::ai_runtime::boundary_events::record_main_stream_leak_observation(
+            &db,
+            &correlation,
+            &observation.main_stream_leak_witness_payload(),
+        )
+        .expect("record leak witness");
+        let events = query_by_run(&db, &run_id).expect("query");
+        let recorded = events
+            .iter()
+            .find(|event| {
+                event
+                    .payload
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("main_stream_search_observation")
+            })
+            .expect("main stream leak witness");
+        assert_eq!(recorded.run_id, run_id);
+        assert_eq!(recorded.payload["origin"], "main_stream_leak");
+        let kinds = recorded.payload["eventKinds"]
+            .as_array()
+            .expect("event kinds");
+        assert!(kinds.iter().any(|kind| kind == "web_search_call"));
+        assert!(kinds.iter().any(|kind| kind == "url_citation"));
+        assert_eq!(
+            recorded.payload["citationCount"].as_u64().expect("count") as usize,
+            observation.candidates.len()
+        );
+        assert_eq!(recorded.payload["hasRetrievalCredentials"], true);
+        assert_eq!(recorded.payload["isNetworkToolDispatch"], false);
+        let encoded = recorded.payload.to_string();
+        assert!(!encoded.contains("https://"));
+        assert!(!encoded.contains("sk-"));
+        assert!(!encoded.contains(SECRET_NOTE));
     }
 
     #[test]

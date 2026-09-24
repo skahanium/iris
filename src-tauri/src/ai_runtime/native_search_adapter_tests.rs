@@ -71,6 +71,38 @@ fn minimax_endpoint() -> NativeSearchEndpointRef {
 }
 
 #[test]
+fn isolated_parse_and_witness_carry_search_event_kinds_content_free() {
+    let body = responses_live_shape();
+    let parse = crate::ai_runtime::native_search_subrequest::parse_native_search_payload(
+        crate::ai_runtime::native_search_subrequest::NativeSearchPayloadFamily::OpenAiShaped,
+        &body,
+    );
+    assert!(
+        parse
+            .event_kinds
+            .iter()
+            .any(|kind| kind == "web_search_call"),
+        "parse must carry supplier-defined event kinds: {:?}",
+        parse.event_kinds
+    );
+    assert!(parse.event_kinds.iter().any(|kind| kind == "url_citation"));
+    let outcome = parse.into_route_outcome();
+    let payload = crate::ai_runtime::native_search_adapter::native_attempt_witness_payload(
+        "2xx",
+        &outcome,
+        (Some(11), Some(7)),
+        true,
+    );
+    assert_eq!(payload["origin"], "isolated_subrequest");
+    let kinds = payload["eventKinds"].as_array().expect("event kinds");
+    assert!(kinds.iter().any(|kind| kind == "web_search_call"));
+    assert!(kinds.iter().any(|kind| kind == "url_citation"));
+    let encoded = payload.to_string();
+    assert!(!encoded.contains("https://"));
+    assert!(!encoded.contains("sk-"));
+}
+
+#[test]
 fn run_context_endpoint_fallback_carries_api_base_and_credential_service() {
     let model = crate::ai_runtime::run_contract::ModelOverride {
         provider_id: "minimax".into(),
@@ -945,6 +977,7 @@ impl NativeSearchModelAdapter for CatalogMissAdapter {
             has_retrieval_credentials: false,
             generated_text_only: true,
             failure: None,
+            event_kinds: Vec::new(),
         }
     }
 }

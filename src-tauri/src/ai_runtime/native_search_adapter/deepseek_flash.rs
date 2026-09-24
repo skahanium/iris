@@ -107,6 +107,7 @@ fn deepseek_protocol_insufficient() -> NativeSearchParse {
         has_retrieval_credentials: false,
         generated_text_only: false,
         failure: Some(RouteFailureClass::ProtocolOrResultInsufficient),
+        event_kinds: Vec::new(),
     }
 }
 

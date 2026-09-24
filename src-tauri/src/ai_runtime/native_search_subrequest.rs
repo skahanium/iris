@@ -177,6 +177,9 @@ pub(crate) struct NativeSearchParse {
     pub has_retrieval_credentials: bool,
     pub generated_text_only: bool,
     pub failure: Option<RouteFailureClass>,
+    /// Supplier-defined search event type names seen in this response, kept for
+    /// the C26 attempt witness. Content-free.
+    pub event_kinds: Vec<String>,
 }
 
 /// Stable C10 reason when native search is unsupported. Not "能力降级".
@@ -213,6 +216,7 @@ pub(crate) fn parse_native_search_payload(
     family: NativeSearchPayloadFamily,
     value: &Value,
 ) -> NativeSearchParse {
+    let event_kinds = collect_search_event_kinds(value);
     let (structured, candidates) = match family {
         NativeSearchPayloadFamily::OpenAiShaped => openai_search_hits(value),
         NativeSearchPayloadFamily::GeminiShaped => (
@@ -227,6 +231,7 @@ pub(crate) fn parse_native_search_payload(
             has_retrieval_credentials: false,
             generated_text_only: true,
             failure: Some(RouteFailureClass::ProtocolOrResultInsufficient),
+            event_kinds,
         };
     }
     if candidates.is_empty() {
@@ -235,6 +240,7 @@ pub(crate) fn parse_native_search_payload(
             has_retrieval_credentials: false,
             generated_text_only: false,
             failure: None,
+            event_kinds,
         };
     }
     NativeSearchParse {
@@ -242,6 +248,7 @@ pub(crate) fn parse_native_search_payload(
         has_retrieval_credentials: true,
         generated_text_only: false,
         failure: None,
+        event_kinds,
     }
 }
 
@@ -513,6 +520,7 @@ impl NativeSearchParse {
             generated_text_only: self.generated_text_only,
             failure: self.failure,
             internal_provider_attempts: 0,
+            event_kinds: self.event_kinds,
             ..Default::default()
         }
     }
@@ -634,6 +642,22 @@ pub(crate) fn extract_reported_completion_tokens(value: &Value) -> Option<u32> {
 }
 
 impl RetrievalObservation {
+    /// Content-free C26 witness payload for a MainStreamLeak observation.
+    /// Carries only counts, event kinds and token facts — never URLs, bodies
+    /// or credentials.
+    pub(crate) fn main_stream_leak_witness_payload(&self) -> Value {
+        serde_json::json!({
+            "kind": "main_stream_search_observation",
+            "origin": "main_stream_leak",
+            "eventKinds": self.event_kinds,
+            "citationCount": self.candidates.len(),
+            "hasRetrievalCredentials": self.has_retrieval_credentials,
+            "promptTokens": self.prompt_tokens,
+            "completionTokens": self.completion_tokens,
+            "isNetworkToolDispatch": false,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn from_isolated_parse(
         identity: SearchActionIdentity,

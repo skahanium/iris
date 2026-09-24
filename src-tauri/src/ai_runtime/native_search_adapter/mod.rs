@@ -591,7 +591,6 @@ fn record_native_attempt(
     outcome: &RouteAttemptOutcome,
     usage: (Option<u32>, Option<u32>),
 ) {
-    let (prompt, completion) = usage;
     let correlation = crate::ai_runtime::boundary_events::BoundaryCorrelation {
         run_id: identity.run_id.clone(),
         input_revision: identity.input_revision.clone(),
@@ -615,14 +614,26 @@ fn record_native_attempt(
     let _ = crate::ai_runtime::boundary_events::record_native_search_observation(
         db,
         &correlation,
-        &serde_json::json!({
-            "kind":"native_search_subrequest", "origin":"isolated_subrequest", "https":true,
-            "statusClass":status_class, "hasRetrievalCredentials":outcome.has_retrieval_credentials,
-            "citationCount":outcome.candidates.len(), "promptTokens":prompt, "completionTokens":completion,
-            "tokenUsageReported":prompt.is_some() && completion.is_some(), "dispatched":dispatched,
-            "budgetKind":"model_auxiliary_request", "isNetworkToolDispatch":false
-        }),
+        &native_attempt_witness_payload(status_class, outcome, usage, dispatched),
     );
+}
+
+/// Content-free C26 witness payload for one isolated native-search attempt.
+pub(crate) fn native_attempt_witness_payload(
+    status_class: &str,
+    outcome: &RouteAttemptOutcome,
+    usage: (Option<u32>, Option<u32>),
+    dispatched: bool,
+) -> serde_json::Value {
+    let (prompt, completion) = usage;
+    serde_json::json!({
+        "kind":"native_search_subrequest", "origin":"isolated_subrequest", "https":true,
+        "statusClass":status_class, "hasRetrievalCredentials":outcome.has_retrieval_credentials,
+        "citationCount":outcome.candidates.len(), "promptTokens":prompt, "completionTokens":completion,
+        "tokenUsageReported":prompt.is_some() && completion.is_some(), "dispatched":dispatched,
+        "budgetKind":"model_auxiliary_request", "isNetworkToolDispatch":false,
+        "eventKinds":outcome.event_kinds
+    })
 }
 
 pub(super) struct LiveNativeSearchTransport;

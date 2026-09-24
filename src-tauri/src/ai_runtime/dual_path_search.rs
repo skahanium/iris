@@ -119,6 +119,9 @@ pub(crate) struct RouteAttemptOutcome {
     pub completion_tokens: Option<u32>,
     pub dispatched_attempts: u32,
     pub usage_unknown: bool,
+    /// Supplier-defined search event kinds observed on this attempt, kept for
+    /// the C26 witness. Content-free.
+    pub event_kinds: Vec<String>,
 }
 
 /// Successful search-request counts reserved for K11 usage.

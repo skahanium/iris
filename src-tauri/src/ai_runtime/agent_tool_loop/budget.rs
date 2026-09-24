@@ -29,6 +29,45 @@ pub(super) fn confirmation_rejection_summary(results: &[(String, ToolCallResult)
     )
 }
 
+/// Turn-level correlation for a MainStreamLeak witness. A leak carries no tool
+/// action, so the consume point fills turn identity honestly instead of ever
+/// recording the observation's default identity as-is.
+pub(super) fn main_stream_leak_correlation(
+    run_id: &str,
+    model_turn: u32,
+) -> crate::ai_runtime::boundary_events::BoundaryCorrelation {
+    crate::ai_runtime::boundary_events::BoundaryCorrelation {
+        run_id: run_id.to_string(),
+        input_revision: String::new(),
+        parent_run_id: None,
+        child_run_id: None,
+        model_turn,
+        call_id: format!("model-turn-{model_turn}"),
+        attempt_id: "main-stream-leak".into(),
+        tool_surface_version: String::new(),
+        protocol_adapter: "main_stream_search".into(),
+    }
+}
+
+/// K12 MainStreamLeak consumer: search credentials observed in the main
+/// dialogue stream are witnessed for C26 only. They never drive K11 native
+/// `succeeded` and are never executable tool calls.
+pub(super) fn note_main_stream_leak(
+    db: Option<&Database>,
+    run_id: &str,
+    observation: Option<&crate::ai_runtime::native_search_subrequest::RetrievalObservation>,
+) {
+    let (Some(db), Some(observation)) = (db, observation) else {
+        return;
+    };
+    let model_turn = model_turn_ledger::used(run_id);
+    let _ = crate::ai_runtime::boundary_events::record_main_stream_leak_observation(
+        db,
+        &main_stream_leak_correlation(run_id, model_turn),
+        &observation.main_stream_leak_witness_payload(),
+    );
+}
+
 /// Invoke every provider through the same quota boundary. Production adapters
 /// account at their actual HTTP dispatch; deterministic providers use this seam.
 #[allow(clippy::too_many_arguments)]
@@ -43,9 +82,18 @@ pub(crate) async fn answer_budgeted_turn(
 ) -> AppResult<GatewayResponse> {
     model_turn_ledger::with_purpose(purpose, async {
         if provider.manages_attempt_budget() {
-            return provider
+            let response = provider
                 .answer_turn(run_id, messages, tools, budget, observer)
                 .await;
+            note_main_stream_leak(
+                provider.budget_database(),
+                run_id,
+                response
+                    .as_ref()
+                    .ok()
+                    .and_then(|r| r.retrieval_observation.as_ref()),
+            );
+            return response;
         }
         let lease =
             model_turn_ledger::claim_attempt(provider.budget_database(), run_id, purpose, budget)?;
@@ -53,6 +101,14 @@ pub(crate) async fn answer_budgeted_turn(
         let response = provider
             .answer_turn(run_id, messages, tools, lease.budget, observer)
             .await;
+        note_main_stream_leak(
+            provider.budget_database(),
+            run_id,
+            response
+                .as_ref()
+                .ok()
+                .and_then(|r| r.retrieval_observation.as_ref()),
+        );
         model_turn_ledger::settle_attempt(
             provider.budget_database(),
             &lease,
@@ -215,6 +271,21 @@ pub(super) fn plan_tool_proposals<'a>(
             (call, ToolCallDisposition::Dispatched)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod main_stream_leak_identity_tests {
+    use super::*;
+
+    #[test]
+    fn main_stream_leak_correlation_fills_turn_identity_not_defaults() {
+        let correlation = main_stream_leak_correlation("run-leak", 3);
+        assert_eq!(correlation.run_id, "run-leak");
+        assert_eq!(correlation.model_turn, 3);
+        assert_eq!(correlation.call_id, "model-turn-3");
+        assert_eq!(correlation.attempt_id, "main-stream-leak");
+        assert_eq!(correlation.protocol_adapter, "main_stream_search");
+    }
 }
 
 #[cfg(test)]

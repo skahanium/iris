@@ -86,7 +86,6 @@ pub struct GatewayResponse {
     #[serde(skip)]
     pub continuation: Option<ProviderContinuation>,
     #[serde(skip)]
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) retrieval_observation: Option<RetrievalObservation>,
 }
 
