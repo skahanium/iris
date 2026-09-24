@@ -1823,11 +1823,7 @@ test("证据物漂移即阻断：testFingerprint 与当前测试文件不一致�
     record.testFingerprint = "sha256:0000";
     saveRegistry(fixture.harness, registry);
     const obsolete = runCheck(fixture.root);
-    assert.equal(
-      obsolete.exitCode,
-      0,
-      "obsolete 记录的证据物留痕不阻断",
-    );
+    assert.equal(obsolete.exitCode, 0, "obsolete 记录的证据物留痕不阻断");
   } finally {
     fixture.cleanup();
   }

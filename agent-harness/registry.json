@@ -1,11 +1,11 @@
 <!-- iris:object FILE-REGISTRY kind=rules file=true -->
 {
   "schemaVersion": "iris-agent-harness-registry-v1",
-  "registryRevision": 179,
+  "registryRevision": 180,
   "baseline": {
     "architectureDefinition": "2670739f",
     "reviewBaseline": "2d357038",
-    "recordedAt": "2026-09-24T14:25:18.346Z"
+    "recordedAt": "2026-09-24T14:27:06.970Z"
   },
   "sources": {
     "SRC-DISC-2026-09-14": {
@@ -271,7 +271,7 @@
     "registry.json": {
       "container": "FILE-REGISTRY",
       "registration": "FILE-REGISTRY#file",
-      "fingerprint": "c99f552799f01c136c1f840806d7ebd4"
+      "fingerprint": "19164440ba9cfd2bb157cfc337a92a6b"
     },
     "requirements/current-baseline.md": {
       "container": "P04",
@@ -6925,6 +6925,12 @@
       "author": "zcode-agent",
       "topic": "2026-09-24 F5/F6 判据修正与补位复核",
       "detail": "身份判据三改（maintainer 2026-09-24 本会话裁定，Q1/Q2 采纳）：①codex-root／codex-budget-reviewer／codex-session-reviewer／codex-protocol-reviewer 归并为 codex-root（依据登记表 2026-09-21 自述四者为同一 root 会话子任务路径）；②复合署名按成分集合求交判定独立性，封堵「作者写复合署名、复核者写其中成分」旁路；③user 不构成独立复核身份（17 条 user 复核的撰写者无法核实）。接受变红后由 zcode-agent 补位：REV-58（CHG-84 十三对象）、REV-59（CHG-2026-09-16-30/Q16）、REV-60（CHG-2026-09-17-37 三对象）、REV-61（CHG-2026-09-16-32 三对象），均绑当前指纹；REV-2026-09-24-ZCODE-55 的 D05#file 旧绑定标 stale（不改写）。REV-2026-09-22-95 经 maintainer 于 2026-09-24 本会话确认属实（09-22 确经 AskUserQuestion 给出 synchronized 结论），记录保持。评审来源：DeepSeek 2026-09-24 检视 F5/F6。"
+    },
+    {
+      "at": "2026-09-24T14:26:58.397Z",
+      "author": "zcode-agent",
+      "topic": "2026-09-24 F7/F8 收口：嵌入等待根因复查与审计处置表",
+      "detail": "F7 根因复查（8273837b 同款方法）：EmbeddingScheduler 为每实例状态（无进程全局），embedding_scheduler_contract 文件内测试自述互串行——ebf6e393 所记「cargo test 并行跑其它二进制」不成立（cargo 串行执行各测试二进制）。真实结论：噪声负载下 worker 线程调度延迟使相位等待超窗（runner 偏慢一类），60s 上限保留为调度容差、不复加大；同批 unwrap_or_else(into_inner) 防毒化级联是真修复。历史提交不改写，以本条更正记录。CI 超时 30→45min（40d273f0）同属 runner 容差，保留。F8：docs/audit-report-2026-09.md §六 后补「建议处置表」（12 条：1 条已修、3 条部分采纳、8 条未处理，逐条引提交），建议去向自此可查。评审来源：DeepSeek 2026-09-24 检视 F7/F8。"
     }
   ],
   "history": "registry-history.json"

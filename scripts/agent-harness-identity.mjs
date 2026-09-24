@@ -127,15 +127,15 @@ export function isIndependentReview(review, change) {
   if (!author.length || author.includes("user")) return false;
   return Boolean(
     !identitiesOverlap(review.author, change?.author) &&
-      !identitiesOverlap(review.author, review.reviewer) &&
-      reviewerIdentities(change?.author).length &&
-      review.change === change.id &&
-      ["no-impact", "synchronized"].includes(review.conclusion) &&
-      String(review.reason ?? "").trim().length >= 4 &&
-      String(review.evidence ?? "").trim() &&
-      review.objects?.some((object) =>
-        change.objects?.some((changed) => changed.id === object.id),
-      ),
+    !identitiesOverlap(review.author, review.reviewer) &&
+    reviewerIdentities(change?.author).length &&
+    review.change === change.id &&
+    ["no-impact", "synchronized"].includes(review.conclusion) &&
+    String(review.reason ?? "").trim().length >= 4 &&
+    String(review.evidence ?? "").trim() &&
+    review.objects?.some((object) =>
+      change.objects?.some((changed) => changed.id === object.id),
+    ),
   );
 }
 
